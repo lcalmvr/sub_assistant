@@ -19,7 +19,6 @@ DOCUPIPE_API_KEY = os.environ["DOCUPIPE_API_KEY"]
 BASE_URL         = "https://app.docupipe.ai"
 OPENAI_KEY       = os.environ["OPENAI_API_KEY"]
 
-CHECK_INTERVAL   = 60
 ATT_DIR, RESP_DIR = "attachments", "responses"
 
 SCHEMA_MAP = {
@@ -169,16 +168,19 @@ def handle_email(msg_bytes):
 
 # —— main loop ——
 def main():
-    while True:
-        try:
-            m=imaplib.IMAP4_SSL(IMAP_SERVER); m.login(EMAIL_ACCOUNT,APP_PASSWORD); m.select("inbox")
-            _,ids=m.search(None,"UNSEEN")
-            for num in ids[0].split():
-                _,d=m.fetch(num,"(RFC822)"); handle_email(d[0][1]); m.store(num,"+FLAGS","\\Seen")
-            m.logout()
-        except Exception as e:
-            print("ERROR:",e)
-        time.sleep(CHECK_INTERVAL)
+    try:
+        m = imaplib.IMAP4_SSL(IMAP_SERVER)
+        m.login(EMAIL_ACCOUNT, APP_PASSWORD)
+        m.select("inbox")
+        _, ids = m.search(None, "UNSEEN")
+        for num in ids[0].split():
+            _, d = m.fetch(num, "(RFC822)")
+            handle_email(d[0][1])
+            m.store(num, "+FLAGS", "\\Seen")
+        m.logout()
+    except Exception as e:
+        print("ERROR:", e)
+
 
 if __name__=="__main__":
     main()
