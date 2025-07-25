@@ -32,11 +32,18 @@ st.title("📂 AI-Processed Submissions")
 
 sub_df = load_submissions()
 st.subheader("Recent submissions")
-sel_row = st.dataframe(sub_df, use_container_width=True,
-                       hide_index=True).select_rows
-if sel_row:
-    sub_id = sub_df.iloc[sel_row[0]]["id"]
-    st.divider()
+
+st.dataframe(sub_df, use_container_width=True, hide_index=True)
+
+choice = st.radio(
+    "Select a submission to open ↓",
+    sub_df.index,
+    format_func=lambda i: f"{sub_df.at[i, 'id']} — {sub_df.at[i, 'broker_email']}"
+)
+
+sub_id = sub_df.at[choice, "id"]
+st.divider()
+
 
     # --- Summary card ---
     st.subheader(f"Submission {sub_id}")
