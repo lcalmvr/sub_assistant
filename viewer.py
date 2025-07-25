@@ -44,6 +44,9 @@ def load_documents(submission_id):
         WHERE submission_id = %s;
     """
     return pd.read_sql(query, get_conn(), params=[submission_id])
+    
+def _as_dict(v):
+    return json.loads(v) if isinstance(v, str) else v
 
 
 # -------------- UI -----------------
@@ -80,7 +83,7 @@ if sub_id:
                 f"Pages: {row['page_count']}  |  Priority: {row['is_priority']}"
             )
             st.markdown("**Metadata**")
-            st.json(json.loads(row["doc_metadata"] or "{}"))
+            st.json(_as_dict(row["doc_metadata"]))
             st.markdown("**Extracted Data (truncated)**")
-            st.json(json.loads(row["extracted_data"] or "{}"))
+            st.json(_as_dict(row["extracted_data"]))
 
