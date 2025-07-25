@@ -1,49 +1,67 @@
-import os, json, psycopg2, pandas as pd, streamlit as st
+import os
+import json
 from datetime import datetime
 
+import psycopg2
+import pandas as pd
+import streamlit as st
+
+# ----------------- CONFIG -----------------
 st.set_page_config(page_title="Submission Viewer", layout="wide")
 
-DATABASE_URL = os.getenv("DATABASE_URL")  # Render will inject; local dev: export it
+DATABASE_URL = os.getenv("DATABASE_URL")  # Render/locally via .env
 
+
+# -------------- DB HELPERS ---------------
 @st.cache_resource(show_spinner=False)
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
-def load_submissions(limit=200):
-    q = """
-        SELECT id, broker_email, date_received, quote_ready,
+
+def load_submissions(limit: int = 200) -> pd.DataFrame:
+    query = """
+        SELECT id,
+               broker_email,
+               date_received,
+               quote_ready,
                created_at AT TIME ZONE 'UTC' AS created_utc
         FROM submissions
         ORDER BY created_at DESC
         LIMIT %s;
     """
-    return pd.read_sql(q, get_conn(), params=[limit])
+    return pd.read_sql(query, get_conn(), params=[limit])
+
 
 def load_documents(submission_id):
-    q = """
-        SELECT filename, document_type, page_count, is_priority,
-               doc_metadata, extracted_data
+    query = """
+        SELECT filename,
+               document_type,
+               page_count,
+               is_priority,
+               doc_metadata,
+               extracted_data
         FROM documents
         WHERE submission_id = %s;
     """
-    return pd.read_sql(q, get_conn(), params=[submission_id])
+    return pd.read_sql(query, get_conn(), params=[submission_id])
 
+
+# -------------- UI -----------------
 st.title("📂 AI-Processed Submissions")
 
 sub_df = load_submissions()
-st.subheader("Recent submissions")
 
+st.subheader("Recent submissions")
 st.dataframe(sub_df, use_container_width=True, hide_index=True)
 
-choice = st.radio(
+sub_id = st.selectbox(
     "Select a submission to open ↓",
-    sub_df.index,
-    format_func=lambda i: f"{sub_df.at[i, 'id']} — {sub_df.at[i, 'broker_email']}"
+    sub_df["id"],
+    index=0 if len(sub_df) else None,
 )
 
-sub_id = sub_df.at[choice, "id"]
-st.divider()
-
+if sub_id:
+    st.divider()
 
     # --- Summary card ---
     st.subheader(f"Submission {sub_id}")
@@ -58,7 +76,9 @@ st.divider()
     st.subheader("Documents")
     for _, row in docs.iterrows():
         with st.expander(f"{row['filename']} – {row['document_type']}"):
-            st.write(f"Pages: {row['page_count']}  |  Priority: {row['is_priority']}")
+            st.write(
+                f"Pages: {row['page_count']}  |  Priority: {row['is_priority']}"
+            )
             st.markdown("**Metadata**")
             st.json(json.loads(row["doc_metadata"] or "{}"))
             st.markdown("**Extracted Data (truncated)**")
