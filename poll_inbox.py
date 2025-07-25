@@ -221,34 +221,35 @@ def handle_email(msg_bytes):
     summary=gpt_summary(subject,body,apps,losses)
     
     # ----- Build DB payloads -----
-submission_payload = {
-    "broker_email": sender,
-    "date_received": datetime.utcnow(),
-    "summary": summary,
-    "flags": {},          # add real flags later if you calculate them
-    "quote_ready": False  # flip to True when your auto-UW logic is done
-}
+    submission_payload = {
+        "broker_email": sender,
+        "date_received": datetime.utcnow(),
+        "summary": summary,
+        "flags": {},          # add real flags later if you calculate them
+        "quote_ready": False  # flip to True when your auto-UW logic is done
+    }
 
-document_payloads = []
-for data, schema, file_path in zip(
-        apps + losses,
-        ["Application"] * len(apps) + ["Loss Run"] * len(losses),
-        links):
-    document_payloads.append({
-        "filename": os.path.basename(file_path),
-        "document_type": schema,
-        "page_count": data.get("pageCount") or None,
-        "is_priority": True,
-        "doc_metadata": {"source": "email"},
-        "extracted_data": data
-    })
+    document_payloads = []
+    for data, schema, file_path in zip(
+            apps + losses,
+            ["Application"] * len(apps) + ["Loss Run"] * len(losses),
+            links):
+        document_payloads.append({
+            "filename": os.path.basename(file_path),
+            "document_type": schema,
+            "page_count": data.get("pageCount") or None,
+            "is_priority": True,
+            "doc_metadata": {"source": "email"},
+            "extracted_data": data
+        })
 
-# ----- Write to DB -----
-insert_submission_to_db(submission_payload, document_payloads)
+    # ----- Write to DB -----
+    insert_submission_to_db(submission_payload, document_payloads)
 
 
-# ----- reply to email -----
-reply_email(sender,subject,summary,links)
+    # ----- reply to email -----
+    reply_email(sender,subject,summary,links)
+
 
 # —— main loop ——
 def main():
