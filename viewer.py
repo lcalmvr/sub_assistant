@@ -9,7 +9,7 @@ import streamlit as st
 # ----------------- CONFIG -----------------
 st.set_page_config(page_title="Submission Viewer", layout="wide")
 
-DATABASE_URL = os.getenv("DATABASE_URL")  # Render/locally via .env
+DATABASE_URL = os.getenv("DATABASE_URL")  # provided by Render or .env
 
 
 # -------------- DB HELPERS ---------------
@@ -44,9 +44,22 @@ def load_documents(submission_id):
         WHERE submission_id = %s;
     """
     return pd.read_sql(query, get_conn(), params=[submission_id])
-    
-def _as_dict(v):
-    return json.loads(v) if isinstance(v, str) else v
+
+
+# -------------- SAFE JSON HELPER ---------------
+def _safe_json(val):
+    """
+    Return a JSON-serialisable dict or list regardless of raw storage type.
+    Handles: None, empty string, stringified JSON, already-parsed dict/list.
+    """
+    if val in (None, "", {}):
+        return {}
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except json.JSONDecodeError:
+            return {"value": val}
+    return val  # already dict / list / other
 
 
 # -------------- UI -----------------
@@ -82,8 +95,10 @@ if sub_id:
             st.write(
                 f"Pages: {row['page_count']}  |  Priority: {row['is_priority']}"
             )
+
             st.markdown("**Metadata**")
-            st.json(_as_dict(row["doc_metadata"]))
+            st.json(_safe_json(row["doc_metadata"]))
+
             st.markdown("**Extracted Data (truncated)**")
-            st.json(_as_dict(row["extracted_data"]))
+            st.json(_safe_json(row["extracted_data"]))
 
