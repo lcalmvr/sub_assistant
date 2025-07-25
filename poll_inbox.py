@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """
 Gmail → DocuPipe → GPT-4o underwriting summary
-Business Ops generated via a dedicated “What does <company> do?” call.
+Writes each submission + docs into Postgres.
+
+Environment variables required on Render / local .env:
+    GMAIL_USER
+    GMAIL_APP_PASSWORD
+    DOCUPIPE_API_KEY
+    OPENAI_API_KEY
+    DATABASE_URL        ← your Railway connection string
 """
 
 import imaplib, email, os, time, requests, base64, json, smtplib, html
 from email.header import decode_header
 from email.message import EmailMessage
 from bs4 import BeautifulSoup
-import openai
-import psycopg2
 from datetime import datetime
 
+import openai
+import psycopg2
 
 # ——— CONFIG ———
 EMAIL_ACCOUNT    = os.environ["GMAIL_USER"]
@@ -22,6 +29,8 @@ DOCUPIPE_API_KEY = os.environ["DOCUPIPE_API_KEY"]
 BASE_URL         = "https://app.docupipe.ai"
 OPENAI_KEY       = os.environ["OPENAI_API_KEY"]
 
+DATABASE_URL     = os.environ["DATABASE_URL"]
+
 ATT_DIR, RESP_DIR = "attachments", "responses"
 
 SCHEMA_MAP = {
@@ -31,10 +40,7 @@ SCHEMA_MAP = {
 
 openai_client = openai.OpenAI(api_key=OPENAI_KEY)
 
-# ——— Database ———
-DATABASE_URL = "postgresql://postgres:JXnDIbktoamRBBZIZuSSHruOTcBYeHtn@nozomi.proxy.rlwy.net:47254/railway"
-
-# ——— util helpers ———
+# ——— UTIL HELPERS ——————————————————————————————————————————————
 def plain_body(msg):
     if msg.is_multipart():
         for p in msg.walk():
@@ -54,11 +60,10 @@ def shrink(d):
     return out
 
 def ask_business_ops(name, industry, website):
-    """Independent call: 'What does Smartly do?' (ChatGPT style)."""
     prompt = (
         f"What does {name} do? Respond in 4–6 crisp bullet points, "
         "covering key products/services, target customers, scale, and any well-known use cases. "
-        "Use your general knowledge; if you’re unsure, infer from the industry and website.\n\n"
+        "Use your general knowledge; if unsure, infer from the industry and website.\n\n"
         f"Company info:\n• Industry: {industry}\n• Website: {website}"
     )
     resp = openai_client.chat.completions.create(
@@ -147,8 +152,7 @@ def dp_process(fp):
     with open(out,"w") as f: f.write(std.text)
     return out,schema
 
-
-# —— database writer ——
+# —— DB writer ————————————————————————————
 def insert_submission_to_db(submission_data, document_list):
     conn = psycopg2.connect(DATABASE_URL)
     cur  = conn.cursor()
@@ -193,10 +197,9 @@ def insert_submission_to_db(submission_data, document_list):
     conn.commit()
     cur.close()
     conn.close()
-    print(f"✅ Saved submission {submission_id} with {len(document_list)} docs.")
+    print(f"✅ Saved submission {submission_id} ({len(document_list)} docs)")
 
-
-# —— e-mail handler ——
+# —— e-mail handler —————————————————————————
 os.makedirs(ATT_DIR,exist_ok=True); os.makedirs(RESP_DIR,exist_ok=True)
 
 def handle_email(msg_bytes):
@@ -206,52 +209,59 @@ def handle_email(msg_bytes):
     body=plain_body(raw); sender=email.utils.parseaddr(raw.get("From"))[1]
     print("▶",subject,"—",sender)
 
-    links,apps,losses=[],[],[]
+    apps, losses = [], []
+    document_payloads = []
+    response_links = []
+
     for part in raw.walk():
         if part.get("Content-Disposition","").startswith("attachment"):
-            fn=part.get_filename(); pth=os.path.join(ATT_DIR,fn)
-            with open(pth,"wb") as f: f.write(part.get_payload(decode=True))
+            fn=part.get_filename()
+            pth=os.path.join(ATT_DIR,fn)
+            with open(pth,"wb") as f:
+                f.write(part.get_payload(decode=True))
+
             jp,schema=dp_process(pth)
-            if jp:
-                links.append(jp)
-                with open(jp) as jf: data=json.load(jf)
-                if schema=="e794cee0": apps.append(data)
-                elif schema=="34e8b170": losses.append(data)
+            if not jp:
+                continue
+
+            response_links.append(jp)
+            with open(jp) as jf:
+                data=json.load(jf)
+
+            if schema=="e794cee0":
+                apps.append(data)
+                doc_type="Application"
+            elif schema=="34e8b170":
+                losses.append(data)
+                doc_type="Loss Run"
+            else:
+                doc_type="Other"
+
+            document_payloads.append({
+                "filename": fn,
+                "document_type": doc_type,
+                "page_count": data.get("pageCount") or None,
+                "is_priority": True,
+                "doc_metadata": {"source": "email"},
+                "extracted_data": data
+            })
 
     summary=gpt_summary(subject,body,apps,losses)
-    
-    # ----- Build DB payloads -----
+
+    # --- DB write ---
     submission_payload = {
         "broker_email": sender,
         "date_received": datetime.utcnow(),
         "summary": summary,
-        "flags": {},          # add real flags later if you calculate them
-        "quote_ready": False  # flip to True when your auto-UW logic is done
+        "flags": {},
+        "quote_ready": False
     }
-
-    document_payloads = []
-    for data, schema, file_path in zip(
-            apps + losses,
-            ["Application"] * len(apps) + ["Loss Run"] * len(losses),
-            links):
-        document_payloads.append({
-            "filename": os.path.basename(file_path),
-            "document_type": schema,
-            "page_count": data.get("pageCount") or None,
-            "is_priority": True,
-            "doc_metadata": {"source": "email"},
-            "extracted_data": data
-        })
-
-    # ----- Write to DB -----
     insert_submission_to_db(submission_payload, document_payloads)
 
+    # --- Ack e-mail to broker ---
+    reply_email(sender,subject,summary,response_links)
 
-    # ----- reply to email -----
-    reply_email(sender,subject,summary,links)
-
-
-# —— main loop ——
+# —— main loop ——————————————————————————————————
 def main():
     try:
         m = imaplib.IMAP4_SSL(IMAP_SERVER)
@@ -269,4 +279,3 @@ def main():
 
 if __name__=="__main__":
     main()
-
