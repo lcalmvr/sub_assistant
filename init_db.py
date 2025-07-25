@@ -1,6 +1,6 @@
 import psycopg2
 
-DATABASE_URL = "postgresql://postgres:JXnDIbktoamRBBZIZuSSHruOTcBYeHtn@postgres.railway.internal:5432/railway"
+DATABASE_URL = "postgresql://postgres:JXnDIbktoamRBBZIZuSSHruOTcBYeHtn@nozomi.proxy.rlwy.net:47254/railway"
 
 schema = """
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
