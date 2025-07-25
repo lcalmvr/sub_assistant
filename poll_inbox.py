@@ -9,6 +9,9 @@ from email.header import decode_header
 from email.message import EmailMessage
 from bs4 import BeautifulSoup
 import openai
+import psycopg2
+from datetime import datetime
+
 
 # ——— CONFIG ———
 EMAIL_ACCOUNT    = os.environ["GMAIL_USER"]
@@ -27,6 +30,9 @@ SCHEMA_MAP = {
 }
 
 openai_client = openai.OpenAI(api_key=OPENAI_KEY)
+
+# ——— Database ———
+DATABASE_URL = "postgresql://postgres:JXnDIbktoamRBBZIZuSSHruOTcBYeHtn@nozomi.proxy.rlwy.net:47254/railway"
 
 # ——— util helpers ———
 def plain_body(msg):
@@ -141,6 +147,55 @@ def dp_process(fp):
     with open(out,"w") as f: f.write(std.text)
     return out,schema
 
+
+# —— database writer ——
+def insert_submission_to_db(submission_data, document_list):
+    conn = psycopg2.connect(DATABASE_URL)
+    cur  = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO submissions (
+            broker_email, date_received, summary,
+            flags, quote_ready, created_at, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id;
+    """, (
+        submission_data["broker_email"],
+        submission_data["date_received"],
+        submission_data["summary"],
+        json.dumps(submission_data.get("flags", {})),
+        submission_data.get("quote_ready", False),
+        datetime.utcnow(),
+        datetime.utcnow()
+    ))
+    submission_id = cur.fetchone()[0]
+
+    for doc in document_list:
+        cur.execute("""
+            INSERT INTO documents (
+                submission_id, filename, document_type,
+                page_count, is_priority,
+                doc_metadata, extracted_data, created_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+        """, (
+            submission_id,
+            doc["filename"],
+            doc.get("document_type"),
+            doc.get("page_count"),
+            doc.get("is_priority", False),
+            json.dumps(doc.get("doc_metadata", {})),
+            json.dumps(doc.get("extracted_data", {})),
+            datetime.utcnow()
+        ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print(f"✅ Saved submission {submission_id} with {len(document_list)} docs.")
+
+
 # —— e-mail handler ——
 os.makedirs(ATT_DIR,exist_ok=True); os.makedirs(RESP_DIR,exist_ok=True)
 
@@ -164,7 +219,36 @@ def handle_email(msg_bytes):
                 elif schema=="34e8b170": losses.append(data)
 
     summary=gpt_summary(subject,body,apps,losses)
-    reply_email(sender,subject,summary,links)
+    
+    # ----- Build DB payloads -----
+submission_payload = {
+    "broker_email": sender,
+    "date_received": datetime.utcnow(),
+    "summary": summary,
+    "flags": {},          # add real flags later if you calculate them
+    "quote_ready": False  # flip to True when your auto-UW logic is done
+}
+
+document_payloads = []
+for data, schema, file_path in zip(
+        apps + losses,
+        ["Application"] * len(apps) + ["Loss Run"] * len(losses),
+        links):
+    document_payloads.append({
+        "filename": os.path.basename(file_path),
+        "document_type": schema,
+        "page_count": data.get("pageCount") or None,
+        "is_priority": True,
+        "doc_metadata": {"source": "email"},
+        "extracted_data": data
+    })
+
+# ----- Write to DB -----
+insert_submission_to_db(submission_payload, document_payloads)
+
+
+# ----- reply to email -----
+reply_email(sender,subject,summary,links)
 
 # —— main loop ——
 def main():
