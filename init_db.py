@@ -1,6 +1,6 @@
 import psycopg2
 
-DATABASE_URL = "your_railway_connection_string_here"
+DATABASE_URL = "postgresql://postgres:JXnDIbktoamRBBZIZuSSHruOTcBYeHtn@postgres.railway.internal:5432/railway"
 
 schema = """
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
