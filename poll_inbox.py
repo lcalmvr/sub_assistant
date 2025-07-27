@@ -251,6 +251,25 @@ def dp_process(fp):
         f.write(std.text)
     return out_path, schema
 
+# ─── applicant-name helper ──────────────────────────────────
+def derive_applicant_name(subject: str, gi: dict) -> str:
+    """
+    1️⃣  If the Cyber-App JSON has generalInformation.applicantName → use it.
+    2️⃣  Otherwise take the LAST chunk of the e-mail subject after the final dash,
+        stripping filler words like “Submission Cyber/Tech”.
+    3️⃣  Fallback = “Unnamed Company”.
+    """
+    name = gi.get("applicantName")
+    if name:
+        return name.strip()
+
+    # take text AFTER the last " - " or " – "
+    parts = re.split(r"\s[-–]\s", subject)
+    name = parts[-1].strip() if len(parts) > 1 else subject.strip()
+
+    # strip generic words
+    name = re.sub(r"(?i)(submission|cyber/tech|request)", "", name).strip()
+    return name or "Unnamed Company"
 
 # ─── DB helpers ─────────────────────────────────────────────
 def insert_stub(broker,name,summary):
