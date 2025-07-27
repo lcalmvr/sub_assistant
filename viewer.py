@@ -84,9 +84,10 @@ with st.expander("🔍 Find similar submissions"):
         col_expr = {
             "Business operations": "ops_embedding",
             "Controls":            "controls_embedding",
-            "Combined":            "(ops_embedding + controls_embedding) / 2"
+            "Combined":            "(ops_embedding + controls_embedding)"
         }[mode]
 
+    try:
         cur = get_conn().cursor()
         cur.execute(f"""
             SELECT id,
@@ -100,6 +101,12 @@ with st.expander("🔍 Find similar submissions"):
             LIMIT 10;
         """, (Vector(q_vec),)) # cast to pgvector type
         rows = cur.fetchall(); cur.close()
+     except psycopg2.Error as e:
+        conn.rollback()               # clear ‘failed transaction’ flag
+        st.error(f"Query failed: {e}")
+        rows = []
+    finally:
+        cur.close()
 
         st.markdown("**Top matches:**")
         st.table([{
