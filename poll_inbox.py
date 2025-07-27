@@ -53,42 +53,64 @@ SCHEMA_MAP = {
 
 # ─── Build controls bullets & flags from Cyber-App JSON ─────
 CONTROL_MAP = {
-    "multiFactorAuthentication": "MFA",
-    "offlineBackups":            "offline backups",
-    "immutableBackups":          "immutable backups",
-    "endpointDetectionAndResponse": "EDR",
-    "soc2Compliance":            "SOC 2",
-    "securityAwarenessTraining": "phishing-training",
-    "incidentResponsePlan":      "incident-response plan",
+    # "substring to search in key" : "human-readable label"
+    "multifactor":          "MFA",
+    "offlinebackup":        "offline backups",
+    "immutablebackup":      "immutable backups",
+    "endpointdetection":    "EDR",
+    "soc2":                 "SOC 2",
+    "securityawareness":    "phishing-training",
+    "incidentresponse":     "incident-response plan",
 }
 
 def controls_from_json(apps_json: list[dict]) -> tuple[str, dict]:
     """
-    Returns (bullet_text, flags_dict) built from *_is_present booleans
-    in DocuPipe Cyber-App JSON.
+    Returns (bullet_block, flags_dict) extracted from the Cyber-App JSON.
+    • Key matching is *substring* + case-insensitive, so it works with:
+        multiFactorAuthenticationIsPresent
+        endpointDetectionAndResponse_is_present
+        etc.
+    • If a boolean value is missing, flag = "unknown".
     """
-    flags = {}
     bullets_pos, bullets_neg, bullets_na = [], [], []
+    flags = {}
 
     if not apps_json:
-        return "", {k:"unknown" for k in CONTROL_MAP.values()}
+        # no Cyber-App provided
+        return "", {k.replace('-', '_'): "unknown" for k in CONTROL_MAP.values()}
 
     gi = apps_json[0].get("generalInformation", {})
-    for raw, label in CONTROL_MAP.items():
-        key = f"{raw}_is_present"
-        val = gi.get(key)
+
+    # recursive search helper
+    def find_bool(node, needle):
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            if isinstance(cur, dict):
+                for k, v in cur.items():
+                    if needle in k.lower():
+                        return v
+                    stack.append(v)
+            elif isinstance(cur, list):
+                stack.extend(cur)
+        return None
+
+    for needle, label in CONTROL_MAP.items():
+        val = find_bool(gi, needle)
+        flag_key = label.replace("-", "_")          # e.g. "immutable_backups"
         if val is True:
             bullets_pos.append(f"✔ {label} present")
-            flags[label.replace('-','_')] = "present"
+            flags[flag_key] = "present"
         elif val is False:
             bullets_neg.append(f"✖ {label} absent")
-            flags[label.replace('-','_')] = "absent"
+            flags[flag_key] = "absent"
         else:
             bullets_na.append(f"• {label}: not provided")
-            flags[label.replace('-','_')] = "unknown"
+            flags[flag_key] = "unknown"
 
-    bullets = "\n".join(bullets_pos + bullets_neg + bullets_na)
-    return bullets, flags
+    bullet_block = "\n".join(bullets_pos + bullets_neg + bullets_na)
+    return bullet_block, flags
+
 
 
 
