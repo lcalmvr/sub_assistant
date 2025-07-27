@@ -2,19 +2,19 @@
 """
 poll_inbox.py  •  Gmail → DocuPipe → GPT-4o underwriting pipeline
 ================================================================
-Persists each submission to Postgres (Supabase) with:
-  • operations_summary                (text)
-  • security_controls_summary         (text)   ⇦ bullet list
+Stores to Postgres:
+  • operations_summary                (text  – business-ops bullets)
+  • security_controls_summary         (text  – Positive/Negative/Not-Provided)
   • ops_embedding, controls_embedding (pgvector)
-  • flags JSON, e.g.
+  • flags JSON  e.g.
       {
         "mfa": "above_average",
         "backups": "no_info",
         "edr": "below_average",
-        "phish_training": "above_average"
+        "phish_training": "no_info"
       }
-  • industry_code  (manufacturing, msp, saas …)
-and e-mails an acknowledgement back to the broker.
+  • industry_code
+and sends an acknowledgement e-mail back to the broker.
 """
 # ────────────────────────────────────────────────────────────
 import os, re, time, json, base64, imaplib, email, smtplib, html
@@ -56,16 +56,20 @@ _CONTROL_CATS = {
 }
 
 def _bool_from_val(val):
-    """True/False/Yes/No/1/0 → present/absent/unknown."""
+    """
+    Map raw JSON values to 'present' / 'absent' / 'unknown'.
+    • Only explicit text 'absent' / 'no' counts as absent.
+    • Booleans False / 0 are treated as unknown → no_info.
+    """
     if val in (True, "true", "yes", "present", 1):   return "present"
-    if val in (False, "false", "no", "absent", 0):   return "absent"
+    if val in ("absent", "no"):                      return "absent"
     return "unknown"
 
 def _find_flag(node, needle):
     """
     DFS through nested dicts/lists; if a key contains *needle*:
-      • if value is bool/str/int → return presence
-      • if value is dict → look for child key 'present' or 'isPresent'
+      • bool/str/int value → interpret with _bool_from_val
+      • dict value → look for child key 'present' / 'isPresent'
     """
     stack = [node]
     while stack:
@@ -85,12 +89,7 @@ def _find_flag(node, needle):
     return "unknown"
 
 def _presence_to_rating(val: str) -> str:
-    """
-    Map presence → rating used in DB flags.
-      present  → above_average
-      absent   → below_average
-      unknown  → no_info
-    """
+    """present → above_average · absent → below_average · unknown → no_info"""
     if val == "present": return "above_average"
     if val == "absent":  return "below_average"
     return "no_info"
@@ -98,18 +97,17 @@ def _presence_to_rating(val: str) -> str:
 def _controls_from_json(app_jsons: list[dict]) -> tuple[str, dict]:
     """
     Returns (bullet_summary, ratings_dict).
-      bullet_summary – markdown with **Positive** / **Negative** / **Not Provided**
+      bullet_summary – **Positive/Negative/Not Provided** markdown
       ratings_dict   – {mfa|backups|edr|phish_training: above/below/no_info}
     """
-    # ── 1) If nothing supplied, short-circuit
     if not app_jsons:
         return (
             "**Not Provided**:\n  - No security-control information supplied.",
             {k: "no_info" for k in _CONTROL_CATS},
         )
 
-    # ── 2) Determine ratings
-    app = app_jsons[0]              # assume first app JSON is primary
+    # ── 1  derive flag ratings
+    app = app_jsons[0]
     ratings: dict[str, str] = {}
     for cat, needles in _CONTROL_CATS.items():
         presence = "unknown"
@@ -119,18 +117,14 @@ def _controls_from_json(app_jsons: list[dict]) -> tuple[str, dict]:
                 break
         ratings[cat] = _presence_to_rating(presence)
 
-    # ── 3) Ask GPT-4o-mini for a richer bullet list
-    json_short = json.dumps(app, indent=2)[:4000]  # clip to stay under context
+    # ── 2  GPT – build Positive / Negative / Not Provided bullets
+    json_short = json.dumps(app, indent=2)[:4000]
     prompt = (
-        "You are a cyber-security analyst. Review the following application JSON "
-        "and draft a concise security-controls section with **three headings**: "
-        "**Positive**, **Negative**, **Not Provided**.  "
-        "Under each heading, include bullet points.  "
-        "Focus on MFA, backups, EDR/AV, SOC/MDR, patching cadence, SSO, email "
-        "security, phishing-training, privileged-access management, and any other "
-        "notable controls.  Bullet points may paraphrase.  Keep it under 120 words "
-        "total.\n\nAPPLICATION_JSON:\n"
-        + json_short
+        "You are a cyber-security analyst. Produce **three headings** exactly "
+        "named **Positive**, **Negative**, **Not Provided** followed by bullet "
+        "points covering MFA, backups, EDR/AV, SOC/MDR, patching, SSO, email "
+        "security, phishing-training, privileged-access management, etc. "
+        "≤120 words total.\n\nAPPLICATION_JSON:\n" + json_short
     )
     bullet_summary = openai_client.chat.completions.create(
         model="gpt-4o-mini",
@@ -139,7 +133,7 @@ def _controls_from_json(app_jsons: list[dict]) -> tuple[str, dict]:
         max_tokens=220,
     ).choices[0].message.content.strip()
 
-    # Fallback guard – ensure required headings exist
+    # Guardrail
     if "**Positive**" not in bullet_summary:
         bullet_summary = (
             "**Positive**:\n  - No positive controls identified\n"
@@ -153,7 +147,7 @@ def _controls_from_json(app_jsons: list[dict]) -> tuple[str, dict]:
 utc_now = lambda: datetime.now(UTC)
 
 def plain_body(msg):
-    """Extract plain-text body from e-mail (fallback HTML→text)."""
+    """Extract plain-text body (fallback HTML→text)."""
     if msg.is_multipart():
         for p in msg.walk():
             ct = p.get_content_type()
@@ -177,7 +171,7 @@ def derive_applicant_name(subject: str, gi: dict) -> str:
     return name or "Unnamed Company"
 
 def shrink(d: dict) -> dict:
-    """Strip giant blobs before GPT context."""
+    """Trim huge dicts before passing to GPT."""
     out = {}
     for k, v in d.items():
         if isinstance(v, str)  and len(v) > 800:               continue
@@ -231,19 +225,32 @@ def bullets_business_ops(context: str) -> str:
         txt = "* Business operations unavailable – awaiting further info."
     return txt
 
-def gpt_summary(subject, body, apps_small, losses_small, ops_bullets):
+def build_email_summary(subject, body, ops_bullets, controls_summary,
+                        apps_small, losses_small):
+    """
+    Compose the 4-section markdown summary for the e-mail.
+    Section 2 (Business Ops) and Section 3 (Controls) are **verbatim**.
+    """
     sys = (
-        "You are a cyber-E&O underwriting analyst. Produce FOUR sections:\n"
-        "1) Submission Summary\n2) Business Operations (use bullets)\n"
-        "3) Controls Summary\n4) Loss Summary\n≤120 words each. Bullets only."
+        "You are a cyber-E&O underwriting analyst. Produce EXACTLY the "
+        "following markdown sections in order:\n\n"
+        "## Submission Summary\n(bullet points, ≤120 words)\n\n"
+        "## Business Operations\n(The text in <OPS>…</OPS> – do not change)\n\n"
+        "## Controls Summary\n(The text in <CTRL>…</CTRL> – do not change)\n\n"
+        "## Loss Summary\n(bullet points, ≤120 words)"
     )
+
     msgs = [
         {"role": "system", "content": sys},
         {"role": "user", "content": f"Subject: {subject}\n\nBody:\n{body}"},
-        {"role": "user", "content": f"Business Ops bullets:\n{ops_bullets}"},
-        {"role": "user", "content": f"Application JSON:\n{json.dumps(apps_small, indent=2)}"},
-        {"role": "user", "content": f"Loss-run JSON:\n{json.dumps(losses_small, indent=2)}"},
+        {"role": "user", "content": f"<OPS>\n{ops_bullets}\n</OPS>"},
+        {"role": "user", "content": f"<CTRL>\n{controls_summary}\n</CTRL>"},
+        {"role": "user", "content": "APPLICATION_JSON:\n" +
+                                    json.dumps(apps_small, indent=2)},
+        {"role": "user", "content": "LOSS_JSON:\n" +
+                                    json.dumps(losses_small, indent=2)},
     ]
+
     return openai_client.chat.completions.create(
         model="gpt-4o",
         messages=msgs,
@@ -292,13 +299,12 @@ def reply_email(to_addr, subj, summary, links):
 
 # ─── DocuPipe upload → classify → standardize  ─────────────
 def dp_process(fp: str) -> tuple[str | None, str | None]:
-    """Returns (path_to_standardized_json, schema_id) or (None, None)."""
     hdr = {
         "X-API-Key"   : DOCUPIPE_API_KEY,
         "accept"      : "application/json",
         "content-type": "application/json",
     }
-    # 1) upload
+    # upload
     with open(fp, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
     up = requests.post(
@@ -311,14 +317,14 @@ def dp_process(fp: str) -> tuple[str | None, str | None]:
         return None, None
     doc_id = up.json()["documentId"]
 
-    # 2) OCR poll
+    # OCR poll
     for _ in range(30):
         status = requests.get(f"{BASE_URL}/document/{doc_id}", headers=hdr).json()["status"]
         if status == "completed":
             break
         time.sleep(4)
 
-    # 3) classify
+    # classify
     cl = requests.post(
         f"{BASE_URL}/classify/batch",
         headers=hdr,
@@ -332,7 +338,6 @@ def dp_process(fp: str) -> tuple[str | None, str | None]:
         print("No jobIds in classification response:", cl.json())
         return None, None
     job_id = ids[0]
-
     for _ in range(30):
         job = requests.get(f"{BASE_URL}/job/{job_id}", headers=hdr).json()
         if job["status"] == "completed":
@@ -346,7 +351,7 @@ def dp_process(fp: str) -> tuple[str | None, str | None]:
         print("Unknown schema:", job)
         return None, None
 
-    # 4) standardize
+    # standardize
     std = requests.post(
         f"{BASE_URL}/standardize",
         headers=hdr,
@@ -464,18 +469,19 @@ def handle_email(msg_bytes: bytes):
 
     blurb       = tavily_blurb(applicant, website)
     ops_bullets = bullets_business_ops(f"{industry}\n{blurb}")
-    summary     = gpt_summary(
+    controls_summary, flags = _controls_from_json(apps)
+
+    email_summary = build_email_summary(
         subject, body,
+        ops_bullets, controls_summary,
         [shrink(a) for a in apps],
         [shrink(l) for l in losses],
-        ops_bullets,
     )
 
-    controls_summary, flags = _controls_from_json(apps)
-    industry_code           = classify_industry(applicant, f"{ops_bullets}\n{blurb}")
+    industry_code = classify_industry(applicant, f"{ops_bullets}\n{blurb}")
 
     # DB writes
-    sid = insert_stub(sender, applicant, summary)
+    sid = insert_stub(sender, applicant, email_summary)
     insert_documents(sid, docs_payload)
 
     ops_vec  = embed(ops_bullets)
@@ -512,7 +518,7 @@ def handle_email(msg_bytes: bytes):
     conn.close()
 
     print(f"✅ Saved submission {sid} ({len(docs_payload)} docs + embeddings + flags)")
-    reply_email(sender, subject, summary, links)
+    reply_email(sender, subject, email_summary, links)
 
 # ─── Main poll loop ────────────────────────────────────────
 def main():
