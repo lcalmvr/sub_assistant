@@ -51,6 +51,47 @@ SCHEMA_MAP = {
     "ef9a697a": "34e8b170",   # Loss Runs
 }
 
+# ─── Build controls bullets & flags from Cyber-App JSON ─────
+CONTROL_MAP = {
+    "multiFactorAuthentication": "MFA",
+    "offlineBackups":            "offline backups",
+    "immutableBackups":          "immutable backups",
+    "endpointDetectionAndResponse": "EDR",
+    "soc2Compliance":            "SOC 2",
+    "securityAwarenessTraining": "phishing-training",
+    "incidentResponsePlan":      "incident-response plan",
+}
+
+def controls_from_json(apps_json: list[dict]) -> tuple[str, dict]:
+    """
+    Returns (bullet_text, flags_dict) built from *_is_present booleans
+    in DocuPipe Cyber-App JSON.
+    """
+    flags = {}
+    bullets_pos, bullets_neg, bullets_na = [], [], []
+
+    if not apps_json:
+        return "", {k:"unknown" for k in CONTROL_MAP.values()}
+
+    gi = apps_json[0].get("generalInformation", {})
+    for raw, label in CONTROL_MAP.items():
+        key = f"{raw}_is_present"
+        val = gi.get(key)
+        if val is True:
+            bullets_pos.append(f"✔ {label} present")
+            flags[label.replace('-','_')] = "present"
+        elif val is False:
+            bullets_neg.append(f"✖ {label} absent")
+            flags[label.replace('-','_')] = "absent"
+        else:
+            bullets_na.append(f"• {label}: not provided")
+            flags[label.replace('-','_')] = "unknown"
+
+    bullets = "\n".join(bullets_pos + bullets_neg + bullets_na)
+    return bullets, flags
+
+
+
 # ─── small utils ────────────────────────────────────────────
 utc_now = lambda: datetime.now(UTC)
 
@@ -327,8 +368,7 @@ def handle_email(msg_bytes):
         ops_bullets
     )
 
-    controls_bullets = extract_controls_bullets(summary)
-    flags            = extract_flags(apps, controls_bullets)
+    controls_bullets, flags = controls_from_json(apps)
     industry_code    = classify_industry(applicant, f"{ops_bullets}\n{blurb}")
 
     sid = insert_stub(sender, applicant, summary)
