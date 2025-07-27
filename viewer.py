@@ -1,12 +1,27 @@
+# viewer.py
+"""
+Streamlit admin viewer
+• Lists recent submissions & their documents
+• Shows four-section GPT summary + Ops / Controls bullets
+• Adds a similarity-search panel that lets analysts search by:
+      – Business operations vector
+      – Controls vector
+      – Combined (simple sum of the two)
+----------------------------------------------------------------
+Requires env-vars:
+  DATABASE_URL      Supabase pooler URL
+  OPENAI_API_KEY    for text-embedding-3-small
+"""
+
 import os, json
 from datetime import datetime
 
 import psycopg2
-from pgvector.psycopg2 import register_vector
-from pgvector import Vector
+from pgvector.psycopg2 import register_vector   # DB adapter
+from pgvector import Vector                     # cast Python list → pgvector
 import pandas as pd
 import streamlit as st
-import openai, numpy as np     # NEW
+import openai
 
 # ----------------- CONFIG -----------------
 st.set_page_config(page_title="Submission Viewer", layout="wide")
@@ -19,7 +34,7 @@ oa_client      = openai.OpenAI(api_key=OPENAI_API_KEY)
 @st.cache_resource(show_spinner=False)
 def get_conn():
     conn = psycopg2.connect(DATABASE_URL)
-    register_vector(conn)      # pgvector adapter
+    register_vector(conn)
     return conn
 
 
@@ -70,54 +85,63 @@ st.title("📂 AI-Processed Submissions")
 # ---------- Vector Search Panel ----------
 with st.expander("🔍 Find similar submissions"):
     q = st.text_input("Describe the account (free text):", key="vec_query")
-    mode = st.radio("Search vector", ["Business operations", "Controls", "Combined"],
-                    horizontal=True, key="vec_mode")
+    mode = st.radio(
+        "Search vector",
+        ["Business operations", "Controls", "Combined"],
+        horizontal=True,
+        key="vec_mode",
+    )
 
     if q:
-        # 1) embed query
+        # pick the column/expression BEFORE query
+        col_expr = {
+            "Business operations": "ops_embedding",
+            "Controls":            "controls_embedding",
+            "Combined":            "(ops_embedding + controls_embedding)"
+        }[mode]
+
+        # 1️⃣ embed the query
         q_vec = oa_client.embeddings.create(
             model="text-embedding-3-small",
             input=q,
             encoding_format="float"
         ).data[0].embedding
 
-        col_expr = {
-            "Business operations": "ops_embedding",
-            "Controls":            "controls_embedding",
-            "Combined":            "(ops_embedding + controls_embedding)"
-        }[mode]
-    
-    rows = [] #ensure it always exists
-    try:
-        cur = get_conn().cursor()
-        cur.execute(f"""
-            SELECT id,
-                   applicant_name,
-                   broker_email,
-                   left(operations_summary, 60)  AS ops_snip,
-                   left(security_controls_summary, 60) AS ctrl_snip,
-                   {col_expr} <=> %s AS dist
-            FROM submissions
-            ORDER BY dist
-            LIMIT 10;
-        """, (Vector(q_vec),)) # cast to pgvector type
-        rows = cur.fetchall(); cur.close()
-    except psycopg2.Error as e:
-        conn.rollback()               # clear ‘failed transaction’ flag
-        st.error(f"Query failed: {e}")
-        rows = []
-    finally:
-        cur.close()
+        rows = []   # ensure var exists even on error
+        try:
+            cur = get_conn().cursor()
+            cur.execute(
+                f"""
+                SELECT id,
+                       applicant_name,
+                       broker_email,
+                       left(operations_summary, 60)        AS ops_snip,
+                       left(security_controls_summary, 60) AS ctrl_snip,
+                       {col_expr} <=> %s AS dist
+                FROM submissions
+                ORDER BY dist
+                LIMIT 10;
+                """,
+                (Vector(q_vec),)
+            )
+            rows = cur.fetchall()
+        except psycopg2.Error as e:
+            get_conn().rollback()   # clear failed-txn flag
+            st.error(f"Query failed: {e}")
+        finally:
+            cur.close()
 
         st.markdown("**Top matches:**")
-        st.table([{
-            "ID": r[0],
-            "Applicant": r[1] or "(unknown)",
-            "Broker": r[2],
-            "Ops preview": r[3] + "…",
-            "Ctrl preview": r[4] + "…",
-            "Similarity": round(1 - r[5], 3)
-        } for r in rows])
+        st.table([
+            {
+                "ID":          r[0],
+                "Applicant":   r[1] or "(unknown)",
+                "Broker":      r[2],
+                "Ops preview": r[3] + "…",
+                "Ctrl preview": r[4] + "…",
+                "Similarity":  round(1 - r[5], 3)
+            } for r in rows
+        ])
 
 st.divider()
 
