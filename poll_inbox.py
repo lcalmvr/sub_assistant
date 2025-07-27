@@ -67,14 +67,26 @@ def shrink(d):
 
 
 def derive_applicant_name(subject: str, gi: dict) -> str:
-    """Best-effort applicant name from JSON or subject line."""
-    if gi.get("applicantName"):
-        return gi["applicantName"]
-    # take text before first “ – ” or “ - ”
-    parts = re.split(r"\s[-–]\s", subject, maxsplit=1)
-    if parts:
-        return parts[0].strip()
-    return "Unnamed Company"
+    """
+    1) JSON field if present
+    2) Last part of subject after the final dash
+    3) Fallback string
+    """
+    name = gi.get("applicantName")
+    if name:
+        return name.strip()
+
+    # take text AFTER the last “ - ” or “ – ”
+    parts = re.split(r"\s[-–]\s", subject)
+    if len(parts) > 1:
+        name = parts[-1].strip()
+    else:
+        name = subject.strip()
+
+    # strip generic words
+    name = re.sub(r"(?i)submission|cyber/tech|request", "", name).strip()
+    return name or "Unnamed Company"
+
 
 
 def ask_business_ops(name, industry, website):
