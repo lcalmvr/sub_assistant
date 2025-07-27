@@ -86,7 +86,8 @@ with st.expander("🔍 Find similar submissions"):
             "Controls":            "controls_embedding",
             "Combined":            "(ops_embedding + controls_embedding)"
         }[mode]
-
+    
+    rows = [] #ensure it always exists
     try:
         cur = get_conn().cursor()
         cur.execute(f"""
