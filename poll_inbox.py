@@ -263,39 +263,76 @@ def reply_email(to_addr, subj, summary, links):
 
 # ─── robust DocuPipe upload/classify/standardize ───────────
 def dp_process(fp):
-    hdr={"X-API-Key":DOCUPIPE_API_KEY,"accept":"application/json","content-type":"application/json"}
-    with open(fp,"rb") as f:b64=base64.b64encode(f.read()).decode()
-    up=requests.post(f"{BASE_URL}/document",headers=hdr,
-        json={"document":{"file":{"contents":b64,"filename":os.path.basename(fp)}}})
-    if not up.ok: print("DocuPipe upload failed:",up.text); return None,None
-    doc_id=up.json()["documentId"]
+    hdr = {
+        "X-API-Key": DOCUPIPE_API_KEY,
+        "accept":    "application/json",
+        "content-type": "application/json",
+    }
+
+    # ── 1) upload ──────────────────────────────────────────
+    with open(fp, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    up = requests.post(
+        f"{BASE_URL}/document", headers=hdr,
+        json={"document": {"file": {"contents": b64, "filename": os.path.basename(fp)}}}
+    )
+    if not up.ok:
+        print("DocuPipe upload failed:", up.text)
+        return None, None
+    doc_id = up.json()["documentId"]
+
+    # ── 2) OCR poll ───────────────────────────────────────
+    for _ in range(30):
+        if requests.get(f"{BASE_URL}/document/{doc_id}", headers=hdr).json()["status"] == "completed":
+            break
+        time.sleep(4)
+
+    # ── 3) classify ───────────────────────────────────────
+    cl = requests.post(f"{BASE_URL}/classify/batch", headers=hdr, json={"documentIds": [doc_id]})
+    if not cl.ok:
+        print("DocuPipe classify failed:", cl.text)
+        return None, None
+    ids = cl.json().get("jobIds") or cl.json().get("classificationJobIds") or []
+    if not ids:
+        print("No jobIds in response:", cl.json())
+        return None, None
+    job_id = ids[0]
 
     for _ in range(30):
-        if requests.get(f"{BASE_URL}/document/{doc_id}",headers=hdr).json()["status"]=="completed":
-            break; time.sleep(4)
+        job = requests.get(f"{BASE_URL}/job/{job_id}", headers=hdr).json()
+        if job["status"] == "completed":
+            break
+        time.sleep(4)
 
-    cl=requests.post(f"{BASE_URL}/classify/batch",headers=hdr,
-        json={"documentIds":[doc_id]})
-    if not cl.ok: print("DocuPipe classify failed:",cl.text); return None,None
-    ids=cl.json().get("jobIds") or cl.json().get("classificationJobIds") or []
-    if not ids: print("No jobIds in response:",cl.json()); return None,None
-    job_id=ids[0]
+    cls = (job.get("assignedClassIds") or job.get("result", {}).get("assignedClassIds") or [None])[0]
+    schema = SCHEMA_MAP.get(cls)
 
-    for _ in range(30):
-        job=requests.get(f"{BASE_URL}/job/{job_id}",headers=hdr).json()
-        if job["status"]=="completed": break; time.sleep(4)
+    # ▲ DEBUG print #1: what class ID & mapping we got
+    print("DBG class ID →", cls, "mapped schema →", schema)
 
-    cls=(job.get("assignedClassIds") or job.get("result",{}).get("assignedClassIds") or [None])[0]
-    schema=SCHEMA_MAP.get(cls)
-    if not schema: print("Unknown schema:", job); return None,None
+    if not schema:
+        print("Unknown schema:", job)
+        return None, None
 
-    std=requests.post(f"{BASE_URL}/standardize",headers=hdr,
-        json={"documentId":doc_id,"schemaId":schema})
-    if not std.ok: print("Standardize failed:",std.text); return None,None
+    # ── 4) standardize ────────────────────────────────────
+    std = requests.post(
+        f"{BASE_URL}/standardize",
+        headers=hdr,
+        json={"documentId": doc_id, "schemaId": schema},
+    )
+    if not std.ok:
+        print("Standardize failed:", std.text)
+        return None, None
 
-    out=os.path.join(RESP_DIR,os.path.basename(fp)+".standardized.json")
-    open(out,"w").write(std.text)
-    return out,schema
+    out = os.path.join(RESP_DIR, os.path.basename(fp) + ".standardized.json")
+
+    # ▲ DEBUG print #2: confirm we’re writing the standardized JSON
+    print("DBG writing std file for schema →", schema, "→", os.path.basename(out))
+
+    with open(out, "w") as f:
+        f.write(std.text)
+    return out, schema
+
 
 # ─── DB helpers ─────────────────────────────────────────────
 def insert_stub(broker,name,summary):
