@@ -14,7 +14,7 @@ DATABASE_URL            Supabase **pooler** URL (pgvector enabled)
 """
 
 # ── Standard libs ──────────────────────────────────────────────
-import os, imaplib, email, time, json, html, base64, requests
+import os, imaplib, email, time, json, html, base64, requests, smtplib
 from datetime import datetime
 from email.header      import decode_header
 from email.message     import EmailMessage
