@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Gmail → DocuPipe → GPT-4o underwriting summary
-Writes each submission + docs into Supabase Postgres *with two pgvector embeddings*:
-    • ops_embedding            (business-operations bullets)
-    • controls_embedding       (security-controls bullets)
-
-Required env-vars (Render / .env)
----------------------------------
-GMAIL_USER            Gmail address that receives broker e-mails
-GMAIL_APP_PASSWORD    App-specific password
-DOCUPIPE_API_KEY      https://app.docupipe.ai
-OPENAI_API_KEY        GPT-4o + embeddings
-DATABASE_URL          Supabase pooler URL (pgvector enabled)
+Gmail → DocuPipe → GPT-4o underwriting assistant
+----------------------------------------------------------------
+• Parses unread broker e-mails
+• Uploads attachments to DocuPipe → classifies → standardizes
+• Builds four-section summary with GPT-4o
+• Saves submission + docs in Supabase Postgres
+      – operations_summary              (text)
+      – security_controls_summary       (text)
+      – ops_embedding   vector(1536)
+      – controls_embedding vector(1536)
+• Sends acknowledgement e-mail back to broker
 """
+
 # ───────── stdlib ────────────────────────────────────────────
 import os, imaplib, email, time, json, html, base64, requests, smtplib, re, textwrap
 from datetime import datetime
@@ -66,6 +66,17 @@ def shrink(d):
     return out
 
 
+def derive_applicant_name(subject: str, gi: dict) -> str:
+    """Best-effort applicant name from JSON or subject line."""
+    if gi.get("applicantName"):
+        return gi["applicantName"]
+    # take text before first “ – ” or “ - ”
+    parts = re.split(r"\s[-–]\s", subject, maxsplit=1)
+    if parts:
+        return parts[0].strip()
+    return "Unnamed Company"
+
+
 def ask_business_ops(name, industry, website):
     prompt = (
         f"What does {name} do? Respond in 4–6 crisp bullet points, "
@@ -73,12 +84,16 @@ def ask_business_ops(name, industry, website):
         "If unsure, infer from industry and website.\n\n"
         f"Industry: {industry}\nWebsite/domains: {website}"
     )
-    return openai_client.chat.completions.create(
+    reply = openai_client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.4,
         max_tokens=180,
     ).choices[0].message.content.strip()
+
+    if reply.lower().startswith("to provide a detailed response"):
+        reply = "* Business operations unavailable – awaiting further info."
+    return reply
 
 
 def gpt_summary(subject, body, apps_small, losses_small, business_ops):
@@ -88,7 +103,7 @@ def gpt_summary(subject, body, apps_small, losses_small, business_ops):
         "2) Business Operations – paste exactly the bullets provided below.\n"
         "3) Controls Summary – sub-lists Positive / Negative / Not Provided.\n"
         "4) Loss Summary – frequency, largest loss, root causes.\n"
-        "Max 120 words/section. Bullet points only."
+        "Max 120 words per section. Bullet points only."
     )
     messages = [
         {"role": "system", "content": system_prompt},
@@ -279,13 +294,12 @@ def handle_email(msg_bytes):
                 "extracted_data": data
             })
 
-    # ------------- GPT summaries & embeddings -----------------
     gi = apps[0].get("generalInformation", {}) if apps else {}
-    applicant_name = gi.get("applicantName") or None
+    applicant_name = derive_applicant_name(subject, gi)
     industry       = gi.get("primaryIndustry","")
     website        = gi.get("primaryWebsiteAndEmailDomains","")
 
-    business_ops = ask_business_ops(applicant_name or "The company", industry, website)
+    business_ops = ask_business_ops(applicant_name, industry, website)
 
     summary = gpt_summary(
         subject, body,
@@ -294,18 +308,15 @@ def handle_email(msg_bytes):
         business_ops
     )
 
-    # → controls bullets
-    m = re.search(r"3\)\s*Controls Summary\s*[-–]?\s*(.*?)\n\s*4\)", summary, re.S | re.I)
+    # controls bullets: tolerant regex
+    m = re.search(r"3\)\s*Controls Summary\s*[-–]?\s*(.*?)\n\s*4[\)\.]?", summary, re.S | re.I)
+    if not m:
+        m = re.search(r"Controls Summary\s*[-–]?\s*(.*?)(?:\n\n|\Z)", summary, re.S | re.I)
     controls_bullets = textwrap.dedent(m.group(1)).strip() if m else ""
 
-    # → ops bullets we already have
-    ops_bullets = business_ops
-
-    # insert stub row + docs
     sid = insert_submission_stub(sender, applicant_name, summary)
     insert_documents(sid, docs_payload)
 
-    # embed & update
     conn = psycopg2.connect(DATABASE_URL); register_vector(conn)
     cur  = conn.cursor()
     cur.execute("""
@@ -317,9 +328,9 @@ def handle_email(msg_bytes):
           updated_at                    = %s
       WHERE id = %s;
     """, (
-        ops_bullets,
+        business_ops,
         controls_bullets,
-        embed_text(ops_bullets),
+        embed_text(business_ops),
         embed_text(controls_bullets),
         datetime.utcnow(),
         sid
