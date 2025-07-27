@@ -1,14 +1,17 @@
 # viewer.py
 """
-Streamlit admin viewer
-• Lists recent submissions & their documents
-• Shows four-section GPT summary + Ops / Controls bullets
-• Adds a similarity-search panel that lets analysts search by:
-      – Business operations vector
-      – Controls vector
-      – Combined (simple sum of the two)
-----------------------------------------------------------------
-Requires env-vars:
+Streamlit admin viewer with:
+  • Recent-submission table (filtered)
+  • Detailed document explorer
+  • Vector similarity search on
+        – Business-operations embedding
+        – Controls embedding
+        – Combined (sum)
+  • Sidebar filters powered by LLM-normalized fields:
+        – MFA absent
+        – Industry = manufacturing
+------------------------------------------------------------
+Env-vars:
   DATABASE_URL      Supabase pooler URL
   OPENAI_API_KEY    for text-embedding-3-small
 """
@@ -17,20 +20,21 @@ import os, json
 from datetime import datetime
 
 import psycopg2
-from pgvector.psycopg2 import register_vector   # DB adapter
-from pgvector import Vector                     # cast Python list → pgvector
+from pgvector.psycopg2 import register_vector
+from pgvector import Vector
 import pandas as pd
 import streamlit as st
 import openai
 
-# ----------------- CONFIG -----------------
+# ---------- CONFIG ----------
 st.set_page_config(page_title="Submission Viewer", layout="wide")
 
 DATABASE_URL   = os.getenv("DATABASE_URL")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 oa_client      = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# -------------- DB HELPERS ---------------
+
+# ---------- DB helper ----------
 @st.cache_resource(show_spinner=False)
 def get_conn():
     conn = psycopg2.connect(DATABASE_URL)
@@ -38,8 +42,8 @@ def get_conn():
     return conn
 
 
-def load_submissions(limit: int = 200) -> pd.DataFrame:
-    query = """
+def load_submissions(sql_where: str, limit: int = 200) -> pd.DataFrame:
+    qry = f"""
         SELECT id,
                applicant_name,
                broker_email,
@@ -47,14 +51,15 @@ def load_submissions(limit: int = 200) -> pd.DataFrame:
                quote_ready,
                created_at AT TIME ZONE 'UTC' AS created_utc
         FROM submissions
+        WHERE {sql_where}
         ORDER BY created_at DESC
         LIMIT %s;
     """
-    return pd.read_sql(query, get_conn(), params=[limit])
+    return pd.read_sql(qry, get_conn(), params=[limit])
 
 
 def load_documents(submission_id):
-    query = """
+    qry = """
         SELECT filename,
                document_type,
                page_count,
@@ -64,10 +69,10 @@ def load_documents(submission_id):
         FROM documents
         WHERE submission_id = %s;
     """
-    return pd.read_sql(query, get_conn(), params=[submission_id])
+    return pd.read_sql(qry, get_conn(), params=[submission_id])
 
 
-# -------------- SAFE JSON HELPER ---------------
+# ---------- safe-JSON ----------
 def _safe_json(val):
     if val in (None, "", {}):
         return {}
@@ -79,35 +84,49 @@ def _safe_json(val):
     return val
 
 
-# -------------- UI -----------------
+# ============================================================
 st.title("📂 AI-Processed Submissions")
 
-# ---------- Vector Search Panel ----------
+# ---------- Sidebar filters ----------
+with st.sidebar:
+    st.header("Filters")
+    filt_no_mfa   = st.checkbox("MFA absent")
+    filt_mfg_only = st.checkbox("Industry: manufacturing")
+
+where_clauses = ["TRUE"]
+if filt_no_mfa:
+    where_clauses.append("flags->>'mfa' = 'absent'")
+if filt_mfg_only:
+    where_clauses.append("industry_code = 'manufacturing'")
+
+SQL_WHERE = " AND ".join(where_clauses)
+
+# ---------- Vector search panel ----------
 with st.expander("🔍 Find similar submissions"):
-    q = st.text_input("Describe the account (free text):", key="vec_query")
-    mode = st.radio(
+    query_text = st.text_input("Describe the account (free text):", key="vec_query")
+    vec_mode   = st.radio(
         "Search vector",
         ["Business operations", "Controls", "Combined"],
         horizontal=True,
         key="vec_mode",
     )
 
-    if q:
-        # pick the column/expression BEFORE query
+    if query_text:
+        # column/expression to compare
         col_expr = {
             "Business operations": "ops_embedding",
             "Controls":            "controls_embedding",
             "Combined":            "(ops_embedding + controls_embedding)"
-        }[mode]
+        }[vec_mode]
 
-        # 1️⃣ embed the query
+        # embed query
         q_vec = oa_client.embeddings.create(
             model="text-embedding-3-small",
-            input=q,
+            input=query_text,
             encoding_format="float"
         ).data[0].embedding
 
-        rows = []   # ensure var exists even on error
+        rows = []
         try:
             cur = get_conn().cursor()
             cur.execute(
@@ -119,6 +138,7 @@ with st.expander("🔍 Find similar submissions"):
                        left(security_controls_summary, 60) AS ctrl_snip,
                        {col_expr} <=> %s AS dist
                 FROM submissions
+                WHERE {SQL_WHERE}
                 ORDER BY dist
                 LIMIT 10;
                 """,
@@ -126,7 +146,7 @@ with st.expander("🔍 Find similar submissions"):
             )
             rows = cur.fetchall()
         except psycopg2.Error as e:
-            get_conn().rollback()   # clear failed-txn flag
+            get_conn().rollback()
             st.error(f"Query failed: {e}")
         finally:
             cur.close()
@@ -146,7 +166,7 @@ with st.expander("🔍 Find similar submissions"):
 st.divider()
 
 # ---------- Recent submissions ----------
-sub_df = load_submissions()
+sub_df = load_submissions(SQL_WHERE)
 
 st.subheader("Recent submissions")
 st.dataframe(sub_df, use_container_width=True, hide_index=True)
@@ -160,10 +180,9 @@ sub_id = st.selectbox(
 if sub_id:
     st.divider()
 
-    # --- Summary card ---
+    # ----- detailed summary -----
     st.subheader(f"Submission {sub_id}")
-    conn = get_conn()
-    with conn.cursor() as cur:
+    with get_conn().cursor() as cur:
         cur.execute("""
             SELECT summary,
                    operations_summary,
@@ -181,12 +200,14 @@ if sub_id:
     with st.expander("Controls bullets"):
         st.markdown(ctrl_sum or "_not available_")
 
-    # --- Documents ---
+    # ----- documents -----
     st.subheader("Documents")
     docs = load_documents(sub_id)
     for _, row in docs.iterrows():
         with st.expander(f"{row['filename']} – {row['document_type']}"):
-            st.write(f"Pages: {row['page_count']}  |  Priority: {row['is_priority']}")
+            st.write(
+                f"Pages: {row['page_count']}  |  Priority: {row['is_priority']}"
+            )
             st.markdown("**Metadata**")
             st.json(_safe_json(row["doc_metadata"]))
             st.markdown("**Extracted Data (truncated)**")
