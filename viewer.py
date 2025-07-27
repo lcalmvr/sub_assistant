@@ -2,7 +2,8 @@ import os, json
 from datetime import datetime
 
 import psycopg2
-from pgvector.psycopg2 import register_vector, Vector
+from pgvector.psycopg2 import register_vector
+from pgvector import Vector
 import pandas as pd
 import streamlit as st
 import openai, numpy as np     # NEW
