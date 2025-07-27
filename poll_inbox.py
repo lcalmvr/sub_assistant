@@ -49,16 +49,23 @@ SCHEMA_MAP = {
 # ───────── helpers ──────────────────────────────────────────
 def fetch_ops_blurb(company_name: str, website: str) -> str:
     """
-    Returns a one-sentence blurb via Tavily search, or '' if nothing found.
+    Returns "<title>: <snippet>" or '' if Tavily gives nothing.
+    Tavily keys: title • url • content • score
     """
     query = (company_name or website or "").strip()
     if not query:
         return ""
-    resp = tavily_client.search(f"{query} company overview", max_results=5)
-    if not resp["results"]:
+    try:
+        resp = tavily_client.search(f"{query} company overview", max_results=5)
+        if not resp.get("results"):
+            return ""
+        top = resp["results"][0]
+        snippet = top.get("content", "").strip()
+        return f"{top['title']}: {snippet}" if snippet else ""
+    except Exception as e:
+        print("Tavily error:", e)
         return ""
-    top = resp["results"][0]                 # first result is usually Crunchbase/LinkedIn
-    return f"{top['title']}: {top['body']}"
+
 
 
 def plain_body(msg):
