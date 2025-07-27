@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-poll_inbox.py • Gmail → DocuPipe → GPT-4o underwriting pipeline
+poll_inbox.py  –  Gmail → DocuPipe → GPT-4o underwriting pipeline
 ================================================================
 Persists each submission to Postgres:
-  • operations_summary                (Business-Ops bullets – unchanged)
-  • security_controls_summary         (Positive / Negative / Not Provided bullets)
+  • operations_summary                (business-ops bullets – unchanged)
+  • security_controls_summary         (**Positive / Negative / Not Provided**)
   • ops_embedding, controls_embedding (pgvector)
-  • flags JSON                        (mfa / backups / edr / phish_training)
+  • flags JSON  (mfa / backups / edr / phish_training)
   • industry_code
-and e-mails an acknowledgement to the broker.
+and e-mails an acknowledgement back to the broker.
 """
 # ───────────────────────────── Imports & ENV ───────────────────────────
 import os, re, time, json, base64, imaplib, email, smtplib, html
@@ -21,23 +21,23 @@ import requests, openai, tavily, psycopg2
 from pgvector.psycopg2 import register_vector
 from pgvector          import Vector
 
-EMAIL_ACCOUNT          = os.getenv("GMAIL_USER")
-APP_PASSWORD           = os.getenv("GMAIL_APP_PASSWORD")
-IMAP_SERVER            = "imap.gmail.com"
-DOCUPIPE_API_KEY       = os.getenv("DOCUPIPE_API_KEY")
-BASE_URL               = "https://app.docupipe.ai"
-openai_client          = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-tavily_client          = tavily.TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-DATABASE_URL           = os.getenv("DATABASE_URL")
+EMAIL_ACCOUNT   = os.getenv("GMAIL_USER")
+APP_PASSWORD    = os.getenv("GMAIL_APP_PASSWORD")
+IMAP_SERVER     = "imap.gmail.com"
+DOCUPIPE_API_KEY= os.getenv("DOCUPIPE_API_KEY")
+BASE_URL        = "https://app.docupipe.ai"
+openai_client   = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+tavily_client   = tavily.TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+DATABASE_URL    = os.getenv("DATABASE_URL")
 
-ATT_DIR, RESP_DIR      = "attachments", "responses"
+ATT_DIR, RESP_DIR = "attachments", "responses"
 
 SCHEMA_MAP = {
     "bb981184": "e794cee0",   # Cyber / Tech application
     "ef9a697a": "34e8b170",   # Loss runs
 }
 
-# ───────────── Headline control categories & helpers ───────────────────
+# ───────────── Headline controls & flag helpers ────────────────────────
 _CONTROL_CATS = {
     "mfa"            : ["multifactor", "mfa"],
     "backups"        : ["backup", "offlinebackup", "immutablebackup"],
@@ -57,87 +57,72 @@ def _find_flag(node, needle):
         if isinstance(cur,dict):
             for k,v in cur.items():
                 if needle in k.lower():
-                    if isinstance(v,(bool,str,int)):
-                        return _bool_from_val(v)
+                    if isinstance(v,(bool,str,int)): return _bool_from_val(v)
                     if isinstance(v,dict):
                         for ck,cv in v.items():
-                            if "present" in ck.lower():
-                                return _bool_from_val(cv)
+                            if "present" in ck.lower(): return _bool_from_val(cv)
                 stack.append(v)
-        elif isinstance(cur,list):
-            stack.extend(cur)
+        elif isinstance(cur,list): stack.extend(cur)
     return "unknown"
 
-def _presence_to_rating(val:str)->str:
-    return "above_average" if val=="present" else ("below_average" if val=="absent" else "no_info")
+def _presence_to_rating(v): return "above_average" if v=="present" else ("below_average" if v=="absent" else "no_info")
 
-def extract_control_flags(app_jsons:list[dict])->dict:
-    if not app_jsons:
-        return {k:"no_info"for k in _CONTROL_CATS}
+def extract_control_flags(app_jsons):
+    if not app_jsons: return {k:"no_info" for k in _CONTROL_CATS}
     app=app_jsons[0]
-    return {
-        cat:_presence_to_rating(next((_find_flag(app,n) for n in needles if _find_flag(app,n)!="unknown"),"unknown"))
-        for cat,needles in _CONTROL_CATS.items()
-    }
+    out={}
+    for cat,needles in _CONTROL_CATS.items():
+        val="unknown"
+        for n in needles:
+            val=_find_flag(app,n)
+            if val!="unknown": break
+        out[cat]=_presence_to_rating(val)
+    return out
 
-# ───────────── Rich controls summary via GPT-4o ─────────────────────────
-def _gpt_controls_prompt(json_snip:str, strict:bool)->list[dict]:
+# ───────────── Rich controls summary (no stub overwrite) ───────────────
+def summarize_controls_json(app_jsons):
+    if not app_jsons:
+        return ("**Not Provided**:\n"
+                "- No security-control information supplied.")
+    raw=json.dumps(app_jsons[0],indent=2)[:15000]  # first 15 k chars
     system=(
         "You are a cyber-security analyst.  Produce EXACTLY three markdown "
         "headings named **Positive**, **Negative**, **Not Provided** (in that order). "
-        "Under each heading, include bullet points describing controls. "
-        "Focus on MFA, backups, endpoint security/EDR, SOC/MDR, patching cadence, "
-        "SSO, email security, phishing-training, PAM, firewalls/IDS/IPS, and remote access."
+        "Under each heading, give bullet points describing controls.  Focus on "
+        "MFA, backups, EDR/AV, SOC/MDR, patching cadence, SSO, email security, "
+        "phishing-training, PAM, firewalls/IDS/IPS, and remote access."
     )
-    if strict:
-        system+="\nDO NOT use any other heading names."
-    return [
-        {"role":"system","content":system},
-        {"role":"user","content":f"APPLICATION_JSON:\n{json_snip}"}
-    ]
-
-def summarize_controls_json(app_jsons:list[dict])->str:
-    if not app_jsons:
+    try:
+        rsp=openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role":"system","content":system},
+                      {"role":"user","content":f"APPLICATION_JSON:\n{raw}"}],
+            temperature=0.2,max_tokens=500)
+        text=rsp.choices[0].message.content.strip()
+        print("GPT Controls Summary (first 300 chars):\n",text[:300],"\n---")
+        return text
+    except Exception as e:
+        print("GPT error:",e)
         return ("**Not Provided**:\n"
-                "  - No security-control information supplied.")
-    raw_json=json.dumps(app_jsons[0],indent=2)[:15000]  # first 15 000 chars
-    for attempt in (1,2):  # try twice (loose → strict)
-        strict=(attempt==2)
-        try:
-            out=openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=_gpt_controls_prompt(raw_json,strict),
-                temperature=0.2,max_tokens=500).choices[0].message.content.strip()
-        except Exception as e:
-            print("GPT error:",e); break
-        if all(h in out for h in ("**Positive**","**Negative**","**Not Provided**")):
-            return out
-        print("GPT controls summary missing headings (attempt",attempt,"):",out[:200])
-    # fallback
-    return ("**Positive**:\n  - (none captured)\n"
-            "- **Negative**:\n  - (none captured)\n"
-            "- **Not Provided**:\n  - Insufficient data")
+                "- Unable to generate controls summary due to an API error.")
 
-# ───────────── Misc helpers (body, applicant name, etc.) ───────────────
+# ───────────── Utility fns (body, name, shrink) ────────────────────────
 utc_now=lambda:datetime.now(UTC)
-
 def plain_body(msg):
     if msg.is_multipart():
         for p in msg.walk():
-            ct=p.get_content_type()
-            if ct=="text/plain":
+            t=p.get_content_type()
+            if t=="text/plain":
                 return p.get_payload(decode=True).decode(p.get_content_charset()or"utf-8")
-            if ct=="text/html":
-                return BeautifulSoup(p.get_payload(decode=True).decode(p.get_content_charset()or"utf-8"),"html.parser").get_text(" ",strip=True)
+            if t=="text/html":
+                html_bytes=p.get_payload(decode=True).decode(p.get_content_charset()or"utf-8")
+                return BeautifulSoup(html_bytes,"html.parser").get_text(" ",strip=True)
     return msg.get_payload(decode=True).decode(msg.get_content_charset()or"utf-8")
-
-def derive_applicant_name(subject:str,gi:dict)->str:
-    if gi.get("applicantName"):return gi["applicantName"].strip()
-    parts=re.split(r"\s[-–]\s",subject)
-    name=parts[-1].strip()if len(parts)>1 else subject.strip()
+def derive_applicant_name(subject,gi):
+    if gi.get("applicantName"): return gi["applicantName"].strip()
+    parts=re.split(r"\s[-–]\s",subject); name=parts[-1].strip() if len(parts)>1 else subject.strip()
     return re.sub(r"(?i)(submission|cyber/tech|request)","",name).strip() or"Unnamed Company"
-
-def shrink(d):  # trim huge fields before GPT
+def shrink(d):
     out={}
     for k,v in d.items():
         if isinstance(v,str)and len(v)>800:continue
@@ -145,17 +130,18 @@ def shrink(d):  # trim huge fields before GPT
         else:out[k]=v
     return out
 
-# ───────────── Business-ops & industry helpers (unchanged) ─────────────
+# ───────────── Business-Ops & industry helpers (unchanged) ─────────────
 CHOICES={"manufacturing","msp","saas","fintech","healthcare","ecommerce","logistics","retail","energy","government","other"}
 def tavily_blurb(name,website):
     q=(name or website).strip()
     if not q:return""
     try:
         res=tavily_client.search(f"{q} company overview",max_results=5)
-        if res.get("results"):top=res["results"][0];return f"{top['title']}: {top.get('content','').strip()}"
+        if res.get("results"):
+            top=res["results"][0]
+            return f"{top['title']}: {top.get('content','').strip()}"
     except Exception as e:print("Tavily error:",e)
     return""
-
 def classify_industry(name,ctx):
     prompt=("Return ONE word from: "+", ".join(sorted(CHOICES))+
             f"\n\nCompany: {name}\nContext:\n{ctx}")
@@ -164,9 +150,8 @@ def classify_industry(name,ctx):
         messages=[{"role":"user","content":prompt}],
         temperature=0,max_tokens=10).choices[0].message.content.strip().lower()
     return ans if ans in CHOICES else"other"
-
-def bullets_business_ops(context):
-    prompt=("Convert the description below into 4-6 concise bullet points:\n\n"+context)
+def bullets_business_ops(ctx):
+    prompt="Convert the description below into 4-6 concise bullet points:\n\n"+ctx
     txt=openai_client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role":"user","content":prompt}],
@@ -174,42 +159,39 @@ def bullets_business_ops(context):
     if txt.lower().startswith("to provide a detailed response"):
         txt="* Business operations unavailable – awaiting further info."
     return txt
-
-def build_email_summary(subject,body,ops_bullets,controls_summary,apps_small,losses_small):
+def build_email_summary(subject,body,ops,ctrl,apps_small,losses_small):
     sys=("You are a cyber-E&O underwriting analyst.  Produce EXACTLY:\n"
-         "## Submission Summary (≤120-word bullets)\n"
-         "## Business Operations (verbatim <OPS>)\n"
-         "## Controls Summary (verbatim <CTRL>)\n"
-         "## Loss Summary (≤120-word bullets)")
+         "## Submission Summary\n(bullet list ≤120 words)\n\n"
+         "## Business Operations\n(verbatim text inside <OPS>)\n\n"
+         "## Controls Summary\n(verbatim text inside <CTRL>)\n\n"
+         "## Loss Summary\n(bullet list ≤120 words)")
     msgs=[
         {"role":"system","content":sys},
         {"role":"user","content":f"Subject: {subject}\n\nBody:\n{body}"},
-        {"role":"user","content":f"<OPS>\n{ops_bullets}\n</OPS>"},
-        {"role":"user","content":f"<CTRL>\n{controls_summary}\n</CTRL>"},
+        {"role":"user","content":f"<OPS>\n{ops}\n</OPS>"},
+        {"role":"user","content":f"<CTRL>\n{ctrl}\n</CTRL>"},
         {"role":"user","content":"APP_JSON:\n"+json.dumps(apps_small,indent=2)},
         {"role":"user","content":"LOSS_JSON:\n"+json.dumps(losses_small,indent=2)},
     ]
     return openai_client.chat.completions.create(
-        model="gpt-4o",
-        messages=msgs,
-        temperature=0.25,max_tokens=1200).choices[0].message.content.strip()
-
-def embed(text):
-    if not text.strip():return None
+        model="gpt-4o",messages=msgs,temperature=0.25,max_tokens=1200
+    ).choices[0].message.content.strip()
+def embed(txt):
+    if not txt.strip():return None
     return openai_client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text,encoding_format="float").data[0].embedding
+        model="text-embedding-3-small",input=txt,encoding_format="float"
+    ).data[0].embedding
 
 # ───────────── SMTP acknowledgement ────────────────────────
-def reply_email(to_addr,subj,summary,links):
+def reply_email(to_addr,subj,sumy,links):
     msg=EmailMessage();msg["Subject"]=f"RE: {subj} – Submission Received"
     msg["From"]=EMAIL_ACCOUNT;msg["To"]=to_addr
-    html_links="".join(f"<li>{html.escape(os.path.basename(p))}</li>"for p in links)
     plain_links="\n".join(os.path.basename(p)for p in links)or"(no JSON)"
-    msg.set_content(f"{summary}\n\nStructured JSON files:\n{plain_links}")
-    msg.add_alternative(f"<p>{html.escape(summary).replace(chr(10),'<br>')}</p>"
-                        f"<p><b>Structured JSON files:</b></p><ul>{html_links}</ul>",
-                        subtype="html")
+    msg.set_content(f"{sumy}\n\nStructured JSON files:\n{plain_links}")
+    html_links="".join(f"<li>{html.escape(os.path.basename(p))}</li>"for p in links)
+    msg.add_alternative(
+        f"<p>{html.escape(sumy).replace(chr(10),'<br>')}</p>"
+        f"<p><b>Structured JSON files:</b></p><ul>{html_links}</ul>",subtype="html")
     for p in links:
         with open(p,"rb")as f:
             msg.add_attachment(f.read(),maintype="application",subtype="json",
@@ -219,47 +201,44 @@ def reply_email(to_addr,subj,summary,links):
             s.login(EMAIL_ACCOUNT,APP_PASSWORD);s.send_message(msg)
     except Exception as e:print("SMTP send failed:",e)
 
-# ───────────── DocuPipe upload → classify → standardize ────
-def dp_process(fp:str)->tuple[str|None,str|None]:
+# ───────────── DocuPipe helper (upload → std JSON) ─────────
+def dp_process(fp):
     hdr={"X-API-Key":DOCUPIPE_API_KEY,"accept":"application/json","content-type":"application/json"}
     with open(fp,"rb")as f:b64=base64.b64encode(f.read()).decode()
-    up=requests.post(f"{BASE_URL}/document",headers=hdr,
-                     json={"document":{"file":{"contents":b64,"filename":os.path.basename(fp)}}})
-    if not up.ok:print("DocuPipe upload failed:",up.text);return None,None
+    up=requests.post(f"{BASE_URL}/document",headers=hdr,json={"document":{"file":{"contents":b64,"filename":os.path.basename(fp)}}})
+    if not up.ok:print("Upload failed:",up.text);return None,None
     doc_id=up.json()["documentId"]
     for _ in range(30):
         if requests.get(f"{BASE_URL}/document/{doc_id}",headers=hdr).json()["status"]=="completed":break
         time.sleep(4)
     cl=requests.post(f"{BASE_URL}/classify/batch",headers=hdr,json={"documentIds":[doc_id]})
-    if not cl.ok:print("DocuPipe classify failed:",cl.text);return None,None
+    if not cl.ok:print("Classify failed:",cl.text);return None,None
     ids=cl.json().get("jobIds") or cl.json().get("classificationJobIds") or[]
-    if not ids:print("No jobIds in classify response:",cl.json());return None,None
+    if not ids: print("No jobIds:",cl.json()); return None,None
     job_id=ids[0]
     for _ in range(30):
         job=requests.get(f"{BASE_URL}/job/{job_id}",headers=hdr).json()
         if job["status"]=="completed":break
         time.sleep(4)
-    cls=(job.get("assignedClassIds")or job.get("result",{}).get("assignedClassIds") or[None])[0]
-    schema=SCHEMA_MAP.get(cls)
-    print("DBG class ID →",cls,"mapped schema →",schema)
-    if not schema:print("Unknown schema:",job);return None,None
+    cls=(job.get("assignedClassIds")or job.get("result",{}).get("assignedClassIds")or[None])[0]
+    schema=SCHEMA_MAP.get(cls); print("DBG class→",cls,"schema→",schema)
+    if not schema:print("Unknown schema");return None,None
     std=requests.post(f"{BASE_URL}/standardize",headers=hdr,
                       json={"documentId":doc_id,"schemaId":schema})
     if not std.ok:print("Standardize failed:",std.text);return None,None
-    out_path=os.path.join(RESP_DIR,os.path.basename(fp)+".standardized.json")
-    with open(out_path,"w")as f:f.write(std.text)
-    return out_path,schema
+    out=os.path.join(RESP_DIR,os.path.basename(fp)+".standardized.json")
+    with open(out,"w")as f:f.write(std.text)
+    return out,schema
 
 # ───────────── Postgres helpers ────────────────────────────
-def insert_stub(broker,name,summary):
+def insert_stub(broker,name,sumy):
     conn=psycopg2.connect(DATABASE_URL);cur=conn.cursor()
     cur.execute("""INSERT INTO submissions (
-      broker_email,applicant_name,date_received,summary,
-      flags,quote_ready,created_at,updated_at)
-      VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id;""",
-      (broker,name,utc_now(),summary,json.dumps({}),False,utc_now(),utc_now()))
+        broker_email,applicant_name,date_received,summary,
+        flags,quote_ready,created_at,updated_at)
+        VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id;""",
+        (broker,name,utc_now(),sumy,json.dumps({}),False,utc_now(),utc_now()))
     sid=cur.fetchone()[0];conn.commit();cur.close();conn.close();return sid
-
 def insert_documents(sid,docs):
     conn=psycopg2.connect(DATABASE_URL);cur=conn.cursor()
     for d in docs:
@@ -271,13 +250,13 @@ def insert_documents(sid,docs):
            json.dumps(d["doc_metadata"]),json.dumps(d["extracted_data"]),utc_now()))
     conn.commit();cur.close();conn.close()
 
-# ───────────── E-mail handler ──────────────────────────────
+# ───────────── E-mail handler ─────────────────────────────
 os.makedirs(ATT_DIR,exist_ok=True);os.makedirs(RESP_DIR,exist_ok=True)
 
-def handle_email(msg_bytes:bytes):
+def handle_email(msg_bytes):
     raw=email.message_from_bytes(msg_bytes)
-    subject=decode_header(raw.get("Subject"))[0][0]
-    subject=subject.decode() if isinstance(subject,bytes) else subject
+    subject_data=decode_header(raw.get("Subject"))[0][0]
+    subject=subject_data.decode() if isinstance(subject_data,bytes) else subject_data
     body=plain_body(raw)
     sender=email.utils.parseaddr(raw.get("From"))[1]
     print("▶",subject,"—",sender)
@@ -296,19 +275,16 @@ def handle_email(msg_bytes:bytes):
             elif schema=="34e8b170": losses.append(data); dtype="Loss Run"
             else: dtype="Other"
             docs_payload.append({"filename":fn,"document_type":dtype,
-                "page_count":data.get("pageCount"),"is_priority":True,
-                "doc_metadata":{"source":"email"},"extracted_data":data})
+                                 "page_count":data.get("pageCount"),"is_priority":True,
+                                 "doc_metadata":{"source":"email"},"extracted_data":data})
 
     gi=apps[0].get("generalInformation",{}) if apps else {}
     applicant=derive_applicant_name(subject,gi)
-    industry=gi.get("primaryIndustry","")
-    website=gi.get("primaryWebsiteAndEmailDomains","")
+    blurb=tavily_blurb(applicant,gi.get("primaryWebsiteAndEmailDomains",""))
+    ops_bullets=bullets_business_ops(f"{gi.get('primaryIndustry','')}\n{blurb}")
 
-    blurb       = tavily_blurb(applicant,website)
-    ops_bullets = bullets_business_ops(f"{industry}\n{blurb}")
-
-    flags            = extract_control_flags(apps)
-    controls_summary = summarize_controls_json(apps)
+    controls_summary=summarize_controls_json(apps)
+    flags=extract_control_flags(apps)
 
     email_summary=build_email_summary(
         subject,body,ops_bullets,controls_summary,
@@ -322,25 +298,25 @@ def handle_email(msg_bytes:bytes):
     ops_vec,ctrl_vec=embed(ops_bullets),embed(controls_summary)
     conn=psycopg2.connect(DATABASE_URL);register_vector(conn);cur=conn.cursor()
     cur.execute("""UPDATE submissions SET
-        operations_summary=%s, security_controls_summary=%s,
-        ops_embedding=%s, controls_embedding=%s,
-        flags=%s, industry_code=%s, updated_at=%s WHERE id=%s;""",
+        operations_summary=%s,security_controls_summary=%s,
+        ops_embedding=%s,controls_embedding=%s,
+        flags=%s,industry_code=%s,updated_at=%s WHERE id=%s;""",
         (ops_bullets,controls_summary,
          Vector(ops_vec) if ops_vec else None,
          Vector(ctrl_vec) if ctrl_vec else None,
          json.dumps(flags),industry_code,utc_now(),sid))
     conn.commit();cur.close();conn.close()
 
-    print(f"✅ Saved submission {sid} ({len(docs_payload)} docs)")
+    print(f"✅ Saved submission {sid}")
     reply_email(sender,subject,email_summary,links)
 
-# ───────────── Main poll loop ──────────────────────────────
+# ───────────── Poll loop ───────────────────────────────────
 def main():
     try:
         m=imaplib.IMAP4_SSL(IMAP_SERVER);m.login(EMAIL_ACCOUNT,APP_PASSWORD)
         m.select("inbox");_,ids=m.search(None,"UNSEEN")
-        unseen=ids[0].split();print("Checked inbox –",len(unseen),"unseen.")
-        for num in unseen:
+        print("Checked inbox –",len(ids[0].split()),"unseen.")
+        for num in ids[0].split():
             _,data=m.fetch(num,"(RFC822)");handle_email(data[0][1])
             m.store(num,"+FLAGS","\\Seen")
         m.logout()
