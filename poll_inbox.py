@@ -14,7 +14,7 @@ Gmail → DocuPipe → GPT-4o underwriting assistant
 """
 
 # ───────── stdlib ────────────────────────────────────────────
-import os, imaplib, email, time, json, html, base64, requests, smtplib, re, textwrap
+import os, imaplib, email, time, json, html, base64, requests, smtplib, re, textwrap, tavily
 from datetime import datetime
 from email.header  import decode_header
 from email.message import EmailMessage
@@ -36,6 +36,9 @@ BASE_URL               = "https://app.docupipe.ai"
 openai_client          = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 DATABASE_URL           = os.environ["DATABASE_URL"]
 
+TAVILY_API_KEY         = os.getenv("TAVILY_API_KEY")
+tavily_client          = tavily.TavilyClient(api_key=TAVILY_API_KEY)
+
 ATT_DIR, RESP_DIR      = "attachments", "responses"
 
 SCHEMA_MAP = {
@@ -44,6 +47,20 @@ SCHEMA_MAP = {
 }
 
 # ───────── helpers ──────────────────────────────────────────
+def fetch_ops_blurb(company_name: str, website: str) -> str:
+    """
+    Returns a one-sentence blurb via Tavily search, or '' if nothing found.
+    """
+    query = (company_name or website or "").strip()
+    if not query:
+        return ""
+    resp = tavily_client.search(f"{query} company overview", max_results=5)
+    if not resp["results"]:
+        return ""
+    top = resp["results"][0]                 # first result is usually Crunchbase/LinkedIn
+    return f"{top['title']}: {top['body']}"
+
+
 def plain_body(msg):
     """Return plain-text body for any e-mail (fallback to HTML→text)."""
     if msg.is_multipart():
@@ -311,7 +328,15 @@ def handle_email(msg_bytes):
     industry       = gi.get("primaryIndustry","")
     website        = gi.get("primaryWebsiteAndEmailDomains","")
 
-    business_ops = ask_business_ops(applicant_name, industry, website)
+    # --- NEW: get Tavily snippet ------------
+    blurb = fetch_ops_blurb(applicant_name, website)
+
+    business_ops = ask_business_ops(
+        applicant_name,
+        industry,
+        f"{website}\n\n{blurb}"        # pass snippet into prompt
+    )
+
 
     summary = gpt_summary(
         subject, body,
