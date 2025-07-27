@@ -6,4 +6,4 @@ streamlit
 pandas
 pgvector
 Faker
-Tavily
+tavily-python
