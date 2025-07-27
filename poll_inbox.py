@@ -17,7 +17,7 @@ poll_inbox.py  —  Gmail → DocuPipe → GPT-4o underwriting assistant
 
 # ───────── stdlib ────────────────────────────────────────────
 import os, imaplib, email, time, json, html, base64, requests, smtplib, re, textwrap
-from datetime import datetime
+from datetime import datetime, UTC
 from email.header  import decode_header
 from email.message import EmailMessage
 from bs4           import BeautifulSoup
@@ -215,9 +215,9 @@ def insert_submission_stub(broker, applicant, summary):
       RETURNING id;
     """, (
         broker, applicant,
-        datetime.utcnow(), summary,
+        datetime.now(UTC), summary,
         json.dumps({}), False,
-        datetime.utcnow(), datetime.utcnow()
+        datetime.now(UTC), datetime.now(UTC)
     ))
     sid = cur.fetchone()[0]
     conn.commit(); cur.close(); conn.close()
@@ -240,7 +240,7 @@ def insert_documents(sid, docs):
             d["page_count"], d["is_priority"],
             json.dumps(d["doc_metadata"]),
             json.dumps(d["extracted_data"]),
-            datetime.utcnow()
+            datetime.now(UTC)
         ))
     conn.commit(); cur.close(); conn.close()
 
@@ -309,24 +309,28 @@ def handle_email(msg_bytes):
 
     conn = psycopg2.connect(DATABASE_URL); register_vector(conn)
     cur  = conn.cursor()
+    
+    ops_vec  = embed_text(business_ops)
+    ctrl_vec = embed_text(controls_bullets)
+    
     cur.execute("""
       UPDATE submissions SET
-        operations_summary            = %s,
-        security_controls_summary     = %s,
-        ops_embedding                 = %s,
-        controls_embedding            = %s,
-        flags                         = %s,
-        industry_code                 = %s,
-        updated_at                    = %s
+            operations_summary            = %s,
+            security_controls_summary     = %s,
+            ops_embedding                 = %s,
+            controls_embedding            = %s,
+            flags                         = %s,
+            industry_code                 = %s,
+            updated_at                    = %s
       WHERE id = %s;
     """, (
         business_ops,
         controls_bullets,
-        Vector(embed_text(business_ops)),
-        Vector(embed_text(controls_bullets)),
+        Vector(ops_vec)  if ops_vec  else None,
+        Vector(ctrl_vec) if ctrl_vec else None,
         json.dumps(flags),
         industry_code,
-        datetime.utcnow(),
+        datetime.now(UTC),
         sid
     ))
     conn.commit(); cur.close(); conn.close()
