@@ -67,6 +67,45 @@ def fetch_ops_blurb(company_name: str, website: str) -> str:
         return ""
 
 
+def extract_controls_flags(bullets: str) -> dict:
+    """
+    Return {"mfa":"present|absent|unknown",
+            "backups":"present|absent|unknown"}
+    """
+    prompt = (
+        "You are a compliance analyst. For each control list below, "
+        "return JSON {\"mfa\":\"present|absent|unknown\","
+        "\"backups\":\"present|absent|unknown\"}.\n\n"
+        f"Controls bullets:\n{bullets}"
+    )
+    txt = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0,
+        max_tokens=60,
+    ).choices[0].message.content
+    try:
+        return json.loads(txt)
+    except Exception:
+        return {"mfa":"unknown","backups":"unknown"}
+
+
+def classify_industry(name: str, ops_bullets: str) -> str:
+    prompt = (
+        "Return a single lowercase industry keyword for the company:\n"
+        "manufacturing | msp | saas | fintech | healthcare | ecommerce | other\n\n"
+        f"Company name: {name}\n"
+        f"Business-ops bullets:\n{ops_bullets}"
+    )
+    txt = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role":"user","content":prompt}],
+        temperature=0,
+        max_tokens=10,
+    ).choices[0].message.content.strip().lower()
+    return txt if txt in {"manufacturing","msp","saas","fintech","healthcare","ecommerce"} else "other"
+
+
 
 def plain_body(msg):
     """Return plain-text body for any e-mail (fallback to HTML→text)."""
@@ -358,6 +397,9 @@ def handle_email(msg_bytes):
         m = re.search(r"Controls Summary\s*[-–]?\s*(.*?)(?:\n\n|\Z)", summary, re.S | re.I)
     controls_bullets = textwrap.dedent(m.group(1)).strip() if m else ""
 
+    flags         = extract_controls_flags(controls_bullets)
+    industry_code = classify_industry(applicant_name, business_ops)
+
     sid = insert_submission_stub(sender, applicant_name, summary)
     insert_documents(sid, docs_payload)
 
@@ -369,6 +411,8 @@ def handle_email(msg_bytes):
           security_controls_summary     = %s,
           ops_embedding                 = %s,
           controls_embedding            = %s,
+          flags                         = %s,
+          industry_code                 = %s,
           updated_at                    = %s
       WHERE id = %s;
     """, (
@@ -376,6 +420,8 @@ def handle_email(msg_bytes):
         controls_bullets,
         embed_text(business_ops),
         embed_text(controls_bullets),
+        json.dumps(flags),
+        industry_code,
         datetime.utcnow(),
         sid
     ))
