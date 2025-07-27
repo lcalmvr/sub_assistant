@@ -169,29 +169,88 @@ def reply_email(to_addr, subj, summary, links):
 
 # ─── DocuPipe fn (unchanged) ─────────────────────────────────
 def dp_process(fp):
-    hdr={"X-API-Key":DOCUPIPE_API_KEY,"accept":"application/json",
-         "content-type":"application/json"}
-    with open(fp,"rb") as f:
-        b64=base64.b64encode(f.read()).decode()
-    doc_id=requests.post(f"{BASE_URL}/document",headers=hdr,
-        json={"document":{"file":{"contents":b64,"filename":os.path.basename(fp)}}}
-    ).json()["documentId"]
+    """
+    Upload → OCR → classify → standardize one document.
+    Returns (json_path, schema_id)  or  (None, None) on failure.
+    """
+    hdr = {
+        "X-API-Key": DOCUPIPE_API_KEY,
+        "accept": "application/json",
+        "content-type": "application/json",
+    }
+
+    # 1) upload
+    with open(fp, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    up = requests.post(
+        f"{BASE_URL}/document",
+        headers=hdr,
+        json={"document": {"file": {"contents": b64, "filename": os.path.basename(fp)}}},
+    )
+    if not up.ok:
+        print("DocuPipe upload failed:", up.text)
+        return None, None
+    doc_id = up.json()["documentId"]
+
+    # 2) wait for OCR
     for _ in range(30):
-        if requests.get(f"{BASE_URL}/document/{doc_id}",headers=hdr).json()["status"]=="completed":
-            break; time.sleep(4)
-    job_id=requests.post(f"{BASE_URL}/classify/batch",headers=hdr,
-        json={"documentIds":[doc_id]}).json()["classificationJobIds"][0]
+        status = requests.get(f"{BASE_URL}/document/{doc_id}", headers=hdr).json()
+        if status["status"] == "completed":
+            break
+        time.sleep(4)
+
+    # 3) classify
+    cl_resp = requests.post(
+        f"{BASE_URL}/classify/batch", headers=hdr, json={"documentIds": [doc_id]}
+    )
+    if not cl_resp.ok:
+        print("DocuPipe classify failed:", cl_resp.text)
+        return None, None
+
+    cl_json = cl_resp.json()
+    # new API: {"jobIds":[...]}  old API: {"classificationJobIds":[...]}
+    job_ids = (
+        cl_json.get("jobIds")
+        or cl_json.get("classificationJobIds")
+        or []
+    )
+    if not job_ids:
+        print("DocuPipe classify response missing jobIds:", cl_json)
+        return None, None
+    job_id = job_ids[0]
+
+    # 4) poll job
     for _ in range(30):
-        job=requests.get(f"{BASE_URL}/job/{job_id}",headers=hdr).json()
-        if job["status"]=="completed": break; time.sleep(4)
-    cls=(job.get("assignedClassIds") or job.get("result",{}).get("assignedClassIds") or [None])[0]
-    schema=SCHEMA_MAP.get(cls);  # None if unrecognized
-    if not schema: return None,None
-    std=requests.post(f"{BASE_URL}/standardize",headers=hdr,
-        json={"documentId":doc_id,"schemaId":schema})
-    if not std.ok: return None,None
-    out=os.path.join(RESP_DIR,os.path.basename(fp)+".standardized.json")
-    open(out,"w").write(std.text); return out,schema
+        job = requests.get(f"{BASE_URL}/job/{job_id}", headers=hdr).json()
+        if job["status"] == "completed":
+            break
+        time.sleep(4)
+
+    cls = (
+        job.get("assignedClassIds")
+        or job.get("result", {}).get("assignedClassIds")
+        or [None]
+    )[0]
+    schema = SCHEMA_MAP.get(cls)
+    if not schema:
+        print("Unknown schema class:", job)
+        return None, None
+
+    # 5) standardise
+    std = requests.post(
+        f"{BASE_URL}/standardize",
+        headers=hdr,
+        json={"documentId": doc_id, "schemaId": schema},
+    )
+    if not std.ok:
+        print("DocuPipe standardize failed:", std.text)
+        return None, None
+
+    out_path = os.path.join(RESP_DIR, os.path.basename(fp) + ".standardized.json")
+    with open(out_path, "w") as f:
+        f.write(std.text)
+    return out_path, schema
+
 
 # ─── DB helpers ─────────────────────────────────────────────
 def insert_stub(broker,name,summary):
