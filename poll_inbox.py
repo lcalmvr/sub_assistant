@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-poll_inbox.py • Gmail → DocuPipe → GPT-4o underwriting pipeline
+poll_inbox.py  •  Gmail → DocuPipe → GPT-4o underwriting pipeline
 ================================================================
 Stores to Postgres:
   • operations_summary                (text – business-ops bullets)
   • security_controls_summary         (text – Positive/Negative/Not-Provided)
   • ops_embedding, controls_embedding (pgvector)
-  • flags JSON  e.g.
+  • flags JSON, e.g.
       {
         "mfa":            "above_average",
         "backups":        "no_info",
@@ -14,7 +14,7 @@ Stores to Postgres:
         "phish_training": "no_info"
       }
   • industry_code
-and e-mails an acknowledgement back to the broker.
+and sends an acknowledgement e-mail back to the broker.
 """
 # ────────────────────────────────────────────────────────────
 import os, re, time, json, base64, imaplib, email, smtplib, html
@@ -47,7 +47,7 @@ SCHEMA_MAP = {
     "ef9a697a": "34e8b170",   # Loss runs
 }
 
-# ─── Security-controls extraction & rating ─────────────────
+# ─── Headline control categories  ──────────────────────────
 _CONTROL_CATS = {
     "mfa"            : ["multifactor", "mfa"],
     "backups"        : ["backup", "offlinebackup", "immutablebackup"],
@@ -57,9 +57,10 @@ _CONTROL_CATS = {
 
 def _bool_from_val(val):
     """
-    Map raw JSON values to 'present' / 'absent' / 'unknown'.
-    ✦ Only the explicit strings 'absent' or 'no' count as absent.
-    ✦ Booleans False/0 count as unknown → no_info.
+    Convert raw JSON values to 'present' / 'absent' / 'unknown'.
+
+    • Only explicit strings 'absent' or 'no' ⇒ 'absent'.
+    • Booleans False / 0 ⇒ 'unknown'  (so become 'no_info' later).
     """
     if val in (True, "true", "yes", "present", 1):     return "present"
     if val in ("absent", "no"):                        return "absent"
@@ -67,9 +68,10 @@ def _bool_from_val(val):
 
 def _find_flag(node, needle):
     """
-    DFS through nested dicts/lists; if a key contains *needle*:
-      • bool/str/int value → interpret with _bool_from_val
-      • dict value         → look for child key 'present' / 'isPresent'
+    Depth-first search. If any key contains *needle*:
+
+      • primitive value → feed through _bool_from_val
+      • dict value      → look for child key 'present' / 'isPresent'
     """
     stack = [node]
     while stack:
@@ -94,73 +96,78 @@ def _presence_to_rating(val: str) -> str:
     if val == "absent":  return "below_average"
     return "no_info"
 
-def _controls_from_json(app_jsons: list[dict]) -> tuple[str, dict]:
-    """
-    Returns (bullet_summary, ratings_dict).
-      • bullet_summary – markdown with Positive / Negative / Not Provided
-      • ratings_dict   – { cat: above/below/no_info }
-    """
+# ─── 1 ▸ headline control flags  ───────────────────────────
+def extract_control_flags(app_jsons: list[dict]) -> dict:
+    """Return flags dict with above/below/no_info for four headline controls."""
     if not app_jsons:
-        return (
-            "**Not Provided**:\n  - No security-control information supplied.",
-            {k: "no_info" for k in _CONTROL_CATS},
-        )
+        return {k: "no_info" for k in _CONTROL_CATS}
 
-    # ── 1  ratings
     app = app_jsons[0]
-    ratings: dict[str, str] = {}
+    out = {}
     for cat, needles in _CONTROL_CATS.items():
         presence = "unknown"
         for n in needles:
             presence = _find_flag(app, n)
             if presence != "unknown":
                 break
-        ratings[cat] = _presence_to_rating(presence)
+        out[cat] = _presence_to_rating(presence)
+    return out
 
-    # ── 2  GPT bullet list  (robust prompt, gpt-4o, larger slice)
-    json_short = json.dumps(app, indent=2)[:8000]      # up to ~8 KB
-    sys = (
-        "You are a cyber-security analyst.  Produce EXACTLY three "
-        "markdown headings named **Positive**, **Negative**, **Not Provided**. "
-        "Under each heading, add bullet points describing controls. "
-        "Focus on MFA, backups, endpoint security/EDR, SOC/MDR, patching cadence, "
-        "SSO, email security, phishing-training, privileged-access management, "
-        "remote access, firewalls/IDS/IPS, etc.  "
-        "Limit the TOTAL output to ≤120 words.  Use succinct phrases."
+# ─── 2 ▸ rich controls markdown summary  ───────────────────
+def summarize_controls_json(app_jsons: list[dict]) -> str:
+    """
+    Feed the *entire* DocuPipe JSON to GPT-4o.
+    Returns markdown with **Positive / Negative / Not Provided** bullet lists.
+    """
+    if not app_jsons:
+        return ("**Not Provided**:\n"
+                "  - No security-control information supplied.")
+
+    raw_json = json.dumps(app_jsons[0], indent=2)
+
+    system = (
+        "You are a cyber-security analyst.  Produce EXACTLY three markdown "
+        "headings named **Positive**, **Negative**, **Not Provided** (in that "
+        "order).  Under each heading, add concise bullet points.  Include "
+        "controls such as MFA, backups, endpoint security/EDR, SOC/MDR, "
+        "patching cadence, SSO, email security, phishing-training, PAM, "
+        "firewalls/IDS/IPS, and remote-access practices."
     )
-    bullet_summary = openai_client.chat.completions.create(
+
+    completion = openai_client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": sys},
-            {"role": "user",   "content": f"APPLICATION_JSON:\n{json_short}"},
+            {"role": "system", "content": system},
+            {"role": "user",   "content": f"APPLICATION_JSON:\n{raw_json}"},
         ],
-        temperature=0.25,
-        max_tokens=300,
+        temperature=0.2,
+        max_tokens=500,        # ample; adjust if you hit token limits
     ).choices[0].message.content.strip()
 
-    # Guardrail – if GPT fails, fall back once
-    if "**Positive**" not in bullet_summary or "**Negative**" not in bullet_summary:
-        bullet_summary = (
-            "**Positive**:\n  - No positive controls identified\n"
-            "- **Negative**:\n  - No negative controls identified\n"
-            "- **Not Provided**:\n  - Insufficient information"
-        )
+    if all(h in completion for h in ("**Positive**",
+                                     "**Negative**",
+                                     "**Not Provided**")):
+        return completion
 
-    return bullet_summary, ratings
+    # fallback if GPT glitches
+    return ("**Positive**:\n  - (none captured)\n"
+            "- **Negative**:\n  - (none captured)\n"
+            "- **Not Provided**:\n  - Insufficient data")
 
-# ─── Misc utilities ────────────────────────────────────────
+# ─── Misc utilities  ───────────────────────────────────────
 utc_now = lambda: datetime.now(UTC)
 
 def plain_body(msg):
-    """Extract plain-text body (fallback HTML→text)."""
     if msg.is_multipart():
         for p in msg.walk():
             ct = p.get_content_type()
             if ct == "text/plain":
-                return p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8")
+                return p.get_payload(decode=True).decode(
+                    p.get_content_charset() or "utf-8")
             if ct == "text/html":
-                h = p.get_payload(decode=True).decode(p.get_content_charset() or "utf-8")
-                return BeautifulSoup(h, "html.parser").get_text(" ", strip=True)
+                html_bytes = p.get_payload(decode=True).decode(
+                    p.get_content_charset() or "utf-8")
+                return BeautifulSoup(html_bytes, "html.parser").get_text(" ", strip=True)
     return msg.get_payload(decode=True).decode(msg.get_content_charset() or "utf-8")
 
 def derive_applicant_name(subject: str, gi: dict) -> str:
@@ -172,15 +179,14 @@ def derive_applicant_name(subject: str, gi: dict) -> str:
     return name or "Unnamed Company"
 
 def shrink(d: dict) -> dict:
-    """Trim massive dicts before GPT context."""
     out = {}
     for k, v in d.items():
-        if isinstance(v, str)  and len(v) > 800:               continue
+        if isinstance(v, str)  and len(v) > 800:                continue
         if isinstance(v, list) and len(v) > 50: out[k] = f"[{len(v)} items]"
-        else:                                    out[k] = v
+        else:                                   out[k] = v
     return out
 
-# ─── Industry helpers / GPT prompts ─────────────────────────
+# ─── Industry & business-ops helpers (unchanged) ───────────
 CHOICES = {
     "manufacturing","msp","saas","fintech","healthcare",
     "ecommerce","logistics","retail","energy","government","other",
@@ -227,11 +233,11 @@ def bullets_business_ops(context: str) -> str:
 def build_email_summary(subject, body, ops_bullets, controls_summary,
                         apps_small, losses_small):
     """
-    Compose 4-section markdown.  Sections 2 & 3 are passed VERBATIM.
+    Compose 4-section markdown. Sections 2 & 3 are passed verbatim.
     """
     sys = (
         "You are a cyber-E&O underwriting analyst.  Produce EXACTLY the "
-        "following markdown sections in this order:\n\n"
+        "following markdown sections in order:\n\n"
         "## Submission Summary\n(bullet points, ≤120 words)\n\n"
         "## Business Operations\n(The text inside <OPS>…</OPS> – copy verbatim)\n\n"
         "## Controls Summary\n(The text inside <CTRL>…</CTRL> – copy verbatim)\n\n"
@@ -260,7 +266,7 @@ def embed(text: str):
         input=text, encoding_format="float",
     ).data[0].embedding
 
-# ─── SMTP acknowledgement ──────────────────────────────────
+# ─── E-mail acknowledgement helper  ────────────────────────
 def reply_email(to_addr, subj, summary, links):
     msg = EmailMessage()
     msg["Subject"] = f"RE: {subj} – Submission Received"
@@ -271,14 +277,16 @@ def reply_email(to_addr, subj, summary, links):
     plain_links = "\n".join(os.path.basename(p) for p in links) or "(no JSON)"
     msg.set_content(f"{summary}\n\nStructured JSON files:\n{plain_links}")
     msg.add_alternative(
-        f"<p>{html.escape(summary).replace(chr(10),'<br>')}</p>"
+        f"<p>{html.escape(summary).replace(chr(10), '<br>')}</p>"
         f"<p><b>Structured JSON files:</b></p><ul>{html_links}</ul>",
         subtype="html",
     )
     for p in links:
         with open(p, "rb") as f:
-            msg.add_attachment(f.read(), maintype="application",
-                               subtype="json", filename=os.path.basename(p))
+            msg.add_attachment(
+                f.read(), maintype="application", subtype="json",
+                filename=os.path.basename(p)
+            )
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
             s.login(EMAIL_ACCOUNT, APP_PASSWORD)
@@ -286,13 +294,14 @@ def reply_email(to_addr, subj, summary, links):
     except Exception as e:
         print("SMTP send failed:", e)
 
-# ─── DocuPipe helpers ──────────────────────────────────────
+# ─── DocuPipe helpers (upload → classify → standardize) ────
 def dp_process(fp: str) -> tuple[str | None, str | None]:
     hdr = {
         "X-API-Key"   : DOCUPIPE_API_KEY,
         "accept"      : "application/json",
         "content-type": "application/json",
     }
+    # 1) upload
     with open(fp, "rb") as f:
         b64 = base64.b64encode(f.read()).decode()
     up = requests.post(
@@ -304,18 +313,20 @@ def dp_process(fp: str) -> tuple[str | None, str | None]:
         print("DocuPipe upload failed:", up.text); return None, None
     doc_id = up.json()["documentId"]
 
+    # 2) wait for OCR
     for _ in range(30):
         if requests.get(f"{BASE_URL}/document/{doc_id}", headers=hdr).json()["status"] == "completed":
             break
         time.sleep(4)
 
+    # 3) classify
     cl = requests.post(f"{BASE_URL}/classify/batch", headers=hdr,
                        json={"documentIds": [doc_id]})
     if not cl.ok:
         print("DocuPipe classify failed:", cl.text); return None, None
     ids = cl.json().get("jobIds") or cl.json().get("classificationJobIds") or []
     if not ids:
-        print("No jobIds in response:", cl.json()); return None, None
+        print("No jobIds in classify response:", cl.json()); return None, None
     job_id = ids[0]
     for _ in range(30):
         job = requests.get(f"{BASE_URL}/job/{job_id}", headers=hdr).json()
@@ -329,17 +340,18 @@ def dp_process(fp: str) -> tuple[str | None, str | None]:
     if not schema:
         print("Unknown schema:", job); return None, None
 
+    # 4) standardize
     std = requests.post(f"{BASE_URL}/standardize", headers=hdr,
                         json={"documentId": doc_id, "schemaId": schema})
     if not std.ok:
         print("Standardize failed:", std.text); return None, None
 
-    out_path = os.path.join(RESP_DIR, os.path.basename(fp)+".standardized.json")
+    out_path = os.path.join(RESP_DIR, os.path.basename(fp) + ".standardized.json")
     print("DBG writing std file:", os.path.basename(out_path))
     with open(out_path, "w") as f: f.write(std.text)
     return out_path, schema
 
-# ─── Postgres helpers ──────────────────────────────────────
+# ─── Postgres helpers  ─────────────────────────────────────
 def insert_stub(broker, name, summary):
     conn = psycopg2.connect(DATABASE_URL); cur = conn.cursor()
     cur.execute(
@@ -372,7 +384,7 @@ def insert_documents(sid, docs):
             ))
     conn.commit(); cur.close(); conn.close()
 
-# ─── E-mail handler ────────────────────────────────────────
+# ─── E-mail handler  ───────────────────────────────────────
 os.makedirs(ATT_DIR, exist_ok=True); os.makedirs(RESP_DIR, exist_ok=True)
 
 def handle_email(msg_bytes: bytes):
@@ -386,6 +398,7 @@ def handle_email(msg_bytes: bytes):
     apps, losses = [], []
     docs_payload, links = [], []
 
+    # attachments → DocuPipe
     for part in raw.walk():
         if part.get("Content-Disposition", "").startswith("attachment"):
             fn  = part.get_filename()
@@ -416,7 +429,10 @@ def handle_email(msg_bytes: bytes):
 
     blurb            = tavily_blurb(applicant, website)
     ops_bullets      = bullets_business_ops(f"{industry}\n{blurb}")
-    controls_summary, flags = _controls_from_json(apps)
+
+    # NEW: separate flags & rich summary
+    flags            = extract_control_flags(apps)
+    controls_summary = summarize_controls_json(apps)
 
     email_summary = build_email_summary(
         subject, body,
@@ -427,7 +443,6 @@ def handle_email(msg_bytes: bytes):
 
     industry_code = classify_industry(applicant, f"{ops_bullets}\n{blurb}")
 
-    # DB writes
     sid = insert_stub(sender, applicant, email_summary)
     insert_documents(sid, docs_payload)
 
@@ -458,7 +473,7 @@ def handle_email(msg_bytes: bytes):
     print(f"✅ Saved submission {sid} ({len(docs_payload)} docs + embeddings + flags)")
     reply_email(sender, subject, email_summary, links)
 
-# ─── Main poll loop ────────────────────────────────────────
+# ─── Main poll loop  ───────────────────────────────────────
 def main():
     try:
         m = imaplib.IMAP4_SSL(IMAP_SERVER)
