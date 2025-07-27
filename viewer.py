@@ -2,7 +2,7 @@ import os, json
 from datetime import datetime
 
 import psycopg2
-from pgvector.psycopg2 import register_vector
+from pgvector.psycopg2 import register_vector, Vector
 import pandas as pd
 import streamlit as st
 import openai, numpy as np     # NEW
@@ -97,7 +97,7 @@ with st.expander("🔍 Find similar submissions"):
             FROM submissions
             ORDER BY dist
             LIMIT 10;
-        """, (q_vec,))
+        """, (Vector(q_vec),)) # cast to pgvector type
         rows = cur.fetchall(); cur.close()
 
         st.markdown("**Top matches:**")
