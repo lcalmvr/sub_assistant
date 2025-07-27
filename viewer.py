@@ -101,7 +101,7 @@ with st.expander("🔍 Find similar submissions"):
             LIMIT 10;
         """, (Vector(q_vec),)) # cast to pgvector type
         rows = cur.fetchall(); cur.close()
-     except psycopg2.Error as e:
+    except psycopg2.Error as e:
         conn.rollback()               # clear ‘failed transaction’ flag
         st.error(f"Query failed: {e}")
         rows = []
