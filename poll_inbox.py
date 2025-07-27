@@ -53,7 +53,7 @@ SCHEMA_MAP = {
 
 # ─── Build controls bullets & flags from Cyber-App JSON ─────
 CONTROL_MAP = {
-    # "substring to search in key" : "human-readable label"
+    #   substring to look for         → human-readable label
     "multifactor":          "MFA",
     "offlinebackup":        "offline backups",
     "immutablebackup":      "immutable backups",
@@ -63,54 +63,60 @@ CONTROL_MAP = {
     "incidentresponse":     "incident-response plan",
 }
 
+def _bool_from_val(val):
+    """Normalise True/False/Yes/No/1/0 → present/absent/unknown."""
+    if val in (True, "true", "yes", "present", 1):   return "present"
+    if val in (False, "false", "no", "absent", 0):   return "absent"
+    return "unknown"
+
+def _find_flag(node, needle):
+    """
+    DFS through dicts/lists.  If a key contains *needle*:
+      • if value is bool/str/int → return val
+      • if value is dict → look for child key 'present' or 'isPresent'.
+    """
+    stack = [node]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                k_l = k.lower()
+                if needle in k_l:
+                    # direct boolean
+                    if isinstance(v, (bool, str, int)):
+                        return _bool_from_val(v)
+                    # nested {isPresent: bool}
+                    if isinstance(v, dict):
+                        for ck, cv in v.items():
+                            if "present" in ck.lower():
+                                return _bool_from_val(cv)
+                stack.append(v)
+        elif isinstance(cur, list):
+            stack.extend(cur)
+    return "unknown"
+
 def controls_from_json(apps_json: list[dict]) -> tuple[str, dict]:
     """
-    Returns (bullet_block, flags_dict) extracted from the Cyber-App JSON.
-    • Key matching is *substring* + case-insensitive, so it works with:
-        multiFactorAuthenticationIsPresent
-        endpointDetectionAndResponse_is_present
-        etc.
-    • If a boolean value is missing, flag = "unknown".
+    Returns (bullet_block, flags_dict) built from Cyber-App JSON.
+    Guaranteed to give a value (present/absent/unknown) for every control.
     """
-    bullets_pos, bullets_neg, bullets_na = [], [], []
-    flags = {}
-
     if not apps_json:
-        # no Cyber-App provided
-        return "", {k.replace('-', '_'): "unknown" for k in CONTROL_MAP.values()}
+        unknown = {lab.replace("-", "_"): "unknown" for lab in CONTROL_MAP.values()}
+        return "", unknown
 
-    gi = apps_json[0].get("generalInformation", {})
-
-    # recursive search helper
-    def find_bool(node, needle):
-        stack = [node]
-        while stack:
-            cur = stack.pop()
-            if isinstance(cur, dict):
-                for k, v in cur.items():
-                    if needle in k.lower():
-                        return v
-                    stack.append(v)
-            elif isinstance(cur, list):
-                stack.extend(cur)
-        return None
-
+    flags, pos, neg, na = {}, [], [], []
     for needle, label in CONTROL_MAP.items():
-        val = find_bool(gi, needle)
-        flag_key = label.replace("-", "_")          # e.g. "immutable_backups"
-        if val is True:
-            bullets_pos.append(f"✔ {label} present")
-            flags[flag_key] = "present"
-        elif val is False:
-            bullets_neg.append(f"✖ {label} absent")
-            flags[flag_key] = "absent"
+        val = _find_flag(apps_json[0], needle)
+        flags[label.replace("-", "_")] = val
+        if val == "present":
+            pos.append(f"✔ {label} present")
+        elif val == "absent":
+            neg.append(f"✖ {label} absent")
         else:
-            bullets_na.append(f"• {label}: not provided")
-            flags[flag_key] = "unknown"
+            na.append(f"• {label}: not provided")
 
-    bullet_block = "\n".join(bullets_pos + bullets_neg + bullets_na)
-    return bullet_block, flags
-
+    bullets = "\n".join(pos + neg + na)
+    return bullets, flags
 
 
 
@@ -144,13 +150,6 @@ def shrink(d):
         else: out[k]=v
     return out
 
-# ─── controls bullets extractor ─────────────────────────────
-def extract_controls_bullets(summary: str) -> str:
-    m = re.search(
-        r"(Controls|Security Controls)\s+Summary?\s*[-–:\n]+\s*(.*?)\n\s*(?:\d\)|Loss|Losses|$)",
-        summary, re.S | re.I
-    )
-    return textwrap.dedent(m.group(2)).strip() if m else ""
 
 # ─── flag extraction helpers ───────────────────────────────
 def norm(val) -> str:
