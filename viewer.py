@@ -1,19 +1,18 @@
-# viewer.py
 """
 Streamlit admin viewer with:
-  • Recent-submission table (filtered)
+  • Recent‑submission table (filtered)
   • Detailed document explorer
   • Vector similarity search on
-        – Business-operations embedding
+        – Business‑operations embedding
         – Controls embedding
         – Combined (sum)
-  • Sidebar filters powered by LLM-normalized fields:
-        – MFA absent
-        – Industry = manufacturing
+  • Sidebar filters powered by LLM‑normalized fields:
+        – MFA absent (from nist_controls JSON)
+        – Primary industry = Manufacturing (from NAICS title)
 ------------------------------------------------------------
-Env-vars:
+Env‑vars:
   DATABASE_URL      Supabase pooler URL
-  OPENAI_API_KEY    for text-embedding-3-small
+  OPENAI_API_KEY    for text‑embedding‑3‑small
 """
 
 import os, json
@@ -43,6 +42,7 @@ def get_conn():
 
 
 def load_submissions(sql_where: str, limit: int = 200) -> pd.DataFrame:
+    """Lightweight list for the main table."""
     qry = f"""
         SELECT id,
                applicant_name,
@@ -72,7 +72,8 @@ def load_documents(submission_id):
     return pd.read_sql(qry, get_conn(), params=[submission_id])
 
 
-# ---------- safe-JSON ----------
+# ---------- safe‑JSON ----------
+
 def _safe_json(val):
     if val in (None, "", {}):
         return {}
@@ -85,7 +86,7 @@ def _safe_json(val):
 
 
 # ============================================================
-st.title("📂 AI-Processed Submissions")
+st.title("📂 AI‑Processed Submissions")
 
 # ---------- Sidebar filters ----------
 with st.sidebar:
@@ -95,9 +96,11 @@ with st.sidebar:
 
 where_clauses = ["TRUE"]
 if filt_no_mfa:
-    where_clauses.append("flags->>'mfa' = 'absent'")
+    # Expecting nist_controls JSON like {"mfa": "absent" | "partial" | "present"}
+    where_clauses.append("(nist_controls ->> 'mfa') = 'absent'")
 if filt_mfg_only:
-    where_clauses.append("industry_code = 'manufacturing'")
+    # Match NAICS primary title containing the stem "manufactur"
+    where_clauses.append("naics_primary_title ILIKE '%manufactur%'")
 
 SQL_WHERE = " AND ".join(where_clauses)
 
@@ -134,8 +137,8 @@ with st.expander("🔍 Find similar submissions"):
                 SELECT id,
                        applicant_name,
                        broker_email,
-                       left(operations_summary, 60)        AS ops_snip,
-                       left(security_controls_summary, 60) AS ctrl_snip,
+                       left(business_summary, 60)       AS biz_snip,
+                       left(nist_controls_summary, 60)  AS ctrl_snip,
                        {col_expr} <=> %s AS dist
                 FROM submissions
                 WHERE {SQL_WHERE}
@@ -154,12 +157,12 @@ with st.expander("🔍 Find similar submissions"):
         st.markdown("**Top matches:**")
         st.table([
             {
-                "ID":          r[0],
-                "Applicant":   r[1] or "(unknown)",
-                "Broker":      r[2],
-                "Ops preview": r[3] + "…",
-                "Ctrl preview": r[4] + "…",
-                "Similarity":  round(1 - r[5], 3)
+                "ID":           r[0],
+                "Applicant":    r[1] or "(unknown)",
+                "Broker":       r[2],
+                "Biz preview":  (r[3] or "") + "…",
+                "Ctrl preview": (r[4] or "") + "…",
+                "Similarity":   round(1 - r[5], 3)
             } for r in rows
         ])
 
@@ -184,20 +187,20 @@ if sub_id:
     st.subheader(f"Submission {sub_id}")
     with get_conn().cursor() as cur:
         cur.execute("""
-            SELECT summary,
-                   operations_summary,
-                   security_controls_summary
+            SELECT business_summary,
+                   cyber_exposures,
+                   nist_controls_summary
             FROM submissions
             WHERE id=%s;
         """, (sub_id,))
-        summary, ops_sum, ctrl_sum = cur.fetchone()
+        biz_sum, exposure_sum, ctrl_sum = cur.fetchone()
 
-    st.markdown("### LLM Summary")
-    st.markdown(summary)
+    st.markdown("### Business Summary")
+    st.markdown(biz_sum or "_not available_")
 
-    with st.expander("Business-Ops bullets"):
-        st.markdown(ops_sum or "_not available_")
-    with st.expander("Controls bullets"):
+    with st.expander("Cyber Exposures"):
+        st.markdown(exposure_sum or "_not available_")
+    with st.expander("NIST Controls Summary"):
         st.markdown(ctrl_sum or "_not available_")
 
     # ----- documents -----
