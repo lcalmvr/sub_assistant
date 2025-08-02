@@ -1,16 +1,18 @@
 """
-Streamlit admin viewer (v2) – aligned with updated `submissions` schema
-=====================================================================
-Features
---------
-* **Sidebar filters**
-    • ⚠️ *Any below‑average NIST domain*
-    • Primary NAICS **prefix** search
-    • *Quote‑ready only*
-* **Selectbox** now shows **“Applicant – short‑ID”** (name first) for easier scanning.
-* Vector similarity search and document explorer remain.
+Streamlit admin viewer (v3) – similarity results driven by the *selected* submission
+===================================================================================
+Changes
+-------
+* Replaces free‑text vector search with a **radio selector** that shows records similar
+  to the currently opened submission:
+    1. Similar **Business Operations** (ops_embedding)
+    2. Similar **Controls (NIST)** (controls_embedding)
+    3. Similar **Both** (ops + controls)
+  Distance metric uses pgvector `<=>` (cosine‑similarity for L2‑normalized vectors).
+* Selectbox still lists **Applicant – short‑ID**.
+* Sidebar filters unchanged (below‑avg NIST, NAICS prefix, quote‑ready).
 
-Dependencies: `streamlit`, `psycopg2-binary`, `pgvector`, `openai`, `pandas`
+Dependencies: streamlit, psycopg2‑binary, pgvector, openai, pandas
 """
 
 import os, json
@@ -19,14 +21,10 @@ from pgvector.psycopg2 import register_vector
 from pgvector import Vector
 import pandas as pd
 import streamlit as st
-import openai
 
 st.set_page_config(page_title="Submission Viewer", layout="wide")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-oa_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # ──────────────────────────────────────────────────────────────
 # DB helpers
@@ -40,12 +38,8 @@ def get_conn():
 
 def load_submissions(where_sql: str, params: list, limit: int = 200) -> pd.DataFrame:
     qry = f"""
-        SELECT id,
-               applicant_name,
-               broker_email,
-               naics_primary_code,
-               date_received,
-               quote_ready,
+        SELECT id, applicant_name, broker_email, naics_primary_code,
+               date_received, quote_ready,
                created_at AT TIME ZONE 'UTC' AS created_utc
         FROM submissions
         WHERE {where_sql}
@@ -79,19 +73,17 @@ def _safe_json(val):
 
 
 # ──────────────────────────────────────────────────────────────
-# UI – Sidebar filters
+# Sidebar filters
 # ──────────────────────────────────────────────────────────────
 st.title("📂 AI‑Processed Submissions")
 
 with st.sidebar:
     st.header("Filters")
     filt_below_avg = st.checkbox("⚠️ Any below‑average NIST domain")
-    naics_prefix   = st.text_input("Primary NAICS (starts with)")
-    filt_quote     = st.checkbox("Quote ready only")
+    naics_prefix = st.text_input("Primary NAICS (starts with)")
+    filt_quote = st.checkbox("Quote ready only")
 
-where_clauses = []
-params: list = []
-
+where_clauses, params = [], []
 if filt_below_avg:
     where_clauses.append("nist_controls::text ILIKE '%below_average%'")
 if naics_prefix.strip():
@@ -99,51 +91,85 @@ if naics_prefix.strip():
     params.append(f"{naics_prefix.strip()}%")
 if filt_quote:
     where_clauses.append("quote_ready = true")
-
 WHERE_SQL = " AND ".join(where_clauses) or "TRUE"
 
 # ──────────────────────────────────────────────────────────────
-# Vector search panel (unchanged)
+# Recent submissions table + selector
 # ──────────────────────────────────────────────────────────────
-with st.expander("🔍 Find similar submissions"):
-    query_text = st.text_input("Describe the account (free text):", key="vec_query")
-    vec_mode = st.radio(
-        "Search vector",
-        ["Business operations", "Controls", "Combined"],
+sub_df = load_submissions(WHERE_SQL, params)
+
+st.subheader("Recent submissions")
+st.dataframe(sub_df, use_container_width=True, hide_index=True)
+
+label_map = {f"{row.applicant_name} – {str(row.id)[:8]}": row.id for row in sub_df.itertuples()}
+label_selected = st.selectbox(
+    "Open submission:", list(label_map.keys()), index=0 if label_map else None
+)
+sub_id = label_map.get(label_selected)
+
+if sub_id:
+    st.divider()
+    st.subheader(label_selected)
+
+    with get_conn().cursor() as cur:
+        # fetch summaries & embeddings of the target submission
+        cur.execute(
+            """
+            SELECT business_summary, cyber_exposures, nist_controls_summary,
+                   ops_embedding, controls_embedding
+            FROM submissions WHERE id = %s;
+            """,
+            (sub_id,),
+        )
+        row = cur.fetchone()
+        biz_sum, exp_sum, ctrl_sum, ops_vec, ctrl_vec = row
+
+    # ---- show summaries ----
+    st.markdown("### Business Summary")
+    st.markdown(biz_sum or "_not available_")
+    with st.expander("Cyber Exposures"):
+        st.markdown(exp_sum or "_not available_")
+    with st.expander("NIST Controls Summary"):
+        st.markdown(ctrl_sum or "_not available_")
+
+    # ---- Similarity selector ----
+    sim_mode = st.radio(
+        "Show similar submissions by…",
+        (
+            "None",
+            "Business operations",
+            "Controls (NIST)",
+            "Operations & NIST",
+        ),
         horizontal=True,
-        key="vec_mode",
+        key="sim_mode",
     )
 
-    if query_text:
-        col_expr = {
-            "Business operations": "ops_embedding",
-            "Controls": "controls_embedding",
-            "Combined": "(ops_embedding + controls_embedding)",
-        }[vec_mode]
+    if sim_mode != "None":
+        vec_lookup = {
+            "Business operations": ("ops_embedding", ops_vec),
+            "Controls (NIST)": ("controls_embedding", ctrl_vec),
+            "Operations & NIST": ("(ops_embedding + controls_embedding)", [a + b for a, b in zip(ops_vec, ctrl_vec)]),
+        }
+        col_expr, q_vec = vec_lookup[sim_mode]
 
-        q_vec = oa_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=query_text,
-            encoding_format="float",
-        ).data[0].embedding
+        with get_conn().cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT id, applicant_name,
+                       left(business_summary, 60)  AS biz_snip,
+                       left(nist_controls_summary, 60) AS ctrl_snip,
+                       {col_expr} <=> %s AS dist
+                FROM submissions
+                WHERE id <> %s AND {WHERE_SQL}
+                ORDER BY dist
+                LIMIT 10;
+                """,
+                params + [Vector(q_vec), sub_id],
+            )
+            rows = cur.fetchall()
 
-        cur = get_conn().cursor()
-        cur.execute(
-            f"""
-            SELECT id, applicant_name,
-                   left(business_summary, 60) AS biz_snip,
-                   left(nist_controls_summary, 60) AS ctrl_snip,
-                   {col_expr} <=> %s AS dist
-            FROM submissions
-            WHERE {WHERE_SQL}
-            ORDER BY dist
-            LIMIT 10;
-            """,
-            params + [Vector(q_vec)],
-        )
-        rows = cur.fetchall(); cur.close()
-
-        st.markdown("**Top matches:**")
+        st.markdown("#### Similar submissions")
         st.table([
             {
                 "Applicant": r[1],
@@ -155,53 +181,13 @@ with st.expander("🔍 Find similar submissions"):
             for r in rows
         ])
 
-st.divider()
-
-# ──────────────────────────────────────────────────────────────
-# Recent submissions table
-# ──────────────────────────────────────────────────────────────
-sub_df = load_submissions(WHERE_SQL, params)
-
-st.subheader("Recent submissions")
-st.dataframe(sub_df, use_container_width=True, hide_index=True)
-
-label_map = {
-    f"{row.applicant_name} – {str(row.id)[:8]}": row.id for row in sub_df.itertuples()
-}
-
-label_selected = st.selectbox(
-    "Open submission:", list(label_map.keys()), index=0 if label_map else None
-)
-sub_id = label_map.get(label_selected)
-
-if sub_id:
-    st.divider()
-    st.subheader(label_selected)
-
-    with get_conn().cursor() as cur:
-        cur.execute(
-            """
-            SELECT business_summary, cyber_exposures, nist_controls_summary
-            FROM submissions WHERE id=%s;
-            """,
-            (sub_id,),
-        )
-        biz_sum, exp_sum, ctrl_sum = cur.fetchone()
-
-    st.markdown("### Business Summary")
-    st.markdown(biz_sum or "_not available_")
-
-    with st.expander("Cyber Exposures"):
-        st.markdown(exp_sum or "_not available_")
-    with st.expander("NIST Controls Summary"):
-        st.markdown(ctrl_sum or "_not available_")
-
+    # ---- Documents ----
     st.subheader("Documents")
     docs = load_documents(sub_id)
-    for _, row in docs.iterrows():
-        with st.expander(f"{row['filename']} – {row['document_type']}"):
-            st.write(f"Pages: {row['page_count']} | Priority: {row['is_priority']}")
+    for _, r in docs.iterrows():
+        with st.expander(f"{r['filename']} – {r['document_type']}"):
+            st.write(f"Pages: {r['page_count']} | Priority: {r['is_priority']}")
             st.markdown("**Metadata**")
-            st.json(_safe_json(row["doc_metadata"]))
+            st.json(_safe_json(r["doc_metadata"]))
             st.markdown("**Extracted Data (truncated)**")
-            st.json(_safe_json(row["extracted_data"]))
+            st.json(_safe_json(r["extracted_data"]))
