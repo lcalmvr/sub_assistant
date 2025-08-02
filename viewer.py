@@ -29,10 +29,23 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 # ──────────────────────────────────────────────────────────────
 # DB helpers
 # ──────────────────────────────────────────────────────────────
-@st.cache_resource(show_spinner=False)
+# ──────────────────────────────────────────────────────────────
+# Robust connection helper – recreates if server closed the idle conn
+# ──────────────────────────────────────────────────────────────
+
 def get_conn():
-    conn = psycopg2.connect(DATABASE_URL)
-    register_vector(conn)
+    """Return a live psycopg2 connection stored in st.session_state.
+
+    Streamlit sessions can live for hours, but Supabase / Postgres may
+    reclaim idle connections after a few minutes. We keep one connection
+    per user session and recreate it if `.closed` is non‑zero.
+    """
+    conn = st.session_state.get("db_conn")
+    if conn is None or conn.closed != 0:  # 0=open, 1=closed
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = True  # avoids lingering txns for read‑only queries
+        register_vector(conn)
+        st.session_state["db_conn"] = conn
     return conn
 
 
