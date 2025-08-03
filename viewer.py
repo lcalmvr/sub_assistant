@@ -295,7 +295,7 @@ if sub_id:
 
         # 4️⃣  Render → upload PDF, save DB row
         ctx = {
-            "applicant": biz_sum.split("\n")[0] if biz_sum else "Applicant",
+            "applicant": label_selected.split(" – ")[0],
             "limit":     f"${quote_out['limit']:,}",
             "retention": f"${quote_out['retention']:,}",
             "premium":   f"${quote_out['premium']:,}",
