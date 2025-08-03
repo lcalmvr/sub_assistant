@@ -1,18 +1,17 @@
 """
-Streamlit admin viewer (v3) – similarity results driven by the *selected* submission
-===================================================================================
-Changes
--------
-* Replaces free‑text vector search with a **radio selector** that shows records similar
-  to the currently opened submission:
-    1. Similar **Business Operations** (ops_embedding)
-    2. Similar **Controls (NIST)** (controls_embedding)
-    3. Similar **Both** (ops + controls)
-  Distance metric uses pgvector `<=>` (cosine‑similarity for L2‑normalized vectors).
-* Selectbox still lists **Applicant – short‑ID**.
-* Sidebar filters unchanged (below‑avg NIST, NAICS prefix, quote‑ready).
+Streamlit admin viewer (v3 → v3.1) – now with underwriter feedback logging
+===========================================================================
 
-Dependencies: streamlit, psycopg2‑binary, pgvector, openai, pandas
+NEW IN v3.1  (Aug 2025)
+-----------------------
+* 👍 / 👎 / ⚠️  radio buttons + optional edit & comment for:
+    • Business Summary
+    • Cyber Exposures
+    • NIST Controls Summary
+* Records saved to `submission_feedback` table (see roadmap Phase 1)
+* “🔎 Feedback History” expander shows past feedback for the open submission
+
+Dependencies unchanged: streamlit, psycopg2-binary, pgvector, pandas
 """
 
 import os, json
@@ -26,29 +25,56 @@ st.set_page_config(page_title="Submission Viewer", layout="wide")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# Detect current user – adapt to your auth system as needed
+CURRENT_USER = st.session_state.get("current_user", os.getenv("USER", "unknown"))
+
 # ──────────────────────────────────────────────────────────────
 # DB helpers
 # ──────────────────────────────────────────────────────────────
-# ──────────────────────────────────────────────────────────────
-# Robust connection helper – recreates if server closed the idle conn
-# ──────────────────────────────────────────────────────────────
-
 def get_conn():
-    """Return a live psycopg2 connection stored in st.session_state.
-
-    Streamlit sessions can live for hours, but Supabase / Postgres may
-    reclaim idle connections after a few minutes. We keep one connection
-    per user session and recreate it if `.closed` is non‑zero.
-    """
+    """Return (and cache) a live psycopg2 connection."""
     conn = st.session_state.get("db_conn")
     if conn is None or conn.closed != 0:  # 0=open, 1=closed
         conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = True  # avoids lingering txns for read‑only queries
+        conn.autocommit = True
         register_vector(conn)
         st.session_state["db_conn"] = conn
     return conn
 
 
+def save_feedback(
+    submission_id: str,
+    section: str,
+    original_text: str,
+    edited_text: str | None,
+    feedback_label: str,
+    comment: str | None,
+    user_id: str,
+) -> None:
+    """Insert one feedback record into submission_feedback."""
+    with get_conn().cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO submission_feedback
+                (submission_id, section, original_text, edited_text,
+                 feedback_label, comment, user_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s);
+            """,
+            (
+                submission_id,
+                section,
+                original_text,
+                edited_text,
+                feedback_label,
+                comment,
+                user_id,
+            ),
+        )
+
+
+# ──────────────────────────────────────────────────────────────
+# Data loaders
+# ──────────────────────────────────────────────────────────────
 def load_submissions(where_sql: str, params: list, limit: int = 200) -> pd.DataFrame:
     qry = f"""
         SELECT id, applicant_name, broker_email, naics_primary_code,
@@ -73,7 +99,6 @@ def load_documents(submission_id):
 # ──────────────────────────────────────────────────────────────
 # Utility
 # ──────────────────────────────────────────────────────────────
-
 def _safe_json(val):
     if val in (None, "", {}):
         return {}
@@ -88,11 +113,11 @@ def _safe_json(val):
 # ──────────────────────────────────────────────────────────────
 # Sidebar filters
 # ──────────────────────────────────────────────────────────────
-st.title("📂 AI‑Processed Submissions")
+st.title("📂 AI-Processed Submissions")
 
 with st.sidebar:
     st.header("Filters")
-    filt_below_avg = st.checkbox("⚠️ Any below‑average NIST domain")
+    filt_below_avg = st.checkbox("⚠️ Any below-average NIST domain")
     naics_prefix = st.text_input("Primary NAICS (starts with)")
     filt_quote = st.checkbox("Quote ready only")
 
@@ -125,7 +150,6 @@ if sub_id:
     st.subheader(label_selected)
 
     with get_conn().cursor() as cur:
-        # fetch summaries & embeddings of the target submission
         cur.execute(
             """
             SELECT business_summary, cyber_exposures, nist_controls_summary,
@@ -137,23 +161,62 @@ if sub_id:
         row = cur.fetchone()
         biz_sum, exp_sum, ctrl_sum, ops_vec, ctrl_vec = row
 
-    # ---- show summaries ----
-    st.markdown("### Business Summary")
-    st.markdown(biz_sum or "_not available_")
-    with st.expander("Cyber Exposures"):
-        st.markdown(exp_sum or "_not available_")
-    with st.expander("NIST Controls Summary"):
-        st.markdown(ctrl_sum or "_not available_")
+    # ───────────────────────────────
+    # Feedback-enabled AI sections
+    # ───────────────────────────────
+    def feedback_block(
+        title: str,
+        section_slug: str,
+        original_text: str | None,
+    ):
+        with st.expander(title, expanded=True):
+            st.markdown(original_text or "_not available_")
 
-    # ---- Similarity selector ----
+            # --- feedback widgets ---
+            cols = st.columns([1, 3])
+            with cols[0]:
+                feedback = st.radio(
+                    "Rating",
+                    ["👍", "👎", "⚠️"],
+                    horizontal=True,
+                    key=f"{section_slug}_fb_{sub_id}",
+                )
+                comment = st.text_input(
+                    "Comment (optional)",
+                    key=f"{section_slug}_comment_{sub_id}",
+                )
+            with cols[1]:
+                edited_text = st.text_area(
+                    "Edit (optional)",
+                    value=original_text or "",
+                    height=200,
+                    key=f"{section_slug}_edit_{sub_id}",
+                )
+
+            if st.button("Submit feedback", key=f"{section_slug}_submit_{sub_id}"):
+                save_feedback(
+                    submission_id=sub_id,
+                    section=section_slug,
+                    original_text=original_text or "",
+                    edited_text=edited_text
+                    if edited_text != (original_text or "")
+                    else None,
+                    feedback_label=feedback,
+                    comment=comment or None,
+                    user_id=CURRENT_USER,
+                )
+                st.success("Saved ✔︎")
+
+    feedback_block("📝 Business Summary", "business_summary", biz_sum)
+    feedback_block("🛡️ Cyber Exposures", "cyber_exposures", exp_sum)
+    feedback_block("🔐 NIST Controls Summary", "nist_controls", ctrl_sum)
+
+    # ───────────────────────────────
+    # Similarity selector (unchanged)
+    # ───────────────────────────────
     sim_mode = st.radio(
         "Show similar submissions by…",
-        (
-            "None",
-            "Business operations",
-            "Controls (NIST)",
-            "Operations & NIST",
-        ),
+        ("None", "Business operations", "Controls (NIST)", "Operations & NIST"),
         horizontal=True,
         key="sim_mode",
     )
@@ -162,7 +225,10 @@ if sub_id:
         vec_lookup = {
             "Business operations": ("ops_embedding", ops_vec),
             "Controls (NIST)": ("controls_embedding", ctrl_vec),
-            "Operations & NIST": ("(ops_embedding + controls_embedding)", [a + b for a, b in zip(ops_vec, ctrl_vec)]),
+            "Operations & NIST": (
+                "(ops_embedding + controls_embedding)",
+                [a + b for a, b in zip(ops_vec, ctrl_vec)],
+            ),
         }
         col_expr, q_vec = vec_lookup[sim_mode]
 
@@ -183,23 +249,50 @@ if sub_id:
             rows = cur.fetchall()
 
         st.markdown("#### Similar submissions")
-        st.table([
-            {
-                "Applicant": r[1],
-                "ID": str(r[0])[:8],
-                "Biz preview": (r[2] or "") + "…",
-                "Ctrl preview": (r[3] or "") + "…",
-                "Similarity": round(1 - r[4], 3),
-            }
-            for r in rows
-        ])
+        st.table(
+            [
+                {
+                    "Applicant": r[1],
+                    "ID": str(r[0])[:8],
+                    "Biz preview": (r[2] or "") + "…",
+                    "Ctrl preview": (r[3] or "") + "…",
+                    "Similarity": round(1 - r[4], 3),
+                }
+                for r in rows
+            ]
+        )
 
-    # ---- Documents ----
+    # ───────────────────────────────
+    # Feedback history
+    # ───────────────────────────────
+    with st.expander("🔎 Feedback History"):
+        hist_df = pd.read_sql(
+            """
+            SELECT section,
+                   coalesce(edited_text, '—') AS edited_text,
+                   feedback_label,
+                   comment,
+                   user_id,
+                   created_at AT TIME ZONE 'UTC' AS created_utc
+            FROM submission_feedback
+            WHERE submission_id = %s
+            ORDER BY created_at DESC;
+            """,
+            get_conn(),
+            params=[sub_id],
+        )
+        st.dataframe(hist_df, use_container_width=True)
+
+    # ───────────────────────────────
+    # Documents (unchanged)
+    # ───────────────────────────────
     st.subheader("Documents")
     docs = load_documents(sub_id)
     for _, r in docs.iterrows():
         with st.expander(f"{r['filename']} – {r['document_type']}"):
-            st.write(f"Pages: {r['page_count']} | Priority: {r['is_priority']}")
+            st.write(
+                f"Pages: {r['page_count']} | Priority: {r['is_priority']}"
+            )
             st.markdown("**Metadata**")
             st.json(_safe_json(r["doc_metadata"]))
             st.markdown("**Extracted Data (truncated)**")
