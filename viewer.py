@@ -294,15 +294,22 @@ if sub_id:
         quote_out["terms"] = "Standard carrier form – subject to underwriting."
 
         # 4️⃣  Render → upload PDF, save DB row
-        pdf_path = _render_quote_pdf({
+        ctx = {
             "applicant": biz_sum.split("\n")[0] if biz_sum else "Applicant",
-            **quote_out
-        })
-        url = _upload_pdf(pdf_path)
-        qid = _save_quote_row(sub_id, quote_out, url)
+            "limit":     f"${quote_out['limit']:,}",
+            "retention": f"${quote_out['retention']:,}",
+            "premium":   f"${quote_out['premium']:,}",
+            "hazard_class": quote_out["hazard_class"],
+            "terms": quote_out["terms"],
+        }
+
+        pdf_path = _render_quote_pdf(ctx)
+        url      = _upload_pdf(pdf_path)
+        qid      = _save_quote_row(sub_id, quote_out, url)
 
         st.success(f"Draft quote saved (ID {qid}).")
         st.markdown(f"[📥 Download PDF]({url})")
+
 
 
 
