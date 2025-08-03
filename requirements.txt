@@ -11,3 +11,4 @@ numpy
 pyyaml
 jinja2
 weasyprint
+text<br>supabase>=2.0.0<br>
