@@ -1,0 +1,7 @@
+MFA:      -0.05   # 5 % credit if present
+EDR:      -0.03
+Backups:  -0.02
+Phishing: -0.01
+
+No_MFA:    0.15   # 15 % surcharge if MFA missing
+No_EDR:    0.10

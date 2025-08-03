@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    h1   { border-bottom: 2px solid #000; padding-bottom:.25rem; }
+    table { border-collapse: collapse; margin-top:1rem; }
+    td,th { border:1px solid #ccc; padding:.4rem .6rem; }
+  </style>
+</head>
+<body>
+  <h1>Cyber / Tech E&O Quote – {{ applicant }}</h1>
+
+  <table>
+    <tr><th>Limit</th><td>{{ limit | int | string }}</td></tr>
+    <tr><th>Retention</th><td>{{ retention | int | string }}</td></tr>
+    <tr><th>Total Premium (USD)</th><td>${{ premium | int | string }}</td></tr>
+    <tr><th>Hazard Class</th><td>{{ hazard_class }}</td></tr>
+  </table>
+
+  <h2>Terms &amp; Conditions</h2>
+  <pre>{{ terms }}</pre>
+
+  <small>Draft – subject to final underwriter approval</small>
+</body>
+</html>
