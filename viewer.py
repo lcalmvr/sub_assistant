@@ -249,38 +249,61 @@ if sub_id:
     feedback_block("🔐 NIST Controls Summary", "nist_controls", ctrl_sum)
 
     # ───────────────────────────────
-    #  Quote Draft Button
+    #  Quote Draft Button  (patched)
     # ───────────────────────────────
     if st.button("🧾 Generate Quote Draft", type="primary"):
-        # 1.  Build a minimal dict for rating_engine
-        #    (replace revenue/controls fetch with real columns in your DB)
+
+        # 1️⃣  Pull rating inputs from new columns
         with get_conn().cursor() as cur:
             cur.execute(
-                "select industry_slug, annual_revenue, controls_present from submissions where id=%s",
+                """
+                SELECT naics_primary_code,
+                       annual_revenue,
+                       COALESCE(controls_present, '{}')::text[]
+                FROM submissions
+                WHERE id = %s
+                """,
                 (sub_id,),
             )
-            ind, rev, ctrl_list = cur.fetchone()
-        submission_dict = {
-            "industry": ind,
-            "revenue":  rev,
-            "limit":    2_000_000,    # you may let underwriter choose these later
-            "retention":25_000,
-            "controls": ctrl_list or [],
-        }
-        quote_out = rate_quote(submission_dict)      # ← calls your YAML engine
-        quote_out["terms"] = "Standard carrier form – subject to underwriting."  # stub
+            naics_code, revenue, ctrl_list = cur.fetchone()
 
-        # 2.  Render PDF
+        if revenue is None:
+            st.warning("Annual revenue not populated yet – cannot generate a quote.")
+            st.stop()
+
+        # 2️⃣  Map NAICS → hazard-class slug used in rating_engine
+        def naics_to_slug(code: str) -> str:
+            prefix = code[:2] if code else ""
+            return {
+                "51": "Advertising_Marketing_Technology",
+                "54": "Professional_Services_Consulting",
+                "44": "Ecommerce_Online_Retail",
+                "31": "Manufacturing_Discrete",
+            }.get(prefix, "Software_as_a_Service_SaaS")
+
+        submission_dict = {
+            "industry":  naics_to_slug(naics_code),
+            "revenue":   revenue,
+            "limit":     2_000_000,   # TODO: make this selectable
+            "retention": 25_000,
+            "controls":  list(ctrl_list) if ctrl_list else [],
+        }
+
+        # 3️⃣  Price with YAML engine
+        quote_out = rate_quote(submission_dict)
+        quote_out["terms"] = "Standard carrier form – subject to underwriting."
+
+        # 4️⃣  Render → upload PDF, save DB row
         pdf_path = _render_quote_pdf({
             "applicant": biz_sum.split("\n")[0] if biz_sum else "Applicant",
             **quote_out
         })
-        # 3.  Upload & save row
-        url   = _upload_pdf(pdf_path)
-        qid   = _save_quote_row(sub_id, quote_out, url)
+        url = _upload_pdf(pdf_path)
+        qid = _save_quote_row(sub_id, quote_out, url)
 
         st.success(f"Draft quote saved (ID {qid}).")
         st.markdown(f"[📥 Download PDF]({url})")
+
 
 
     # ------------------- similarity section (unchanged) ------
