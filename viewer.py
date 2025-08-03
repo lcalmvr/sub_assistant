@@ -18,6 +18,48 @@ st.set_page_config(page_title="Submission Viewer", layout="wide")
 DATABASE_URL = os.getenv("DATABASE_URL")
 CURRENT_USER = st.session_state.get("current_user", os.getenv("USER", "unknown"))
 
+# ░░░░░░░░░░░░░░  QUOTE HELPERS  ░░░░░░░░░░░░░░░
+from rating_engine.engine import price as rate_quote
+from jinja2 import Environment, FileSystemLoader
+from weasyprint import HTML
+import uuid, mimetypes, json
+from tempfile import NamedTemporaryFile
+from pathlib import Path
+from supabase import create_client
+
+SB = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE"))
+TEMPLATE_ENV = Environment(loader=FileSystemLoader("rating_engine/templates"))
+
+def _render_quote_pdf(ctx: dict) -> Path:
+    html = TEMPLATE_ENV.get_template("quote.html").render(**ctx)
+    tmp = NamedTemporaryFile(delete=False, suffix=".pdf")
+    HTML(string=html).write_pdf(tmp.name)
+    return Path(tmp.name)
+
+def _upload_pdf(pdf_path: Path) -> str:
+    bucket = "quotes"
+    key = f"{uuid.uuid4()}.pdf"
+    with pdf_path.open("rb") as f:
+        SB.storage.from_(bucket).upload(
+            key, f, {"content-type": mimetypes.guess_type(pdf_path)[0] or "application/pdf"}
+        )
+    return f"{os.getenv('SUPABASE_URL')}/storage/v1/object/public/{bucket}/{key}"
+
+def _save_quote_row(sub_id: str, quote_json: dict, pdf_url: str):
+    with get_conn().cursor() as cur:
+        cur.execute(
+            """
+            insert into quotes (submission_id, quote_json, pdf_url, created_by)
+            values (%s,%s,%s,%s)
+            returning id
+            """,
+            (sub_id, json.dumps(quote_json), pdf_url, CURRENT_USER),
+        )
+        return cur.fetchone()[0]
+# ░░░░░░░░░░░░░░  END QUOTE HELPERS  ░░░░░░░░░░░░░░
+
+
+
 # ─────────────────────── DB helpers ────────────────────────
 def get_conn():
     conn = st.session_state.get("db_conn")
@@ -205,6 +247,41 @@ if sub_id:
     feedback_block("📝 Business Summary", "business_summary", biz_sum)
     feedback_block("🛡️ Cyber Exposures", "cyber_exposures", exp_sum)
     feedback_block("🔐 NIST Controls Summary", "nist_controls", ctrl_sum)
+
+    # ───────────────────────────────
+    #  Quote Draft Button
+    # ───────────────────────────────
+    if st.button("🧾 Generate Quote Draft", type="primary"):
+        # 1.  Build a minimal dict for rating_engine
+        #    (replace revenue/controls fetch with real columns in your DB)
+        with get_conn().cursor() as cur:
+            cur.execute(
+                "select industry_slug, annual_revenue, controls_present from submissions where id=%s",
+                (sub_id,),
+            )
+            ind, rev, ctrl_list = cur.fetchone()
+        submission_dict = {
+            "industry": ind,
+            "revenue":  rev,
+            "limit":    2_000_000,    # you may let underwriter choose these later
+            "retention":25_000,
+            "controls": ctrl_list or [],
+        }
+        quote_out = rate_quote(submission_dict)      # ← calls your YAML engine
+        quote_out["terms"] = "Standard carrier form – subject to underwriting."  # stub
+
+        # 2.  Render PDF
+        pdf_path = _render_quote_pdf({
+            "applicant": biz_sum.split("\n")[0] if biz_sum else "Applicant",
+            **quote_out
+        })
+        # 3.  Upload & save row
+        url   = _upload_pdf(pdf_path)
+        qid   = _save_quote_row(sub_id, quote_out, url)
+
+        st.success(f"Draft quote saved (ID {qid}).")
+        st.markdown(f"[📥 Download PDF]({url})")
+
 
     # ------------------- similarity section (unchanged) ------
     sim_mode = st.radio(
