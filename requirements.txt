@@ -8,3 +8,6 @@ pgvector
 Faker
 tavily-python
 numpy
+pyyaml
+jinja2
+weasyprint
