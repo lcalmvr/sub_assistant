@@ -90,6 +90,9 @@ def price(submission: dict) -> dict:
     limit      = submission["limit"]
     retention  = submission["retention"]
     controls   = submission.get("controls", [])
+    
+    # Cast revenue to float so all math is float-based
+    revenue = float(revenue)
 
     # 1️⃣  Hazard class lookup
     hazard = INDUSTRY_HAZARD.get(industry)
