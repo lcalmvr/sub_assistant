@@ -12,6 +12,7 @@ from pgvector.psycopg2 import register_vector
 from pgvector import Vector
 import pandas as pd
 import streamlit as st
+from datetime import datetime, timezone
 
 st.set_page_config(page_title="Submission Viewer", layout="wide")
 
@@ -380,6 +381,35 @@ if sub_id:
             params=[sub_id],
         )
         st.dataframe(hist_df, use_container_width=True)
+        
+        
+    # ------------------- underwriter decision --------------------
+    with st.expander("📝 Underwriter Decision"):
+    tag = st.selectbox("Decision tag", ["", "Quoted", "Declined", "Referred"])
+    reason = st.text_area("Reason / notes", height=100)
+    if st.button("Save decision", disabled=not tag):
+        cur.execute(
+            """
+            UPDATE submissions
+            SET decision_tag = %s,
+                decision_reason = %s,
+                decided_at = %s,
+                decided_by = %s
+            WHERE id = %s
+            """,
+            (tag, reason.strip(), datetime.now(tz=timezone.utc), user_id, submission_id),
+        )
+        conn.commit()
+        st.success("Decision saved ✅")
+        
+        
+     # ------------------- AI Reommendation --------------------
+    with st.expander("🤖 AI Recommendation", expanded=True):
+    st.markdown(row["ai_recommendation"] or "_AI not generated yet_")
+    if row["ai_guideline_citations"]:
+        for c in json.loads(row["ai_guideline_citations"]):
+            st.write("•", c)
+
 
     # ------------------- documents (unchanged) ---------------
     st.subheader("Documents")
