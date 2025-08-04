@@ -23,15 +23,13 @@ _store    = SupabaseVectorStore(
 )
 
 # 2) Prompt: Quote / Decline / Refer  + citations
-_PROMPT = PromptTemplate.from_template("""
-You are a cyber underwriter assistant. Decide whether to **Quote**, **Decline**,
-or **Refer** the account and explain why, *citing section numbers* from the
-guidelines.
+_PROMPT = PromptTemplate.from_template(
+    """
+You are a cyber underwriter assistant.  Using the excerpts below from the
+underwriting guidelines, decide whether to **Quote**, **Decline**, or
+**Refer** the account and explain why (cite the section numbers).
 
-Submission:
-• Business summary: {biz}
-• Cyber exposures:  {exp}
-• Controls summary: {ctrl}
+{context}
 
 Return markdown exactly in this form:
 
@@ -44,7 +42,8 @@ Return markdown exactly in this form:
 
 ## Citations
 - <filename § section>
-""")
+"""
+)
 
 _chain = ConversationalRetrievalChain.from_llm(
     llm       = ChatOpenAI(model="gpt-4o-mini", temperature=0),
@@ -53,11 +52,24 @@ _chain = ConversationalRetrievalChain.from_llm(
     return_source_documents=True,
 )
 
-def get_ai_decision(biz: str, exp: str, ctrl: str) -> tuple[str, list[str]]:
-    res   = _chain(
-        {"question": "Provide a recommendation.",
-         "biz": biz, "exp": exp, "ctrl": ctrl, "chat_history": []}
+_chain = ConversationalRetrievalChain.from_llm(
+    llm       = ChatOpenAI(model="gpt-4o-mini", temperature=0),
+    retriever = _store.as_retriever(search_kwargs={"k": 4}),
+    combine_docs_chain_kwargs={
+        "prompt": _PROMPT,
+        "document_variable_name": "context",   # 👈 NEW
+    },
+    return_source_documents=True,
+)
+
+def get_ai_decision(biz: str, exp: str, ctrl: str):
+    user_q = (
+        f"Business Summary:\n{biz}\n\n"
+        f"Cyber Exposures:\n{exp}\n\n"
+        f"Controls Summary:\n{ctrl}\n\n"
+        "Provide your recommendation."
     )
+    res = _chain({"question": user_q, "chat_history": []})
     cites = [
         f"{d.metadata.get('filename')} §{d.metadata.get('section')}"
         for d in res["source_documents"]
