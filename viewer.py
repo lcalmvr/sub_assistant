@@ -424,57 +424,54 @@ if sub_id:
                 )
             st.success("Decision saved ✅")
 
-    # ------------------- AI Recommendation (single block) --------------------
-    with st.expander("🤖 AI Recommendation", expanded=True):
-        # ----- current recommendation -----
-        st.markdown(
-            row.get("ai_recommendation")
-            or "_AI recommendation not generated yet_"
-        )
+# ------------------- AI Recommendation (single block) --------------------
+ai_rec_placeholder = "_AI recommendation not generated yet_"
 
-        cites = row.get("ai_guideline_citations") or []
-        # Supabase returns lists as Python lists; legacy rows may be JSON strings
-        if isinstance(cites, str):
-            import json
-            cites = json.loads(cites)
+with st.expander("🤖 AI Recommendation", expanded=True):
+    # Local copy that we'll overwrite in-place
+    ai_md    = st.session_state.get(f"ai_md_{sub_id}", row.get("ai_recommendation") or ai_rec_placeholder)
+    ai_cites = st.session_state.get(f"ai_cites_{sub_id}", row.get("ai_guideline_citations") or [])
 
-        for c in cites:
-            if isinstance(c, dict):
-                st.write(f"• {c['section']}  (p.{c.get('page', '?')})")
-            else:
-                st.write(f"• {c}")
+    # ---------- render ----------
+    st.markdown(ai_md)
+    if isinstance(ai_cites, str):  # older rows
+        import json
+        ai_cites = json.loads(ai_cites)
+    for c in ai_cites:
+        if isinstance(c, dict):
+            st.write(f"• {c['section']} (p.{c.get('page','?')})")
+        else:
+            st.write(f"• {c}")
 
-        # ----- regenerate button -----
-        if st.button("🔄 Regenerate using current text", key=f"regen_{sub_id}"):
-            from guideline_rag import get_ai_decision
+    # ---------- regenerate ----------
+    if st.button("🔄 Regenerate using current text", key=f"regen_{sub_id}"):
+        from guideline_rag import get_ai_decision
 
-            # Pull the latest text (either session-state edits or DB originals)
-            biz  = st.session_state.get("edited_biz",  row["business_summary"])
-            exp  = st.session_state.get("edited_exp",  row["cyber_exposures"])
-            ctrl = st.session_state.get("edited_ctrl", row["nist_controls_summary"])
+        # get freshest text
+        biz  = st.session_state.get("edited_biz",  row["business_summary"])
+        exp  = st.session_state.get("edited_exp",  row["cyber_exposures"])
+        ctrl = st.session_state.get("edited_ctrl", row["nist_controls_summary"])
 
-            new_text, new_cites = get_ai_decision(biz, exp, ctrl)
+        ai_md, ai_cites = get_ai_decision(biz, exp, ctrl)
 
-            # Immediate on-screen update
-            st.markdown(new_text)
-            for c in new_cites:
-                if isinstance(c, dict):
-                    st.write(f"• {c['section']}  (p.{c.get('page', '?')})")
-                else:
-                    st.write(f"• {c}")
+        # persist to DB
+        with get_conn().cursor() as cur:
+            cur.execute(
+                """
+                UPDATE submissions
+                   SET ai_recommendation      = %s,
+                       ai_guideline_citations = %s
+                 WHERE id = %s
+                """,
+                (ai_md, json.dumps(ai_cites), sub_id),
+            )
+        get_conn().commit()
 
-            # Persist to DB
-            with get_conn().cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE submissions
-                       SET ai_recommendation      = %s,
-                           ai_guideline_citations = %s
-                     WHERE id = %s
-                    """,
-                    (new_text, json.dumps(new_cites), sub_id),
-                )
-            st.success("AI recommendation refreshed ✅")
+        # stash in session state so the expander re-renders *only* the new text
+        st.session_state[f"ai_md_{sub_id}"]    = ai_md
+        st.session_state[f"ai_cites_{sub_id}"] = ai_cites
+        st.experimental_rerun()    # hard refresh of this page
+
 
 
 

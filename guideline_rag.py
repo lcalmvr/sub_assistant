@@ -41,26 +41,27 @@ Return markdown exactly in this form:
 - <bullet 2>
 
 ## Citations
-- <filename § section>
+- <section heading> (p.<page>)
 """
 )
 
-_chain = ConversationalRetrievalChain.from_llm(
-    llm       = ChatOpenAI(model="gpt-4o-mini", temperature=0),
-    retriever = _store.as_retriever(search_kwargs={"k": 4}),
-    combine_docs_chain_kwargs={"prompt": _PROMPT},
-    return_source_documents=True,
+# 3) Retriever with relevance threshold  (k = 8, keep only ≥ 0.85 similarity)
+retriever = _store.as_retriever(
+    search_type   = "similarity_score_threshold",
+    search_kwargs = {"k": 8, "score_threshold": 0.85},
 )
 
+# 4) Single, final chain
 _chain = ConversationalRetrievalChain.from_llm(
     llm       = ChatOpenAI(model="gpt-4o-mini", temperature=0),
-    retriever = _store.as_retriever(search_kwargs={"k": 4}),
+    retriever = retriever,
     combine_docs_chain_kwargs={
         "prompt": _PROMPT,
-        "document_variable_name": "context",   # 👈 NEW
+        "document_variable_name": "context",
     },
     return_source_documents=True,
 )
+
 
 def get_ai_decision(biz: str, exp: str, ctrl: str):
     user_q = (
