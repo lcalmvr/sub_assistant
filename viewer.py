@@ -424,50 +424,46 @@ if sub_id:
                 )
             st.success("Decision saved ✅")
 
-    # ------------------- AI Recommendation --------------------
+    # ------------------- AI Recommendation (single block) --------------------
     with st.expander("🤖 AI Recommendation", expanded=True):
-        st.markdown(row.get("ai_recommendation") or "_AI recommendation not generated yet_")
-
-        cites = row.get("ai_guideline_citations")
-        if cites:
-            # Supabase returns JSONB as list; if it’s still a string (older rows), decode it.
-            if isinstance(cites, str):
-                import json
-                cites = json.loads(cites)
-
-            for c in cites:
-                st.write(f"• {c['section']}  (p.{c.get('page', '?')})")
-                
-    # ---------- PATCH END ----------
-    
-    
-    # assume `row` is the submission Series and `sub_id` its DB id
-    with st.expander("🤖 AI Recommendation", expanded=True):
-        st.markdown(row.get("ai_recommendation") or "_AI recommendation not generated yet_")
+        # ----- current recommendation -----
+        st.markdown(
+            row.get("ai_recommendation")
+            or "_AI recommendation not generated yet_"
+        )
 
         cites = row.get("ai_guideline_citations") or []
-        if isinstance(cites, str):  # covers old rows
+        # Supabase returns lists as Python lists; legacy rows may be JSON strings
+        if isinstance(cites, str):
+            import json
             cites = json.loads(cites)
-        for c in cites:
-            st.write("•", c)
 
-        # ←————  New button to regenerate
+        for c in cites:
+            if isinstance(c, dict):
+                st.write(f"• {c['section']}  (p.{c.get('page', '?')})")
+            else:
+                st.write(f"• {c}")
+
+        # ----- regenerate button -----
         if st.button("🔄 Regenerate using current text", key=f"regen_{sub_id}"):
             from guideline_rag import get_ai_decision
 
-            # pull the *latest* text the UW might have edited
-            biz   = st.session_state.get("edited_biz",  row["business_summary"])
-            exp   = st.session_state.get("edited_exp",  row["cyber_exposures"])
-            ctrl  = st.session_state.get("edited_ctrl", row["nist_controls_summary"])
+            # Pull the latest text (either session-state edits or DB originals)
+            biz  = st.session_state.get("edited_biz",  row["business_summary"])
+            exp  = st.session_state.get("edited_exp",  row["cyber_exposures"])
+            ctrl = st.session_state.get("edited_ctrl", row["nist_controls_summary"])
 
             new_text, new_cites = get_ai_decision(biz, exp, ctrl)
 
-            # show immediately
+            # Immediate on-screen update
             st.markdown(new_text)
             for c in new_cites:
-                st.write("•", c)
+                if isinstance(c, dict):
+                    st.write(f"• {c['section']}  (p.{c.get('page', '?')})")
+                else:
+                    st.write(f"• {c}")
 
-            # persist
+            # Persist to DB
             with get_conn().cursor() as cur:
                 cur.execute(
                     """
