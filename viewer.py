@@ -405,10 +405,10 @@ if sub_id:
         
      # ------------------- AI Reommendation --------------------
     with st.expander("🤖 AI Recommendation", expanded=True):
-    st.markdown(row["ai_recommendation"] or "_AI not generated yet_")
-    if row["ai_guideline_citations"]:
-        for c in json.loads(row["ai_guideline_citations"]):
-            st.write("•", c)
+        st.markdown(row["ai_recommendation"] or "_AI not generated yet_")
+        if row["ai_guideline_citations"]:
+            for c in json.loads(row["ai_guideline_citations"]):
+                st.write("•", c)
 
 
     # ------------------- documents (unchanged) ---------------
