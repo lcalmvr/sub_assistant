@@ -123,12 +123,22 @@ def latest_edits_map(submission_id: str) -> dict:
 # ─────────────────────── Data loaders ───────────────────────
 def load_submissions(where_sql: str, params: list, limit: int = 200):
     qry = f"""
-        SELECT id, applicant_name, broker_email,
+        SELECT id,
+               applicant_name,
+               broker_email,
                naics_primary_code,
                date_received,
                quote_ready,
+
+               -- ↓↓↓ bring back the three prompt fields
+               business_summary,
+               cyber_exposures,
+               nist_controls_summary,
+
+               -- AI columns
                ai_recommendation,
                ai_guideline_citations,
+
                created_at AT TIME ZONE 'UTC' AS created_utc
         FROM submissions
         WHERE {where_sql}
@@ -136,7 +146,6 @@ def load_submissions(where_sql: str, params: list, limit: int = 200):
         LIMIT %s
     """
     return pd.read_sql(qry, get_conn(), params=params + [limit])
-
 
 def load_documents(submission_id):
     qry = """
