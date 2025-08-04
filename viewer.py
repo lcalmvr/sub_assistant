@@ -436,7 +436,8 @@ if sub_id:
                 cites = json.loads(cites)
 
             for c in cites:
-                st.write("•", c)
+                st.write(f"• {c['section']}  (p.{c.get('page', '?')})")
+                
     # ---------- PATCH END ----------
     
     
