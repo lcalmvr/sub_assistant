@@ -13,6 +13,8 @@ jinja2
 weasyprint
 supabase>=2.0.0
 langchain
+langchain-community
+langchain-openai
 openai
 python-dotenv
 pypdf
