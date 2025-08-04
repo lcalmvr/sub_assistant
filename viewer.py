@@ -381,34 +381,48 @@ if sub_id:
             params=[sub_id],
         )
         st.dataframe(hist_df, use_container_width=True)
-        
-        
+
+    # ---------- PATCH START ----------
+    # create `row` once so the next blocks can use it
+    row = sub_df.loc[sub_df["id"] == sub_id].iloc[0]
+
     # ------------------- underwriter decision --------------------
     with st.expander("📝 Underwriter Decision"):
-        tag = st.selectbox("Decision tag", ["", "Quoted", "Declined", "Referred"])
-        reason = st.text_area("Reason / notes", height=100)
-        if st.button("Save decision", disabled=not tag):
-            cur.execute(
-                """
-                UPDATE submissions
-                SET decision_tag = %s,
-                    decision_reason = %s,
-                    decided_at = %s,
-                    decided_by = %s
-                WHERE id = %s
-                """,
-                (tag, reason.strip(), datetime.now(tz=timezone.utc), user_id, submission_id),
-            )
-            conn.commit()
+        tag = st.selectbox(
+            "Decision tag",
+            ["", "Quoted", "Declined", "Referred"],
+            key=f"decision_tag_{sub_id}",
+        )
+        reason = st.text_area(
+            "Reason / notes",
+            height=100,
+            key=f"decision_reason_{sub_id}",
+        )
+        if st.button("Save decision", disabled=not tag, key=f"save_decision_{sub_id}"):
+            with get_conn().cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE submissions
+                    SET decision_tag      = %s,
+                        decision_reason   = %s,
+                        decided_at        = NOW(),
+                        decided_by        = %s
+                    WHERE id = %s
+                    """,
+                    (tag, reason.strip(), CURRENT_USER, sub_id),
+                )
             st.success("Decision saved ✅")
-        
-        
-     # ------------------- AI Reommendation --------------------
+
+    # ------------------- AI Recommendation --------------------
     with st.expander("🤖 AI Recommendation", expanded=True):
-        st.markdown(row["ai_recommendation"] or "_AI not generated yet_")
-        if row["ai_guideline_citations"]:
-            for c in json.loads(row["ai_guideline_citations"]):
+        st.markdown(
+            row.get("ai_recommendation") or "_AI recommendation not generated yet_"
+        )
+        cites = row.get("ai_guideline_citations")
+        if cites:
+            for c in json.loads(cites):
                 st.write("•", c)
+    # ---------- PATCH END ----------
 
 
     # ------------------- documents (unchanged) ---------------
