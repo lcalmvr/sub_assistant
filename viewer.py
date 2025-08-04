@@ -417,12 +417,16 @@ if sub_id:
 
     # ------------------- AI Recommendation --------------------
     with st.expander("🤖 AI Recommendation", expanded=True):
-        st.markdown(
-            row.get("ai_recommendation") or "_AI recommendation not generated yet_"
-        )
+        st.markdown(row.get("ai_recommendation") or "_AI recommendation not generated yet_")
+
         cites = row.get("ai_guideline_citations")
         if cites:
-            for c in json.loads(cites):
+            # Supabase returns JSONB as list; if it’s still a string (older rows), decode it.
+            if isinstance(cites, str):
+                import json
+                cites = json.loads(cites)
+
+            for c in cites:
                 st.write("•", c)
     # ---------- PATCH END ----------
 
