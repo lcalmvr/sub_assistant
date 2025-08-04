@@ -70,8 +70,12 @@ def get_ai_decision(biz: str, exp: str, ctrl: str):
         "Provide your recommendation."
     )
     res = _chain({"question": user_q, "chat_history": []})
+    
+    # guideline_rag.py  – inside get_ai_decision()
     cites = [
-        f"{d.metadata.get('filename')} §{d.metadata.get('section')}"
+        {"section": d.metadata.get("section", "Untitled"),
+         "page":    d.metadata.get("page", "?")}
         for d in res["source_documents"]
     ]
+
     return res["answer"], cites
