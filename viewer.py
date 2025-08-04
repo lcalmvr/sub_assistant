@@ -429,6 +429,47 @@ if sub_id:
             for c in cites:
                 st.write("•", c)
     # ---------- PATCH END ----------
+    
+    
+    # assume `row` is the submission Series and `sub_id` its DB id
+    with st.expander("🤖 AI Recommendation", expanded=True):
+        st.markdown(row.get("ai_recommendation") or "_AI recommendation not generated yet_")
+
+        cites = row.get("ai_guideline_citations") or []
+        if isinstance(cites, str):  # covers old rows
+            cites = json.loads(cites)
+        for c in cites:
+            st.write("•", c)
+
+        # ←————  New button to regenerate
+        if st.button("🔄 Regenerate using current text", key=f"regen_{sub_id}"):
+            from guideline_rag import get_ai_decision
+
+            # pull the *latest* text the UW might have edited
+            biz   = st.session_state.get("edited_biz",  row["business_summary"])
+            exp   = st.session_state.get("edited_exp",  row["cyber_exposures"])
+            ctrl  = st.session_state.get("edited_ctrl", row["nist_controls_summary"])
+
+            new_text, new_cites = get_ai_decision(biz, exp, ctrl)
+
+            # show immediately
+            st.markdown(new_text)
+            for c in new_cites:
+                st.write("•", c)
+
+            # persist
+            with get_conn().cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE submissions
+                       SET ai_recommendation      = %s,
+                           ai_guideline_citations = %s
+                     WHERE id = %s
+                    """,
+                    (new_text, json.dumps(new_cites), sub_id),
+                )
+            st.success("AI recommendation refreshed ✅")
+
 
 
     # ------------------- documents (unchanged) ---------------
