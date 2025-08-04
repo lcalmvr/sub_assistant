@@ -130,14 +130,12 @@ def load_submissions(where_sql: str, params: list, limit: int = 200):
                date_received,
                quote_ready,
 
-               -- ↓↓↓ bring back the three prompt fields
                business_summary,
                cyber_exposures,
                nist_controls_summary,
 
-               -- AI columns
                ai_recommendation,
-               ai_guideline_citations,
+               ai_guideline_citations::text   AS ai_guideline_citations,  -- 👈 cast here
 
                created_at AT TIME ZONE 'UTC' AS created_utc
         FROM submissions
