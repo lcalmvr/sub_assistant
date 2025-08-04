@@ -8,6 +8,11 @@ from langchain_community.vectorstores import SupabaseVectorStore
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 
+from pathlib import Path
+from dotenv import load_dotenv          # ⬅️ add this
+
+load_dotenv(Path(__file__).resolve().parents[0] / ".env")  # ⬅️ and this
+
 # 1) Supabase vec-store pointing at guideline_chunks
 _supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 _store    = SupabaseVectorStore(
