@@ -252,7 +252,12 @@ if sub_id:
                     user_id=CURRENT_USER,
                 )
                 st.success("Saved ✔︎")
-                st.experimental_rerun()  # refresh to display new edit
+                # hard refresh of the page (new API name in ≥1.30)
+                if hasattr(st, "rerun"):          # Streamlit >= 1.30
+                    st.rerun()
+                else:                             # older versions
+                    st.experimental_rerun()
+
 
     feedback_block("📝 Business Summary", "business_summary", biz_sum)
     feedback_block("🛡️ Cyber Exposures", "cyber_exposures", exp_sum)
@@ -468,7 +473,12 @@ with st.expander("🤖 AI Recommendation", expanded=True):
         # stash in session state so the expander re-renders *only* the new text
         st.session_state[f"ai_md_{sub_id}"]    = ai_md
         st.session_state[f"ai_cites_{sub_id}"] = ai_cites
-        st.experimental_rerun()    # hard refresh of this page
+        # hard refresh of the page (new API name in ≥1.30)
+        if hasattr(st, "rerun"):          # Streamlit >= 1.30
+            st.rerun()
+        else:                             # older versions
+            st.experimental_rerun()
+
 
 
 
