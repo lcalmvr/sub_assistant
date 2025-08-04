@@ -127,6 +127,8 @@ def load_submissions(where_sql: str, params: list, limit: int = 200):
                naics_primary_code,
                date_received,
                quote_ready,
+               ai_recommendation,
+               ai_guideline_citations,
                created_at AT TIME ZONE 'UTC' AS created_utc
         FROM submissions
         WHERE {where_sql}
