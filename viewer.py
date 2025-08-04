@@ -385,22 +385,22 @@ if sub_id:
         
     # ------------------- underwriter decision --------------------
     with st.expander("📝 Underwriter Decision"):
-    tag = st.selectbox("Decision tag", ["", "Quoted", "Declined", "Referred"])
-    reason = st.text_area("Reason / notes", height=100)
-    if st.button("Save decision", disabled=not tag):
-        cur.execute(
-            """
-            UPDATE submissions
-            SET decision_tag = %s,
-                decision_reason = %s,
-                decided_at = %s,
-                decided_by = %s
-            WHERE id = %s
-            """,
-            (tag, reason.strip(), datetime.now(tz=timezone.utc), user_id, submission_id),
-        )
-        conn.commit()
-        st.success("Decision saved ✅")
+        tag = st.selectbox("Decision tag", ["", "Quoted", "Declined", "Referred"])
+        reason = st.text_area("Reason / notes", height=100)
+        if st.button("Save decision", disabled=not tag):
+            cur.execute(
+                """
+                UPDATE submissions
+                SET decision_tag = %s,
+                    decision_reason = %s,
+                    decided_at = %s,
+                    decided_by = %s
+                WHERE id = %s
+                """,
+                (tag, reason.strip(), datetime.now(tz=timezone.utc), user_id, submission_id),
+            )
+            conn.commit()
+            st.success("Decision saved ✅")
         
         
      # ------------------- AI Reommendation --------------------
