@@ -63,14 +63,15 @@ _chain = ConversationalRetrievalChain.from_llm(
     return_source_documents=True,
 )
 
-
-# -----------------------------------------------------------
+# ────────────────────────────────────────────────────────────────
 # Return AI markdown + structured citations
-# -----------------------------------------------------------
+#   * The submission text is now part of the **question**
+#     so the retriever can pull guideline chunks about MFA, EDR, etc.
+#   * {context} is still passed so the LLM can read the details, too.
+# ────────────────────────────────────────────────────────────────
 def get_ai_decision(biz: str, exp: str, ctrl: str):
-    # ----- build the prompt pieces -----
-    context = f"""
-### Submission Details
+    # 1️⃣ Build one long question string that contains the submission details
+    query_text = f"""
 Business Summary:
 {biz}
 
@@ -79,18 +80,23 @@ Cyber Exposures:
 
 Controls Summary:
 {ctrl}
+
+Provide a recommendation.
 """
 
-    # Ask the chain
+    # 2️⃣ Provide the same details to the LLM as separate context
+    context = query_text  # re-use the same block
+
+    # 3️⃣ Ask the chain
     res = _chain.invoke(
         {
-            "question": "Provide a recommendation.",
-            "context":  context,
+            "question": query_text,   # used for embedding / retrieval
+            "context":  context,      # injected into the prompt
             "chat_history": [],
         }
     )
 
-    # ----- tidy citations -----
+    # 4️⃣ Extract clean citations (dict format)
     cites = [
         {
             "section": d.metadata.get("section", "Untitled"),
@@ -100,4 +106,3 @@ Controls Summary:
     ]
 
     return res["answer"], cites
-
