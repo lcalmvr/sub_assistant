@@ -41,7 +41,6 @@ Return markdown exactly in this form:
 - <bullet 2>
 
 ## Citations
-- <section heading> (p.<page>)
 """
 )
 
