@@ -105,7 +105,7 @@ Provide a recommendation.
             "page":    d.metadata.get("page", "?"),
         }
         for d in res["source_documents"]
-        if re.match(r"^\d", d.metadata.get("section", ""))
+        if re.match(r"^\d+\.\d", d.metadata.get("section", ""))  # ← NEW
     ]
 
     # 4) De-duplicate while preserving order
