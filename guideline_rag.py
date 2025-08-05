@@ -45,11 +45,11 @@ Return markdown exactly in this form:
 )
 
 # -----------------------------------------------------------
-# Retriever: top-10 chunks, keep only those with ≥ 0.80 similarity
+# Retriever: top-15 most similar chunks (no hard threshold)
 # -----------------------------------------------------------
 retriever = _store.as_retriever(
-    search_type   = "similarity_score_threshold",
-    search_kwargs = {"k": 10, "score_threshold": 0.80},
+    search_type   = "similarity",   #  ←  changed
+    search_kwargs = {"k": 15},      #  ←  keep 15 best
 )
 
 # 4) Single, final chain
@@ -95,6 +95,9 @@ Provide a recommendation.
             "chat_history": [],
         }
     )
+    
+    print(">>> RETRIEVED HEADINGS:",
+      [d.metadata["section"] for d in res["source_documents"]])
 
     # 4️⃣ Extract clean citations (dict format)
     cites = [
