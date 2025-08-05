@@ -44,10 +44,12 @@ Return markdown exactly in this form:
 """
 )
 
-# 3) Retriever with relevance threshold  (k = 8, keep only ≥ 0.85 similarity)
+# -----------------------------------------------------------
+# Retriever: top-10 chunks, keep only those with ≥ 0.80 similarity
+# -----------------------------------------------------------
 retriever = _store.as_retriever(
     search_type   = "similarity_score_threshold",
-    search_kwargs = {"k": 8, "score_threshold": 0.85},
+    search_kwargs = {"k": 10, "score_threshold": 0.80},
 )
 
 # 4) Single, final chain
@@ -62,20 +64,40 @@ _chain = ConversationalRetrievalChain.from_llm(
 )
 
 
+# -----------------------------------------------------------
+# Return AI markdown + structured citations
+# -----------------------------------------------------------
 def get_ai_decision(biz: str, exp: str, ctrl: str):
-    user_q = (
-        f"Business Summary:\n{biz}\n\n"
-        f"Cyber Exposures:\n{exp}\n\n"
-        f"Controls Summary:\n{ctrl}\n\n"
-        "Provide your recommendation."
+    # ----- build the prompt pieces -----
+    context = f"""
+### Submission Details
+Business Summary:
+{biz}
+
+Cyber Exposures:
+{exp}
+
+Controls Summary:
+{ctrl}
+"""
+
+    # Ask the chain
+    res = _chain.invoke(
+        {
+            "question": "Provide a recommendation.",
+            "context":  context,
+            "chat_history": [],
+        }
     )
-    res = _chain({"question": user_q, "chat_history": []})
-    
-    # guideline_rag.py  – inside get_ai_decision()
+
+    # ----- tidy citations -----
     cites = [
-        {"section": d.metadata.get("section", "Untitled"),
-         "page":    d.metadata.get("page", "?")}
+        {
+            "section": d.metadata.get("section", "Untitled"),
+            "page":    d.metadata.get("page", "?"),
+        }
         for d in res["source_documents"]
     ]
 
     return res["answer"], cites
+
