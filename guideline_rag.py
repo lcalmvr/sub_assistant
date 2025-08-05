@@ -1,6 +1,7 @@
 # guideline_rag.py  (≈ 45 LOC)
 
 import os, json
+import re
 from supabase import create_client
 from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
@@ -69,8 +70,11 @@ _chain = ConversationalRetrievalChain.from_llm(
 #     so the retriever can pull guideline chunks about MFA, EDR, etc.
 #   * {context} is still passed so the LLM can read the details, too.
 # ────────────────────────────────────────────────────────────────
+# ───────────────────────────────────────────────────────────
+# NEW get_ai_decision  (filters & de-duplicates citations)
+# ───────────────────────────────────────────────────────────
 def get_ai_decision(biz: str, exp: str, ctrl: str):
-    # 1️⃣ Build one long question string that contains the submission details
+    # 1) Build query & context (submission details)
     query_text = f"""
 Business Summary:
 {biz}
@@ -83,29 +87,34 @@ Controls Summary:
 
 Provide a recommendation.
 """
+    context = query_text  # same text injected into the prompt
 
-    # 2️⃣ Provide the same details to the LLM as separate context
-    context = query_text  # re-use the same block
-
-    # 3️⃣ Ask the chain
+    # 2) Run the chain
     res = _chain.invoke(
         {
-            "question": query_text,   # used for embedding / retrieval
-            "context":  context,      # injected into the prompt
+            "question": query_text,   # drives similarity search
+            "context":  context,      # visible to the LLM
             "chat_history": [],
         }
     )
-    
-    print(">>> RETRIEVED HEADINGS:",
-      [d.metadata["section"] for d in res["source_documents"]])
 
-    # 4️⃣ Extract clean citations (dict format)
+    # 3) Clean, filtered citations  (keep headings that start with a digit)
     cites = [
         {
             "section": d.metadata.get("section", "Untitled"),
             "page":    d.metadata.get("page", "?"),
         }
         for d in res["source_documents"]
+        if re.match(r"^\d", d.metadata.get("section", ""))
     ]
 
-    return res["answer"], cites
+    # 4) De-duplicate while preserving order
+    seen = set()
+    unique_cites = []
+    for c in cites:
+        key = (c["section"], c["page"])
+        if key not in seen:
+            seen.add(key)
+            unique_cites.append(c)
+
+    return res["answer"], unique_cites
