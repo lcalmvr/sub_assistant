@@ -299,3 +299,95 @@ tail -f poll_inbox.log
 3. Check console output for error messages
 4. Verify environment variables and API keys
 5. Test individual components in isolation
+
+---
+
+## 🆕 **CURRENT PROJECT STATE UPDATES** (After Modular Refactoring)
+
+### Primary Changes
+- ✅ **Production Interface**: `viewer_with_modular_rating.py` (modular rating component)
+- ✅ **Legacy Interface**: `viewer.py` (original full version)
+- ✅ **New Component**: `components/rating_panel_v2.py` (reusable rating logic)
+- ✅ **Fixed EDR Issue**: Controls now parsed from text summaries
+- ✅ **Clean Archive**: Old files moved to `archive/` directory
+
+### Updated Commands
+
+#### **Production Interface (CURRENT)**
+```bash
+# Use the modular production version
+streamlit run viewer_with_modular_rating.py
+
+# Legacy version for reference
+streamlit run viewer.py
+```
+
+#### **Updated Rating Engine API** 
+```bash
+# Rating engine now uses price_with_breakdown for detailed results
+python -c "
+from rating_engine.engine import price_with_breakdown
+result = price_with_breakdown({
+    'industry': 'Advertising_Marketing_Technology',  # Updated industry slug
+    'revenue': 50000000,
+    'limit': 2000000,
+    'retention': 25000,
+    'controls': ['MFA', 'EDR']  # Now properly parsed from text
+})
+print(f'Premium: \${result[\"premium\"]:,.2f}')
+print(f'Hazard Class: {result[\"breakdown\"][\"hazard_class\"]}')
+print(f'Control Modifiers: {len(result[\"breakdown\"][\"control_modifiers\"])} applied')
+"
+```
+
+#### **New Controls Parsing Feature**
+```bash
+# Test the fix for EDR contradiction issue
+python -c "
+from app.pipeline import parse_controls_from_summary
+bullet_summary = 'CrowdStrike deployed for endpoint protection. Multi-factor authentication required.'
+nist_summary = 'AC-2: Account Management implemented with MFA'
+controls = parse_controls_from_summary(bullet_summary, nist_summary)
+print(f'Parsed controls: {controls}')
+# Expected output: ['EDR', 'MFA']
+"
+```
+
+#### **Archive References**
+```bash
+# Setup scripts moved to archive (run if needed)
+python archive/setup_scripts/setup_embeddings.py
+python archive/setup_scripts/add_revenue_column.py
+
+# Test files for reference
+ls archive/tests/test_*.py
+
+# Development utilities
+ls archive/dev_scripts/
+```
+
+#### **Updated File Structure**
+```
+sub_assistant/
+├── viewer_with_modular_rating.py  # 🎯 CURRENT PRODUCTION
+├── viewer.py                      # Legacy original
+├── components/                    # 🆕 Modular components
+│   └── rating_panel_v2.py        # Reusable rating logic
+├── archive/                       # 🗃️ Archived files
+│   ├── README.md                  # Archive documentation  
+│   ├── legacy_viewers/            # Old viewer versions
+│   ├── failed_modular/            # Over-simplified attempt
+│   ├── setup_scripts/             # One-time migration scripts
+│   ├── dev_scripts/              # Development utilities
+│   └── tests/                    # Development test files
+├── rating_engine/                 # ✅ Core rating logic
+├── app/                          # ✅ Core processing
+└── ...                           # Other unchanged files
+```
+
+### Key Improvements
+1. **Modular Architecture**: Rating component can be reused for alternate rating mechanisms
+2. **Fixed EDR Bug**: Controls properly extracted from text summaries  
+3. **Clean Codebase**: 525+ lines of rating code modularized into reusable component
+4. **Preserved Functionality**: All original features maintained
+5. **Development Ready**: Foundation prepared for alternate rating mechanism

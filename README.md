@@ -75,11 +75,11 @@ python init_db.py
 # Enable pgvector extension
 python enable_pgvector.py
 
-# Set up embeddings column
-python setup_embeddings.py
+# Set up embeddings column (if needed - archived)
+python archive/setup_scripts/setup_embeddings.py
 
-# If you have an existing database, add the revenue column
-python add_revenue_column.py
+# If you have an existing database, add the revenue column (if needed - archived)
+python archive/setup_scripts/add_revenue_column.py
 ```
 
 ### Load Sample Data
@@ -87,6 +87,24 @@ python add_revenue_column.py
 # Load underwriting guidelines
 python scripts/load_guidelines.py
 ```
+
+## 📁 Current Project Structure
+
+### 🎯 Active Files
+- `viewer_with_modular_rating.py` - **Production admin interface**
+- `viewer.py` - Original admin interface (legacy)
+- `components/rating_panel_v2.py` - Reusable rating component
+- `rating_engine/engine.py` - Core rating logic
+- `app/pipeline.py` - Document processing with controls parsing
+- `guideline_rag.py` - AI underwriting recommendations
+
+### 🗃️ Archived Files
+- `archive/legacy_viewers/` - Backup viewer versions
+- `archive/failed_modular/` - Over-simplified modular attempt
+- `archive/setup_scripts/` - One-time migration scripts
+- `archive/dev_scripts/` - Development utilities
+- `archive/tests/` - Development test files
+- `archive/README.md` - Documentation of archived files
 
 ## 📁 Script Reference
 
@@ -148,11 +166,18 @@ Config-driven rating engine:
 ### Admin Interface
 
 #### `viewer.py`
-Streamlit-based admin interface:
+Original Streamlit-based admin interface:
 - Submission review and editing
 - AI recommendation display
 - Quote generation and PDF export
 - Document management
+
+#### `viewer_with_modular_rating.py` ⭐ **CURRENT PRODUCTION VERSION**
+Modular Streamlit interface with extracted rating component:
+- All functionality of original viewer
+- Modular rating system using `components/rating_panel_v2.py`
+- Cleaner architecture for future enhancements
+- Ready for alternate rating mechanism integration
 
 ## 🔧 Configuration
 
@@ -196,11 +221,14 @@ SUPABASE_SERVICE_ROLE=your_service_role_key
 # Process local fixtures
 python ingest_local.py --dir fixtures/acme/
 
-# Run admin interface
+# Run admin interface (production version)
+streamlit run viewer_with_modular_rating.py
+
+# Run original admin interface (legacy)
 streamlit run viewer.py
 
 # Test rating engine
-python -c "from rating_engine.engine import price; print(price({'industry': 'fintech', 'revenue': 50000000, 'limit': 2000000, 'retention': 25000, 'controls': ['MFA', 'EDR']}))"
+python -c "from rating_engine.engine import price_with_breakdown; print(price_with_breakdown({'industry': 'Advertising_Marketing_Technology', 'revenue': 50000000, 'limit': 2000000, 'retention': 25000, 'controls': ['MFA', 'EDR']}))"
 ```
 
 ### Fixture Structure
