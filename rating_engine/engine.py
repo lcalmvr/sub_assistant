@@ -74,6 +74,101 @@ def _nearest_key(d: dict, key: str):
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def price_with_breakdown(submission: dict) -> dict:
+    """
+    Calculate premium with detailed breakdown of rating factors.
+    
+    Expected submission keys:
+        industry   : str  – slug matching YAML map
+        revenue    : int  – annual revenue in USD
+        limit      : int  – policy limit (e.g. 2_000_000)
+        retention  : int  – retention / deductible (e.g. 25_000)
+        controls   : list[str] – control slugs present (e.g. ["MFA","EDR"])
+    
+    Returns detailed breakdown including all rating factors and assumptions.
+    """
+    industry   = submission["industry"]
+    revenue    = submission["revenue"]
+    limit      = submission["limit"]
+    retention  = submission["retention"]
+    controls   = submission.get("controls", [])
+    
+    # Cast revenue to float so all math is float-based
+    revenue = float(revenue)
+
+    # Track breakdown components
+    breakdown = {}
+
+    # 1️⃣  Hazard class lookup
+    hazard = INDUSTRY_HAZARD.get(industry)
+    if hazard is None:
+        raise ValueError(f"Unknown industry slug '{industry}' in INDUSTRY_HAZARD map")
+    
+    breakdown["industry"] = industry
+    breakdown["hazard_class"] = hazard
+
+    # 2️⃣  Base rate per $1,000 revenue
+    band_key   = _revenue_band_key(revenue)
+    rate_table = HAZARD_BASE.get(str(hazard)) or HAZARD_BASE.get(hazard)
+    rate_per_k = rate_table[band_key]
+    base_prem  = (revenue / 1_000) * rate_per_k
+    
+    breakdown["revenue_band"] = band_key
+    breakdown["base_rate_per_1k"] = rate_per_k
+    breakdown["base_premium"] = base_prem
+
+    # 3️⃣  Limit factor
+    limit_key = _nearest_key(LIMIT_FACTORS, f"{limit//1_000_000}M")
+    limit_factor = LIMIT_FACTORS[limit_key]
+    prem = base_prem * limit_factor
+    
+    breakdown["limit_key"] = limit_key
+    breakdown["limit_factor"] = limit_factor
+    breakdown["premium_after_limit"] = prem
+
+    # 4️⃣  Retention factor  ─ tolerate str **or** int keys
+    ret_factor = RET_FACTORS.get(str(retention)) or RET_FACTORS.get(retention)
+    if ret_factor is None:
+        # choose the next-higher deductible if exact not found
+        numeric_keys = sorted(int(k) if isinstance(k, str) else k
+                              for k in RET_FACTORS.keys())
+        larger = [k for k in numeric_keys if k > retention]
+        chosen = larger[0] if larger else numeric_keys[-1]
+        ret_factor = RET_FACTORS.get(str(chosen)) or RET_FACTORS.get(chosen)
+
+    prem *= ret_factor
+    
+    breakdown["retention_factor"] = ret_factor
+    breakdown["premium_after_retention"] = prem
+
+    # 5️⃣  Control modifiers
+    applied_modifiers = []
+    for ctrl_slug, mod in CTRL_MODS.items():
+        if ctrl_slug.startswith("No_"):
+            positive_slug = ctrl_slug[3:]
+            if positive_slug not in controls:
+                prem *= (1 + mod)
+                applied_modifiers.append({"control": ctrl_slug, "modifier": mod, "reason": f"Missing {positive_slug}"})
+        elif ctrl_slug in controls:
+            prem *= (1 + mod)
+            applied_modifiers.append({"control": ctrl_slug, "modifier": mod, "reason": f"Has {ctrl_slug}"})
+    
+    breakdown["control_modifiers"] = applied_modifiers
+    breakdown["premium_after_controls"] = prem
+
+    # 6️⃣  Round to nearest 100
+    final_prem = Decimal(prem).quantize(Decimal("100"), rounding=ROUND_HALF_UP)
+    
+    breakdown["final_premium"] = int(final_prem)
+
+    return {
+        "hazard_class": hazard,
+        "premium": int(final_prem),
+        "limit": limit,
+        "retention": retention,
+        "breakdown": breakdown,
+    }
+
 def price(submission: dict) -> dict:
     """
     Calculate premium.

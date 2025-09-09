@@ -27,7 +27,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 CURRENT_USER = st.session_state.get("current_user", os.getenv("USER", "unknown"))
 
 # ░░░░░░░░░░░░░░  QUOTE HELPERS  ░░░░░░░░░░░░░░░
-from rating_engine.engine import price as rate_quote
+from rating_engine.engine import price as rate_quote, price_with_breakdown
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -721,11 +721,176 @@ if sub_id:
 
     # ------------------- Rating --------------------
     with st.expander("⭐ Rate & Quote", expanded=False):
-        # Empty container for rating functionality
-        rating_container = st.empty()
+        # Get submission data for both preview and quote generation
+        with get_conn().cursor() as cur:
+            cur.execute(
+                """
+                SELECT applicant_name, business_summary, annual_revenue, naics_primary_title
+                FROM submissions
+                WHERE id = %s
+                """,
+                (sub_id,),
+            )
+            sub_data = cur.fetchone()
         
-        with rating_container.container():
-            st.info("Rating functionality will be implemented here")
+        if sub_data:
+            # Check if revenue exists
+            if sub_data[2] is not None:  # Revenue exists
+                # Map industry name to rating engine slug
+                industry_slug = map_industry_to_slug(sub_data[3])
+                
+                # Rating Preview Section
+                st.markdown("#### 🔍 Preview Rating")
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
+                    if st.button("Preview Rating with Assumptions", key=f"preview_{sub_id}"):
+                        with st.spinner("Calculating premium..."):
+                            try:
+                                quote_data = {
+                                    "industry": industry_slug,
+                                    "revenue": sub_data[2],
+                                    "limit": 2_000_000,  # Default $2M limit
+                                    "retention": 25_000,  # Default $25K retention
+                                    "controls": [],  # Default empty controls
+                                }
+                                
+                                # Get detailed rating breakdown
+                                rating_result = price_with_breakdown(quote_data)
+                                breakdown = rating_result["breakdown"]
+                                
+                                st.success(f"**Annual Premium: ${rating_result['premium']:,}**")
+                                
+                                # Display rating assumptions
+                                with st.container():
+                                    st.markdown("##### Rating Assumptions Used:")
+                                    
+                                    col_left, col_right = st.columns([1, 1])
+                                    
+                                    with col_left:
+                                        st.markdown(f"**Industry:** {breakdown['industry'].replace('_', ' ')}")
+                                        st.markdown(f"**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)")
+                                        st.markdown(f"**Revenue Band:** {breakdown['revenue_band']}")
+                                        st.markdown(f"**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
+                                    
+                                    with col_right:
+                                        st.markdown(f"**Policy Limit:** ${rating_result['limit']:,}")
+                                        st.markdown(f"**Limit Factor:** {breakdown['limit_factor']:.2f}x")
+                                        st.markdown(f"**Retention/Deductible:** ${rating_result['retention']:,}")
+                                        st.markdown(f"**Retention Factor:** {breakdown['retention_factor']:.2f}x")
+                                    
+                                    # Show control modifiers if any
+                                    if breakdown['control_modifiers']:
+                                        st.markdown("**Control Adjustments:**")
+                                        for mod in breakdown['control_modifiers']:
+                                            modifier_pct = mod['modifier'] * 100
+                                            sign = "+" if modifier_pct > 0 else ""
+                                            st.markdown(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
+                                    else:
+                                        st.markdown("**Control Adjustments:** None applied (using default controls)")
+                                    
+                                    # Show calculation steps
+                                    st.markdown("##### Premium Calculation:")
+                                    st.markdown(f"1. Base Premium: ${breakdown['base_premium']:,.0f}")
+                                    st.markdown(f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}")
+                                    st.markdown(f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}")
+                                    st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
+                                    st.markdown(f"5. **Final Premium (rounded to $100):** ${breakdown['final_premium']:,}")
+                            
+                            except Exception as e:
+                                st.error(f"Error calculating premium: {e}")
+                
+                with col2:
+                    st.info("👈 Click to see detailed rating assumptions and premium calculation")
+            
+            else:  # Revenue missing
+                st.markdown("#### 🔍 Preview Rating")
+                st.warning("Annual revenue is required for rating preview.")
+                
+                # Revenue input for preview
+                preview_revenue = st.number_input(
+                    "Enter Annual Revenue ($) for Preview",
+                    min_value=0,
+                    value=1000000,
+                    step=100000,
+                    key=f"preview_revenue_input_{sub_id}"
+                )
+                
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("Preview Rating with This Revenue", key=f"preview_temp_{sub_id}"):
+                        with st.spinner("Calculating premium..."):
+                            try:
+                                industry_slug = map_industry_to_slug(sub_data[3])
+                                quote_data = {
+                                    "industry": industry_slug,
+                                    "revenue": preview_revenue,
+                                    "limit": 2_000_000,
+                                    "retention": 25_000,
+                                    "controls": [],
+                                }
+                                
+                                # Get detailed rating breakdown
+                                rating_result = price_with_breakdown(quote_data)
+                                breakdown = rating_result["breakdown"]
+                                
+                                st.success(f"**Annual Premium: ${rating_result['premium']:,}** (using revenue: ${preview_revenue:,})")
+                                
+                                # Display rating assumptions (same as above)
+                                with st.container():
+                                    st.markdown("##### Rating Assumptions Used:")
+                                    
+                                    col_left, col_right = st.columns([1, 1])
+                                    
+                                    with col_left:
+                                        st.markdown(f"**Industry:** {breakdown['industry'].replace('_', ' ')}")
+                                        st.markdown(f"**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)")
+                                        st.markdown(f"**Revenue Band:** {breakdown['revenue_band']}")
+                                        st.markdown(f"**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
+                                    
+                                    with col_right:
+                                        st.markdown(f"**Policy Limit:** ${rating_result['limit']:,}")
+                                        st.markdown(f"**Limit Factor:** {breakdown['limit_factor']:.2f}x")
+                                        st.markdown(f"**Retention/Deductible:** ${rating_result['retention']:,}")
+                                        st.markdown(f"**Retention Factor:** {breakdown['retention_factor']:.2f}x")
+                                    
+                                    if breakdown['control_modifiers']:
+                                        st.markdown("**Control Adjustments:**")
+                                        for mod in breakdown['control_modifiers']:
+                                            modifier_pct = mod['modifier'] * 100
+                                            sign = "+" if modifier_pct > 0 else ""
+                                            st.markdown(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
+                                    else:
+                                        st.markdown("**Control Adjustments:** None applied (using default controls)")
+                                    
+                                    st.markdown("##### Premium Calculation:")
+                                    st.markdown(f"1. Base Premium: ${breakdown['base_premium']:,.0f}")
+                                    st.markdown(f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}")
+                                    st.markdown(f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}")
+                                    st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
+                                    st.markdown(f"5. **Final Premium (rounded to $100):** ${breakdown['final_premium']:,}")
+                            
+                            except Exception as e:
+                                st.error(f"Error calculating premium: {e}")
+                
+                with col2:
+                    if st.button("Save Revenue to Database", key=f"save_preview_revenue_{sub_id}"):
+                        with st.spinner("Saving revenue..."):
+                            try:
+                                conn = get_conn()
+                                with conn.cursor() as cur:
+                                    cur.execute(
+                                        "UPDATE submissions SET annual_revenue = %s WHERE id = %s",
+                                        (preview_revenue, sub_id)
+                                    )
+                                    conn.commit()
+                                st.success("Revenue saved! Page will refresh.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error saving revenue: {e}")
+        
+        else:
+            st.error("Could not load submission data")
         
         st.divider()
         
