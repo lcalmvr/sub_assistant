@@ -4,6 +4,10 @@ Rating and quote generation panel component
 import streamlit as st
 from datetime import datetime
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 from rating_engine.engine import price_with_breakdown
 from app.pipeline import parse_controls_from_summary
 from ..config.settings import map_industry_to_slug

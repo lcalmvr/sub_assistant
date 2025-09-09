@@ -9,9 +9,15 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Dict, Any
 
-from jinja2 import Environment, FileSystemLoader
-from supabase import create_client
-from weasyprint import HTML
+# Optional dependencies - fail gracefully if not available
+try:
+    from jinja2 import Environment, FileSystemLoader
+    from supabase import create_client
+    from weasyprint import HTML
+    DEPENDENCIES_AVAILABLE = True
+except ImportError as e:
+    DEPENDENCIES_AVAILABLE = False
+    print(f"Quote generation dependencies not available: {e}")
 
 from .database import get_conn
 from ..config.settings import CURRENT_USER, SUPABASE_URL, SUPABASE_KEY
@@ -23,11 +29,18 @@ if not SUPABASE_KEY:
     SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
 # Initialize Supabase client and template environment
-SB = create_client(SUPABASE_URL, SUPABASE_KEY)
-TEMPLATE_ENV = Environment(loader=FileSystemLoader("rating_engine/templates"))
+if DEPENDENCIES_AVAILABLE:
+    SB = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+    TEMPLATE_ENV = Environment(loader=FileSystemLoader("rating_engine/templates"))
+else:
+    SB = None
+    TEMPLATE_ENV = None
 
 def render_quote_pdf(ctx: Dict[str, Any]) -> Path:
     """Render quote HTML template to PDF file"""
+    if not DEPENDENCIES_AVAILABLE or not TEMPLATE_ENV:
+        raise RuntimeError("Quote generation dependencies not available")
+    
     html = TEMPLATE_ENV.get_template("quote.html").render(**ctx)
     tmp = NamedTemporaryFile(delete=False, suffix=".pdf")
     HTML(string=html).write_pdf(tmp.name)
@@ -35,6 +48,9 @@ def render_quote_pdf(ctx: Dict[str, Any]) -> Path:
 
 def upload_pdf_to_storage(pdf_path: Path) -> str:
     """Upload PDF to Supabase storage and return public URL"""
+    if not DEPENDENCIES_AVAILABLE or not SB:
+        raise RuntimeError("Storage dependencies not available")
+    
     bucket = "quotes"
     key = f"{uuid.uuid4()}.pdf"
     with pdf_path.open("rb") as f:
