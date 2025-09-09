@@ -1,0 +1,7 @@
+{
+  "pageCount": 2,
+  "losses": [
+    { "date": "2023-02-10", "cause": "phishing", "paid": 12000, "reserved": 0 },
+    { "date": "2024-06-21", "cause": "business email compromise", "paid": 0, "reserved": 5000 }
+  ]
+}

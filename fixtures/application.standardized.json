@@ -1,0 +1,14 @@
+{
+  "pageCount": 7,
+  "generalInformation": {
+    "applicantName": "Acme Industries",
+    "primaryWebsiteAndEmailDomains": "acme-msp.example",
+    "primaryIndustry": "Managed IT / MSP"
+  },
+  "security": {
+    "mfa": { "present": true },
+    "backups": { "present": true, "type": "immutable" },
+    "edr": { "present": true },
+    "phishingTraining": { "present": true }
+  }
+}
