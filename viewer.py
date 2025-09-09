@@ -28,6 +28,7 @@ CURRENT_USER = st.session_state.get("current_user", os.getenv("USER", "unknown")
 
 # ░░░░░░░░░░░░░░  QUOTE HELPERS  ░░░░░░░░░░░░░░░
 from rating_engine.engine import price as rate_quote, price_with_breakdown
+from app.pipeline import parse_controls_from_summary
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -41,6 +42,38 @@ def map_industry_to_slug(industry_name):
         # Add more mappings as needed
     }
     return industry_mapping.get(industry_name, "Professional_Services_Consulting")  # Default fallback
+
+def parse_dollar_input(value_str):
+    """Parse dollar input with M/K suffixes (e.g., '1M' -> 1000000, '50K' -> 50000)"""
+    if not value_str:
+        return 0
+    
+    value_str = str(value_str).strip().upper()
+    
+    if value_str.endswith('M'):
+        try:
+            return int(float(value_str[:-1]) * 1_000_000)
+        except:
+            return 0
+    elif value_str.endswith('K'):
+        try:
+            return int(float(value_str[:-1]) * 1_000)
+        except:
+            return 0
+    else:
+        try:
+            return int(float(value_str))
+        except:
+            return 0
+
+def format_dollar_display(value):
+    """Format dollar value for display (e.g., 1000000 -> '1M', 50000 -> '50K')"""
+    if value >= 1_000_000 and value % 1_000_000 == 0:
+        return f"{value // 1_000_000}M"
+    elif value >= 1_000 and value % 1_000 == 0:
+        return f"{value // 1_000}K"
+    else:
+        return f"{value:,}"
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 import uuid, mimetypes, json
@@ -725,7 +758,8 @@ if sub_id:
         with get_conn().cursor() as cur:
             cur.execute(
                 """
-                SELECT applicant_name, business_summary, annual_revenue, naics_primary_title
+                SELECT applicant_name, business_summary, annual_revenue, naics_primary_title, 
+                       bullet_point_summary, nist_controls_summary
                 FROM submissions
                 WHERE id = %s
                 """,
@@ -740,142 +774,208 @@ if sub_id:
                 industry_slug = map_industry_to_slug(sub_data[3])
                 
                 # Rating Preview Section
-                st.markdown("#### 🔍 Preview Rating")
-                col1, col2 = st.columns([1, 1])
+                st.markdown("#### 🔍 Rating Preview")
                 
-                with col1:
-                    if st.button("Preview Rating with Assumptions", key=f"preview_{sub_id}"):
-                        with st.spinner("Calculating premium..."):
-                            try:
-                                quote_data = {
-                                    "industry": industry_slug,
-                                    "revenue": sub_data[2],
-                                    "limit": 2_000_000,  # Default $2M limit
-                                    "retention": 25_000,  # Default $25K retention
-                                    "controls": [],  # Default empty controls
-                                }
-                                
-                                # Get detailed rating breakdown
-                                rating_result = price_with_breakdown(quote_data)
-                                breakdown = rating_result["breakdown"]
-                                
-                                st.success(f"**Annual Premium: ${rating_result['premium']:,}**")
-                                
-                                # Display rating assumptions
-                                with st.container():
-                                    st.markdown("##### Rating Assumptions Used:")
-                                    
-                                    col_left, col_right = st.columns([1, 1])
-                                    
-                                    with col_left:
-                                        st.markdown(f"**Industry:** {breakdown['industry'].replace('_', ' ')}")
-                                        st.markdown(f"**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)")
-                                        st.markdown(f"**Revenue Band:** {breakdown['revenue_band']}")
-                                        st.markdown(f"**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
-                                    
-                                    with col_right:
-                                        st.markdown(f"**Policy Limit:** ${rating_result['limit']:,}")
-                                        st.markdown(f"**Limit Factor:** {breakdown['limit_factor']:.2f}x")
-                                        st.markdown(f"**Retention/Deductible:** ${rating_result['retention']:,}")
-                                        st.markdown(f"**Retention Factor:** {breakdown['retention_factor']:.2f}x")
-                                    
-                                    # Show control modifiers if any
-                                    if breakdown['control_modifiers']:
-                                        st.markdown("**Control Adjustments:**")
-                                        for mod in breakdown['control_modifiers']:
-                                            modifier_pct = mod['modifier'] * 100
-                                            sign = "+" if modifier_pct > 0 else ""
-                                            st.markdown(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
-                                    else:
-                                        st.markdown("**Control Adjustments:** None applied (using default controls)")
-                                    
-                                    # Show calculation steps
-                                    st.markdown("##### Premium Calculation:")
-                                    st.markdown(f"1. Base Premium: ${breakdown['base_premium']:,.0f}")
-                                    st.markdown(f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}")
-                                    st.markdown(f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}")
-                                    st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
-                                    st.markdown(f"5. **Final Premium (rounded to $100):** ${breakdown['final_premium']:,}")
-                            
-                            except Exception as e:
-                                st.error(f"Error calculating premium: {e}")
+                # Policy Configuration
+                config_col1, config_col2 = st.columns([1, 1])
                 
-                with col2:
-                    st.info("👈 Click to see detailed rating assumptions and premium calculation")
+                with config_col1:
+                    st.markdown("**Policy Limit:**")
+                    # Left-aligned buttons with proper spacing
+                    button_cols = st.columns([1, 1, 1, 1, 4])  # Last column takes remaining space
+                    
+                    with button_cols[0]:
+                        if st.button("$1M", key=f"limit_1m_{sub_id}"):
+                            st.session_state[f"selected_limit_{sub_id}"] = 1_000_000
+                            st.session_state[f"selected_limit_text_{sub_id}"] = "1M"
+                            st.rerun()
+                    with button_cols[1]:
+                        if st.button("$2M", key=f"limit_2m_{sub_id}"):
+                            st.session_state[f"selected_limit_{sub_id}"] = 2_000_000
+                            st.session_state[f"selected_limit_text_{sub_id}"] = "2M"
+                            st.rerun()
+                    with button_cols[2]:
+                        if st.button("$3M", key=f"limit_3m_{sub_id}"):
+                            st.session_state[f"selected_limit_{sub_id}"] = 3_000_000
+                            st.session_state[f"selected_limit_text_{sub_id}"] = "3M"
+                            st.rerun()
+                    with button_cols[3]:
+                        if st.button("$5M", key=f"limit_5m_{sub_id}"):
+                            st.session_state[f"selected_limit_{sub_id}"] = 5_000_000
+                            st.session_state[f"selected_limit_text_{sub_id}"] = "5M"
+                            st.rerun()
+                    
+                    # Get current values
+                    current_limit = st.session_state.get(f"selected_limit_{sub_id}", 2_000_000)
+                    current_limit_text = st.session_state.get(f"selected_limit_text_{sub_id}", "2M")
+                    
+                    # Text input for limit with M/K formatting
+                    limit_input = st.text_input(
+                        "Policy Limit (e.g., 2M, 500K)",
+                        value=current_limit_text,
+                        key=f"limit_text_input_{sub_id}",
+                        help="Enter limit using M for millions (2M = $2,000,000) or K for thousands (500K = $500,000)"
+                    )
+                    
+                    # Parse and update limit
+                    parsed_limit = parse_dollar_input(limit_input)
+                    if parsed_limit > 0:
+                        st.session_state[f"selected_limit_{sub_id}"] = parsed_limit
+                        selected_limit = parsed_limit
+                        st.caption(f"Parsed as: ${parsed_limit:,}")
+                    else:
+                        selected_limit = current_limit
+                        if limit_input.strip():
+                            st.error("Invalid format. Use: 2M, 500K, or 2000000")
+                
+                with config_col2:
+                    st.markdown("**Retention/Deductible:**")
+                    # Left-aligned buttons with proper spacing
+                    ret_button_cols = st.columns([1, 1, 1, 1, 1, 1, 2])  # Last column takes remaining space
+                    
+                    with ret_button_cols[0]:
+                        if st.button("$10K", key=f"ret_10k_{sub_id}"):
+                            st.session_state[f"selected_retention_{sub_id}"] = 10_000
+                            st.session_state[f"selected_retention_text_{sub_id}"] = "10K"
+                            st.rerun()
+                    with ret_button_cols[1]:
+                        if st.button("$25K", key=f"ret_25k_{sub_id}"):
+                            st.session_state[f"selected_retention_{sub_id}"] = 25_000
+                            st.session_state[f"selected_retention_text_{sub_id}"] = "25K"
+                            st.rerun()
+                    with ret_button_cols[2]:
+                        if st.button("$50K", key=f"ret_50k_{sub_id}"):
+                            st.session_state[f"selected_retention_{sub_id}"] = 50_000
+                            st.session_state[f"selected_retention_text_{sub_id}"] = "50K"
+                            st.rerun()
+                    with ret_button_cols[3]:
+                        if st.button("$100K", key=f"ret_100k_{sub_id}"):
+                            st.session_state[f"selected_retention_{sub_id}"] = 100_000
+                            st.session_state[f"selected_retention_text_{sub_id}"] = "100K"
+                            st.rerun()
+                    with ret_button_cols[4]:
+                        if st.button("$250K", key=f"ret_250k_{sub_id}"):
+                            st.session_state[f"selected_retention_{sub_id}"] = 250_000
+                            st.session_state[f"selected_retention_text_{sub_id}"] = "250K"
+                            st.rerun()
+                    with ret_button_cols[5]:
+                        if st.button("$500K", key=f"ret_500k_{sub_id}"):
+                            st.session_state[f"selected_retention_{sub_id}"] = 500_000
+                            st.session_state[f"selected_retention_text_{sub_id}"] = "500K"
+                            st.rerun()
+                    
+                    # Get current values
+                    current_retention = st.session_state.get(f"selected_retention_{sub_id}", 25_000)
+                    current_retention_text = st.session_state.get(f"selected_retention_text_{sub_id}", "25K")
+                    
+                    # Text input for retention with M/K formatting
+                    retention_input = st.text_input(
+                        "Retention Amount (e.g., 25K, 100K)",
+                        value=current_retention_text,
+                        key=f"retention_text_input_{sub_id}",
+                        help="Enter retention using K for thousands (25K = $25,000) or full amount (25000)"
+                    )
+                    
+                    # Parse and update retention
+                    parsed_retention = parse_dollar_input(retention_input)
+                    if parsed_retention > 0:
+                        st.session_state[f"selected_retention_{sub_id}"] = parsed_retention
+                        selected_retention = parsed_retention
+                        st.caption(f"Parsed as: ${parsed_retention:,}")
+                    else:
+                        selected_retention = current_retention
+                        if retention_input.strip():
+                            st.error("Invalid format. Use: 25K, 100K, or 25000")
+                
+                # Auto-generate rating preview
+                try:
+                    # Parse controls from bullet and NIST summaries
+                    bullet_summary = sub_data[4] or ""  # bullet_point_summary
+                    nist_summary = sub_data[5] or ""    # nist_controls_summary
+                    parsed_controls = parse_controls_from_summary(bullet_summary, nist_summary)
+                    
+                    quote_data = {
+                        "industry": industry_slug,
+                        "revenue": sub_data[2],
+                        "limit": selected_limit,
+                        "retention": selected_retention,
+                        "controls": parsed_controls,
+                    }
+                    
+                    # Get detailed rating breakdown
+                    rating_result = price_with_breakdown(quote_data)
+                    breakdown = rating_result["breakdown"]
+                    
+                    # Display premium prominently
+                    st.markdown("---")
+                    col_prem, col_info = st.columns([1, 2])
+                    
+                    with col_prem:
+                        st.metric("Annual Premium", f"${rating_result['premium']:,}", help="Based on current configuration")
+                    
+                    with col_info:
+                        st.info(f"Policy: ${selected_limit:,} limit / ${selected_retention:,} retention • Hazard Class: {breakdown['hazard_class']} • Rate: ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
+                    
+                    # Rating assumptions in expander
+                    with st.expander("📋 View Detailed Rating Breakdown", expanded=False):
+                        col_left, col_right = st.columns([1, 1])
+                        
+                        with col_left:
+                            st.markdown(f"**Industry:** {breakdown['industry'].replace('_', ' ')}")
+                            st.markdown(f"**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)")
+                            st.markdown(f"**Revenue Band:** {breakdown['revenue_band']}")
+                            st.markdown(f"**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
+                        
+                        with col_right:
+                            st.markdown(f"**Policy Limit:** ${rating_result['limit']:,}")
+                            st.markdown(f"**Limit Factor:** {breakdown['limit_factor']:.2f}x")
+                            st.markdown(f"**Retention/Deductible:** ${rating_result['retention']:,}")
+                            st.markdown(f"**Retention Factor:** {breakdown['retention_factor']:.2f}x")
+                        
+                        # Show control modifiers if any
+                        if breakdown['control_modifiers']:
+                            st.markdown("**Control Adjustments:**")
+                            for mod in breakdown['control_modifiers']:
+                                modifier_pct = mod['modifier'] * 100
+                                sign = "+" if modifier_pct > 0 else ""
+                                st.markdown(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
+                        else:
+                            st.markdown("**Control Adjustments:** None applied")
+                        
+                        # Show calculation steps
+                        st.markdown("**Premium Calculation:**")
+                        st.markdown(f"1. Base Premium: ${breakdown['base_premium']:,.0f}")
+                        st.markdown(f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}")
+                        st.markdown(f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}")
+                        st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
+                        st.markdown(f"5. **Final Premium (rounded):** ${breakdown['final_premium']:,}")
+                
+                except Exception as e:
+                    st.error(f"Error calculating premium: {e}")
             
             else:  # Revenue missing
-                st.markdown("#### 🔍 Preview Rating")
+                st.markdown("#### 🔍 Rating Preview")
                 st.warning("Annual revenue is required for rating preview.")
                 
-                # Revenue input for preview
-                preview_revenue = st.number_input(
-                    "Enter Annual Revenue ($) for Preview",
-                    min_value=0,
-                    value=1000000,
-                    step=100000,
-                    key=f"preview_revenue_input_{sub_id}"
-                )
+                # Revenue input line below the warning
+                rev_col1, rev_col2 = st.columns([3, 1])
                 
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    if st.button("Preview Rating with This Revenue", key=f"preview_temp_{sub_id}"):
-                        with st.spinner("Calculating premium..."):
-                            try:
-                                industry_slug = map_industry_to_slug(sub_data[3])
-                                quote_data = {
-                                    "industry": industry_slug,
-                                    "revenue": preview_revenue,
-                                    "limit": 2_000_000,
-                                    "retention": 25_000,
-                                    "controls": [],
-                                }
-                                
-                                # Get detailed rating breakdown
-                                rating_result = price_with_breakdown(quote_data)
-                                breakdown = rating_result["breakdown"]
-                                
-                                st.success(f"**Annual Premium: ${rating_result['premium']:,}** (using revenue: ${preview_revenue:,})")
-                                
-                                # Display rating assumptions (same as above)
-                                with st.container():
-                                    st.markdown("##### Rating Assumptions Used:")
-                                    
-                                    col_left, col_right = st.columns([1, 1])
-                                    
-                                    with col_left:
-                                        st.markdown(f"**Industry:** {breakdown['industry'].replace('_', ' ')}")
-                                        st.markdown(f"**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)")
-                                        st.markdown(f"**Revenue Band:** {breakdown['revenue_band']}")
-                                        st.markdown(f"**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
-                                    
-                                    with col_right:
-                                        st.markdown(f"**Policy Limit:** ${rating_result['limit']:,}")
-                                        st.markdown(f"**Limit Factor:** {breakdown['limit_factor']:.2f}x")
-                                        st.markdown(f"**Retention/Deductible:** ${rating_result['retention']:,}")
-                                        st.markdown(f"**Retention Factor:** {breakdown['retention_factor']:.2f}x")
-                                    
-                                    if breakdown['control_modifiers']:
-                                        st.markdown("**Control Adjustments:**")
-                                        for mod in breakdown['control_modifiers']:
-                                            modifier_pct = mod['modifier'] * 100
-                                            sign = "+" if modifier_pct > 0 else ""
-                                            st.markdown(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
-                                    else:
-                                        st.markdown("**Control Adjustments:** None applied (using default controls)")
-                                    
-                                    st.markdown("##### Premium Calculation:")
-                                    st.markdown(f"1. Base Premium: ${breakdown['base_premium']:,.0f}")
-                                    st.markdown(f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}")
-                                    st.markdown(f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}")
-                                    st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
-                                    st.markdown(f"5. **Final Premium (rounded to $100):** ${breakdown['final_premium']:,}")
-                            
-                            except Exception as e:
-                                st.error(f"Error calculating premium: {e}")
+                with rev_col1:
+                    revenue_input = st.text_input(
+                        "Annual Revenue (enter amount like: 1M, 500K, or 1000000)",
+                        value="1M",
+                        key=f"preview_revenue_text_{sub_id}",
+                        help="Enter revenue using M for millions (1M = $1,000,000) or K for thousands (500K = $500,000)"
+                    )
+                    preview_revenue = parse_dollar_input(revenue_input)
+                    if preview_revenue > 0:
+                        st.caption(f"Parsed as: ${preview_revenue:,}")
+                    else:
+                        st.error("Invalid format. Use: 1M, 500K, or 1000000")
                 
-                with col2:
-                    if st.button("Save Revenue to Database", key=f"save_preview_revenue_{sub_id}"):
-                        with st.spinner("Saving revenue..."):
+                with rev_col2:
+                    if st.button("💾 Save to DB", key=f"save_revenue_inline_{sub_id}", help="Save revenue to database"):
+                        if preview_revenue > 0:
                             try:
                                 conn = get_conn()
                                 with conn.cursor() as cur:
@@ -884,10 +984,191 @@ if sub_id:
                                         (preview_revenue, sub_id)
                                     )
                                     conn.commit()
-                                st.success("Revenue saved! Page will refresh.")
+                                st.success("Saved!")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"Error saving revenue: {e}")
+                                st.error(f"Error: {e}")
+                        else:
+                            st.error("Enter valid revenue first")
+                
+                # Policy Configuration - same layout as above
+                config_col1, config_col2 = st.columns([1, 1])
+                
+                with config_col1:
+                    st.markdown("**Policy Limit:**")
+                    # Left-aligned buttons with proper spacing
+                    button_cols_temp = st.columns([1, 1, 1, 1, 4])
+                    
+                    with button_cols_temp[0]:
+                        if st.button("$1M", key=f"limit_1m_temp_{sub_id}"):
+                            st.session_state[f"selected_limit_temp_{sub_id}"] = 1_000_000
+                            st.session_state[f"selected_limit_temp_text_{sub_id}"] = "1M"
+                            st.rerun()
+                    with button_cols_temp[1]:
+                        if st.button("$2M", key=f"limit_2m_temp_{sub_id}"):
+                            st.session_state[f"selected_limit_temp_{sub_id}"] = 2_000_000
+                            st.session_state[f"selected_limit_temp_text_{sub_id}"] = "2M"
+                            st.rerun()
+                    with button_cols_temp[2]:
+                        if st.button("$3M", key=f"limit_3m_temp_{sub_id}"):
+                            st.session_state[f"selected_limit_temp_{sub_id}"] = 3_000_000
+                            st.session_state[f"selected_limit_temp_text_{sub_id}"] = "3M"
+                            st.rerun()
+                    with button_cols_temp[3]:
+                        if st.button("$5M", key=f"limit_5m_temp_{sub_id}"):
+                            st.session_state[f"selected_limit_temp_{sub_id}"] = 5_000_000
+                            st.session_state[f"selected_limit_temp_text_{sub_id}"] = "5M"
+                            st.rerun()
+                    
+                    # Get current values
+                    current_limit_temp = st.session_state.get(f"selected_limit_temp_{sub_id}", 2_000_000)
+                    current_limit_temp_text = st.session_state.get(f"selected_limit_temp_text_{sub_id}", "2M")
+                    
+                    # Text input for limit with M/K formatting
+                    limit_input_temp = st.text_input(
+                        "Policy Limit (e.g., 2M, 500K)",
+                        value=current_limit_temp_text,
+                        key=f"limit_text_input_temp_{sub_id}",
+                        help="Enter limit using M for millions (2M = $2,000,000) or K for thousands (500K = $500,000)"
+                    )
+                    
+                    # Parse and update limit
+                    parsed_limit_temp = parse_dollar_input(limit_input_temp)
+                    if parsed_limit_temp > 0:
+                        st.session_state[f"selected_limit_temp_{sub_id}"] = parsed_limit_temp
+                        selected_limit_temp = parsed_limit_temp
+                        st.caption(f"Parsed as: ${parsed_limit_temp:,}")
+                    else:
+                        selected_limit_temp = current_limit_temp
+                        if limit_input_temp.strip():
+                            st.error("Invalid format. Use: 2M, 500K, or 2000000")
+                
+                with config_col2:
+                    st.markdown("**Retention/Deductible:**")
+                    # Left-aligned buttons with proper spacing
+                    ret_button_cols_temp = st.columns([1, 1, 1, 1, 1, 1, 2])
+                    
+                    with ret_button_cols_temp[0]:
+                        if st.button("$10K", key=f"ret_10k_temp_{sub_id}"):
+                            st.session_state[f"selected_retention_temp_{sub_id}"] = 10_000
+                            st.session_state[f"selected_retention_temp_text_{sub_id}"] = "10K"
+                            st.rerun()
+                    with ret_button_cols_temp[1]:
+                        if st.button("$25K", key=f"ret_25k_temp_{sub_id}"):
+                            st.session_state[f"selected_retention_temp_{sub_id}"] = 25_000
+                            st.session_state[f"selected_retention_temp_text_{sub_id}"] = "25K"
+                            st.rerun()
+                    with ret_button_cols_temp[2]:
+                        if st.button("$50K", key=f"ret_50k_temp_{sub_id}"):
+                            st.session_state[f"selected_retention_temp_{sub_id}"] = 50_000
+                            st.session_state[f"selected_retention_temp_text_{sub_id}"] = "50K"
+                            st.rerun()
+                    with ret_button_cols_temp[3]:
+                        if st.button("$100K", key=f"ret_100k_temp_{sub_id}"):
+                            st.session_state[f"selected_retention_temp_{sub_id}"] = 100_000
+                            st.session_state[f"selected_retention_temp_text_{sub_id}"] = "100K"
+                            st.rerun()
+                    with ret_button_cols_temp[4]:
+                        if st.button("$250K", key=f"ret_250k_temp_{sub_id}"):
+                            st.session_state[f"selected_retention_temp_{sub_id}"] = 250_000
+                            st.session_state[f"selected_retention_temp_text_{sub_id}"] = "250K"
+                            st.rerun()
+                    with ret_button_cols_temp[5]:
+                        if st.button("$500K", key=f"ret_500k_temp_{sub_id}"):
+                            st.session_state[f"selected_retention_temp_{sub_id}"] = 500_000
+                            st.session_state[f"selected_retention_temp_text_{sub_id}"] = "500K"
+                            st.rerun()
+                    
+                    # Get current values
+                    current_retention_temp = st.session_state.get(f"selected_retention_temp_{sub_id}", 25_000)
+                    current_retention_temp_text = st.session_state.get(f"selected_retention_temp_text_{sub_id}", "25K")
+                    
+                    # Text input for retention with M/K formatting
+                    retention_input_temp = st.text_input(
+                        "Retention Amount (e.g., 25K, 100K)",
+                        value=current_retention_temp_text,
+                        key=f"retention_text_input_temp_{sub_id}",
+                        help="Enter retention using K for thousands (25K = $25,000) or full amount (25000)"
+                    )
+                    
+                    # Parse and update retention
+                    parsed_retention_temp = parse_dollar_input(retention_input_temp)
+                    if parsed_retention_temp > 0:
+                        st.session_state[f"selected_retention_temp_{sub_id}"] = parsed_retention_temp
+                        selected_retention_temp = parsed_retention_temp
+                        st.caption(f"Parsed as: ${parsed_retention_temp:,}")
+                    else:
+                        selected_retention_temp = current_retention_temp
+                        if retention_input_temp.strip():
+                            st.error("Invalid format. Use: 25K, 100K, or 25000")
+                
+                # Auto-generate rating preview for temp scenario
+                if preview_revenue > 0:
+                    try:
+                        industry_slug = map_industry_to_slug(sub_data[3])
+                        # Parse controls from bullet and NIST summaries
+                        bullet_summary = sub_data[4] or ""  # bullet_point_summary
+                        nist_summary = sub_data[5] or ""    # nist_controls_summary
+                        parsed_controls = parse_controls_from_summary(bullet_summary, nist_summary)
+                        
+                        quote_data = {
+                            "industry": industry_slug,
+                            "revenue": preview_revenue,
+                            "limit": selected_limit_temp,
+                            "retention": selected_retention_temp,
+                            "controls": parsed_controls,
+                        }
+                        
+                        rating_result = price_with_breakdown(quote_data)
+                        breakdown = rating_result["breakdown"]
+                        
+                        # Display premium prominently
+                        st.markdown("---")
+                        col_prem, col_info, col_save = st.columns([1, 2, 1])
+                        
+                        with col_prem:
+                            st.metric("Annual Premium", f"${rating_result['premium']:,}", help="Based on entered revenue")
+                        
+                        with col_info:
+                            st.info(f"Using revenue: ${preview_revenue:,} • Policy: ${selected_limit_temp:,} / ${selected_retention_temp:,} • Hazard Class: {breakdown['hazard_class']}")
+                        
+                        with col_save:
+                            st.write("")  # Empty space for alignment
+                        
+                        # Rating breakdown in expander
+                        with st.expander("📋 View Detailed Rating Breakdown", expanded=False):
+                            col_left, col_right = st.columns([1, 1])
+                            
+                            with col_left:
+                                st.markdown(f"**Industry:** {breakdown['industry'].replace('_', ' ')}")
+                                st.markdown(f"**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)")
+                                st.markdown(f"**Revenue Band:** {breakdown['revenue_band']}")
+                                st.markdown(f"**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
+                            
+                            with col_right:
+                                st.markdown(f"**Policy Limit:** ${rating_result['limit']:,}")
+                                st.markdown(f"**Limit Factor:** {breakdown['limit_factor']:.2f}x")
+                                st.markdown(f"**Retention/Deductible:** ${rating_result['retention']:,}")
+                                st.markdown(f"**Retention Factor:** {breakdown['retention_factor']:.2f}x")
+                            
+                            if breakdown['control_modifiers']:
+                                st.markdown("**Control Adjustments:**")
+                                for mod in breakdown['control_modifiers']:
+                                    modifier_pct = mod['modifier'] * 100
+                                    sign = "+" if modifier_pct > 0 else ""
+                                    st.markdown(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
+                            else:
+                                st.markdown("**Control Adjustments:** None applied")
+                            
+                            st.markdown("**Premium Calculation:**")
+                            st.markdown(f"1. Base Premium: ${breakdown['base_premium']:,.0f}")
+                            st.markdown(f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}")
+                            st.markdown(f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}")
+                            st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
+                            st.markdown(f"5. **Final Premium (rounded):** ${breakdown['final_premium']:,}")
+                    
+                    except Exception as e:
+                        st.error(f"Error calculating premium: {e}")
         
         else:
             st.error("Could not load submission data")
@@ -954,14 +1235,23 @@ if sub_id:
                             industry_slug = map_industry_to_slug(sub_data[3])
                             st.write(f"Debug - Mapping '{sub_data[3]}' to '{industry_slug}'")
                             
+                            # Get selected policy configuration (use session state or defaults)
+                            final_limit = st.session_state.get(f"selected_limit_{sub_id}", 2_000_000)
+                            final_retention = st.session_state.get(f"selected_retention_{sub_id}", 25_000)
+                            
+                            # Parse controls from bullet and NIST summaries
+                            bullet_summary = sub_data[4] or ""  # bullet_point_summary
+                            nist_summary = sub_data[5] or ""    # nist_controls_summary
+                            parsed_controls = parse_controls_from_summary(bullet_summary, nist_summary)
+                            
                             quote_data = {
                                 "applicant_name": sub_data[0],
                                 "business_summary": sub_data[1],
                                 "revenue": sub_data[2],
                                 "industry": industry_slug,
-                                "limit": 2_000_000,  # Default $2M limit
-                                "retention": 25_000,  # Default $25K retention
-                                "controls": [],  # Default empty controls
+                                "limit": final_limit,
+                                "retention": final_retention,
+                                "controls": parsed_controls,
                                 "quote_date": datetime.now().strftime("%Y-%m-%d"),
                             }
                             
