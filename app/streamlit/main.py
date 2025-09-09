@@ -46,15 +46,24 @@ def main():
         
         # Simple list view for now
         for _, row in df.iterrows():
-            with st.expander(f"📋 {row['applicant_name']} - ${row.get('annual_revenue', 'N/A'):,}" if pd.notna(row.get('annual_revenue')) else f"📋 {row['applicant_name']} - Revenue TBD"):
+            # Safe check for revenue
+            revenue = row.get('annual_revenue')
+            has_revenue = revenue is not None and not (pd.isna(revenue) if pd.api.types.is_scalar(revenue) else False)
+            
+            revenue_display = f"${revenue:,}" if has_revenue else "Revenue TBD"
+            
+            with st.expander(f"📋 {row['applicant_name']} - {revenue_display}"):
                 
                 # Basic info
                 st.markdown(f"**Date Received:** {row['date_received']}")
                 st.markdown(f"**Industry:** {row.get('naics_primary_title', 'N/A')}")
-                if pd.notna(row.get('industry_tags')):
-                    tags = row['industry_tags'] if isinstance(row['industry_tags'], list) else []
+                
+                # Safe check for industry tags
+                industry_tags = row.get('industry_tags')
+                if industry_tags is not None:
+                    tags = industry_tags if isinstance(industry_tags, list) else []
                     if tags:
-                        st.markdown(f"**Tags:** {', '.join(tags)}")
+                        st.markdown(f"**Tags:** {', '.join(str(tag) for tag in tags)}")
                 
                 # Get detailed submission data for rating
                 with get_conn().cursor() as cur:

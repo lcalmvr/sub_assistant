@@ -7,8 +7,19 @@ import psycopg2
 import psycopg2.extras
 import streamlit as st
 from pgvector.psycopg2 import register_vector
+from sqlalchemy import create_engine
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Create SQLAlchemy engine for pandas operations
+_sqlalchemy_engine = None
+
+def get_sqlalchemy_engine():
+    """Get SQLAlchemy engine for pandas operations"""
+    global _sqlalchemy_engine
+    if _sqlalchemy_engine is None and DATABASE_URL:
+        _sqlalchemy_engine = create_engine(DATABASE_URL)
+    return _sqlalchemy_engine
 
 def get_conn():
     """Get database connection from session state or create new one"""
@@ -77,7 +88,12 @@ def load_submissions(where_clause: str, params: list) -> pd.DataFrame:
     ORDER BY date_received DESC
     LIMIT 100
     """
-    return pd.read_sql(qry, get_conn(), params=params)
+    engine = get_sqlalchemy_engine()
+    if engine:
+        return pd.read_sql(qry, engine, params=params)
+    else:
+        # Fallback to psycopg2 connection
+        return pd.read_sql(qry, get_conn(), params=params)
 
 def load_documents(submission_id: str) -> pd.DataFrame:
     """Load documents for a submission"""
@@ -87,7 +103,11 @@ def load_documents(submission_id: str) -> pd.DataFrame:
     WHERE submission_id = %s
     ORDER BY is_priority DESC, filename
     """
-    return pd.read_sql(qry, get_conn(), params=[submission_id])
+    engine = get_sqlalchemy_engine()
+    if engine:
+        return pd.read_sql(qry, engine, params=[submission_id])
+    else:
+        return pd.read_sql(qry, get_conn(), params=[submission_id])
 
 def load_submission(submission_id: str) -> pd.DataFrame:
     """Load a single submission with all details"""
@@ -98,7 +118,11 @@ def load_submission(submission_id: str) -> pd.DataFrame:
     FROM submissions
     WHERE id = %s
     """
-    return pd.read_sql(qry, get_conn(), params=[submission_id])
+    engine = get_sqlalchemy_engine()
+    if engine:
+        return pd.read_sql(qry, engine, params=[submission_id])
+    else:
+        return pd.read_sql(qry, get_conn(), params=[submission_id])
 
 def get_similar_submissions(ops_vec: list, ctrl_vec: list, current_id: str, limit: int = 10) -> list:
     """Find similar submissions using vector similarity"""
