@@ -12,6 +12,7 @@ CREATE TABLE submissions (
     summary TEXT,
     flags JSONB,
     quote_ready BOOLEAN DEFAULT FALSE,
+    revenue BIGINT,
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now()
 );
@@ -31,6 +32,7 @@ CREATE TABLE documents (
 CREATE INDEX idx_documents_submission_id ON documents(submission_id);
 CREATE INDEX idx_documents_type ON documents(document_type);
 CREATE INDEX idx_documents_priority ON documents(is_priority);
+CREATE INDEX idx_submissions_revenue ON submissions(revenue);
 """
 
 def main():

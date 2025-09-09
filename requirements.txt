@@ -21,3 +21,4 @@ openai
 python-dotenv
 pypdf
 tiktoken
+streamlit-pdf-viewer
