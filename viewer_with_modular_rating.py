@@ -757,7 +757,12 @@ if sub_id:
                     st.markdown(message["content"])
 
     # ------------------- Rating --------------------
-    render_rating_panel(sub_id, get_conn)
+    quote_helpers = {
+        'render_pdf': _render_quote_pdf,
+        'upload_pdf': _upload_pdf,
+        'save_quote': _save_quote_row
+    }
+    render_rating_panel(sub_id, get_conn, quote_helpers)
     
     # ------------------- Feedback History --------------------
     with st.expander("🔎 Feedback History", expanded=False):

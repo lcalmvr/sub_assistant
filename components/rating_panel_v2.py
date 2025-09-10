@@ -8,13 +8,15 @@ from datetime import datetime
 from rating_engine.engine import price_with_breakdown
 from app.pipeline import parse_controls_from_summary
 
-def render_rating_panel(sub_id: str, get_conn_func):
+def render_rating_panel(sub_id: str, get_conn_func, quote_helpers=None):
     """
     Render the complete rating and quote panel for a submission.
     
     Args:
         sub_id: Submission ID
         get_conn_func: Function that returns database connection
+        quote_helpers: Optional dict with quote generation helper functions
+                      {'render_pdf': func, 'upload_pdf': func, 'save_quote': func}
     """
     with st.expander("⭐ Rate & Quote", expanded=False):
         # Get submission data for both preview and quote generation
@@ -88,7 +90,7 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func):
             _render_rating_breakdown(rating_result, breakdown)
         
         # Quote generation section
-        _render_quote_generation(sub_id, quote_data, sub_data, get_conn_func)
+        _render_quote_generation(sub_id, quote_data, sub_data, get_conn_func, quote_helpers)
     
     except Exception as e:
         st.error(f"Error calculating premium: {e}")
@@ -294,13 +296,64 @@ def _render_rating_breakdown(rating_result: dict, breakdown: dict):
     st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
     st.markdown(f"5. **Final Premium (rounded):** ${breakdown['final_premium']:,}")
 
-def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get_conn_func):
-    """Render quote generation section (simplified for now)"""
+def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get_conn_func, quote_helpers=None):
+    """Render complete quote generation section"""
     st.markdown("---")
-    st.markdown("#### 📄 Generate Quote")
+    st.markdown("#### 💰 Generate Quote Draft")
     
     if st.button("Generate Quote", key=f"generate_quote_{sub_id}"):
-        st.info("Quote generation functionality to be implemented")
+        if not quote_helpers:
+            st.error("Quote generation not available - helper functions not provided")
+            return
+            
+        with st.spinner("Generating quote..."):
+            try:
+                from datetime import datetime
+                from rating_engine.engine import price as rate_quote
+                
+                # Get helper functions from the passed dictionary
+                _render_quote_pdf = quote_helpers.get('render_pdf')
+                _upload_pdf = quote_helpers.get('upload_pdf') 
+                _save_quote_row = quote_helpers.get('save_quote')
+                
+                if not all([_render_quote_pdf, _upload_pdf, _save_quote_row]):
+                    st.error("Quote generation helpers incomplete")
+                    return
+                
+                # Enhanced quote data with complete submission information
+                enhanced_quote_data = {
+                    "applicant_name": sub_data[0],  # applicant_name
+                    "business_summary": sub_data[1],  # business_summary 
+                    "revenue": quote_data["revenue"],
+                    "industry": quote_data["industry"],
+                    "limit": quote_data["limit"],
+                    "retention": quote_data["retention"],
+                    "controls": quote_data["controls"],
+                    "quote_date": datetime.now().strftime("%Y-%m-%d"),
+                }
+                
+                # Generate quote using rating engine
+                quote_result = rate_quote(enhanced_quote_data)
+                
+                # Render PDF
+                pdf_path = _render_quote_pdf(quote_result)
+                
+                # Upload to storage
+                pdf_url = _upload_pdf(pdf_path)
+                
+                # Save quote record
+                quote_id = _save_quote_row(sub_id, quote_result, pdf_url)
+                
+                st.success(f"Quote generated successfully! ID: {quote_id}")
+                st.markdown(f"[📥 Download Quote PDF]({pdf_url})")
+                
+                # Clean up temp file
+                pdf_path.unlink()
+                
+            except Exception as e:
+                st.error(f"Error generating quote: {e}")
+                import traceback
+                st.text(f"Debug info: {traceback.format_exc()}")
 
 # Helper functions
 def _map_industry_to_slug(industry_name: str) -> str:
