@@ -13,12 +13,13 @@ Streamlit admin viewer (v4.0) – Clean rebuild with all features
 * All proper layout and functionality
 """
 
-import os, json
+import os, json, base64, glob
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from pgvector import Vector
 import pandas as pd
 import streamlit as st
+from streamlit_pdf_viewer import pdf_viewer
 from datetime import datetime, timezone
 
 st.set_page_config(page_title="Submission Viewer", layout="wide")
@@ -119,11 +120,30 @@ def _save_quote_row(sub_id: str, quote_json: dict, pdf_url: str):
 # ─────────────────────── DB helpers ────────────────────────
 def get_conn():
     conn = st.session_state.get("db_conn")
+    
+    # Check if connection exists and is still alive
+    try:
+        if conn is not None and conn.closed == 0:
+            # Test the connection with a simple query
+            with conn.cursor() as test_cur:
+                test_cur.execute("SELECT 1")
+            return conn
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        # Connection is broken, clear it from session state
+        st.session_state.pop("db_conn", None)
+        conn = None
+    
+    # Create new connection
     if conn is None or conn.closed != 0:
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = True
-        register_vector(conn)
-        st.session_state["db_conn"] = conn
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            conn.autocommit = True
+            register_vector(conn)
+            st.session_state["db_conn"] = conn
+        except Exception as e:
+            st.error(f"Failed to connect to database: {e}")
+            raise
+    
     return conn
 
 def save_feedback(
@@ -858,9 +878,67 @@ if sub_id:
         for _, r in docs.iterrows():
             with st.expander(f"{r['filename']} – {r['document_type']}"):
                 st.write(f"Pages: {r['page_count']} | Priority: {r['is_priority']}")
-                st.markdown("**Metadata**")
-                st.json(_safe_json(r["doc_metadata"]))
-                st.markdown("**Extracted Data (truncated)**")
-                st.json(_safe_json(r["extracted_data"]))
+                
+                # Check if this is a PDF file
+                filename = r['filename'].lower()
+                if filename.endswith('.pdf'):
+                    # Try to display PDF preview
+                    pdf_path = None
+                    # Check common PDF storage locations including subdirectories
+                    possible_paths = [
+                        f"./attachments/{r['filename']}",
+                        f"./fixtures/{r['filename']}",
+                        f"./{r['filename']}"
+                    ]
+                    
+                    # Also search in subdirectories
+                    search_patterns = [
+                        f"./attachments/**/{r['filename']}",
+                        f"./fixtures/**/{r['filename']}",
+                        f"./**/{r['filename']}"
+                    ]
+                    
+                    # First try direct paths
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            pdf_path = path
+                            break
+                    
+                    # If not found, try searching recursively
+                    if not pdf_path:
+                        for pattern in search_patterns:
+                            matches = glob.glob(pattern, recursive=True)
+                            if matches:
+                                pdf_path = matches[0]  # Take the first match
+                                break
+                    
+                    if pdf_path:
+                        try:
+                            # Use Streamlit's built-in PDF viewer
+                            with open(pdf_path, "rb") as file:
+                                pdf_bytes = file.read()
+                                st.download_button(
+                                    label="📄 Download PDF",
+                                    data=pdf_bytes,
+                                    file_name=r['filename'],
+                                    mime="application/pdf"
+                                )
+                                # Use streamlit-pdf-viewer with zoom controls
+                                st.write("**PDF Preview:**")
+                                try:
+                                    pdf_viewer(input=pdf_bytes, width=1200, height=800)
+                                except Exception as pdf_error:
+                                    st.error(f"Error displaying PDF: {pdf_error}")
+                        except Exception as e:
+                            st.error(f"Error loading PDF: {e}")
+                    else:
+                        st.info(f"PDF file '{r['filename']}' not found in storage locations")
+                        
+                else:
+                    # For non-PDF files, show metadata and extracted data as before
+                    st.markdown("**Metadata**")
+                    st.json(_safe_json(r["doc_metadata"]))
+                    st.markdown("**Extracted Data (truncated)**")
+                    st.json(_safe_json(r["extracted_data"]))
 
     #
