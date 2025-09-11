@@ -13,11 +13,47 @@
   <h1>Cyber / Tech E&O Quote – {{ applicant }}</h1>
 
   <table>
-    <tr><th>Limit</th><td>{{ limit }}</td></tr>
-    <tr><th>Retention</th><td>{{ retention }}</td></tr>
-    <tr><th>Total Premium (USD)</th><td>{{ premium }}</td></tr>
-    <tr><th>Hazard Class</th><td>{{ hazard_class }}</td></tr>
+    <tr><th>Aggregate Limit</th><td>${{ "{:,}".format(limit) }}</td></tr>
+    <tr><th>Retention</th><td>${{ "{:,}".format(retention) }}</td></tr>
+    <tr><th>Total Premium (USD)</th><td>${{ "{:,}".format(premium) }}</td></tr>
   </table>
+
+  <h2>Coverage Limits</h2>
+  {% if coverage_limits %}
+  <table>
+    <tr><th>Coverage Type</th><th>Limit</th></tr>
+    {% if coverage_limits.standard_coverages %}
+      {% for coverage_name, coverage_limit in coverage_limits.standard_coverages.items() %}
+      <tr><td>{{ coverage_name }}</td><td>${{ "{:,}".format(coverage_limit) }}</td></tr>
+      {% endfor %}
+    {% endif %}
+    {% if coverage_limits.sublimit_coverages %}
+      {% for coverage_name, coverage_limit in coverage_limits.sublimit_coverages.items() %}
+      <tr><td>{{ coverage_name }}</td><td>${{ "{:,}".format(coverage_limit) }}</td></tr>
+      {% endfor %}
+    {% endif %}
+  </table>
+  {% else %}
+  <p><em>Standard coverage limits apply</em></p>
+  {% endif %}
+
+  {% if subjectivities %}
+  <h2>Subjectivities</h2>
+  <ul>
+    {% for subjectivity in subjectivities %}
+    <li>{{ subjectivity }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if endorsements %}
+  <h2>Endorsements</h2>
+  <ul>
+    {% for endorsement in endorsements %}
+    <li>{{ endorsement }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
 
   <h2>Terms &amp; Conditions</h2>
   <pre>{{ terms }}</pre>

@@ -35,11 +35,11 @@ def render_rating_panel(sub_id: str, get_conn_func, quote_helpers=None):
         if sub_data:
             # Check if revenue exists
             if sub_data[2] is not None:  # Revenue exists
-                _render_with_revenue(sub_id, sub_data, get_conn_func)
+                _render_with_revenue(sub_id, sub_data, get_conn_func, quote_helpers)
             else:  # Revenue missing
-                _render_without_revenue(sub_id, sub_data, get_conn_func)
+                _render_without_revenue(sub_id, sub_data, get_conn_func, quote_helpers)
 
-def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func):
+def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_helpers=None):
     """Render rating panel when revenue exists"""
     # Map industry name to rating engine slug
     industry_slug = _map_industry_to_slug(sub_data[3])
@@ -63,12 +63,16 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func):
         nist_summary = sub_data[5] or ""    # nist_controls_summary
         parsed_controls = parse_controls_from_summary(bullet_summary, nist_summary)
         
+        # Get coverage limits configuration
+        coverage_config = _get_coverage_configuration(sub_id, selected_limit)
+        
         quote_data = {
             "industry": industry_slug,
             "revenue": sub_data[2],
             "limit": selected_limit,
             "retention": selected_retention,
             "controls": parsed_controls,
+            "coverage_limits": coverage_config,
         }
         
         # Get detailed rating breakdown
@@ -79,15 +83,331 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func):
         st.markdown("---")
         col_prem, col_info = st.columns([1, 2])
         
+        # Calculate Rate Per Million of Limit (RPM)
+        rate_per_million_limit = (rating_result['premium'] / selected_limit) * 1_000_000
+        
+        # Format limit and retention in compact format
+        limit_text = f"${selected_limit/1_000_000:.0f}M" if selected_limit >= 1_000_000 else f"${selected_limit/1_000:.0f}K"
+        retention_text = f"${selected_retention/1_000:.0f}K" if selected_retention >= 1_000 else f"${selected_retention:,.0f}"
+        
+        # Format RPM in compact format
+        if rate_per_million_limit >= 1000:
+            rpm_text = f"${rate_per_million_limit/1000:.1f}K"
+        else:
+            rpm_text = f"${rate_per_million_limit:.0f}"
+        
         with col_prem:
-            st.metric("Annual Premium", f"${rating_result['premium']:,}", help="Based on current configuration")
+            # Simple approach - just premium and RPM
+            premium_line = f"${rating_result['premium']:,} | RPM: {rpm_text}"
+            st.metric("Annual Premium", premium_line, help="Based on current configuration")
         
         with col_info:
-            st.info(f"Policy: ${selected_limit:,} limit / ${selected_retention:,} retention • Hazard Class: {breakdown['hazard_class']} • Rate: ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
+            st.text("")
         
         # Rating assumptions in expander
         with st.expander("📋 View Detailed Rating Breakdown", expanded=False):
             _render_rating_breakdown(rating_result, breakdown)
+        
+        # Additional quote sections
+        st.markdown("---")
+        
+        # Subjectivities section
+        with st.container(border=True):
+                st.markdown("**Subjectivities**")
+                
+                # Stock subjectivities list
+                stock_subjectivities = [
+                    "Coverage is subject to policy terms and conditions",
+                    "Premium subject to minimum retained premium",
+                    "Rate subject to satisfactory inspection",
+                    "Subject to completion of application",
+                    "Subject to receipt of additional underwriting information",
+                    "Coverage bound subject to company acceptance",
+                    "Premium subject to audit",
+                    "Policy subject to terrorism exclusion",
+                    "Subject to cyber security questionnaire completion",
+                    "Coverage subject to satisfactory financial review"
+                ]
+                
+                # Initialize session state for subjectivities
+                subj_session_key = f"subjectivities_{sub_id}"
+                if subj_session_key not in st.session_state:
+                    st.session_state[subj_session_key] = []
+                
+                # Migration: convert old format to new format if needed
+                if st.session_state[subj_session_key] and isinstance(st.session_state[subj_session_key][0], str):
+                    old_items = st.session_state[subj_session_key].copy()
+                    st.session_state[subj_session_key] = []
+                    for i, item in enumerate(old_items):
+                        st.session_state[subj_session_key].append({'id': i, 'text': item})
+                
+                subj_id_counter_key = f"subjectivities_id_counter_{sub_id}"
+                if subj_id_counter_key not in st.session_state:
+                    st.session_state[subj_id_counter_key] = len(st.session_state[subj_session_key])
+                
+                # Get current items in the main list
+                current_items = {subj_data['text'] for subj_data in st.session_state[subj_session_key]}
+                
+                # Filter out items that are already in the main list from multiselect options
+                available_stock = [item for item in stock_subjectivities if item not in current_items]
+                
+                # Multiselect for stock subjectivities - only show available items
+                selected_stock = st.multiselect(
+                    "Select common subjectivities:",
+                    available_stock,
+                    key=f"stock_subj_{sub_id}",
+                    help="Choose from pre-defined subjectivities"
+                )
+                
+                # Add selected stock items to main list
+                for item in selected_stock:
+                    if item not in current_items:
+                        st.session_state[subj_session_key].append({
+                            'id': st.session_state[subj_id_counter_key],
+                            'text': item
+                        })
+                        st.session_state[subj_id_counter_key] += 1
+                        st.rerun()
+                
+                # Text input for custom subjectivity
+                st.markdown("**Add custom subjectivity:**")
+                col_text, col_add = st.columns([3, 1])
+                
+                # Use a counter to reset the input field
+                clear_counter_key = f"clear_counter_{sub_id}"
+                if clear_counter_key not in st.session_state:
+                    st.session_state[clear_counter_key] = 0
+                
+                with col_text:
+                    custom_subj = st.text_input(
+                        "",
+                        key=f"custom_subj_input_{sub_id}_{st.session_state[clear_counter_key]}",
+                        placeholder="Enter custom subjectivity...",
+                        label_visibility="collapsed"
+                    )
+                with col_add:
+                    if st.button("Add", key=f"add_subj_{sub_id}"):
+                        if custom_subj.strip() and not any(subj_data['text'] == custom_subj.strip() for subj_data in st.session_state[subj_session_key]):
+                            st.session_state[subj_session_key].append({
+                                'id': st.session_state[subj_id_counter_key],
+                                'text': custom_subj.strip()
+                            })
+                            st.session_state[subj_id_counter_key] += 1
+                            st.session_state[clear_counter_key] += 1  # This will create a new input field
+                            st.rerun()
+                
+                # Display current subjectivities with edit/remove options
+                if st.session_state[subj_session_key]:
+                    st.markdown("**Current Subjectivities:**")
+                    
+                    # Create a copy of the list to iterate over
+                    subj_list = st.session_state[subj_session_key].copy()
+                    
+                    for i, subj_data in enumerate(subj_list):
+                        subj_id_val = subj_data['id']
+                        subj_text = subj_data['text']
+                        
+                        st.markdown(f"**Subjectivity {i+1}:**")
+                        col_text, col_remove = st.columns([7, 1])
+                        
+                        with col_text:
+                            # Show as editable text area with unique ID-based key
+                            edited_subj = st.text_area(
+                                "",
+                                value=subj_text,
+                                key=f"edit_subj_{subj_id_val}_{sub_id}",
+                                height=60,
+                                help="Edit text and changes will be saved automatically",
+                                label_visibility="collapsed"
+                            )
+                            # Update if changed immediately in session state
+                            if edited_subj != subj_text:
+                                # Find the actual item in session state and update it
+                                for j, item in enumerate(st.session_state[subj_session_key]):
+                                    if item['id'] == subj_id_val:
+                                        st.session_state[subj_session_key][j]['text'] = edited_subj
+                                        break
+                        
+                        with col_remove:
+                            # Use a callback approach to handle deletion
+                            remove_key = f"remove_subj_{subj_id_val}_{sub_id}"
+                            if st.button("🗑️", key=remove_key, help="Remove this subjectivity"):
+                                # Immediately remove from session state
+                                st.session_state[subj_session_key] = [
+                                    item for item in st.session_state[subj_session_key] 
+                                    if item['id'] != subj_id_val
+                                ]
+                                st.rerun()
+                else:
+                    st.caption("No subjectivities added yet")
+        
+        # Endorsements section
+        with st.container(border=True):
+                st.markdown("**Endorsements**")
+                
+                # Stock endorsements list
+                stock_endorsements = [
+                    "War and Terrorism Exclusion",
+                    "Nuclear Risks Exclusion",
+                    "Communicable Disease Exclusion",
+                    "Cyber and Data Exclusion",
+                    "Professional Services Exclusion",
+                    "Contractual Liability Limitation",
+                    "Prior Acts Coverage Extension",
+                    "Extended Reporting Period",
+                    "Innocent Party Coverage",
+                    "Regulatory Defense Coverage"
+                ]
+                
+                # Default endorsements (automatically added)
+                default_endorsements = ["OFAC", "Service of Suite"]
+                
+                # Initialize session state for endorsements
+                endorse_session_key = f"endorsements_{sub_id}"
+                endorse_id_counter_key = f"endorsements_id_counter_{sub_id}"
+                
+                if endorse_session_key not in st.session_state:
+                    # Initialize with default endorsements as ID-based objects
+                    st.session_state[endorse_session_key] = []
+                    for i, default_endorse in enumerate(default_endorsements):
+                        st.session_state[endorse_session_key].append({
+                            'id': i,
+                            'text': default_endorse,
+                            'is_default': True
+                        })
+                
+                # Migration: convert old format to new format if needed
+                if st.session_state[endorse_session_key] and isinstance(st.session_state[endorse_session_key][0], str):
+                    old_items = st.session_state[endorse_session_key].copy()
+                    st.session_state[endorse_session_key] = []
+                    for i, item in enumerate(old_items):
+                        is_default = item in default_endorsements
+                        st.session_state[endorse_session_key].append({
+                            'id': i, 
+                            'text': item,
+                            'is_default': is_default
+                        })
+                
+                if endorse_id_counter_key not in st.session_state:
+                    st.session_state[endorse_id_counter_key] = len(st.session_state[endorse_session_key])
+                
+                # Ensure default endorsements are always present
+                existing_texts = [item['text'] for item in st.session_state[endorse_session_key]]
+                for default_endorse in default_endorsements:
+                    if default_endorse not in existing_texts:
+                        st.session_state[endorse_session_key].insert(0, {
+                            'id': st.session_state[endorse_id_counter_key],
+                            'text': default_endorse,
+                            'is_default': True
+                        })
+                        st.session_state[endorse_id_counter_key] += 1
+                
+                # Get current items in the main list (excluding defaults)
+                current_endorse_items = {endorse_data['text'] for endorse_data in st.session_state[endorse_session_key]}
+                
+                # Filter out items that are already in the main list from multiselect options
+                available_stock_endorse = [item for item in stock_endorsements if item not in current_endorse_items]
+                
+                # Multiselect for stock endorsements - only show available items
+                selected_stock_endorse = st.multiselect(
+                    "Select additional endorsements:",
+                    available_stock_endorse,
+                    key=f"stock_endorse_{sub_id}",
+                    help="Choose from pre-defined endorsements"
+                )
+                
+                # Add selected stock items to main list
+                for item in selected_stock_endorse:
+                    if item not in current_endorse_items:
+                        st.session_state[endorse_session_key].append({
+                            'id': st.session_state[endorse_id_counter_key],
+                            'text': item,
+                            'is_default': False
+                        })
+                        st.session_state[endorse_id_counter_key] += 1
+                        st.rerun()
+                
+                # Text input for custom endorsement
+                st.markdown("**Add custom endorsement:**")
+                col_text_endorse, col_add_endorse = st.columns([3, 1])
+                
+                # Use a counter to reset the input field
+                clear_counter_endorse_key = f"clear_counter_endorse_{sub_id}"
+                if clear_counter_endorse_key not in st.session_state:
+                    st.session_state[clear_counter_endorse_key] = 0
+                
+                with col_text_endorse:
+                    custom_endorse = st.text_input(
+                        "",
+                        key=f"custom_endorse_input_{sub_id}_{st.session_state[clear_counter_endorse_key]}",
+                        placeholder="Enter custom endorsement...",
+                        label_visibility="collapsed"
+                    )
+                with col_add_endorse:
+                    if st.button("Add", key=f"add_endorse_{sub_id}"):
+                        if custom_endorse.strip() and not any(endorse_data['text'] == custom_endorse.strip() for endorse_data in st.session_state[endorse_session_key]):
+                            st.session_state[endorse_session_key].append({
+                                'id': st.session_state[endorse_id_counter_key],
+                                'text': custom_endorse.strip(),
+                                'is_default': False
+                            })
+                            st.session_state[endorse_id_counter_key] += 1
+                            st.session_state[clear_counter_endorse_key] += 1  # This will create a new input field
+                            st.rerun()
+                
+                # Display current endorsements with edit/remove options
+                if st.session_state[endorse_session_key]:
+                    st.markdown("**Current Endorsements:**")
+                    
+                    # Create a copy of the list to iterate over
+                    endorse_list = st.session_state[endorse_session_key].copy()
+                    
+                    for i, endorse_data in enumerate(endorse_list):
+                        endorse_id_val = endorse_data['id']
+                        endorse_text = endorse_data['text']
+                        is_default = endorse_data.get('is_default', False)
+                        
+                        if is_default:
+                            # Default endorsements shown with lock icon
+                            col_text_endorse, col_remove_endorse = st.columns([7, 1])
+                            with col_text_endorse:
+                                st.markdown(f"🔒 **{endorse_text}** *(required)*")
+                            with col_remove_endorse:
+                                st.write("🔒")  # Lock icon for required endorsements
+                        else:
+                            # Editable endorsements
+                            st.markdown(f"**Endorsement {i+1}:**")
+                            col_text_endorse, col_remove_endorse = st.columns([7, 1])
+                            
+                            with col_text_endorse:
+                                # Show as single-line editable text input with unique ID-based key
+                                edited_endorse = st.text_input(
+                                    "",
+                                    value=endorse_text,
+                                    key=f"edit_endorse_{endorse_id_val}_{sub_id}",
+                                    help="Edit text and changes will be saved automatically",
+                                    label_visibility="collapsed"
+                                )
+                                # Update if changed immediately in session state
+                                if edited_endorse != endorse_text:
+                                    # Find the actual item in session state and update it
+                                    for j, item in enumerate(st.session_state[endorse_session_key]):
+                                        if item['id'] == endorse_id_val:
+                                            st.session_state[endorse_session_key][j]['text'] = edited_endorse
+                                            break
+                            
+                            with col_remove_endorse:
+                                # Use a callback approach to handle deletion
+                                remove_endorse_key = f"remove_endorse_{endorse_id_val}_{sub_id}"
+                                if st.button("🗑️", key=remove_endorse_key, help="Remove this endorsement"):
+                                    # Immediately remove from session state
+                                    st.session_state[endorse_session_key] = [
+                                        item for item in st.session_state[endorse_session_key] 
+                                        if item['id'] != endorse_id_val
+                                    ]
+                                    st.rerun()
+                else:
+                    st.caption("No endorsements added yet")
         
         # Quote generation section
         _render_quote_generation(sub_id, quote_data, sub_data, get_conn_func, quote_helpers)
@@ -95,7 +415,7 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func):
     except Exception as e:
         st.error(f"Error calculating premium: {e}")
 
-def _render_without_revenue(sub_id: str, sub_data: tuple, get_conn_func):
+def _render_without_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_helpers=None):
     """Render rating panel when revenue is missing"""
     st.markdown("#### 🔍 Rating Preview")
     st.warning("Annual revenue is required for rating preview.")
@@ -150,12 +470,16 @@ def _render_without_revenue(sub_id: str, sub_data: tuple, get_conn_func):
             nist_summary = sub_data[5] or ""    # nist_controls_summary
             parsed_controls = parse_controls_from_summary(bullet_summary, nist_summary)
             
+            # Get coverage limits configuration
+            coverage_config = _get_coverage_configuration(sub_id, selected_limit_temp, suffix="_temp")
+            
             quote_data = {
                 "industry": industry_slug,
                 "revenue": preview_revenue,
                 "limit": selected_limit_temp,
                 "retention": selected_retention_temp,
                 "controls": parsed_controls,
+                "coverage_limits": coverage_config,
             }
             
             rating_result = price_with_breakdown(quote_data)
@@ -168,7 +492,7 @@ def _render_without_revenue(sub_id: str, sub_data: tuple, get_conn_func):
                 st.metric("Temp Premium", f"${rating_result['premium']:,}", help="Temporary rating with entered revenue")
             
             with col_info:
-                st.info(f"Using revenue: ${preview_revenue:,} • Hazard Class: {breakdown['hazard_class']}")
+                st.info(f"Using revenue: ${preview_revenue:,} • Rate: ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
             
             with st.expander("📋 View Detailed Rating Breakdown", expanded=False):
                 _render_rating_breakdown(rating_result, breakdown)
@@ -221,7 +545,7 @@ def _render_limit_controls(sub_id: str, suffix: str = "") -> int:
 def _render_retention_controls(sub_id: str, suffix: str = "") -> int:
     """Render retention/deductible controls"""
     st.markdown("**Retention/Deductible:**")
-    ret_button_cols = st.columns([1, 1, 1, 1, 1, 1, 2])
+    ret_button_cols = st.columns(6)
     
     retentions = [
         (10_000, "10K"),
@@ -262,39 +586,159 @@ def _render_retention_controls(sub_id: str, suffix: str = "") -> int:
     
     return selected_retention
 
+def _get_coverage_configuration(sub_id: str, aggregate_limit: int, suffix: str = "") -> dict:
+    """Get comprehensive coverage limits configuration"""
+    
+    # Add coverage configuration expander
+    with st.expander("🛡️ Coverage Limits Configuration", expanded=False):
+        st.markdown("**Coverage Structure:**")
+        st.info(f"Aggregate Limit: ${aggregate_limit:,}")
+        
+        # Standard coverages (default to full aggregate)
+        standard_coverages = {}
+        st.markdown("**Standard Coverages (Default to Aggregate Limit):**")
+        
+        standard_coverage_names = [
+            "Standard Coverage 1", "Standard Coverage 2", "Standard Coverage 3", 
+            "Standard Coverage 4", "Standard Coverage 5", "Standard Coverage 6",
+            "Standard Coverage 7", "Standard Coverage 8", "Standard Coverage 9", 
+            "Standard Coverage 10"
+        ]
+        
+        # Display standard coverages in a compact format
+        for i, coverage_name in enumerate(standard_coverage_names):
+            default_limit = aggregate_limit
+            session_key = f"coverage_{i+1}_limit{suffix}_{sub_id}"
+            
+            if session_key not in st.session_state:
+                st.session_state[session_key] = default_limit
+            
+            standard_coverages[coverage_name] = st.session_state[session_key]
+        
+        st.caption("Standard coverages automatically set to aggregate limit")
+        
+        # Sublimit coverages (configurable)  
+        st.markdown("**Sublimit Coverages (Configurable):**")
+        
+        sublimit_coverage_names = [
+            "Social Engineering", "Funds Transfer Fraud", "Invoice Manipulation",
+            "Telecommunications Fraud", "Cryptojacking"
+        ]
+        
+        # Quick select buttons for common sublimit amounts
+        button_cols = st.columns([1, 1, 1, 4])
+        quick_amounts = [(100_000, "100K"), (250_000, "250K"), (500_000, "500K")]
+        
+        for i, (amount, label) in enumerate(quick_amounts):
+            with button_cols[i]:
+                if st.button(f"${label}", key=f"quick_sublimit_{label.lower()}{suffix}_{sub_id}"):
+                    # Apply this amount to all sublimit coverages
+                    for j in range(len(sublimit_coverage_names)):
+                        session_key = f"sublimit_{j+1}_limit{suffix}_{sub_id}"
+                        text_session_key = f"sublimit_{j+1}_text{suffix}_{sub_id}"
+                        st.session_state[session_key] = amount
+                        st.session_state[text_session_key] = label
+                    st.rerun()
+        
+        sublimit_coverages = {}
+        
+        # Default sublimit amounts
+        default_sublimits = [100_000, 250_000, 500_000, 1_000_000, 500_000]
+        
+        # Stack sublimit coverages vertically for compact display
+        # Create a narrow column just wide enough for the longest label ("Telecommunications Fraud")
+        col_narrow, col_wide = st.columns([0.35, 0.65])
+        
+        with col_narrow:
+            for i, (coverage_name, default_sublimit) in enumerate(zip(sublimit_coverage_names, default_sublimits)):
+                session_key = f"sublimit_{i+1}_limit{suffix}_{sub_id}"
+                text_session_key = f"sublimit_{i+1}_text{suffix}_{sub_id}"
+                
+                # Initialize session state
+                if session_key not in st.session_state:
+                    st.session_state[session_key] = default_sublimit
+                    st.session_state[text_session_key] = _format_limit_display(default_sublimit)
+                
+                # Text input first
+                limit_input = st.text_input(
+                    f"{coverage_name}:",
+                    value=st.session_state.get(text_session_key, _format_limit_display(default_sublimit)),
+                    key=f"sublimit_{i+1}_input{suffix}_{sub_id}",
+                    help="Enter limit using K/M format (e.g., 100K, 1M)"
+                )
+                
+                # Process the input and update session state
+                parsed_limit = _parse_dollar_input(limit_input)
+                if parsed_limit > 0:
+                    if parsed_limit <= aggregate_limit:  # Sublimit can't exceed aggregate
+                        st.session_state[session_key] = parsed_limit
+                        st.session_state[text_session_key] = limit_input
+                        sublimit_coverages[coverage_name] = parsed_limit
+                        st.caption(f"✓ ${parsed_limit:,}")
+                    else:
+                        st.error(f"Cannot exceed aggregate limit of ${aggregate_limit:,}")
+                        sublimit_coverages[coverage_name] = st.session_state[session_key]
+                else:
+                    if limit_input.strip():
+                        st.error("Invalid format")
+                    sublimit_coverages[coverage_name] = st.session_state[session_key]
+        
+        # Combine all coverage limits
+        all_coverage_limits = {**standard_coverages, **sublimit_coverages}
+        
+        return {
+            "aggregate_limit": aggregate_limit,
+            "standard_coverages": standard_coverages,
+            "sublimit_coverages": sublimit_coverages,
+            "all_coverages": all_coverage_limits
+        }
+
+def _format_limit_display(amount: int) -> str:
+    """Format dollar amount for display (e.g., 1000000 -> '1M')"""
+    if amount >= 1_000_000 and amount % 1_000_000 == 0:
+        return f"{amount // 1_000_000}M"
+    elif amount >= 1_000 and amount % 1_000 == 0:
+        return f"{amount // 1_000}K"
+    else:
+        return str(amount)
+
 def _render_rating_breakdown(rating_result: dict, breakdown: dict):
     """Render detailed rating breakdown"""
     col_left, col_right = st.columns([1, 1])
     
     with col_left:
-        st.markdown(f"**Industry:** {breakdown['industry'].replace('_', ' ')}")
-        st.markdown(f"**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)")
-        st.markdown(f"**Revenue Band:** {breakdown['revenue_band']}")
-        st.markdown(f"**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue")
+        st.markdown(f"""**Industry:** {breakdown['industry'].replace('_', ' ')}  
+**Hazard Class:** {breakdown['hazard_class']} (1=lowest risk, 5=highest)  
+**Revenue Band:** {breakdown['revenue_band']}  
+**Base Rate:** ${breakdown['base_rate_per_1k']:.2f} per $1K revenue""")
     
     with col_right:
-        st.markdown(f"**Policy Limit:** ${rating_result['limit']:,}")
-        st.markdown(f"**Limit Factor:** {breakdown['limit_factor']:.2f}x")
-        st.markdown(f"**Retention/Deductible:** ${rating_result['retention']:,}")
-        st.markdown(f"**Retention Factor:** {breakdown['retention_factor']:.2f}x")
+        st.markdown(f"""**Policy Limit:** ${rating_result['limit']:,}  
+**Limit Factor:** {breakdown['limit_factor']:.2f}x  
+**Retention/Deductible:** ${rating_result['retention']:,}  
+**Retention Factor:** {breakdown['retention_factor']:.2f}x""")
     
     # Show control modifiers if any
     if breakdown['control_modifiers']:
-        st.markdown("**Control Adjustments:**")
+        control_lines = ["**Control Adjustments:**"]
         for mod in breakdown['control_modifiers']:
             modifier_pct = mod['modifier'] * 100
             sign = "+" if modifier_pct > 0 else ""
-            st.markdown(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
+            control_lines.append(f"• {mod['reason']}: {sign}{modifier_pct:.1f}%")
+        st.markdown("  \n".join(control_lines))
     else:
         st.markdown("**Control Adjustments:** None applied")
     
     # Show calculation steps
-    st.markdown("**Premium Calculation:**")
-    st.markdown(f"1. Base Premium: ${breakdown['base_premium']:,.0f}")
-    st.markdown(f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}")
-    st.markdown(f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}")
-    st.markdown(f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}")
-    st.markdown(f"5. **Final Premium (rounded):** ${breakdown['final_premium']:,}")
+    calc_lines = [
+        "**Premium Calculation:**",
+        f"1. Base Premium: ${breakdown['base_premium']:,.0f}",
+        f"2. After Limit Factor: ${breakdown['premium_after_limit']:,.0f}",
+        f"3. After Retention Factor: ${breakdown['premium_after_retention']:,.0f}",
+        f"4. After Control Adjustments: ${breakdown['premium_after_controls']:,.0f}",
+        f"5. **Final Premium (rounded):** ${breakdown['final_premium']:,}"
+    ]
+    st.markdown("  \n".join(calc_lines))
 
 def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get_conn_func, quote_helpers=None):
     """Render complete quote generation section"""
@@ -320,6 +764,25 @@ def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get
                     st.error("Quote generation helpers incomplete")
                     return
                 
+                # Extract text-only lists for quote generation
+                subjectivities_text = []
+                if f"subjectivities_{sub_id}" in st.session_state:
+                    subj_data = st.session_state[f"subjectivities_{sub_id}"]
+                    if subj_data:
+                        if isinstance(subj_data[0], dict):
+                            subjectivities_text = [item['text'] for item in subj_data]
+                        else:
+                            subjectivities_text = subj_data  # backward compatibility
+                
+                endorsements_text = []
+                if f"endorsements_{sub_id}" in st.session_state:
+                    endorse_data = st.session_state[f"endorsements_{sub_id}"]
+                    if endorse_data:
+                        if isinstance(endorse_data[0], dict):
+                            endorsements_text = [item['text'] for item in endorse_data]
+                        else:
+                            endorsements_text = endorse_data  # backward compatibility
+                
                 # Enhanced quote data with complete submission information
                 enhanced_quote_data = {
                     "applicant_name": sub_data[0],  # applicant_name
@@ -329,6 +792,9 @@ def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get
                     "limit": quote_data["limit"],
                     "retention": quote_data["retention"],
                     "controls": quote_data["controls"],
+                    "coverage_limits": quote_data["coverage_limits"],
+                    "subjectivities": subjectivities_text,
+                    "endorsements": endorsements_text,
                     "quote_date": datetime.now().strftime("%Y-%m-%d"),
                 }
                 

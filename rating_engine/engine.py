@@ -79,11 +79,12 @@ def price_with_breakdown(submission: dict) -> dict:
     Calculate premium with detailed breakdown of rating factors.
     
     Expected submission keys:
-        industry   : str  – slug matching YAML map
-        revenue    : int  – annual revenue in USD
-        limit      : int  – policy limit (e.g. 2_000_000)
-        retention  : int  – retention / deductible (e.g. 25_000)
-        controls   : list[str] – control slugs present (e.g. ["MFA","EDR"])
+        industry        : str  – slug matching YAML map
+        revenue         : int  – annual revenue in USD
+        limit           : int  – policy limit (e.g. 2_000_000)
+        retention       : int  – retention / deductible (e.g. 25_000)
+        controls        : list[str] – control slugs present (e.g. ["MFA","EDR"])
+        coverage_limits : dict – optional coverage limits structure
     
     Returns detailed breakdown including all rating factors and assumptions.
     """
@@ -92,6 +93,7 @@ def price_with_breakdown(submission: dict) -> dict:
     limit      = submission["limit"]
     retention  = submission["retention"]
     controls   = submission.get("controls", [])
+    coverage_limits = submission.get("coverage_limits", {})
     
     # Cast revenue to float so all math is float-based
     revenue = float(revenue)
@@ -166,6 +168,7 @@ def price_with_breakdown(submission: dict) -> dict:
         "premium": int(final_prem),
         "limit": limit,
         "retention": retention,
+        "coverage_limits": coverage_limits,
         "breakdown": breakdown,
     }
 
@@ -185,6 +188,7 @@ def price(submission: dict) -> dict:
     limit      = submission["limit"]
     retention  = submission["retention"]
     controls   = submission.get("controls", [])
+    coverage_limits = submission.get("coverage_limits", {})
     
     # Cast revenue to float so all math is float-based
     revenue = float(revenue)
@@ -234,6 +238,7 @@ def price(submission: dict) -> dict:
         "premium": int(prem),
         "limit": limit,
         "retention": retention,
+        "coverage_limits": coverage_limits,
     }
 
 # ---------------------------------------------------------------------------
