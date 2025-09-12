@@ -656,6 +656,60 @@ if sub_id:
         else:
             st.markdown(bullet_sum or "No bullet point summary available")
     
+    # ------------------- Loss History --------------------
+    with st.expander("📊 Loss History", expanded=False):
+        # Load loss history data
+        conn = get_conn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT loss_date, loss_type, loss_description, loss_amount, 
+                       claim_status, claim_number, carrier_name, paid_amount
+                FROM loss_history 
+                WHERE submission_id = %s 
+                ORDER BY loss_date DESC
+            """, (sub_id,))
+            loss_records = cur.fetchall()
+        
+        if loss_records:
+            st.write(f"**Found {len(loss_records)} loss records**")
+            
+            # Create DataFrame for better display
+            import pandas as pd
+            loss_df = pd.DataFrame(loss_records, columns=[
+                'Loss Date', 'Type', 'Description', 'Loss Amount', 
+                'Status', 'Claim Number', 'Carrier', 'Paid Amount'
+            ])
+            
+            # Display summary metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                total_paid = sum([float(amt) for amt in loss_df['Paid Amount'] if amt])
+                st.metric("Total Paid", f"${total_paid:,.2f}")
+            with col2:
+                closed_claims = len([s for s in loss_df['Status'] if s == 'CLOSED'])
+                st.metric("Closed Claims", closed_claims)
+            with col3:
+                avg_paid = total_paid / len(loss_df) if len(loss_df) > 0 else 0
+                st.metric("Avg per Claim", f"${avg_paid:,.2f}")
+            
+            # Display detailed table
+            st.markdown("**Claims Detail:**")
+            
+            # Format the dataframe for better display
+            display_df = loss_df.copy()
+            display_df['Loss Date'] = pd.to_datetime(display_df['Loss Date']).dt.strftime('%Y-%m-%d')
+            display_df['Description'] = display_df['Description'].str[:100] + '...' if len(display_df) > 0 else display_df['Description']
+            display_df['Paid Amount'] = display_df['Paid Amount'].apply(lambda x: f"${float(x):,.2f}" if x else "N/A")
+            
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+        else:
+            st.info("No loss history records found for this submission.")
+    
     # ------------------- Underwriter Decision --------------------
     with st.expander("👤 Underwriter Decision", expanded=False):
         if st.button("✏️ Edit", key=f"edit_underwriter_{sub_id}"):
