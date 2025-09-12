@@ -933,43 +933,43 @@ if sub_id:
             with st.expander(f"{r['filename']} – {r['document_type']}"):
                 st.write(f"Pages: {r['page_count']} | Priority: {r['is_priority']}")
                 
-                # Check if this is a PDF file
+                # Check file type and display accordingly
                 filename = r['filename'].lower()
-                if filename.endswith('.pdf'):
-                    # Try to display PDF preview
-                    pdf_path = None
-                    # Check common PDF storage locations including subdirectories
-                    possible_paths = [
-                        f"./attachments/{r['filename']}",
-                        f"./fixtures/{r['filename']}",
-                        f"./{r['filename']}"
-                    ]
-                    
-                    # Also search in subdirectories
-                    search_patterns = [
-                        f"./attachments/**/{r['filename']}",
-                        f"./fixtures/**/{r['filename']}",
-                        f"./**/{r['filename']}"
-                    ]
-                    
-                    # First try direct paths
-                    for path in possible_paths:
-                        if os.path.exists(path):
-                            pdf_path = path
+                file_path = None
+                
+                # Search for the file in common locations
+                possible_paths = [
+                    f"./attachments/{r['filename']}",
+                    f"./fixtures/{r['filename']}",
+                    f"./{r['filename']}"
+                ]
+                
+                # Also search in subdirectories
+                search_patterns = [
+                    f"./attachments/**/{r['filename']}",
+                    f"./fixtures/**/{r['filename']}",
+                    f"./**/{r['filename']}"
+                ]
+                
+                # First try direct paths
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        file_path = path
+                        break
+                
+                # If not found, try searching recursively
+                if not file_path:
+                    for pattern in search_patterns:
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            file_path = matches[0]  # Take the first match
                             break
-                    
-                    # If not found, try searching recursively
-                    if not pdf_path:
-                        for pattern in search_patterns:
-                            matches = glob.glob(pattern, recursive=True)
-                            if matches:
-                                pdf_path = matches[0]  # Take the first match
-                                break
-                    
-                    if pdf_path:
+                
+                if filename.endswith('.pdf'):
+                    # Handle PDF files
+                    if file_path:
                         try:
-                            # Use Streamlit's built-in PDF viewer
-                            with open(pdf_path, "rb") as file:
+                            with open(file_path, "rb") as file:
                                 pdf_bytes = file.read()
                                 st.download_button(
                                     label="📄 Download PDF",
@@ -977,7 +977,6 @@ if sub_id:
                                     file_name=r['filename'],
                                     mime="application/pdf"
                                 )
-                                # Use streamlit-pdf-viewer with zoom controls
                                 st.write("**PDF Preview:**")
                                 try:
                                     pdf_viewer(input=pdf_bytes, width=1200, height=800)
@@ -988,8 +987,29 @@ if sub_id:
                     else:
                         st.info(f"PDF file '{r['filename']}' not found in storage locations")
                         
+                elif filename.endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
+                    # Handle image files
+                    if file_path:
+                        try:
+                            st.write("**Image Preview:**")
+                            st.image(file_path, caption=r['filename'], use_container_width=True)
+                            
+                            # Add download button for images
+                            with open(file_path, "rb") as file:
+                                image_bytes = file.read()
+                                st.download_button(
+                                    label="📷 Download Image",
+                                    data=image_bytes,
+                                    file_name=r['filename'],
+                                    mime=f"image/{filename.split('.')[-1]}"
+                                )
+                        except Exception as e:
+                            st.error(f"Error loading image: {e}")
+                    else:
+                        st.info(f"Image file '{r['filename']}' not found in storage locations")
+                        
                 else:
-                    # For non-PDF files, show metadata and extracted data as before
+                    # For other files (JSON, text, etc.), show metadata and extracted data
                     st.markdown("**Metadata**")
                     st.json(_safe_json(r["doc_metadata"]))
                     st.markdown("**Extracted Data (truncated)**")
