@@ -34,6 +34,7 @@ from app.pipeline import parse_controls_from_summary
 # Import modular components
 from components.rating_panel_v2 import render_rating_panel
 from components.similar_submissions_panel import render_similar_submissions_panel
+from components.submission_status_panel import render_submission_status_panel
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -194,7 +195,9 @@ def load_submissions(where_clause: str, params: list) -> pd.DataFrame:
                applicant_name,
                annual_revenue,
                naics_primary_title,
-           industry_tags
+           industry_tags,
+           submission_status,
+           submission_outcome
         FROM submissions
     WHERE {where_clause}
     ORDER BY date_received DESC
@@ -346,6 +349,12 @@ def _to_vector_literal(vec):
 # ─────────────────────── UI starts ──────────────────────────
 st.title("📂 AI-Processed Submissions")
 
+# Navigation
+nav_col1, nav_col2 = st.columns([1, 4])
+with nav_col1:
+    if st.button("🏢 Manage Brokers", help="Go to broker management page"):
+        st.write("🔗 Run: `streamlit run broker_management.py --server.port 8502`")
+
 # Search and submission selection in same row
 col1, col2 = st.columns([2, 1])
 
@@ -370,9 +379,7 @@ with col2:
     label_selected = st.selectbox("Open submission:", list(label_map.keys()) or ["—"])
     sub_id = label_map.get(label_selected)
 
-st.subheader("Recent submissions")
-
-# Configure column display
+# Configure column display (shared configuration)
 column_config = {
     "id": st.column_config.TextColumn(
         "ID", 
@@ -400,36 +407,69 @@ column_config = {
     ),
     "industry_tags": st.column_config.ListColumn(
         "Industry Tags"
+    ),
+    "submission_status": st.column_config.TextColumn(
+        "Status",
+        width="small",
+        help="Primary submission status"
+    ),
+    "submission_outcome": st.column_config.TextColumn(
+        "Outcome",
+        width="small", 
+        help="Submission outcome"
     )
 }
 
-# Format the ID column to show only first 8 characters
+# Format the ID column to show only first 8 characters and status columns for display
 if not sub_df.empty and 'id' in sub_df.columns:
     sub_df_display = sub_df.copy()
     sub_df_display['id'] = sub_df_display['id'].astype(str).str[:8]
+    
+    # Format status columns for better display
+    if 'submission_status' in sub_df_display.columns:
+        sub_df_display['submission_status'] = sub_df_display['submission_status'].str.replace('_', ' ').str.title()
+    if 'submission_outcome' in sub_df_display.columns:
+        sub_df_display['submission_outcome'] = sub_df_display['submission_outcome'].str.replace('_', ' ').str.title()
 else:
     sub_df_display = sub_df
 
-st.dataframe(
-    sub_df_display, 
-    use_container_width=True, 
-    hide_index=True,
-    column_config=column_config
-)
+# Use different expander behavior based on search state
+if search_term:
+    # Force expanded when searching
+    with st.expander("📋 Recent submissions (filtered)", expanded=True):
+        # Add status summary in sidebar
+        with st.sidebar:
+            st.divider() 
+            from components.submission_status_panel import render_status_summary
+            render_status_summary()
+
+        st.dataframe(
+            sub_df_display, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config=column_config
+        )
+else:
+    # Default expander behavior when not searching
+    with st.expander("📋 Recent submissions", expanded=True):
+        # Add status summary in sidebar
+        with st.sidebar:
+            st.divider() 
+            from components.submission_status_panel import render_status_summary
+            render_status_summary()
+
+        st.dataframe(
+            sub_df_display, 
+            use_container_width=True, 
+            hide_index=True,
+            column_config=column_config
+        )
 
 
 if sub_id:
     st.divider()
     st.subheader(label_selected)
     
-    # Account Type Selection
-    st.radio(
-        "Account Type",
-        ["New Account", "Renewal"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key=f"account_type_{sub_id}"
-    )
 
     # ------------------- pull AI originals -------------------
     with get_conn().cursor() as cur:
@@ -457,6 +497,9 @@ if sub_id:
 
     # ------------------- pull latest edits -------------------
     latest_edits = latest_edits_map(sub_id)
+
+    # ------------------- Submission Status --------------------
+    render_submission_status_panel(sub_id)
 
     # ------------------- Business Summary --------------------
     with st.expander("📊 Business Summary", expanded=True):

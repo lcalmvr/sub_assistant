@@ -233,13 +233,35 @@ def price(submission: dict) -> dict:
     # 6️⃣  Round to nearest 100
     prem = Decimal(prem).quantize(Decimal("100"), rounding=ROUND_HALF_UP)
 
-    return {
+    # Pass through additional quote data for PDF generation
+    result = {
         "hazard_class": hazard,
         "premium": int(prem),
         "limit": limit,
         "retention": retention,
         "coverage_limits": coverage_limits,
     }
+    
+    # Pass through additional fields for quote PDF if present
+    if "applicant_name" in submission:
+        result["applicant"] = submission["applicant_name"]
+    if "business_summary" in submission:
+        result["business_summary"] = submission["business_summary"]
+    if "subjectivities" in submission:
+        result["subjectivities"] = submission["subjectivities"]
+    if "endorsements" in submission:
+        result["endorsements"] = submission["endorsements"]
+    if "quote_date" in submission:
+        result["quote_date"] = submission["quote_date"]
+    
+    # Add standard terms if not provided
+    if "terms" not in result:
+        result["terms"] = ("This quote is valid for 30 days from the date of issue. "
+                          "Coverage is subject to policy terms, conditions, and exclusions. "
+                          "Premium is subject to underwriter approval and may be adjusted based on final risk assessment. "
+                          "Policy issuance is contingent upon receipt of completed application and any required documentation.")
+    
+    return result
 
 # ---------------------------------------------------------------------------
 # Quick manual test

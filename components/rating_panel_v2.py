@@ -108,12 +108,13 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_help
         with st.expander("📋 View Detailed Rating Breakdown", expanded=False):
             _render_rating_breakdown(rating_result, breakdown)
         
+        # Coverage limits configuration is now displayed above subjectivities
+        
         # Additional quote sections
         st.markdown("---")
         
         # Subjectivities section
-        with st.container(border=True):
-                st.markdown("**Subjectivities**")
+        with st.expander("📋 Subjectivities", expanded=False):
                 
                 # Stock subjectivities list
                 stock_subjectivities = [
@@ -207,16 +208,14 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_help
                         subj_id_val = subj_data['id']
                         subj_text = subj_data['text']
                         
-                        st.markdown(f"**Subjectivity {i+1}:**")
                         col_text, col_remove = st.columns([7, 1])
                         
                         with col_text:
-                            # Show as editable text area with unique ID-based key
-                            edited_subj = st.text_area(
+                            # Show as single-line editable text input with unique ID-based key
+                            edited_subj = st.text_input(
                                 "",
                                 value=subj_text,
                                 key=f"edit_subj_{subj_id_val}_{sub_id}",
-                                height=60,
                                 help="Edit text and changes will be saved automatically",
                                 label_visibility="collapsed"
                             )
@@ -242,8 +241,7 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_help
                     st.caption("No subjectivities added yet")
         
         # Endorsements section
-        with st.container(border=True):
-                st.markdown("**Endorsements**")
+        with st.expander("📄 Endorsements", expanded=False):
                 
                 # Stock endorsements list
                 stock_endorsements = [
@@ -376,7 +374,6 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_help
                                 st.write("🔒")  # Lock icon for required endorsements
                         else:
                             # Editable endorsements
-                            st.markdown(f"**Endorsement {i+1}:**")
                             col_text_endorse, col_remove_endorse = st.columns([7, 1])
                             
                             with col_text_endorse:
@@ -432,7 +429,7 @@ def _render_without_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_h
         )
         preview_revenue = _parse_dollar_input(revenue_input)
         if preview_revenue > 0:
-            st.caption(f"Parsed as: ${preview_revenue:,}")
+            pass
         else:
             st.error("Invalid format. Use: 1M, 500K, or 1000000")
     
@@ -534,7 +531,6 @@ def _render_limit_controls(sub_id: str, suffix: str = "") -> int:
     if parsed_limit > 0:
         st.session_state[f"selected_limit{suffix}_{sub_id}"] = parsed_limit
         selected_limit = parsed_limit
-        st.caption(f"Parsed as: ${parsed_limit:,}")
     else:
         selected_limit = current_limit
         if limit_input.strip():
@@ -578,7 +574,6 @@ def _render_retention_controls(sub_id: str, suffix: str = "") -> int:
     if parsed_retention > 0:
         st.session_state[f"selected_retention{suffix}_{sub_id}"] = parsed_retention
         selected_retention = parsed_retention
-        st.caption(f"Parsed as: ${parsed_retention:,}")
     else:
         selected_retention = current_retention
         if retention_input.strip():
@@ -659,22 +654,31 @@ def _get_coverage_configuration(sub_id: str, aggregate_limit: int, suffix: str =
                     st.session_state[session_key] = default_sublimit
                     st.session_state[text_session_key] = _format_limit_display(default_sublimit)
                 
-                # Text input first
+                # Process the input and update session state first
+                current_input = st.session_state.get(text_session_key, _format_limit_display(default_sublimit))
+                parsed_current = _parse_dollar_input(current_input)
+                
+                # Create label with confirmed amount
+                if parsed_current > 0 and parsed_current <= aggregate_limit:
+                    label_text = f"{coverage_name}: ✓ ${parsed_current:,}"
+                else:
+                    label_text = f"{coverage_name}:"
+                
+                # Text input with updated label
                 limit_input = st.text_input(
-                    f"{coverage_name}:",
-                    value=st.session_state.get(text_session_key, _format_limit_display(default_sublimit)),
+                    label_text,
+                    value=current_input,
                     key=f"sublimit_{i+1}_input{suffix}_{sub_id}",
                     help="Enter limit using K/M format (e.g., 100K, 1M)"
                 )
                 
-                # Process the input and update session state
+                # Process the new input and update session state
                 parsed_limit = _parse_dollar_input(limit_input)
                 if parsed_limit > 0:
                     if parsed_limit <= aggregate_limit:  # Sublimit can't exceed aggregate
                         st.session_state[session_key] = parsed_limit
                         st.session_state[text_session_key] = limit_input
                         sublimit_coverages[coverage_name] = parsed_limit
-                        st.caption(f"✓ ${parsed_limit:,}")
                     else:
                         st.error(f"Cannot exceed aggregate limit of ${aggregate_limit:,}")
                         sublimit_coverages[coverage_name] = st.session_state[session_key]
@@ -742,10 +746,8 @@ def _render_rating_breakdown(rating_result: dict, breakdown: dict):
 
 def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get_conn_func, quote_helpers=None):
     """Render complete quote generation section"""
-    st.markdown("---")
-    st.markdown("#### 💰 Generate Quote Draft")
     
-    if st.button("Generate Quote", key=f"generate_quote_{sub_id}"):
+    if st.button("Generate Quote", key=f"generate_quote_{sub_id}", type="primary"):
         if not quote_helpers:
             st.error("Quote generation not available - helper functions not provided")
             return
