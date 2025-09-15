@@ -1,7 +1,12 @@
 from datetime import datetime
 from typing import Optional, Literal
 from sqlalchemy import text
-from .db import get_conn
+import os
+import importlib.util
+spec = importlib.util.spec_from_file_location("db", os.path.join(os.path.dirname(__file__), "db.py"))
+db = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(db)
+get_conn = db.get_conn
 
 SubmissionStatus = Literal["pending_decision", "quoted", "declined"]
 SubmissionOutcome = Literal["pending", "bound", "lost", "declined", "waiting_for_response"]

@@ -7,12 +7,16 @@ def render_submission_status_panel(submission_id: str):
     Renders submission status management panel with status/outcome selection and reason fields.
     """
     # Import here to avoid circular imports
-    from app.submission_status import (
-        get_submission_status, 
-        update_submission_status,
-        get_available_outcomes,
-        VALID_STATUS_OUTCOMES
-    )
+    import sys
+    import os
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("submission_status", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "submission_status.py"))
+    submission_status = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(submission_status)
+    get_submission_status = submission_status.get_submission_status
+    update_submission_status = submission_status.update_submission_status
+    get_available_outcomes = submission_status.get_available_outcomes
+    VALID_STATUS_OUTCOMES = submission_status.VALID_STATUS_OUTCOMES
     
     if not submission_id:
         return
@@ -153,7 +157,13 @@ def render_status_summary():
     """
     Renders a summary of all submission statuses.
     """
-    from app.submission_status import get_status_summary
+    import sys
+    import os
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("submission_status", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "submission_status.py"))
+    submission_status = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(submission_status)
+    get_status_summary = submission_status.get_status_summary
     
     
     try:

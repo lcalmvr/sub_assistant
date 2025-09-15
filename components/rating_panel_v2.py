@@ -6,7 +6,13 @@ import streamlit as st
 from datetime import datetime
 
 from rating_engine.engine import price_with_breakdown
-from app.pipeline import parse_controls_from_summary
+import sys
+import os
+import importlib.util
+spec = importlib.util.spec_from_file_location("pipeline", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "pipeline.py"))
+pipeline = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pipeline)
+parse_controls_from_summary = pipeline.parse_controls_from_summary
 
 def render_rating_panel(sub_id: str, get_conn_func, quote_helpers=None):
     """

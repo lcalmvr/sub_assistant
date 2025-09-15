@@ -1,7 +1,16 @@
 """
-Submissions Page Module
-======================
-Submission management functionality for the main app
+Streamlit admin viewer (v4.0) – Clean rebuild with all features
+============================================================================
+* New Account/Renewal radio buttons
+* Business Summary with industry classification
+* Exposure Summary
+* NIST Controls Summary
+* AI Recommendation
+* Underwriter Decision
+* Similar Submissions with embeddings fix
+* Sidebar AI Chat
+* Documents section
+* All proper layout and functionality
 """
 
 import os, json, base64, glob
@@ -12,13 +21,24 @@ import pandas as pd
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 from datetime import datetime, timezone
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 CURRENT_USER = st.session_state.get("current_user", os.getenv("USER", "unknown"))
 
 # ░░░░░░░░░░░░░░  QUOTE HELPERS  ░░░░░░░░░░░░░░░
 from rating_engine.engine import price as rate_quote, price_with_breakdown
-from app.pipeline import parse_controls_from_summary
+import sys
+import os
+import importlib.util
+spec = importlib.util.spec_from_file_location("pipeline", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "pipeline.py"))
+pipeline = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pipeline)
+parse_controls_from_summary = pipeline.parse_controls_from_summary
 
 # Import modular components
 from components.rating_panel_v2 import render_rating_panel
@@ -336,21 +356,21 @@ def _to_vector_literal(vec):
     return f"[{','.join(map(str, vec))}]"
 
 # ─────────────────────── UI starts ──────────────────────────
-
 def render():
     """Main render function for the submissions page"""
+    import pandas as pd
     st.title("📂 AI-Processed Submissions")
 
     # Search and submission selection in same row
     col1, col2 = st.columns([2, 1])
-    
+
     with col1:
         search_term = st.text_input("🔍 Search by company name", key="search_submissions", placeholder="Enter company name...")
         # Trigger rerun when search term changes
         if search_term != st.session_state.get("last_search_term", ""):
             st.session_state.last_search_term = search_term
             st.rerun()
-    
+
     with col2:
         # Load submissions with search filter
         if search_term:
@@ -359,12 +379,12 @@ def render():
         else:
             where_sql = "TRUE"
             params = []
-        
+    
         sub_df = load_submissions(where_sql, params)
         label_map = {f"{r.applicant_name} – {str(r.id)[:8]}": r.id for r in sub_df.itertuples()}
         label_selected = st.selectbox("Open submission:", list(label_map.keys()) or ["—"])
         sub_id = label_map.get(label_selected)
-    
+
     # Configure column display (shared configuration)
     column_config = {
         "id": st.column_config.TextColumn(
@@ -405,12 +425,12 @@ def render():
             help="Submission outcome"
         )
     }
-    
+
     # Format the ID column to show only first 8 characters and status columns for display
     if not sub_df.empty and 'id' in sub_df.columns:
         sub_df_display = sub_df.copy()
         sub_df_display['id'] = sub_df_display['id'].astype(str).str[:8]
-        
+    
         # Format status columns for better display
         if 'submission_status' in sub_df_display.columns:
             sub_df_display['submission_status'] = sub_df_display['submission_status'].str.replace('_', ' ').str.title()
@@ -418,13 +438,12 @@ def render():
             sub_df_display['submission_outcome'] = sub_df_display['submission_outcome'].str.replace('_', ' ').str.title()
     else:
         sub_df_display = sub_df
-    
+
     # Use different expander behavior based on search state
     if search_term:
         # Force expanded when searching
         with st.expander("📋 Recent submissions (filtered)", expanded=True):
-            # Status summary moved to dedicated stats page
-    
+
             st.dataframe(
                 sub_df_display, 
                 use_container_width=True, 
@@ -434,21 +453,20 @@ def render():
     else:
         # Default expander behavior when not searching
         with st.expander("📋 Recent submissions", expanded=True):
-            # Status summary moved to dedicated stats page
-    
+
             st.dataframe(
                 sub_df_display, 
                 use_container_width=True, 
                 hide_index=True,
                 column_config=column_config
             )
-    
-    
+
+
     if sub_id:
         st.divider()
         st.subheader(label_selected)
-        
     
+
         # ------------------- pull AI originals -------------------
         with get_conn().cursor() as cur:
             cur.execute(
@@ -472,18 +490,18 @@ def render():
             )
             result = cur.fetchone()
             biz_sum, exp_sum, ctrl_sum, bullet_sum, ops_vec, ctrl_vec, naics_code, naics_title, naics_sec_code, naics_sec_title, industry_tags, annual_revenue = result
-    
+
         # ------------------- pull latest edits -------------------
         latest_edits = latest_edits_map(sub_id)
-    
+
         # ------------------- Submission Status --------------------
         render_submission_status_panel(sub_id)
-    
+
         # ------------------- Business Summary --------------------
         with st.expander("📊 Business Summary", expanded=True):
             if st.button("✏️ Edit", key=f"edit_biz_{sub_id}"):
                 st.session_state[f"editing_biz_{sub_id}"] = True
-            
+        
             if st.session_state.get(f"editing_biz_{sub_id}", False):
                 edited_biz = st.text_area(
                     "Edit Business Summary",
@@ -501,7 +519,7 @@ def render():
                                 (edited_biz, sub_id)
                             )
                             conn.commit()
-                        
+                    
                         # Track the edit in feedback system
                         save_feedback(
                             submission_id=sub_id,
@@ -512,7 +530,7 @@ def render():
                             comment="Updated business_summary",
                             user_id=CURRENT_USER
                         )
-                        
+                    
                         st.session_state[f"editing_biz_{sub_id}"] = False
                         st.success("✅ Business summary saved successfully!")
                         st.rerun()
@@ -522,18 +540,18 @@ def render():
                         st.rerun()
             else:
                 st.markdown(biz_sum or "No business summary available")
-            
+        
             st.divider()
-            
+        
             # Annual Revenue and Industry Classification
             all_lines = []
-            
+        
             # Add revenue line
             if annual_revenue:
                 all_lines.append(f"**Annual Revenue:** ${annual_revenue:,.0f}")
             else:
                 all_lines.append("**Annual Revenue:** Not specified")
-                
+            
             # Add industry lines
             if naics_code and naics_title:
                 all_lines.append(f"**Primary:** {naics_code} - {naics_title}")
@@ -541,15 +559,15 @@ def render():
                 all_lines.append(f"**Secondary:** {naics_sec_code} - {naics_sec_title}")
             if industry_tags:
                 all_lines.append(f"**Industry Tags:** {', '.join(industry_tags)}")
-            
+        
             if all_lines:
                 st.markdown("  \n".join(all_lines))
-        
+    
         # ------------------- Exposure Summary --------------------
         with st.expander("⚠️ Exposure Summary", expanded=False):
             if st.button("✏️ Edit", key=f"edit_exp_{sub_id}"):
                 st.session_state[f"editing_exp_{sub_id}"] = True
-            
+        
             if st.session_state.get(f"editing_exp_{sub_id}", False):
                 edited_exp = st.text_area(
                     "Edit Exposure Summary",
@@ -567,7 +585,7 @@ def render():
                                 (edited_exp, sub_id)
                             )
                             conn.commit()
-                        
+                    
                         # Track the edit in feedback system
                         save_feedback(
                             submission_id=sub_id,
@@ -578,7 +596,7 @@ def render():
                             comment="Updated cyber_exposures",
                             user_id=CURRENT_USER
                         )
-                        
+                    
                         st.session_state[f"editing_exp_{sub_id}"] = False
                         st.success("✅ Exposure summary saved successfully!")
                         st.rerun()
@@ -588,12 +606,12 @@ def render():
                         st.rerun()
             else:
                 st.markdown(exp_sum or "No exposure summary available")
-        
+    
         # ------------------- NIST Controls Summary --------------------
         with st.expander("🔐 NIST Controls Summary", expanded=False):
             if st.button("✏️ Edit", key=f"edit_ctrl_{sub_id}"):
                 st.session_state[f"editing_ctrl_{sub_id}"] = True
-            
+        
             if st.session_state.get(f"editing_ctrl_{sub_id}", False):
                 edited_ctrl = st.text_area(
                     "Edit NIST Controls Summary",
@@ -611,7 +629,7 @@ def render():
                                 (edited_ctrl, sub_id)
                             )
                             conn.commit()
-                        
+                    
                         # Track the edit in feedback system
                         save_feedback(
                             submission_id=sub_id,
@@ -622,7 +640,7 @@ def render():
                             comment="Updated nist_controls_summary",
                             user_id=CURRENT_USER
                         )
-                        
+                    
                         st.session_state[f"editing_ctrl_{sub_id}"] = False
                         st.success("✅ NIST controls summary saved successfully!")
                         st.rerun()
@@ -632,12 +650,12 @@ def render():
                         st.rerun()
             else:
                 st.markdown(ctrl_sum or "No NIST controls summary available")
-        
+    
         # ------------------- Bullet Point Summary --------------------
         with st.expander("📌 Bullet Point Summary", expanded=False):
             if st.button("✏️ Edit", key=f"edit_bullet_{sub_id}"):
                 st.session_state[f"editing_bullet_{sub_id}"] = True
-            
+        
             if st.session_state.get(f"editing_bullet_{sub_id}", False):
                 edited_bullet = st.text_area(
                     "Edit Bullet Point Summary",
@@ -655,7 +673,7 @@ def render():
                                 (edited_bullet, sub_id)
                             )
                             conn.commit()
-                        
+                    
                         # Track the edit in feedback system
                         save_feedback(
                             submission_id=sub_id,
@@ -666,7 +684,7 @@ def render():
                             comment="Updated bullet_point_summary",
                             user_id=CURRENT_USER
                         )
-                        
+                    
                         st.session_state[f"editing_bullet_{sub_id}"] = False
                         st.success("✅ Bullet point summary saved successfully!")
                         st.rerun()
@@ -676,7 +694,7 @@ def render():
                         st.rerun()
             else:
                 st.markdown(bullet_sum or "No bullet point summary available")
-        
+    
         # ------------------- Loss History --------------------
         with st.expander("📊 Loss History", expanded=False):
             # Load loss history data
@@ -690,17 +708,17 @@ def render():
                     ORDER BY loss_date DESC
                 """, (sub_id,))
                 loss_records = cur.fetchall()
-            
+        
             if loss_records:
                 st.write(f"**Found {len(loss_records)} loss records**")
-                
+            
                 # Create DataFrame for better display
                 import pandas as pd
                 loss_df = pd.DataFrame(loss_records, columns=[
                     'Loss Date', 'Type', 'Description', 'Loss Amount', 
                     'Status', 'Claim Number', 'Carrier', 'Paid Amount'
                 ])
-                
+            
                 # Display summary metrics
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -712,30 +730,30 @@ def render():
                 with col3:
                     avg_paid = total_paid / len(loss_df) if len(loss_df) > 0 else 0
                     st.metric("Avg per Claim", f"${avg_paid:,.2f}")
-                
+            
                 # Display detailed table
                 st.markdown("**Claims Detail:**")
-                
+            
                 # Format the dataframe for better display
                 display_df = loss_df.copy()
                 display_df['Loss Date'] = pd.to_datetime(display_df['Loss Date']).dt.strftime('%Y-%m-%d')
                 display_df['Description'] = display_df['Description'].str[:100] + '...' if len(display_df) > 0 else display_df['Description']
                 display_df['Paid Amount'] = display_df['Paid Amount'].apply(lambda x: f"${float(x):,.2f}" if x else "N/A")
-                
+            
                 st.dataframe(
                     display_df,
                     use_container_width=True,
                     hide_index=True
                 )
-                
+            
             else:
                 st.info("No loss history records found for this submission.")
-        
+    
         # ------------------- Underwriter Decision --------------------
         with st.expander("👤 Underwriter Decision", expanded=False):
             if st.button("✏️ Edit", key=f"edit_underwriter_{sub_id}"):
                 st.session_state[f"editing_underwriter_{sub_id}"] = True
-            
+        
             if st.session_state.get(f"editing_underwriter_{sub_id}", False):
                 # Get existing decision from session state (like other sections get from DB)
                 uw_decision = st.session_state.get(f"underwriter_decision_{sub_id}", "")
@@ -750,7 +768,7 @@ def render():
                     if st.button("💾 Save", key=f"save_underwriter_{sub_id}"):
                         # Store in session state (TODO: add to database later)
                         st.session_state[f"underwriter_decision_{sub_id}"] = edited_decision
-                        
+                    
                         # Track the edit in feedback system (like other sections)
                         save_feedback(
                             submission_id=sub_id,
@@ -761,7 +779,7 @@ def render():
                             comment="Updated underwriter_decision",
                             user_id=CURRENT_USER
                         )
-                        
+                    
                         st.session_state[f"editing_underwriter_{sub_id}"] = False
                         st.success("✅ Underwriter decision saved successfully!")
                         st.rerun()
@@ -773,12 +791,12 @@ def render():
                 # Display current decision (like other sections display their content)
                 uw_decision = st.session_state.get(f"underwriter_decision_{sub_id}")
                 st.markdown(uw_decision or "No underwriter decision available")
-    
+
         # ------------------- AI Recommendation --------------------
         with st.expander("🤖 AI Recommendation", expanded=False):
             # Check if we already have a cached recommendation for this submission
             cache_key = f"ai_recommendation_{sub_id}"
-            
+        
             if cache_key in st.session_state:
                 # Use cached result
                 cached_result = st.session_state[cache_key]
@@ -811,18 +829,18 @@ def render():
                         st.error(f"Error generating AI recommendation: {e}")
                 else:
                     st.info("Click the button above to generate an AI recommendation for this submission.")
-        
+    
         # ------------------- AI Chat --------------------
         with st.expander("🤖 AI Chat Assistant", expanded=False):
             # Initialize chat history
             if 'chat_history' not in st.session_state:
                 st.session_state.chat_history = []
-            
+        
             # Chat input at the top
             if prompt := st.chat_input("Ask about this submission..."):
                 # Add user message to history
                 st.session_state.chat_history.append({"role": "user", "content": prompt})
-                
+            
                 # Get AI response
                 with st.spinner("Thinking..."):
                     try:
@@ -834,23 +852,23 @@ def render():
                             st.session_state.chat_history,
                             use_internet
                         )
-                        
+                    
                         # Add AI response to history
                         st.session_state.chat_history.append({"role": "assistant", "content": response})
                     except Exception as e:
                         error_msg = f"❌ Error getting AI response: {e}"
                         st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
-                
+            
                 # Rerun to refresh the display
                 st.rerun()
-            
+        
             # Display chat history in reverse order (most recent at top)
             if st.session_state.chat_history:
                 st.divider()
                 for message in reversed(st.session_state.chat_history):
                     with st.chat_message(message["role"]):
                         st.markdown(message["content"])
-    
+
         # ------------------- Rating --------------------
         quote_helpers = {
             'render_pdf': _render_quote_pdf,
@@ -858,7 +876,7 @@ def render():
             'save_quote': _save_quote_row
         }
         render_rating_panel(sub_id, get_conn, quote_helpers)
-        
+    
         # ------------------- Feedback History --------------------
         with st.expander("🔎 Feedback History", expanded=False):
             hist_df = pd.read_sql(
@@ -876,15 +894,15 @@ def render():
                 st.dataframe(hist_df, use_container_width=True, hide_index=True)
             else:
                 st.info("No feedback history available")
-    
+
         st.divider()
-    
+
         # ------------------- Similar Submissions --------------------
         render_similar_submissions_panel(sub_id, ops_vec, ctrl_vec, get_conn, load_submissions, load_submission, format_nist_controls_list)
-    
+
         # ------------------- Documents Section -----------------------
         st.subheader("📄 Documents")
-        
+    
         # Get submission details for folder structure
         with get_conn().cursor() as cur:
             cur.execute(
@@ -893,11 +911,11 @@ def render():
             )
             result = cur.fetchone()
             company_name = result[0] if result else "unknown"
-        
+    
         # Create company folder path
         company_folder = f"fixtures/{company_name.lower().replace(' ', '_').replace('.', '').replace(',', '')}"
         os.makedirs(company_folder, exist_ok=True)
-        
+    
         # File uploader
         uploaded_files = st.file_uploader(
             "Upload documents",
@@ -906,20 +924,20 @@ def render():
             key=f"upload_{sub_id}",
             label_visibility="collapsed"
         )
-        
+    
         if uploaded_files:
             col1, col2 = st.columns([1, 1])
-            
+        
             with col1:
                 doc_type = st.selectbox(
                     "Document Type",
                     ["Submission Email", "Application Form", "Questionnaire/Form", "Loss Run", "Other"],
                     key=f"doc_type_{sub_id}"
                 )
-            
+        
             with col2:
                 is_priority = st.checkbox("Priority Document", key=f"priority_{sub_id}")
-            
+        
             if st.button("Upload Documents", key=f"upload_btn_{sub_id}"):
                 for uploaded_file in uploaded_files:
                     try:
@@ -927,7 +945,7 @@ def render():
                         file_path = os.path.join(company_folder, uploaded_file.name)
                         with open(file_path, "wb") as f:
                             f.write(uploaded_file.getbuffer())
-                        
+                    
                         # Process and store in database
                         _process_uploaded_document(
                             sub_id, 
@@ -936,14 +954,14 @@ def render():
                             doc_type, 
                             is_priority
                         )
-                        
+                    
                         st.success(f"✅ Uploaded: {uploaded_file.name}")
-                        
+                    
                     except Exception as e:
                         st.error(f"❌ Error uploading {uploaded_file.name}: {str(e)}")
-                
+            
                 st.rerun()
-    
+
         # Display existing documents
         docs = load_documents(sub_id)
         if docs.empty:
@@ -953,31 +971,31 @@ def render():
             for _, r in docs.iterrows():
                 with st.expander(f"{r['filename']} – {r['document_type']}"):
                     st.write(f"Pages: {r['page_count']} | Priority: {r['is_priority']}")
-                    
+                
                     # Check file type and display accordingly
                     filename = r['filename'].lower()
                     file_path = None
-                    
+                
                     # Search for the file in common locations
                     possible_paths = [
                         f"./attachments/{r['filename']}",
                         f"./fixtures/{r['filename']}",
                         f"./{r['filename']}"
                     ]
-                    
+                
                     # Also search in subdirectories
                     search_patterns = [
                         f"./attachments/**/{r['filename']}",
                         f"./fixtures/**/{r['filename']}",
                         f"./**/{r['filename']}"
                     ]
-                    
+                
                     # First try direct paths
                     for path in possible_paths:
                         if os.path.exists(path):
                             file_path = path
                             break
-                    
+                
                     # If not found, try searching recursively
                     if not file_path:
                         for pattern in search_patterns:
@@ -985,7 +1003,7 @@ def render():
                             if matches:
                                 file_path = matches[0]  # Take the first match
                                 break
-                    
+                
                     if filename.endswith('.pdf'):
                         # Handle PDF files
                         if file_path:
@@ -1007,14 +1025,14 @@ def render():
                                 st.error(f"Error loading PDF: {e}")
                         else:
                             st.info(f"PDF file '{r['filename']}' not found in storage locations")
-                            
+                        
                     elif filename.endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff')):
                         # Handle image files
                         if file_path:
                             try:
                                 st.write("**Image Preview:**")
                                 st.image(file_path, caption=r['filename'], use_container_width=True)
-                                
+                            
                                 # Add download button for images
                                 with open(file_path, "rb") as file:
                                     image_bytes = file.read()
@@ -1028,10 +1046,17 @@ def render():
                                 st.error(f"Error loading image: {e}")
                         else:
                             st.info(f"Image file '{r['filename']}' not found in storage locations")
-                            
+                        
                     else:
                         # For other files (JSON, text, etc.), show metadata and extracted data
                         st.markdown("**Metadata**")
                         st.json(_safe_json(r["doc_metadata"]))
                         st.markdown("**Extracted Data (truncated)**")
                         st.json(_safe_json(r["extracted_data"]))
+
+        #
+
+# Entry point for backwards compatibility
+if __name__ == "__main__":
+    st.set_page_config(page_title="Submissions", layout="wide")
+    render()
