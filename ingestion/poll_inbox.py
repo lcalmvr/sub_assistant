@@ -1,5 +1,5 @@
 # poll_inbox.py – inside your loop, after fetching one message `raw`
-from app.pipeline import process_submission, Attachment
+from core.pipeline import process_submission, Attachment
 
 attachments = []
 for part in raw.walk():

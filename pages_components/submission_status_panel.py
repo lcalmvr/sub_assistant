@@ -10,7 +10,7 @@ def render_submission_status_panel(submission_id: str):
     import sys
     import os
     import importlib.util
-    spec = importlib.util.spec_from_file_location("submission_status", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "submission_status.py"))
+    spec = importlib.util.spec_from_file_location("submission_status", os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "submission_status.py"))
     submission_status = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(submission_status)
     get_submission_status = submission_status.get_submission_status
@@ -160,7 +160,7 @@ def render_status_summary():
     import sys
     import os
     import importlib.util
-    spec = importlib.util.spec_from_file_location("submission_status", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "submission_status.py"))
+    spec = importlib.util.spec_from_file_location("submission_status", os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "submission_status.py"))
     submission_status = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(submission_status)
     get_status_summary = submission_status.get_status_summary

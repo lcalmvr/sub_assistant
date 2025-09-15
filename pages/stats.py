@@ -15,7 +15,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-from app_pages.stats import render
+from pages_workflows.stats import render
 
 # Set page config for this page
 st.set_page_config(page_title="Stats", page_icon="📊", layout="wide")

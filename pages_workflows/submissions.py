@@ -35,15 +35,15 @@ from rating_engine.engine import price as rate_quote, price_with_breakdown
 import sys
 import os
 import importlib.util
-spec = importlib.util.spec_from_file_location("pipeline", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "pipeline.py"))
+spec = importlib.util.spec_from_file_location("pipeline", os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "pipeline.py"))
 pipeline = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pipeline)
 parse_controls_from_summary = pipeline.parse_controls_from_summary
 
 # Import modular components
-from components.rating_panel_v2 import render_rating_panel
-from components.similar_submissions_panel import render_similar_submissions_panel
-from components.submission_status_panel import render_submission_status_panel
+from pages_components.rating_panel_v2 import render_rating_panel
+from pages_components.similar_submissions_panel import render_similar_submissions_panel
+from pages_components.submission_status_panel import render_submission_status_panel
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -810,7 +810,7 @@ def render():
                 # Generate new recommendation
                 if st.button("🔄 Generate AI Recommendation", key=f"generate_ai_rec_{sub_id}"):
                     try:
-                        from guideline_rag import get_ai_decision
+                        from ai.guideline_rag import get_ai_decision
                         if biz_sum or exp_sum or ctrl_sum:
                             with st.spinner("Generating AI recommendation..."):
                                 result = get_ai_decision(biz_sum, exp_sum, ctrl_sum)
@@ -844,7 +844,7 @@ def render():
                 # Get AI response
                 with st.spinner("Thinking..."):
                     try:
-                        from guideline_rag import get_chat_response
+                        from ai.guideline_rag import get_chat_response
                         use_internet = st.checkbox("🌐 Enable internet search", key="internet_search")
                         response = get_chat_response(
                             prompt, 

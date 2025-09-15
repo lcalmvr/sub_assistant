@@ -330,7 +330,7 @@ Email:\n{email_text}
 import numpy as np
 import pandas as pd
 
-NAICS_FILE = Path("naics_2022_w_embeddings.parquet")
+NAICS_FILE = Path("ai/naics_2022_w_embeddings.parquet")
 if not NAICS_FILE.exists():
     raise FileNotFoundError("naics_2022_w_embeddings.parquet missing. Build it once, then rerun.")
 
@@ -480,7 +480,7 @@ def parse_controls_from_summary(bullet_summary: str, nist_summary: str = "") -> 
     return controls
 
 # ───────────── Guideline RAG (user-provided) ─────────────
-from guideline_rag import get_ai_decision
+from ai.guideline_rag import get_ai_decision
 
 # ───────────── DB helpers (schema-safe) ─────────────
 

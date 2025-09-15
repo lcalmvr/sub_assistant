@@ -15,7 +15,7 @@ def render():
     st.title("📊 Submission Statistics")
 
     # Import and render the status summary that was in the sidebar
-    from components.submission_status_panel import render_status_summary
+    from pages_components.submission_status_panel import render_status_summary
     render_status_summary()
 
     # Add additional analytics and charts here in the future

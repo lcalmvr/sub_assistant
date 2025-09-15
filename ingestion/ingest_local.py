@@ -2,7 +2,7 @@
 from pathlib import Path
 import json, argparse
 import os
-from app.pipeline import process_submission, Attachment
+from core.pipeline import process_submission, Attachment
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 

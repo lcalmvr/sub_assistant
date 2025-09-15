@@ -11,7 +11,7 @@ from langchain.prompts import PromptTemplate
 
 from pathlib import Path
 from dotenv import load_dotenv          # ⬅️ add this
-from performance_monitor import monitor
+from utils.performance_monitor import monitor
 
 load_dotenv(Path(__file__).resolve().parents[0] / ".env")  # ⬅️ and this
 

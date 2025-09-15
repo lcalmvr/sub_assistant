@@ -9,7 +9,7 @@ from rating_engine.engine import price_with_breakdown
 import sys
 import os
 import importlib.util
-spec = importlib.util.spec_from_file_location("pipeline", os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "pipeline.py"))
+spec = importlib.util.spec_from_file_location("pipeline", os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "pipeline.py"))
 pipeline = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pipeline)
 parse_controls_from_summary = pipeline.parse_controls_from_summary
