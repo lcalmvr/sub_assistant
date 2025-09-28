@@ -10,6 +10,7 @@ Features:
 """
 
 import os
+import re
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -65,6 +66,23 @@ def _format_percent(percent: float) -> str:
     return f"{percent:.0f}%" if percent == int(percent) else f"{percent:.1f}%"
 
 
+def _parse_percent(val):
+    """Parse percentage strings into floats."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+
+    s = str(val).strip().replace("%", "")
+    if not s:
+        return None
+
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
 def _layers_to_dataframe(layers: list) -> pd.DataFrame:
     """Convert layers list to DataFrame for display."""
     if not layers:
@@ -72,35 +90,193 @@ def _layers_to_dataframe(layers: list) -> pd.DataFrame:
     
     rows = []
     for layer in layers:
+        limit_value = layer.get("limit", 0) or 0
+        quota_total = layer.get("quota_share_total_limit")
+        quota_percent = layer.get("quota_share_percentage")
+
+        if quota_percent is None and quota_total:
+            try:
+                if quota_total:
+                    quota_percent = (limit_value / quota_total) * 100 if quota_total else None
+            except Exception:
+                quota_percent = None
+
         rows.append({
             "carrier": layer.get("carrier", ""),
-            "limit": _format_amount(layer.get("limit", 0)),
+            "limit": _format_amount(limit_value),
             "attachment": _format_amount(layer.get("attachment", 0)),
             "premium": _format_amount(layer.get("premium", 0)) if layer.get("premium") else "",
             "rpm": _format_rpm(layer.get("rpm", 0)) if layer.get("rpm") else "",
             "ilf": layer.get("ilf", ""),
+            "quota_share_part_of": _format_amount(quota_total) if quota_total else "",
+            "quota_share_percentage": _format_percent(quota_percent) if quota_percent else "",
         })
     
     return pd.DataFrame(rows)
 
 
-def _dataframe_to_layers(df: pd.DataFrame) -> list:
+def _dataframe_to_layers(df: pd.DataFrame, existing_layers=None) -> list:
     """Convert DataFrame back to layers list."""
     layers = []
-    for _, row in df.iterrows():
+    existing_layers = existing_layers or []
+    has_quota_part_of = "quota_share_part_of" in df.columns
+    has_quota_percentage = "quota_share_percentage" in df.columns
+
+    for idx, row in df.iterrows():
         if not any(str(row.get(col, "")).strip() for col in ["carrier", "limit", "attachment"]):
             continue
-            
-        layers.append({
+
+        layer = {
             "carrier": str(row.get("carrier", "")).strip(),
             "limit": _parse_amount(row.get("limit", 0)),
             "attachment": _parse_amount(row.get("attachment", 0)),
             "premium": _parse_amount(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
             "rpm": _parse_amount(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
             "ilf": str(row.get("ilf", "")).strip() or None,
-        })
+        }
+
+        if has_quota_part_of:
+            part_of_val = _parse_amount(row.get("quota_share_part_of")) if str(row.get("quota_share_part_of", "")).strip() else None
+            layer["quota_share_total_limit"] = part_of_val if part_of_val else None
+        elif idx < len(existing_layers):
+            layer["quota_share_total_limit"] = existing_layers[idx].get("quota_share_total_limit")
+
+        if has_quota_percentage:
+            percent_val = _parse_percent(row.get("quota_share_percentage")) if str(row.get("quota_share_percentage", "")).strip() else None
+            layer["quota_share_percentage"] = percent_val if percent_val else None
+        elif idx < len(existing_layers):
+            layer["quota_share_percentage"] = existing_layers[idx].get("quota_share_percentage")
+
+        layers.append(layer)
     
     return layers
+
+
+def _has_quota_share_layer(layers: list) -> bool:
+    """Detect whether any excess layer carries quota share data."""
+    for idx, layer in enumerate(layers):
+        if idx == 0:
+            continue
+        total = layer.get("quota_share_total_limit")
+        if total and _parse_amount(total):
+            return True
+    return False
+
+
+def _detect_ilf_factor(text: str):
+    if not text:
+        return None
+    patterns = [
+        r"(\d+(?:\.\d+)?)\s*%\s*ILF",
+        r"ILF\s*(?:of|at)?\s*(\d+(?:\.\d+)?)\s*%",
+    ]
+    for pat in patterns:
+        match = re.search(pat, text, flags=re.I)
+        if match:
+            try:
+                return float(match.group(1)) / 100.0
+            except Exception:
+                return None
+    return None
+
+
+def _extract_carrier_tokens(raw: str) -> list[str]:
+    parts = []
+    if not raw:
+        return parts
+    normalized = raw.replace("&", " and ")
+    for token in re.split(r",| and |\band\b", normalized, flags=re.I):
+        name = token.strip()
+        if name:
+            parts.append(name)
+    return parts
+
+
+def _infer_quota_share_from_text(text: str, layers: list) -> None:
+    """Use simple heuristics to populate quota share metadata from the user's description."""
+    if not text or not layers:
+        return
+
+    pattern = re.compile(
+        r"([A-Za-z0-9 /&,'-]+?)\s+(?:are|is|were|being)\s+part of\s+a\s+([0-9.,$\sMKmk]+)\s+quota share(?:[^.]*?each\s+with\s+(?:a\s+)?([0-9.,$\sMKmk]+)\s+limit)?",
+        flags=re.I,
+    )
+    lowered_layers = {str(layer.get("carrier", "")).strip().lower(): layer for layer in layers}
+
+    for match in pattern.finditer(text):
+        carriers_block = match.group(1)
+        total_raw = match.group(2)
+        per_raw = match.group(3) if match.lastindex and match.lastindex >= 3 else None
+
+        total_limit = _parse_amount(total_raw)
+        per_limit = _parse_amount(per_raw) if per_raw else None
+        if not total_limit:
+            continue
+
+        carriers = _extract_carrier_tokens(carriers_block)
+        for name in carriers:
+            layer = lowered_layers.get(name.lower())
+            if not layer:
+                continue
+            layer["quota_share_total_limit"] = total_limit
+            if per_limit and not layer.get("limit"):
+                layer["limit"] = per_limit
+            limit_val = layer.get("limit") or 0
+            if total_limit and limit_val:
+                layer["quota_share_percentage"] = (limit_val / total_limit) * 100
+
+
+def _stack_layers_with_quota(layers: list) -> None:
+    """Assign attachments while respecting quota share groups."""
+    running_attachment = 0.0
+    idx = 0
+    while idx < len(layers):
+        layer = layers[idx]
+        limit_val = layer.get("limit", 0) or 0
+        total_limit = _parse_amount(layer.get("quota_share_total_limit")) if layer.get("quota_share_total_limit") else None
+
+        if idx == 0:
+            layer["attachment"] = running_attachment
+            running_attachment += limit_val
+            idx += 1
+            continue
+
+        if total_limit:
+            # Identify contiguous quota share group with the same total limit
+            group_indices = []
+            j = idx
+            while j < len(layers):
+                candidate = layers[j]
+                candidate_total = _parse_amount(candidate.get("quota_share_total_limit")) if candidate.get("quota_share_total_limit") else None
+                if candidate_total and abs(candidate_total - total_limit) < 1e-6:
+                    group_indices.append(j)
+                    j += 1
+                else:
+                    break
+
+            if not group_indices:
+                # Should not happen, fallback to regular stacking
+                layer["attachment"] = running_attachment
+                running_attachment += limit_val
+                idx += 1
+                continue
+
+            for gi in group_indices:
+                glayer = layers[gi]
+                glayer["attachment"] = running_attachment
+                # Fill percentage if missing
+                if glayer.get("quota_share_percentage") is None:
+                    share_limit = glayer.get("limit") or 0
+                    if total_limit:
+                        glayer["quota_share_percentage"] = (share_limit / total_limit) * 100 if share_limit else None
+                glayer["quota_share_total_limit"] = total_limit
+
+            running_attachment += total_limit
+            idx = group_indices[-1] + 1
+        else:
+            layer["attachment"] = running_attachment
+            running_attachment += limit_val
+            idx += 1
 
 
 # ───────────────────────── Main Interface ─────────────────────────
@@ -149,6 +325,8 @@ def render():
             # Update the tower layers - use the layers exactly as the AI returns them
             layers = result.get("layers", [])
             primary = result.get("primary")
+            ilf_factor = _detect_ilf_factor(user_input)
+            _infer_quota_share_from_text(user_input, layers)
             
             # If we have a primary, update the first layer with primary data
             if primary and layers:
@@ -158,24 +336,52 @@ def render():
                     "rpm": primary.get("rpm"),
                     "ilf": "TBD"
                 })
-            
+
+                primary_limit = layers[0].get("limit") or primary.get("limit") or 0
+                primary_premium = primary.get("premium") if primary else None
+                base_rpm = primary.get("rpm") if primary else None
+
+                if not base_rpm and primary_premium and primary_limit:
+                    base_rpm = primary_premium / max(1.0, (primary_limit / 1_000_000.0))
+                    primary["rpm"] = base_rpm
+                if base_rpm and not layers[0].get("rpm"):
+                    layers[0]["rpm"] = base_rpm
+                if primary_premium and not layers[0].get("premium"):
+                    layers[0]["premium"] = primary_premium
+
             # Apply ILF calculations if we have a primary with RPM
-            if primary and primary.get("rpm") and len(layers) > 1:
-                base_rpm = primary.get("rpm")
+            base_rpm = layers[0].get("rpm") if layers else None
+            if base_rpm and len(layers) > 1 and ilf_factor:
+                prior_rpm = base_rpm
+                ilf_percent_value = ilf_factor * 100
                 for i in range(1, len(layers)):
+                    current_layer = layers[i]
+                    previous_layer = layers[i - 1]
+                    current_total = _parse_amount(current_layer.get("quota_share_total_limit")) if current_layer.get("quota_share_total_limit") else None
+                    previous_total = _parse_amount(previous_layer.get("quota_share_total_limit")) if previous_layer.get("quota_share_total_limit") else None
+                    same_quota_group = False
+                    if current_total and previous_total and abs(current_total - previous_total) < 1e-6:
+                        same_quota_group = True
+
+                    if same_quota_group:
+                        current_layer["rpm"] = prior_rpm
+                        limit_val = current_layer.get("limit") or 0
+                        if limit_val:
+                            current_layer["premium"] = prior_rpm * (limit_val / 1_000_000.0)
+                        current_layer["ilf"] = previous_layer.get("ilf") or _format_percent(ilf_percent_value)
+                        continue
+
                     # Apply 80% ILF to each subsequent layer
-                    new_rpm = base_rpm * (0.8 ** i)
-                    layers[i]["rpm"] = new_rpm
-                    if layers[i]["limit"]:
-                        layers[i]["premium"] = new_rpm * (layers[i]["limit"] / 1_000_000.0)
-                    layers[i]["ilf"] = "80%"
-            
-            # Fix attachment points to stack properly
-            running_attachment = 0
-            for layer in layers:
-                layer["attachment"] = running_attachment
-                running_attachment += layer.get("limit", 0)
-            
+                    prior_rpm = prior_rpm * ilf_factor
+                    current_layer["rpm"] = prior_rpm
+                    limit_val = current_layer.get("limit") or 0
+                    if limit_val:
+                        current_layer["premium"] = prior_rpm * (limit_val / 1_000_000.0)
+                    current_layer["ilf"] = _format_percent(ilf_percent_value)
+
+            # Infer quota share metadata from the prompt and restack
+            _stack_layers_with_quota(layers)
+
             st.session_state.tower_layers = layers
             
             st.success("✅ Tower updated successfully!")
@@ -186,13 +392,40 @@ def render():
     
     # Tower Table
     st.subheader("Insurance Tower")
-    
+
+    quota_share_detected = _has_quota_share_layer(st.session_state.tower_layers)
+    if "quota_share_manual_enable" not in st.session_state:
+        st.session_state.quota_share_manual_enable = quota_share_detected
+    elif quota_share_detected and not st.session_state.quota_share_manual_enable:
+        # Auto-enable if we newly detect quota share layers
+        st.session_state.quota_share_manual_enable = True
+
+    show_quota_columns = st.checkbox(
+        "Show quota share columns",
+        key="quota_share_manual_enable",
+        help="Quota share captures scenarios like '5M part of 25M excess 50M'."
+    )
+
+    if quota_share_detected:
+        st.caption("Quota share layer detected in the excess tower.")
+
     # Convert layers to DataFrame for editing
     df = _layers_to_dataframe(st.session_state.tower_layers)
-    
+    display_columns = [
+        "carrier",
+        "limit",
+        "attachment",
+        "premium",
+        "rpm",
+        "ilf",
+    ]
+    if show_quota_columns:
+        display_columns.extend(["quota_share_part_of", "quota_share_percentage"])
+    df_for_editor = df[display_columns]
+
     # Display and edit the table
     edited_df = st.data_editor(
-        df,
+        df_for_editor,
         num_rows="dynamic",
         use_container_width=True,
         column_config={
@@ -202,13 +435,23 @@ def render():
             "premium": st.column_config.TextColumn("Premium", width="small"),
             "rpm": st.column_config.TextColumn("RPM", width="small"),
             "ilf": st.column_config.TextColumn("ILF", width="small"),
+            "quota_share_part_of": st.column_config.TextColumn(
+                "Quota Share Part Of",
+                width="small",
+                help="Total shared limit for the quota share layer.",
+            ),
+            "quota_share_percentage": st.column_config.TextColumn(
+                "Quota Share %",
+                width="small",
+                help="Carrier's share of the quota layer (optional).",
+            ),
         },
         key="tower_editor"
     )
-    
+
     # Update session state when table is edited
-    if not edited_df.equals(df):
-        st.session_state.tower_layers = _dataframe_to_layers(edited_df)
+    if not edited_df.equals(df_for_editor):
+        st.session_state.tower_layers = _dataframe_to_layers(edited_df, st.session_state.tower_layers)
         st.rerun()
     
     # Tower Summary
@@ -230,14 +473,29 @@ def render():
         st.markdown("**Tower Structure:**")
         for i, layer in enumerate(st.session_state.tower_layers):
             carrier = layer.get("carrier", "Unknown")
-            limit = _format_amount(layer.get("limit", 0))
+            limit_value = layer.get("limit", 0)
+            limit_display = _format_amount(limit_value)
             attachment = _format_amount(layer.get("attachment", 0))
             premium = _format_amount(layer.get("premium", 0)) if layer.get("premium") else "TBD"
+            quota_total_raw = layer.get("quota_share_total_limit")
+            quota_total = _parse_amount(quota_total_raw) if quota_total_raw else None
+            quota_percent = layer.get("quota_share_percentage")
+
+            if quota_percent is None and quota_total and quota_total != 0:
+                try:
+                    quota_percent = (limit_value / quota_total) * 100 if limit_value else None
+                except Exception:
+                    quota_percent = None
+
+            if i > 0 and quota_total:
+                part_of_text = _format_amount(quota_total)
+                percent_text = f" ({_format_percent(quota_percent)})" if quota_percent else ""
+                limit_display = f"{limit_display} part of {part_of_text}{percent_text}"
             
             if i == 0:
-                st.markdown(f"• **Primary**: {carrier} - {limit} above {attachment} (Premium: {premium})")
+                st.markdown(f"• **Primary**: {carrier} - {limit_display} above {attachment} (Premium: {premium})")
             else:
-                st.markdown(f"• **Layer {i}**: {carrier} - {limit} x {attachment} (Premium: {premium})")
+                st.markdown(f"• **Layer {i}**: {carrier} - {limit_display} x {attachment} (Premium: {premium})")
 
 
 # Backwards-compat entry
