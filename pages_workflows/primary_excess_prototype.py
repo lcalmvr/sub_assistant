@@ -163,21 +163,71 @@ def _has_quota_share_layer(layers: list) -> bool:
     return False
 
 
-def _detect_ilf_factor(text: str):
+def _normalize_carrier_name(name: str) -> str:
+    return re.sub(r"\s+", " ", str(name or "").strip())
+
+
+def _parse_primary_carrier(text: str):
     if not text:
         return None
     patterns = [
-        r"(\d+(?:\.\d+)?)\s*%\s*ILF",
-        r"ILF\s*(?:of|at)?\s*(\d+(?:\.\d+)?)\s*%",
+        r"([A-Za-z0-9 /&,'-]+?)\s+is\s+the\s+primary",
+        r"primary(?: carrier)?(?: is|:)?\s+([^.,;\n]+)",
     ]
     for pat in patterns:
         match = re.search(pat, text, flags=re.I)
         if match:
-            try:
-                return float(match.group(1)) / 100.0
-            except Exception:
-                return None
+            return _normalize_carrier_name(match.group(1))
     return None
+
+
+def _parse_excess_carriers(text: str) -> list[str]:
+    carriers = []
+    if not text:
+        return carriers
+    pattern = re.compile(r"(?:excess(?: carriers?)?|xs)(?:\s+tower)?\s*(?:are|is|=|:)?\s+([^.;\n]+)", flags=re.I)
+    for match in pattern.finditer(text):
+        carriers.extend(_extract_carrier_tokens(match.group(1)))
+    return [_normalize_carrier_name(c) for c in carriers if c]
+
+
+def _parse_premium_hints(text: str) -> list[float]:
+    if not text:
+        return []
+    amounts = []
+    pattern = re.compile(r"premium[s]?[^\d$]*([\$\d.,\sMKmkand]+)", flags=re.I)
+    for match in pattern.finditer(text):
+        segment = match.group(1)
+        for amt in re.findall(r"\$?\s*\d[\d,]*(?:\.\d+)?\s*[MKmk]?", segment):
+            value = _parse_amount(amt)
+            if value:
+                amounts.append(value)
+    return amounts
+
+
+def _detect_table_changes(original: pd.DataFrame, edited: pd.DataFrame) -> dict[int, set[str]]:
+    """Identify which columns were modified by the user in the data editor."""
+    changes: dict[int, set[str]] = {}
+    orig = original.reset_index(drop=True)
+    edit = edited.reset_index(drop=True)
+    columns = list(edit.columns)
+
+    def _norm(val):
+        if pd.isna(val):
+            return ""
+        return str(val).strip()
+
+    for idx in range(len(edit)):
+        row_changes: set[str] = set()
+        for col in columns:
+            new_val = _norm(edit.at[idx, col])
+            old_val = _norm(orig.at[idx, col]) if idx < len(orig) else ""
+            if new_val != old_val:
+                if new_val or old_val:
+                    row_changes.add(col)
+        if row_changes:
+            changes[idx] = row_changes
+    return changes
 
 
 def _extract_carrier_tokens(raw: str) -> list[str]:
@@ -279,6 +329,110 @@ def _stack_layers_with_quota(layers: list) -> None:
             idx += 1
 
 
+def _recalculate_manual_layers(layers: list, change_map: dict[int, set[str]] | None = None) -> None:
+    """Recompute derived premium/RPM/ILF fields after manual edits."""
+    if not layers:
+        return
+
+    change_map = change_map or {}
+
+    _stack_layers_with_quota(layers)
+
+    prev_rpm = None
+    for idx, layer in enumerate(layers):
+        limit_val = layer.get("limit") or 0
+        exposure = (limit_val / 1_000_000.0) if limit_val else None
+        premium = layer.get("premium")
+        rpm = layer.get("rpm")
+        changes = {c.lower() for c in change_map.get(idx, set())}
+        manual_premium = "premium" in changes
+        manual_rpm = "rpm" in changes
+        manual_ilf = "ilf" in changes
+
+        total = _parse_amount(layer.get("quota_share_total_limit")) if layer.get("quota_share_total_limit") else None
+        attachment = layer.get("attachment") or 0
+
+        if idx == 0:
+            if manual_premium and exposure:
+                layer["rpm"] = (premium / exposure) if premium is not None else None
+            elif manual_rpm and exposure:
+                layer["premium"] = (rpm * exposure) if rpm is not None else None
+            else:
+                if rpm is not None and exposure:
+                    layer["premium"] = rpm * exposure
+                elif premium is not None and exposure:
+                    layer["rpm"] = premium / exposure
+            layer["ilf"] = "TBD"
+            prev_rpm = layer.get("rpm")
+            continue
+
+        prev_layer = layers[idx - 1]
+        prev_total = _parse_amount(prev_layer.get("quota_share_total_limit")) if prev_layer.get("quota_share_total_limit") else None
+        same_quota_group = (
+            total
+            and prev_total
+            and abs(total - prev_total) < 1e-6
+            and (prev_layer.get("attachment") or 0) == attachment
+        )
+
+        prev_rpm_effective = prev_layer.get("rpm") if prev_layer.get("rpm") is not None else prev_rpm
+
+        def _apply_ilf_ratio_from_prev(ilf_ratio) -> None:
+            if ilf_ratio is None:
+                return
+            if prev_rpm_effective is None:
+                return
+            new_rpm = prev_rpm_effective * ilf_ratio
+            layer["rpm"] = new_rpm
+            if exposure:
+                layer["premium"] = new_rpm * exposure
+
+        if manual_ilf:
+            ilf_percent = _parse_percent(layer.get("ilf")) if layer.get("ilf") else None
+            factor = None
+            if ilf_percent is not None:
+                factor = ilf_percent / 100.0 if ilf_percent > 1 else ilf_percent
+            _apply_ilf_ratio_from_prev(factor)
+        elif manual_rpm:
+            if exposure and rpm is not None:
+                layer["premium"] = rpm * exposure
+        elif manual_premium:
+            if exposure and premium is not None:
+                layer["rpm"] = premium / exposure
+        elif same_quota_group:
+            if prev_layer.get("rpm") is not None:
+                layer["rpm"] = prev_layer["rpm"]
+                if exposure:
+                    layer["premium"] = layer["rpm"] * exposure
+            layer["ilf"] = prev_layer.get("ilf") or layer.get("ilf") or ""
+
+        # Refresh values after manual precedence
+        premium = layer.get("premium")
+        rpm = layer.get("rpm")
+
+        if not manual_ilf and not same_quota_group:
+            if rpm is not None and prev_rpm_effective:
+                ilf_value = (rpm / prev_rpm_effective) * 100
+                layer["ilf"] = _format_percent(ilf_value)
+            elif layer.get("ilf"):
+                pass
+            else:
+                layer["ilf"] = ""
+
+        if same_quota_group and not manual_ilf:
+            if layer.get("ilf") is None or layer.get("ilf") == "":
+                layer["ilf"] = prev_layer.get("ilf") or ""
+
+        # Ensure premium/rpm alignment when one exists
+        if exposure:
+            if rpm is not None and (manual_rpm or not manual_premium):
+                layer["premium"] = rpm * exposure
+            elif premium is not None and layer.get("rpm") is None:
+                layer["rpm"] = premium / exposure
+
+        prev_rpm = layer.get("rpm") if layer.get("rpm") is not None else prev_rpm_effective
+
+
 # ───────────────────────── Main Interface ─────────────────────────
 
 def render():
@@ -325,9 +479,72 @@ def render():
             # Update the tower layers - use the layers exactly as the AI returns them
             layers = result.get("layers", [])
             primary = result.get("primary")
-            ilf_factor = _detect_ilf_factor(user_input)
+            prompt_primary = _parse_primary_carrier(user_input)
+            prompt_excess = _parse_excess_carriers(user_input)
+            expected_carriers = []
+            if prompt_primary:
+                expected_carriers.append(prompt_primary)
+            expected_carriers.extend(prompt_excess)
+            expected_keys = [_normalize_carrier_name(c).lower() for c in expected_carriers]
+
+            if expected_keys:
+                original_layers = layers
+                buckets: dict[str, list[dict]] = {}
+                for layer in layers:
+                    key = _normalize_carrier_name(layer.get("carrier", "")).lower()
+                    buckets.setdefault(key, []).append(layer)
+
+                ordered_layers = []
+                for key in expected_keys:
+                    bucket = buckets.get(key)
+                    if bucket:
+                        ordered_layers.append(bucket.pop(0))
+
+                candidate_layers = ordered_layers if ordered_layers else layers
+                # Filter out any remaining layers whose carrier wasn't requested
+                allowed = set(expected_keys)
+                filtered_layers = [layer for layer in candidate_layers if _normalize_carrier_name(layer.get("carrier", "")).lower() in allowed]
+                if filtered_layers:
+                    layers = filtered_layers
+                elif ordered_layers:
+                    layers = ordered_layers
+                else:
+                    layers = original_layers
+
+            primary_names = [
+                _normalize_carrier_name(primary.get("carrier")) if isinstance(primary, dict) and primary.get("carrier") else None,
+                prompt_primary,
+            ]
+            primary_names = [name for name in primary_names if name]
+            if primary_names and layers:
+                primary_lower = {_normalize_carrier_name(name).lower() for name in primary_names}
+                primary_idx = next(
+                    (i for i, layer in enumerate(layers) if _normalize_carrier_name(layer.get("carrier", "")).lower() in primary_lower),
+                    None,
+                )
+                if primary_idx is not None and primary_idx != 0:
+                    primary_layer = layers.pop(primary_idx)
+                    layers.insert(0, primary_layer)
+
+            premium_hints = _parse_premium_hints(user_input)
+            if premium_hints:
+                for idx, amount in enumerate(premium_hints):
+                    if idx >= len(layers):
+                        break
+                    layers[idx]["premium"] = amount
+                    limit_val = layers[idx].get("limit") or 0
+                    if limit_val:
+                        exposure = limit_val / 1_000_000.0
+                        if exposure:
+                            layers[idx]["rpm"] = amount / exposure
+                if primary and premium_hints:
+                    primary["premium"] = premium_hints[0]
+                    primary_limit = primary.get("limit") or (layers[0].get("limit") if layers else 0)
+                    expo = (primary_limit / 1_000_000.0) if primary_limit else None
+                    if expo:
+                        primary["rpm"] = premium_hints[0] / expo
             _infer_quota_share_from_text(user_input, layers)
-            
+
             # If we have a primary, update the first layer with primary data
             if primary and layers:
                 # Update the first layer with primary information
@@ -349,38 +566,9 @@ def render():
                 if primary_premium and not layers[0].get("premium"):
                     layers[0]["premium"] = primary_premium
 
-            # Apply ILF calculations if we have a primary with RPM
-            base_rpm = layers[0].get("rpm") if layers else None
-            if base_rpm and len(layers) > 1 and ilf_factor:
-                prior_rpm = base_rpm
-                ilf_percent_value = ilf_factor * 100
-                for i in range(1, len(layers)):
-                    current_layer = layers[i]
-                    previous_layer = layers[i - 1]
-                    current_total = _parse_amount(current_layer.get("quota_share_total_limit")) if current_layer.get("quota_share_total_limit") else None
-                    previous_total = _parse_amount(previous_layer.get("quota_share_total_limit")) if previous_layer.get("quota_share_total_limit") else None
-                    same_quota_group = False
-                    if current_total and previous_total and abs(current_total - previous_total) < 1e-6:
-                        same_quota_group = True
-
-                    if same_quota_group:
-                        current_layer["rpm"] = prior_rpm
-                        limit_val = current_layer.get("limit") or 0
-                        if limit_val:
-                            current_layer["premium"] = prior_rpm * (limit_val / 1_000_000.0)
-                        current_layer["ilf"] = previous_layer.get("ilf") or _format_percent(ilf_percent_value)
-                        continue
-
-                    # Apply 80% ILF to each subsequent layer
-                    prior_rpm = prior_rpm * ilf_factor
-                    current_layer["rpm"] = prior_rpm
-                    limit_val = current_layer.get("limit") or 0
-                    if limit_val:
-                        current_layer["premium"] = prior_rpm * (limit_val / 1_000_000.0)
-                    current_layer["ilf"] = _format_percent(ilf_percent_value)
-
             # Infer quota share metadata from the prompt and restack
             _stack_layers_with_quota(layers)
+            _recalculate_manual_layers(layers, {})
 
             st.session_state.tower_layers = layers
             
@@ -451,7 +639,10 @@ def render():
 
     # Update session state when table is edited
     if not edited_df.equals(df_for_editor):
-        st.session_state.tower_layers = _dataframe_to_layers(edited_df, st.session_state.tower_layers)
+        change_map = _detect_table_changes(df_for_editor, edited_df)
+        recalculated_layers = _dataframe_to_layers(edited_df, st.session_state.tower_layers)
+        _recalculate_manual_layers(recalculated_layers, change_map)
+        st.session_state.tower_layers = recalculated_layers
         st.rerun()
     
     # Tower Summary

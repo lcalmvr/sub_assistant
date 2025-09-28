@@ -18,12 +18,14 @@ def _client() -> OpenAI:
 
 SYSTEM = (
     "You are an expert insurance broker assistant. Parse a natural language description of an excess tower into a structured JSON object.\n"
-    "Compute missing values per clear rules. Be consistent and conservative."
+    "Compute missing values per clear rules. Be consistent and conservative.\n"
+    "CRITICAL: Never invent carriers or layers that are not explicitly mentioned by the user."
 )
 
 USER_TEMPLATE = (
     "Task:\n"
     "- Extract ordered list of carriers in the EXACT order mentioned by the user.\n"
+    "- Do NOT introduce carriers that are not explicitly present in the text.\n"
     "- Determine per-layer limit (global), plus any per-carrier overrides.\n"
     "- Determine premiums and/or RPM (rate per $1M). If only the first premium is given and an ILF (as percent) is given for the rest, compute the rest: RPM_i = RPM_(i-1) * ILF. Premium = RPM * (limit/1,000,000).\n"
     "- Attachments stack from the primary limit (base_attachment). Each row's attachment equals the previous attachment plus any quota-share block sum; for simple single-carrier-per-layer, attachment increases by the immediately prior row's limit.\n"
@@ -127,6 +129,7 @@ OPS_SYSTEM = (
     "- {type:'set', target:{index?|carrier?}, field:'limit'|'premium'|'rpm'|'ilf', value:any}\n"
     "- {type:'set_primary', primary:{carrier, limit, retention?, premium?, rpm?, waiting_hours?}}\n"
     "Constraints: CRITICAL - Maintain the exact order of carriers as listed by the user. If user says 'Carriers are XL, AIG, Corvus, Proof', the order must be XL (primary), AIG (1st excess), Corvus (2nd excess), Proof (3rd excess). For 'insert at A x B', use 'at_attachment=B' and the provided layer.limit. 'move up' means later layers shift above by the inserted limit."
+    " NEVER invent new carriers or layers."
 )
 
 OPS_USER_TMPL = (
