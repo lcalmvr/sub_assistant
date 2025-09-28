@@ -501,6 +501,22 @@ def _existing_columns(table: str) -> set[str]:
     return {r[0] for r in rows}
 
 
+def _existing_tables() -> set[str]:
+    if not engine:
+        return set()
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                """
+            )
+        ).fetchall()
+    return {r[0] for r in rows}
+
+
 def _insert_stub(broker: str, name: str, email_summary: str) -> Any:
     """Insert minimal row into submissions using only columns that exist."""
     if not engine:
@@ -551,6 +567,8 @@ def _update_submission_by_id(sid: Any, rec: dict[str, Any]) -> None:
 
     # Map fields → columns (add only if they exist)
     add("website", rec.get("website"))
+    add("broker_email", rec.get("broker_email"))
+    add("broker_company_id", rec.get("broker_company_id"))
     add("business_summary", rec.get("biz_sum"))
     add("cyber_exposures", rec.get("cyber"))
     add("nist_controls_summary", rec.get("ctrl_sum"))
@@ -575,12 +593,353 @@ def _update_submission_by_id(sid: Any, rec: dict[str, Any]) -> None:
     add("industry_tags", json.dumps(rec.get("industry_tags")))
     add("ai_recommendation", rec.get("ai_rec"))
     add("ai_guideline_citations", json.dumps(rec.get("ai_cites")))
+    # Optional alt-brokers fields if present
+    add("broker_org_id", rec.get("broker_org_id"))
+    add("broker_employment_id", rec.get("broker_employment_id"))
+    add("broker_person_id", rec.get("broker_person_id"))
 
     if not updates:
         return
     sql = text(f"UPDATE submissions SET {', '.join(updates)}, updated_at = COALESCE(updated_at, NOW()) WHERE id = :sid")
     with engine.begin() as conn:
         conn.execute(sql, params)
+
+
+# ───────────── Broker email matching ─────────────
+_EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
+_FORWARDED_FROM_RE = re.compile(r"^>?\s*From:\s*([^\n<]+?)\s*<([^>]+)>", re.I | re.M)
+_SUBMISSION_FROM_RE = re.compile(
+    r"\b(?:new|another|incoming|latest|updated)?\s*submission\s+from\s+([A-Z][A-Z'\-a-z.]+(?:\s+[A-Z][A-Z'\-a-z.]+){0,2})",
+    re.I,
+)
+_NAME_TOKEN_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _extract_emails_from_text(txt: str) -> list[str]:
+    if not txt:
+        return []
+    found = _EMAIL_RE.findall(txt)
+    # Also parse common quoted header lines
+    # e.g., From: Jane Doe <jane@broker.com>
+    m = re.findall(r"From:\s*[^\n<]*<([^>]+)>", txt, flags=re.I)
+    if m:
+        found.extend(m)
+    # dedupe preserving order
+    seen = set()
+    out = []
+    for e in found:
+        el = e.strip().lower()
+        if el and el not in seen:
+            seen.add(el)
+            out.append(el)
+    return out
+
+
+def _tokenize_name(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {
+        token
+        for token in _NAME_TOKEN_RE.split(str(value).lower())
+        if token
+    }
+
+
+def _extract_forwarded_email_names(txt: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    if not txt:
+        return pairs
+    for name, email_addr in _FORWARDED_FROM_RE.findall(txt):
+        email_norm = email_addr.strip().lower()
+        if email_norm:
+            pairs[email_norm] = name.strip()
+    return pairs
+
+
+def _extract_submission_cue_tokens(txt: str) -> list[set[str]]:
+    cues: list[set[str]] = []
+    if not txt:
+        return cues
+    for name in _SUBMISSION_FROM_RE.findall(txt):
+        tokens = _tokenize_name(name)
+        if not tokens:
+            continue
+        cues.append(tokens)
+        # Also keep first token solo to handle single-name references like "Lauren sent this"
+        first = next(iter(tokens))
+        cues.append({first})
+    return cues
+
+
+def _prioritize_candidate_emails(
+    candidate_emails: list[str],
+    sender_email: str | None,
+    forwarded_names: dict[str, str],
+    cue_tokens: list[set[str]],
+    debug_log: list[dict] | None = None,
+) -> list[str]:
+    if not candidate_emails:
+        return candidate_emails
+
+    sender_email = (sender_email or "").strip().lower()
+
+    prioritized = []
+    for idx, email in enumerate(candidate_emails):
+        email_norm = email.strip().lower()
+        score = 100 + idx  # Base ordering fallback
+        reasons: list[str] = [f"base=100 idx={idx}"]
+
+        if sender_email and email_norm == sender_email:
+            score += 50  # Tilt away from the forwarding broker when other cues exist
+            reasons.append("sender_penalty:+50")
+
+        name_tokens = _tokenize_name(forwarded_names.get(email_norm))
+        local_tokens = _tokenize_name(email_norm.split("@")[0])
+
+        if forwarded_names.get(email_norm):
+            new_score = 40 + idx
+            if new_score < score:
+                reasons.append(f"forwarded_header->score {score}->{new_score}")
+            score = min(score, new_score)
+
+        for cue in cue_tokens:
+            if not cue:
+                continue
+            if cue.issubset(name_tokens):
+                new_score = 0 + idx
+                if new_score < score:
+                    reasons.append(f"cue_name_match {sorted(cue)}->{score}->{new_score}")
+                score = min(score, new_score)
+            elif cue.issubset(local_tokens):
+                new_score = 5 + idx
+                if new_score < score:
+                    reasons.append(f"cue_local_match {sorted(cue)}->{score}->{new_score}")
+                score = min(score, new_score)
+
+        prioritized.append((score, idx, email))
+        if debug_log is not None:
+            debug_log.append(
+                {
+                    "email": email_norm,
+                    "initial_rank": idx,
+                    "final_score": score,
+                    "forwarded_name": forwarded_names.get(email_norm),
+                    "name_tokens": sorted(name_tokens),
+                    "local_tokens": sorted(local_tokens),
+                    "reasons": reasons,
+                }
+            )
+
+    prioritized.sort(key=lambda item: (item[0], item[1]))
+    return [email for _, _, email in prioritized]
+
+
+def _load_alt_employment_email_map() -> dict[str, dict]:
+    """Load email -> minimal employment/org mapping from fixtures store (optional)."""
+    try:
+        base = Path(__file__).resolve().parent.parent  # core/ -> project root
+        data_path = base / "fixtures" / "brokerage_experiment.json"
+        if not data_path.exists():
+            return {}
+        data = json.loads(data_path.read_text(encoding="utf-8"))
+        emps = data.get("employments") or {}
+        people = data.get("people") or {}
+        orgs = data.get("organizations") or {}
+        out: dict[str, dict] = {}
+        for emp in emps.values():
+            email = (emp or {}).get("email")
+            if not email:
+                continue
+            el = str(email).strip().lower()
+            out[el] = {
+                "employment_id": emp.get("employment_id"),
+                "person_id": emp.get("person_id"),
+                "org_id": emp.get("org_id"),
+                "office_id": emp.get("office_id"),
+                "org_name": (orgs.get(emp.get("org_id")) or {}).get("name"),
+                "person_name": "{fn} {ln}".format(
+                    fn=(people.get(emp.get("person_id")) or {}).get("first_name", "").strip(),
+                    ln=(people.get(emp.get("person_id")) or {}).get("last_name", "").strip(),
+                ).strip(),
+                "source": "alt_store",
+            }
+        return out
+    except Exception:
+        return {}
+
+
+def _find_broker_contact_in_db(candidate_emails: list[str]) -> tuple[str | None, str | None]:
+    """Return (matched_email, broker_company_id) if found uniquely in DB, else (None,None)."""
+    if not engine or not candidate_emails:
+        return None, None
+    emails = [e.lower() for e in candidate_emails]
+    tables = _existing_tables()
+    with engine.begin() as conn:
+        # Prefer normalized contacts
+        if "broker_contacts_new" in tables:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT lower(email) as email, company_id
+                    FROM broker_contacts_new
+                    WHERE lower(email) = ANY(:emails)
+                    """
+                ),
+                {"emails": emails},
+            ).fetchall()
+            if len(rows) == 1:
+                return rows[0][0], str(rows[0][1]) if rows[0][1] is not None else None
+            # If multiple distinct matches, try to prefer the first in the chain order
+            if rows:
+                order = {e: i for i, e in enumerate(emails)}
+                rows_sorted = sorted(rows, key=lambda r: order.get(r[0], 9999))
+                return rows_sorted[0][0], str(rows_sorted[0][1]) if rows_sorted[0][1] is not None else None
+        # Legacy contacts table (no company mapping)
+        if "broker_contacts" in tables:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT lower(email) as email
+                    FROM broker_contacts
+                    WHERE lower(email) = ANY(:emails)
+                    """
+                ),
+                {"emails": emails},
+            ).fetchall()
+            if rows:
+                # choose first by order in chain
+                order = {e: i for i, e in enumerate(emails)}
+                rows_sorted = sorted(rows, key=lambda r: order.get(r[0], 9999))
+                return rows_sorted[0][0], None
+    return None, None
+
+
+def _find_alt_employment_in_db(candidate_emails: list[str]) -> dict | None:
+    """Find employment by email in brkr_ tables. Returns {email, org_id, employment_id, person_id}."""
+    if not engine or not candidate_emails:
+        return None
+    emails = [e.lower() for e in candidate_emails]
+    tables = _existing_tables()
+    # Require new brkr_ tables
+    emp_table = "brkr_employments" if "brkr_employments" in tables else None
+    if emp_table is None:
+        return None
+    with engine.begin() as conn:
+        sql = text(
+            f"""
+            SELECT lower(email) as email, employment_id, person_id, org_id
+            FROM {emp_table}
+            WHERE email IS NOT NULL AND lower(email) = ANY(:emails)
+            ORDER BY updated_at DESC
+            """
+        )
+        rows = conn.execute(sql, {"emails": emails}).fetchall()
+        if not rows:
+            return None
+        # Prefer first by candidate order
+        order = {e: i for i, e in enumerate(emails)}
+        rows_sorted = sorted(rows, key=lambda r: order.get(r[0], 9999))
+        r0 = rows_sorted[0]
+        return {"email": r0[0], "employment_id": str(r0[1]), "person_id": str(r0[2]), "org_id": str(r0[3])}
+
+
+def resolve_broker_assignment(email_body: str, sender_email: str) -> dict:
+    """
+    Decide the submitting broker using email chain + known contacts/employments.
+    Returns dict with keys: email, broker_company_id (optional), confidence, source.
+    """
+    # Build candidate email list: sender + any emails from chain
+    raw_candidates: list[tuple[str, str]] = []
+    sender_norm = sender_email.strip().lower() if sender_email else ""
+    if sender_norm:
+        raw_candidates.append(("sender", sender_norm))
+
+    for address in _extract_emails_from_text(email_body or ""):
+        raw_candidates.append(("body", address))
+
+    seen: set[str] = set()
+    cand: list[str] = []
+    for _, addr in raw_candidates:
+        if addr and addr not in seen:
+            seen.add(addr)
+            cand.append(addr)
+
+    forwarded_names = _extract_forwarded_email_names(email_body or "")
+    cue_tokens = _extract_submission_cue_tokens(email_body or "")
+    cand = _prioritize_candidate_emails(cand, sender_norm, forwarded_names, cue_tokens)
+
+    # Prefer brokers_alt in DB if present (brkr_ tables)
+    alt_db = _find_alt_employment_in_db(cand)
+    if alt_db:
+        alt_email = (alt_db.get("email") or "").strip().lower()
+        top_email = cand[0] if cand else None
+        if (
+            top_email
+            and alt_email
+            and alt_email != top_email
+            and sender_norm
+            and alt_email == sender_norm
+        ):
+            top_name_tokens = _tokenize_name(forwarded_names.get(top_email))
+            top_local_tokens = _tokenize_name(top_email.split("@")[0])
+            strong_cue = bool(forwarded_names.get(top_email))
+            if not strong_cue:
+                for cue in cue_tokens:
+                    if cue and (cue.issubset(top_name_tokens) or cue.issubset(top_local_tokens)):
+                        strong_cue = True
+                        break
+            if strong_cue:
+                return {
+                    "email": top_email,
+                    "broker_company_id": None,
+                    "broker_org_id": None,
+                    "broker_employment_id": None,
+                    "broker_person_id": None,
+                    "confidence": "medium",
+                    "source": "forwarded_instruction",
+                }
+        return {
+            "email": alt_db.get("email"),
+            "broker_company_id": None,
+            "broker_org_id": alt_db.get("org_id"),
+            "broker_employment_id": alt_db.get("employment_id"),
+            "broker_person_id": alt_db.get("person_id"),
+            "confidence": "high",
+            "source": "alt_db",
+        }
+
+    # Fallback to alternate employment fixtures store
+    alt_map = _load_alt_employment_email_map()
+    for e in cand:
+        if e in alt_map:
+            alt = alt_map.get(e) or {}
+            return {
+                "email": e,
+                "broker_company_id": None,
+                "broker_org_id": alt.get("org_id"),
+                "broker_employment_id": alt.get("employment_id"),
+                "broker_person_id": alt.get("person_id"),
+                "confidence": "medium",
+                "source": "alt_store",
+            }
+
+    # Fallback to DB contacts if present (legacy)
+    match_email, company_id = _find_broker_contact_in_db(cand)
+    if match_email:
+        return {
+            "email": match_email,
+            "broker_company_id": company_id,
+            "confidence": "medium" if company_id else "low",
+            "source": "db_contacts_new" if company_id else "db_contacts_legacy",
+        }
+
+    # Last resort: use sender
+    return {
+        "email": cand[0] if cand else sender_email,
+        "broker_company_id": None,
+        "confidence": "low",
+        "source": "sender",
+    }
 
 # ───────────── PUBLIC ENTRYPOINT used by ingest_local.py ─────────────
 
@@ -636,11 +995,24 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
     controls_vec = _embed_text(controls_summary)
     exposures_vec = _embed_text(cyber_exposures)
 
+    # Resolve broker assignment from email chain and contacts
+    broker_info = resolve_broker_assignment(email_body or subject or "", sender_email)
+    broker_email = broker_info.get("email") or sender_email
+    broker_company_id = broker_info.get("broker_company_id")
+    broker_org_id = broker_info.get("broker_org_id")
+    broker_employment_id = broker_info.get("broker_employment_id")
+    broker_person_id = broker_info.get("broker_person_id")
+
     # Insert minimal stub, then update with whatever columns exist
-    sid = _insert_stub(sender_email, name, email_summary)
+    sid = _insert_stub(broker_email, name, email_summary)
     _update_submission_by_id(sid, {
         "name": name,
         "website": website,
+        "broker_email": broker_email,
+        "broker_company_id": broker_company_id,
+        "broker_org_id": broker_org_id,
+        "broker_employment_id": broker_employment_id,
+        "broker_person_id": broker_person_id,
         "revenue": revenue,
         "biz_sum": business_summary,
         "cyber": cyber_exposures,

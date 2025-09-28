@@ -35,7 +35,10 @@ def _parse_amount(val) -> float:
             return float(s[:-1] or 0) * 1_000
         if s.endswith("M"):
             return float(s[:-1] or 0) * 1_000_000
-        return float(s)
+        num = float(s)
+        if abs(num) < 1_000:
+            return num * 1_000_000
+        return num
     except Exception:
         return 0.0
 
@@ -66,6 +69,16 @@ def _format_percent(percent: float) -> str:
     return f"{percent:.0f}%" if percent == int(percent) else f"{percent:.1f}%"
 
 
+def _format_currency(amount: float) -> str:
+    """Format full dollar amounts without compact suffixes."""
+    if amount is None:
+        return ""
+    try:
+        return f"${amount:,.0f}" if amount else ""
+    except Exception:
+        return ""
+
+
 def _parse_percent(val):
     """Parse percentage strings into floats."""
     if val is None:
@@ -79,6 +92,64 @@ def _parse_percent(val):
 
     try:
         return float(s)
+    except Exception:
+        return None
+
+
+def _parse_retention_from_text(text: str):
+    if not text:
+        return None
+    pattern = re.compile(r"(?:retention|sir|deductible)\s*(?:of|is|:)?\s*([$\d.,\sMKmk]+)", flags=re.I)
+    match = pattern.search(text)
+    if match:
+        return _parse_amount(match.group(1))
+    return None
+
+
+def _parse_premium(val):
+    """Parse premium values; assume thousands when users omit suffix."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        num = float(val)
+        if num == 0:
+            return 0.0
+        return num * 1_000 if abs(num) < 1_000 else num
+
+    s = str(val).strip().upper().replace(",", "").replace("$", "")
+    if not s:
+        return None
+
+    try:
+        if s.endswith("K"):
+            return float(s[:-1] or 0) * 1_000
+        if s.endswith("M"):
+            return float(s[:-1] or 0) * 1_000_000
+        num = float(s)
+        if num == 0:
+            return 0.0
+        return num * 1_000 if abs(num) < 1_000 else num
+    except Exception:
+        return None
+
+
+def _parse_rpm(val):
+    """Parse RPM inputs, assuming values are in thousands unless marked."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        num = float(val)
+        return num * 1000 if abs(num) < 1000 else num
+
+    s = str(val).strip().upper().replace(",", "").replace("$", "")
+    if not s:
+        return None
+
+    try:
+        if s.endswith("K"):
+            return float(s[:-1] or 0) * 1000
+        num = float(s)
+        return num * 1000 if abs(num) < 1000 else num
     except Exception:
         return None
 
@@ -105,7 +176,7 @@ def _layers_to_dataframe(layers: list) -> pd.DataFrame:
             "carrier": layer.get("carrier", ""),
             "limit": _format_amount(limit_value),
             "attachment": _format_amount(layer.get("attachment", 0)),
-            "premium": _format_amount(layer.get("premium", 0)) if layer.get("premium") else "",
+            "premium": _format_currency(layer.get("premium")) if layer.get("premium") is not None else "",
             "rpm": _format_rpm(layer.get("rpm", 0)) if layer.get("rpm") else "",
             "ilf": layer.get("ilf", ""),
             "quota_share_part_of": _format_amount(quota_total) if quota_total else "",
@@ -130,10 +201,13 @@ def _dataframe_to_layers(df: pd.DataFrame, existing_layers=None) -> list:
             "carrier": str(row.get("carrier", "")).strip(),
             "limit": _parse_amount(row.get("limit", 0)),
             "attachment": _parse_amount(row.get("attachment", 0)),
-            "premium": _parse_amount(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
-            "rpm": _parse_amount(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
+            "premium": _parse_premium(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
+            "rpm": _parse_rpm(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
             "ilf": str(row.get("ilf", "")).strip() or None,
         }
+
+        if idx < len(existing_layers):
+            layer["retention"] = existing_layers[idx].get("retention")
 
         if has_quota_part_of:
             part_of_val = _parse_amount(row.get("quota_share_part_of")) if str(row.get("quota_share_part_of", "")).strip() else None
@@ -348,6 +422,7 @@ def _recalculate_manual_layers(layers: list, change_map: dict[int, set[str]] | N
         manual_premium = "premium" in changes
         manual_rpm = "rpm" in changes
         manual_ilf = "ilf" in changes
+        manual_limit = "limit" in changes
 
         total = _parse_amount(layer.get("quota_share_total_limit")) if layer.get("quota_share_total_limit") else None
         attachment = layer.get("attachment") or 0
@@ -357,6 +432,11 @@ def _recalculate_manual_layers(layers: list, change_map: dict[int, set[str]] | N
                 layer["rpm"] = (premium / exposure) if premium is not None else None
             elif manual_rpm and exposure:
                 layer["premium"] = (rpm * exposure) if rpm is not None else None
+            elif manual_limit and exposure:
+                if not manual_premium and premium is not None:
+                    layer["rpm"] = premium / exposure
+                elif not manual_rpm and rpm is not None:
+                    layer["premium"] = rpm * exposure
             else:
                 if rpm is not None and exposure:
                     layer["premium"] = rpm * exposure
@@ -393,12 +473,22 @@ def _recalculate_manual_layers(layers: list, change_map: dict[int, set[str]] | N
             if ilf_percent is not None:
                 factor = ilf_percent / 100.0 if ilf_percent > 1 else ilf_percent
             _apply_ilf_ratio_from_prev(factor)
+            if ilf_percent is not None:
+                display_percent = ilf_percent if ilf_percent > 1 else ilf_percent * 100
+                layer["ilf"] = _format_percent(display_percent)
+            else:
+                layer["ilf"] = ""
         elif manual_rpm:
             if exposure and rpm is not None:
                 layer["premium"] = rpm * exposure
         elif manual_premium:
             if exposure and premium is not None:
                 layer["rpm"] = premium / exposure
+        elif manual_limit and exposure:
+            if premium is not None:
+                layer["rpm"] = premium / exposure
+            elif rpm is not None:
+                layer["premium"] = rpm * exposure
         elif same_quota_group:
             if prev_layer.get("rpm") is not None:
                 layer["rpm"] = prev_layer["rpm"]
@@ -459,6 +549,7 @@ def render():
     with col2:
         if st.button("Clear Tower"):
             st.session_state.tower_layers = []
+            st.session_state.primary_retention = None
             st.rerun()
     
     # Process the natural language input
@@ -527,6 +618,12 @@ def render():
                     layers.insert(0, primary_layer)
 
             premium_hints = _parse_premium_hints(user_input)
+            retention_val = None
+            if primary and primary.get("retention") is not None:
+                retention_val = _parse_amount(primary.get("retention"))
+            if retention_val is None:
+                retention_val = _parse_retention_from_text(user_input)
+
             if premium_hints:
                 for idx, amount in enumerate(premium_hints):
                     if idx >= len(layers):
@@ -543,6 +640,10 @@ def render():
                     expo = (primary_limit / 1_000_000.0) if primary_limit else None
                     if expo:
                         primary["rpm"] = premium_hints[0] / expo
+
+            if layers:
+                layers[0]["retention"] = retention_val
+            st.session_state.primary_retention = retention_val
             _infer_quota_share_from_text(user_input, layers)
 
             # If we have a primary, update the first layer with primary data
@@ -553,6 +654,8 @@ def render():
                     "rpm": primary.get("rpm"),
                     "ilf": "TBD"
                 })
+                if retention_val is not None:
+                    layers[0]["retention"] = retention_val
 
                 primary_limit = layers[0].get("limit") or primary.get("limit") or 0
                 primary_premium = primary.get("premium") if primary else None
@@ -599,16 +702,12 @@ def render():
 
     # Convert layers to DataFrame for editing
     df = _layers_to_dataframe(st.session_state.tower_layers)
-    display_columns = [
-        "carrier",
-        "limit",
-        "attachment",
-        "premium",
-        "rpm",
-        "ilf",
-    ]
+    display_columns = ["carrier", "limit"]
     if show_quota_columns:
-        display_columns.extend(["quota_share_part_of", "quota_share_percentage"])
+        display_columns.append("quota_share_part_of")
+    display_columns.extend(["attachment", "premium", "rpm", "ilf"])
+    if show_quota_columns:
+        display_columns.append("quota_share_percentage")
     df_for_editor = df[display_columns]
 
     # Display and edit the table
@@ -624,7 +723,7 @@ def render():
             "rpm": st.column_config.TextColumn("RPM", width="small"),
             "ilf": st.column_config.TextColumn("ILF", width="small"),
             "quota_share_part_of": st.column_config.TextColumn(
-                "Quota Share Part Of",
+                "Part Of",
                 width="small",
                 help="Total shared limit for the quota share layer.",
             ),
@@ -652,22 +751,40 @@ def render():
         total_limit = sum(layer.get("limit", 0) for layer in st.session_state.tower_layers)
         total_premium = sum(layer.get("premium", 0) for layer in st.session_state.tower_layers if layer.get("premium"))
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Layers", len(st.session_state.tower_layers))
         with col2:
-            st.metric("Total Limit", _format_amount(total_limit))
+            retention_val = st.session_state.get("primary_retention")
+            if retention_val is None and st.session_state.tower_layers:
+                retention_val = st.session_state.tower_layers[0].get("retention")
+            st.metric("Retention", _format_amount(retention_val or 0))
         with col3:
+            st.metric("Total Limit", _format_amount(total_limit))
+        with col4:
             st.metric("Total Premium", _format_amount(total_premium))
         
-        # Show tower structure
+        # Show tower structure with consistent styling
         st.markdown("**Tower Structure:**")
+        st.markdown(
+            """
+            <style>
+            .tower-rows {margin-top: 0.25rem;}
+            .tower-row {margin-bottom: 0.4rem; font-size: 0.95rem;}
+            .tower-row strong {font-weight: 600;}
+            .tower-row span {font-weight: 400;}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        rows_html = []
         for i, layer in enumerate(st.session_state.tower_layers):
             carrier = layer.get("carrier", "Unknown")
             limit_value = layer.get("limit", 0)
             limit_display = _format_amount(limit_value)
             attachment = _format_amount(layer.get("attachment", 0))
-            premium = _format_amount(layer.get("premium", 0)) if layer.get("premium") else "TBD"
+            premium = _format_currency(layer.get("premium")) if layer.get("premium") is not None else "TBD"
             quota_total_raw = layer.get("quota_share_total_limit")
             quota_total = _parse_amount(quota_total_raw) if quota_total_raw else None
             quota_percent = layer.get("quota_share_percentage")
@@ -678,15 +795,35 @@ def render():
                 except Exception:
                     quota_percent = None
 
+            structure_text = ""
+            if i == 0:
+                retention_display = None
+                retention_val = layer.get("retention") or st.session_state.get("primary_retention")
+                if retention_val:
+                    retention_display = _format_amount(retention_val)
+                if retention_display:
+                    structure_text = f"{limit_display} x {retention_display} SIR"
+                else:
+                    structure_text = f"{limit_display} x {attachment}"
+            else:
+                structure_text = f"{limit_display} x {attachment}"
+
             if i > 0 and quota_total:
                 part_of_text = _format_amount(quota_total)
                 percent_text = f" ({_format_percent(quota_percent)})" if quota_percent else ""
-                limit_display = f"{limit_display} part of {part_of_text}{percent_text}"
-            
-            if i == 0:
-                st.markdown(f"• **Primary**: {carrier} - {limit_display} above {attachment} (Premium: {premium})")
-            else:
-                st.markdown(f"• **Layer {i}**: {carrier} - {limit_display} x {attachment} (Premium: {premium})")
+                structure_text = f"{limit_display} part of {part_of_text}{percent_text}"
+
+            label = "Primary" if i == 0 else f"Layer {i}"
+            row_html = (
+                f"<div class='tower-row'><strong>{label}:</strong> "
+                f"<span>{carrier}</span> — "
+                f"<span>{structure_text}</span> "
+                f"<span>(Premium: {premium})</span></div>"
+            )
+            rows_html.append(row_html)
+
+        if rows_html:
+            st.markdown("<div class='tower-rows'>" + "".join(rows_html) + "</div>", unsafe_allow_html=True)
 
 
 # Backwards-compat entry

@@ -99,6 +99,73 @@ from supabase import create_client
 SB = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE"))
 TEMPLATE_ENV = Environment(loader=FileSystemLoader("rating_engine/templates"))
 
+
+# Disable browser autofill/autocomplete to prevent address book suggestions
+def _disable_autofill():
+    st.markdown(
+        """
+        <script>
+        (function() {
+          const setAttrs = (el) => {
+            try {
+              el.setAttribute('autocomplete','off');
+              el.setAttribute('autocorrect','off');
+              el.setAttribute('autocapitalize','none');
+              el.setAttribute('spellcheck','false');
+            } catch (e) {}
+          };
+          const apply = () => {
+            document.querySelectorAll('input, textarea, select').forEach(setAttrs);
+            document.querySelectorAll('form').forEach(f => f.setAttribute('autocomplete','off'));
+          };
+          const obs = new MutationObserver(apply);
+          obs.observe(document.documentElement, {childList: true, subtree: true});
+          apply();
+        })();
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _harden_selectbox_no_autofill(label_text: str):
+    """Target a selectbox by its label text and disable typing/autofill on its input."""
+    js = f"""
+    <script>
+    (function() {{
+      const labelText = {json.dumps(label_text)};
+      const tweak = () => {{
+        try {{
+          const labels = Array.from(document.querySelectorAll('label, div'));
+          for (const lb of labels) {{
+            if (!lb.innerText) continue;
+            if (lb.innerText.trim() === labelText.trim()) {{
+              const root = lb.closest('div')?.parentElement || lb.parentElement;
+              if (!root) continue;
+              const inp = root.querySelector('input');
+              if (inp) {{
+                inp.setAttribute('autocomplete','new-password');
+                inp.setAttribute('autocorrect','off');
+                inp.setAttribute('autocapitalize','none');
+                inp.setAttribute('spellcheck','false');
+                inp.setAttribute('inputmode','text');
+                inp.setAttribute('aria-autocomplete','list');
+                inp.readOnly = true; // disable typing to prevent address book
+                // prevent paste triggering suggestions
+                inp.addEventListener('paste', e => e.preventDefault());
+              }}
+            }}
+          }}
+        }} catch (e) {{}}
+      }};
+      const obs = new MutationObserver(tweak);
+      obs.observe(document.documentElement, {{childList: true, subtree: true}});
+      tweak();
+    }})();
+    </script>
+    """
+    st.markdown(js, unsafe_allow_html=True)
+
 def _render_quote_pdf(ctx: dict) -> Path:
     html = TEMPLATE_ENV.get_template("quote.html").render(**ctx)
     tmp = NamedTemporaryFile(delete=False, suffix=".pdf")
@@ -468,34 +535,216 @@ def render():
     
 
         # ------------------- pull AI originals -------------------
-        with get_conn().cursor() as cur:
+        # Pull core columns first, then optional broker columns depending on schema
+        conn = get_conn()
+        with conn.cursor() as cur:
+            # discover optional broker columns
             cur.execute(
                 """
-                SELECT business_summary,
-                       cyber_exposures,
-                       nist_controls_summary,
-                       bullet_point_summary,
-                       ops_embedding,
-                       controls_embedding,
-                       naics_primary_code,
-                       naics_primary_title,
-                       naics_secondary_code,
-                       naics_secondary_title,
-                       industry_tags,
-                       annual_revenue
-                FROM submissions
-                WHERE id = %s
-                """,
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='submissions'
+                """
+            )
+            existing_cols = {r[0] for r in cur.fetchall()}
+
+            base_cols = [
+                "business_summary",
+                "cyber_exposures",
+                "nist_controls_summary",
+                "bullet_point_summary",
+                "ops_embedding",
+                "controls_embedding",
+                "naics_primary_code",
+                "naics_primary_title",
+                "naics_secondary_code",
+                "naics_secondary_title",
+                "industry_tags",
+                "annual_revenue",
+            ]
+            opt_cols = [c for c in [
+                "broker_email",
+                "broker_company_id",
+                "broker_org_id",
+                "broker_employment_id",
+                "broker_person_id",
+            ] if c in existing_cols]
+
+            select_cols = base_cols + opt_cols
+            cur.execute(
+                f"SELECT {', '.join(select_cols)} FROM submissions WHERE id = %s",
                 (sub_id,),
             )
-            result = cur.fetchone()
-            biz_sum, exp_sum, ctrl_sum, bullet_sum, ops_vec, ctrl_vec, naics_code, naics_title, naics_sec_code, naics_sec_title, industry_tags, annual_revenue = result
+            row = cur.fetchone()
+            # Map base columns
+            (
+                biz_sum,
+                exp_sum,
+                ctrl_sum,
+                bullet_sum,
+                ops_vec,
+                ctrl_vec,
+                naics_code,
+                naics_title,
+                naics_sec_code,
+                naics_sec_title,
+                industry_tags,
+                annual_revenue,
+                *opt_values,
+            ) = row
+            # Initialize optionals
+            broker_email = None
+            broker_company_id = None
+            broker_org_id = None
+            broker_employment_id = None
+            broker_person_id = None
+            # Assign dynamic optionals by name order
+            for name, val in zip(opt_cols, opt_values):
+                if name == "broker_email":
+                    broker_email = val
+                elif name == "broker_company_id":
+                    broker_company_id = val
+                elif name == "broker_org_id":
+                    broker_org_id = val
+                elif name == "broker_employment_id":
+                    broker_employment_id = val
+                elif name == "broker_person_id":
+                    broker_person_id = val
 
         # ------------------- pull latest edits -------------------
         latest_edits = latest_edits_map(sub_id)
 
         # ------------------- Submission Status --------------------
         render_submission_status_panel(sub_id)
+
+        # ------------------- Broker Assignment --------------------
+        with st.expander("🤝 Broker Assignment", expanded=True):
+            # Prevent browser autofill from showing address-book suggestions
+            _disable_autofill()
+            # Prefer brokers_alt tables in DB when available; otherwise fallback to fixtures store
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_schema='public'
+                    """
+                )
+                have_alt_db = {r[0] for r in cur.fetchall()}
+
+            use_brkr = {'brkr_organizations','brkr_people','brkr_employments'}.issubset(have_alt_db)
+
+            if use_brkr:
+                # DB-backed: single employment dropdown (person — org — address)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT e.employment_id, e.email, e.person_id, e.org_id,
+                               p.first_name, p.last_name, org.name as org_name,
+                               COALESCE(a.line1,'') as line1, COALESCE(a.line2,'') as line2,
+                               COALESCE(a.city,'') as city, COALESCE(a.state,'') as state,
+                               COALESCE(a.postal_code,'') as postal_code
+                        FROM brkr_employments e
+                        JOIN brkr_people p ON p.person_id = e.person_id
+                        JOIN brkr_organizations org ON org.org_id = e.org_id
+                        LEFT JOIN brkr_offices off ON off.office_id = e.office_id
+                        LEFT JOIN brkr_org_addresses a ON a.address_id = COALESCE(e.override_address_id, off.default_address_id)
+                        WHERE e.email IS NOT NULL AND e.active = TRUE
+                        ORDER BY lower(p.last_name), lower(p.first_name), lower(org.name)
+                        """
+                    )
+                    rows = cur.fetchall()
+
+                def _fmt_addr(l1,l2,city,state,pc):
+                    parts = [l1]
+                    if l2:
+                        parts.append(l2)
+                    city_state = ", ".join([p for p in [city, state] if p])
+                    tail = " ".join([p for p in [city_state, pc] if p]).strip()
+                    if tail:
+                        parts.append(tail)
+                    return ", ".join([p for p in parts if p]) or "—"
+
+                emp_map = {}
+                for eid, email, pid, oid, fn, ln, org_name, l1,l2,city,state,pc in rows:
+                    label = f"{(fn or '').strip()} {(ln or '').strip()} — {org_name} — {_fmt_addr(l1,l2,city,state,pc)}"
+                    emp_map[str(eid)] = {
+                        "label": label,
+                        "email": email,
+                        "person_id": str(pid),
+                        "org_id": str(oid)
+                    }
+
+                options = [""] + list(emp_map.keys())
+                # Default selection by broker_employment_id then by broker_email
+                default_emp = None
+                if broker_employment_id and str(broker_employment_id) in emp_map:
+                    default_emp = str(broker_employment_id)
+                elif broker_email:
+                    for k,v in emp_map.items():
+                        if (v.get("email") or "").lower() == str(broker_email).lower():
+                            default_emp = k
+                            break
+
+                sel_emp = st.selectbox(
+                    "Broker Employment",
+                    options=options,
+                    format_func=lambda x: ("— Select —" if x == "" else emp_map.get(x,{}).get("label", x)),
+                    index=(options.index(default_emp) if default_emp in options else 0),
+                    key=f"broker_emp_select_{sub_id}"
+                )
+                _harden_selectbox_no_autofill("Broker Employment")
+
+                if st.button("Save Broker", key=f"save_broker_emp_{sub_id}"):
+                    try:
+                        if not sel_emp:
+                            st.error("Please select a broker employment record.")
+                            st.stop()
+                        chosen = emp_map.get(sel_emp) or {}
+                        chosen_email = chosen.get("email")
+                        chosen_org = chosen.get("org_id")
+                        chosen_person = chosen.get("person_id")
+
+                        # Determine which columns exist
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                """
+                                SELECT column_name FROM information_schema.columns
+                                WHERE table_schema='public' AND table_name='submissions'
+                                AND column_name IN ('broker_email','broker_org_id','broker_employment_id','broker_person_id')
+                                """
+                            )
+                            cols = {r[0] for r in cur.fetchall()}
+
+                        set_clauses = []
+                        params = {"sid": sub_id}
+                        if 'broker_email' in cols and chosen_email is not None:
+                            set_clauses.append("broker_email = %(bemail)s")
+                            params["bemail"] = chosen_email
+                        if 'broker_org_id' in cols and chosen_org is not None:
+                            set_clauses.append("broker_org_id = %(borg)s")
+                            params["borg"] = chosen_org
+                        if 'broker_employment_id' in cols:
+                            set_clauses.append("broker_employment_id = %(bemp)s")
+                            params["bemp"] = sel_emp
+                        if 'broker_person_id' in cols and chosen_person is not None:
+                            set_clauses.append("broker_person_id = %(bper)s")
+                            params["bper"] = chosen_person
+
+        
+                        if set_clauses:
+                            with conn.cursor() as cur:
+                                cur.execute(
+                                    f"UPDATE submissions SET {', '.join(set_clauses)} WHERE id = %(sid)s",
+                                    params,
+                                )
+
+                        st.success("Broker assignment saved.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving broker: {e}")
+
+            else:
+                st.warning("Broker directory tables (brkr_*) not found. Please set up the broker directory in the database.")
 
         # ------------------- Business Summary --------------------
         with st.expander("📊 Business Summary", expanded=True):

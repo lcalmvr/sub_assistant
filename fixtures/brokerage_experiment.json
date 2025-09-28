@@ -1,0 +1,522 @@
+{
+  "organizations": {
+    "dd86ff63-833d-4491-b0ec-7f46ff15f59a": {
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "name": "Acme Brokerage LLC",
+      "org_type": "brokerage"
+    },
+    "45d68497-d25e-4a6f-a13e-0a4171221701": {
+      "org_id": "45d68497-d25e-4a6f-a13e-0a4171221701",
+      "name": "New Co Inc",
+      "org_type": "brokerage"
+    },
+    "6cd98b94-f2d2-41de-b70a-3043064bf99e": {
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "name": "HIG",
+      "org_type": "carrier"
+    },
+    "d1fb68d7-4f18-4dc9-b8f9-a30aab2f72cc": {
+      "org_id": "d1fb68d7-4f18-4dc9-b8f9-a30aab2f72cc",
+      "name": "Test Co",
+      "org_type": "brokerage"
+    },
+    "9e37364d-3dbd-44b8-80c4-48d680ba6fb4": {
+      "org_id": "9e37364d-3dbd-44b8-80c4-48d680ba6fb4",
+      "name": "Second Test Co",
+      "org_type": "brokerage"
+    },
+    "2fae6f70-6ee2-4092-b7aa-2d6d9f12cf9c": {
+      "org_id": "2fae6f70-6ee2-4092-b7aa-2d6d9f12cf9c",
+      "name": "Third Test Co inc",
+      "org_type": "carrier"
+    },
+    "d7d41aee-ce96-4a67-b3d6-b8433c97b8c1": {
+      "org_id": "d7d41aee-ce96-4a67-b3d6-b8433c97b8c1",
+      "name": "new one added",
+      "org_type": "brokerage"
+    }
+  },
+  "offices": {
+    "5f199ab6-28d5-4a15-80e8-a717aea90481": {
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_name": "Acme Insurance",
+      "default_address_id": "0398c865-51aa-4265-8dbb-46aa785029be",
+      "status": "active"
+    },
+    "2dae3d36-8a3b-4ede-b3aa-a087f0e2400f": {
+      "office_id": "2dae3d36-8a3b-4ede-b3aa-a087f0e2400f",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_name": "Acme Insurance",
+      "default_address_id": "17a74c16-1e40-4ded-8c53-4b79733c197e",
+      "status": "active"
+    },
+    "734423ad-eafd-442b-bfc8-01b32c31621f": {
+      "office_id": "734423ad-eafd-442b-bfc8-01b32c31621f",
+      "org_id": "45d68497-d25e-4a6f-a13e-0a4171221701",
+      "office_name": "New Co Insurance Northeast",
+      "default_address_id": "3baa428e-cb6a-417b-9b22-292afdaa1576",
+      "status": "active"
+    },
+    "723c2dc6-2e1e-4d55-80a2-4c5dbf12c466": {
+      "office_id": "723c2dc6-2e1e-4d55-80a2-4c5dbf12c466",
+      "org_id": "45d68497-d25e-4a6f-a13e-0a4171221701",
+      "office_name": "New Co Insurance Northeast",
+      "default_address_id": "c1c71d1b-9460-467f-92d3-7fbb9dd029d6",
+      "status": "active"
+    },
+    "83f0c7a3-2243-4e73-9dde-e4d7606bc340": {
+      "office_id": "83f0c7a3-2243-4e73-9dde-e4d7606bc340",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "office_name": "HIG Northeast",
+      "default_address_id": "cd0c453f-3887-4034-b592-f5517a691217",
+      "status": "active"
+    }
+  },
+  "people": {
+    "1e78732b-b3b7-4de2-8e8a-db2b4f4fbac1": {
+      "person_id": "1e78732b-b3b7-4de2-8e8a-db2b4f4fbac1",
+      "first_name": "Jordan A.",
+      "last_name": "Smith"
+    },
+    "97b370dc-c51c-4426-8ecf-20c5135574f8": {
+      "person_id": "97b370dc-c51c-4426-8ecf-20c5135574f8",
+      "first_name": "Avery",
+      "last_name": "Lee"
+    },
+    "6183d892-d8a1-4ba5-8519-51fd96ec5b3c": {
+      "person_id": "6183d892-d8a1-4ba5-8519-51fd96ec5b3c",
+      "first_name": "Michael",
+      "last_name": "Jordan Jr. Jr. "
+    },
+    "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39": {
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "first_name": "Michael B.",
+      "last_name": "Jordan"
+    },
+    "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3": {
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "first_name": "Dennis",
+      "last_name": "Rodman"
+    }
+  },
+  "teams": {
+    "113f7f38-2f03-4828-9d9a-55a4f98d00da": {
+      "team_id": "113f7f38-2f03-4828-9d9a-55a4f98d00da",
+      "team_name": "Large Accounts",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "status": "active",
+      "description": null
+    },
+    "0d9657b6-dd1d-4b75-948f-6860efe61188": {
+      "team_id": "0d9657b6-dd1d-4b75-948f-6860efe61188",
+      "team_name": "North Team",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "status": "active",
+      "description": null
+    },
+    "478755c6-a384-4fac-9269-280ac1511abc": {
+      "team_id": "478755c6-a384-4fac-9269-280ac1511abc",
+      "team_name": "North Team",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "status": "active",
+      "description": null
+    },
+    "43531bdf-02d3-451b-9430-bbd64b1cc77a": {
+      "team_id": "43531bdf-02d3-451b-9430-bbd64b1cc77a",
+      "team_name": "South Team",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "status": "active",
+      "description": null
+    },
+    "c561386c-de63-415a-a9cc-89a7f007704e": {
+      "team_id": "c561386c-de63-415a-a9cc-89a7f007704e",
+      "team_name": "east",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "status": "active",
+      "description": null
+    },
+    "ef7607d6-e420-482f-bf2b-584d643ade5f": {
+      "team_id": "ef7607d6-e420-482f-bf2b-584d643ade5f",
+      "team_name": "central n",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "status": "active",
+      "description": null
+    },
+    "61b7f0c8-146e-4a73-b85a-9289a8b332ca": {
+      "team_id": "61b7f0c8-146e-4a73-b85a-9289a8b332ca",
+      "team_name": "rodman",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "status": "active",
+      "description": null
+    },
+    "271214fb-dee7-4127-8110-5a3a7967d265": {
+      "team_id": "271214fb-dee7-4127-8110-5a3a7967d265",
+      "team_name": "Acme Brokerage LLC - New York",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "status": "active",
+      "description": null
+    }
+  },
+  "employments": {
+    "8f59e8ed-38ef-443f-a6ce-272f09ade149": {
+      "employment_id": "8f59e8ed-38ef-443f-a6ce-272f09ade149",
+      "person_id": "1e78732b-b3b7-4de2-8e8a-db2b4f4fbac1",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "email": "jordan@example.com",
+      "phone": null,
+      "active": true,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    },
+    "c47dd686-4ec3-408f-80bb-babe4fc54c04": {
+      "employment_id": "c47dd686-4ec3-408f-80bb-babe4fc54c04",
+      "person_id": "97b370dc-c51c-4426-8ecf-20c5135574f8",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "2dae3d36-8a3b-4ede-b3aa-a087f0e2400f",
+      "email": "avery@example.com",
+      "phone": null,
+      "active": true,
+      "override_dba_id": "3ef4ddf2-f1e2-40d2-b549-f52bcf78c59c",
+      "override_address_id": "b474b94d-681e-48b7-b834-921e629fcd0d"
+    },
+    "64b1af55-35fe-4b4b-860d-35814d4a6c16": {
+      "employment_id": "64b1af55-35fe-4b4b-860d-35814d4a6c16",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "45d68497-d25e-4a6f-a13e-0a4171221701",
+      "office_id": "734423ad-eafd-442b-bfc8-01b32c31621f",
+      "email": "vinnieregina@gmail.com",
+      "phone": null,
+      "active": false,
+      "override_dba_id": null,
+      "override_address_id": null
+    },
+    "1c698b5b-3d42-49e3-8181-ef224ec27130": {
+      "employment_id": "1c698b5b-3d42-49e3-8181-ef224ec27130",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "office_id": "83f0c7a3-2243-4e73-9dde-e4d7606bc340",
+      "email": "michaeljordan@gmail.com",
+      "phone": "7323974227",
+      "active": false,
+      "override_dba_id": "64b25ce0-6843-4aa9-8b63-8b04f205de68",
+      "override_address_id": "cd0c453f-3887-4034-b592-f5517a691217"
+    },
+    "7fbc1301-794f-4a66-95a9-baa65f15f648": {
+      "employment_id": "7fbc1301-794f-4a66-95a9-baa65f15f648",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "office_id": "83f0c7a3-2243-4e73-9dde-e4d7606bc340",
+      "email": "michaeljordan@gmail.com",
+      "phone": "7323974227",
+      "active": false,
+      "override_dba_id": "64b25ce0-6843-4aa9-8b63-8b04f205de68",
+      "override_address_id": "cd0c453f-3887-4034-b592-f5517a691217"
+    },
+    "e5393e62-add2-4511-a42b-5dc66c28d2d9": {
+      "employment_id": "e5393e62-add2-4511-a42b-5dc66c28d2d9",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "office_id": "83f0c7a3-2243-4e73-9dde-e4d7606bc340",
+      "email": "vinnieregina@gmail.com",
+      "phone": "7323974227",
+      "active": false,
+      "override_dba_id": "64b25ce0-6843-4aa9-8b63-8b04f205de68",
+      "override_address_id": null
+    },
+    "1520a66c-3190-409d-99fc-530e05f622b3": {
+      "employment_id": "1520a66c-3190-409d-99fc-530e05f622b3",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "office_id": "83f0c7a3-2243-4e73-9dde-e4d7606bc340",
+      "email": "vinnieregina@gmail.com",
+      "phone": "7323974227",
+      "active": false,
+      "override_dba_id": "64b25ce0-6843-4aa9-8b63-8b04f205de68",
+      "override_address_id": null
+    },
+    "690ed155-9d12-4a72-93a4-877e08619020": {
+      "employment_id": "690ed155-9d12-4a72-93a4-877e08619020",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "office_id": "83f0c7a3-2243-4e73-9dde-e4d7606bc340",
+      "email": "vinnieregina@gmail.com",
+      "phone": "7323974227",
+      "active": false,
+      "override_dba_id": "64b25ce0-6843-4aa9-8b63-8b04f205de68",
+      "override_address_id": null
+    },
+    "b3d56105-4028-4ace-9d64-ffadfa1954ae": {
+      "employment_id": "b3d56105-4028-4ace-9d64-ffadfa1954ae",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "2dae3d36-8a3b-4ede-b3aa-a087f0e2400f",
+      "email": "vinnieregina@gmail.com",
+      "phone": "7323974227",
+      "active": false,
+      "override_dba_id": "3ef4ddf2-f1e2-40d2-b549-f52bcf78c59c",
+      "override_address_id": null
+    },
+    "5e414388-6fa0-47a6-a641-1dfed2e661f3": {
+      "employment_id": "5e414388-6fa0-47a6-a641-1dfed2e661f3",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "office_id": "83f0c7a3-2243-4e73-9dde-e4d7606bc340",
+      "email": null,
+      "phone": null,
+      "active": false,
+      "override_dba_id": "64b25ce0-6843-4aa9-8b63-8b04f205de68",
+      "override_address_id": null
+    },
+    "22eddf36-7743-42f9-be96-4385a6ea2b59": {
+      "employment_id": "22eddf36-7743-42f9-be96-4385a6ea2b59",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "email": "vinnieregina@gmail.com",
+      "phone": "7431234567",
+      "active": false,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    },
+    "8abb6456-ee79-4b17-b658-9a0f1792b7fd": {
+      "employment_id": "8abb6456-ee79-4b17-b658-9a0f1792b7fd",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "email": "vinnieregina@gmail.com",
+      "phone": "7431234567",
+      "active": true,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    },
+    "a023b753-36ee-4f85-943b-6c7cabfda571": {
+      "employment_id": "a023b753-36ee-4f85-943b-6c7cabfda571",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "2dae3d36-8a3b-4ede-b3aa-a087f0e2400f",
+      "email": "sksks@gmail.com",
+      "phone": "7323974227",
+      "active": false,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    },
+    "69da486b-4722-46bd-808c-ecb9dca4d80c": {
+      "employment_id": "69da486b-4722-46bd-808c-ecb9dca4d80c",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "email": "jslkjfsj@gmail.com",
+      "phone": "2849278349",
+      "active": false,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    },
+    "e20e0655-4f52-4134-a40a-d95be32eb6d9": {
+      "employment_id": "e20e0655-4f52-4134-a40a-d95be32eb6d9",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "2dae3d36-8a3b-4ede-b3aa-a087f0e2400f",
+      "email": "jlkfjslfj@gmail.com",
+      "phone": "2394820849",
+      "active": false,
+      "override_dba_id": "3ef4ddf2-f1e2-40d2-b549-f52bcf78c59c",
+      "override_address_id": null
+    },
+    "f2f2feec-00d9-4f48-a429-f6abc7fde92b": {
+      "employment_id": "f2f2feec-00d9-4f48-a429-f6abc7fde92b",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "2dae3d36-8a3b-4ede-b3aa-a087f0e2400f",
+      "email": "jlkfjslfj@gmail.com",
+      "phone": "2394820849",
+      "active": false,
+      "override_dba_id": "3ef4ddf2-f1e2-40d2-b549-f52bcf78c59c",
+      "override_address_id": null
+    },
+    "a421f154-0533-4a88-b255-4508262bf61c": {
+      "employment_id": "a421f154-0533-4a88-b255-4508262bf61c",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "email": "skljflfjlsj",
+      "phone": "389348339",
+      "active": false,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    },
+    "f92b2e0c-3598-4f3e-b90f-2dfe30b66b4e": {
+      "employment_id": "f92b2e0c-3598-4f3e-b90f-2dfe30b66b4e",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "email": "skljflfjlsj",
+      "phone": "389348339",
+      "active": false,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    },
+    "f4a7d8d3-c54b-41a4-9728-c49bb4bde3bc": {
+      "employment_id": "f4a7d8d3-c54b-41a4-9728-c49bb4bde3bc",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "office_id": "5f199ab6-28d5-4a15-80e8-a717aea90481",
+      "email": "skljflfjlsj",
+      "phone": "389348339",
+      "active": true,
+      "override_dba_id": "1cc9d304-1249-4811-8e70-2d399b5c0151",
+      "override_address_id": null
+    }
+  },
+  "team_offices": {},
+  "team_memberships": {
+    "e794cbc9-98e1-45c0-9b81-9a896293cce5": {
+      "team_membership_id": "e794cbc9-98e1-45c0-9b81-9a896293cce5",
+      "team_id": "113f7f38-2f03-4828-9d9a-55a4f98d00da",
+      "person_id": "1e78732b-b3b7-4de2-8e8a-db2b4f4fbac1",
+      "active": true,
+      "role_label": "Lead"
+    },
+    "71d45305-1e74-4ff3-96ce-4c9ce14a2755": {
+      "team_membership_id": "71d45305-1e74-4ff3-96ce-4c9ce14a2755",
+      "team_id": "113f7f38-2f03-4828-9d9a-55a4f98d00da",
+      "person_id": "97b370dc-c51c-4426-8ecf-20c5135574f8",
+      "active": true,
+      "role_label": "Member"
+    },
+    "cdbcad80-1566-4973-8a8c-dceb73774393": {
+      "team_membership_id": "cdbcad80-1566-4973-8a8c-dceb73774393",
+      "team_id": "0d9657b6-dd1d-4b75-948f-6860efe61188",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "active": false,
+      "role_label": null
+    },
+    "d5bbb098-f191-49cb-8d79-5289def3be76": {
+      "team_membership_id": "d5bbb098-f191-49cb-8d79-5289def3be76",
+      "team_id": "c561386c-de63-415a-a9cc-89a7f007704e",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "active": false,
+      "role_label": null
+    },
+    "fa795abe-7017-4290-8709-6a5101920cb0": {
+      "team_membership_id": "fa795abe-7017-4290-8709-6a5101920cb0",
+      "team_id": "113f7f38-2f03-4828-9d9a-55a4f98d00da",
+      "person_id": "e9b5aa3f-3cbd-4936-9881-75ffc0f51bb3",
+      "active": true,
+      "role_label": null
+    },
+    "2b98adee-b212-4593-a76d-757401639a58": {
+      "team_membership_id": "2b98adee-b212-4593-a76d-757401639a58",
+      "team_id": "61b7f0c8-146e-4a73-b85a-9289a8b332ca",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "active": false,
+      "role_label": null
+    },
+    "8828799f-2cb7-4bfd-afab-7caf7527aafe": {
+      "team_membership_id": "8828799f-2cb7-4bfd-afab-7caf7527aafe",
+      "team_id": "113f7f38-2f03-4828-9d9a-55a4f98d00da",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "active": false,
+      "role_label": null
+    },
+    "e3d7e2ee-6e2b-4900-b7ba-1e26a228eb59": {
+      "team_membership_id": "e3d7e2ee-6e2b-4900-b7ba-1e26a228eb59",
+      "team_id": "43531bdf-02d3-451b-9430-bbd64b1cc77a",
+      "person_id": "8fd5b46d-f1c8-4e3a-aa43-478c236b6c39",
+      "active": true,
+      "role_label": null
+    }
+  },
+  "dba_names": {
+    "1cc9d304-1249-4811-8e70-2d399b5c0151": {
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "name": "Acme Insurance",
+      "normalized": "acme insurance"
+    },
+    "3ef4ddf2-f1e2-40d2-b549-f52bcf78c59c": {
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "name": "Acme Boston",
+      "normalized": "acme boston"
+    },
+    "64b25ce0-6843-4aa9-8b63-8b04f205de68": {
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "name": "HIG Northeast  ",
+      "normalized": "hig northeast"
+    }
+  },
+  "org_addresses": {
+    "0398c865-51aa-4265-8dbb-46aa785029be": {
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "address": {
+        "line1": "123 Main St",
+        "city": "New York",
+        "state": "NY",
+        "postal_code": "10001",
+        "line2": "Suite 23",
+        "country": "US"
+      },
+      "normalized": "123 main st|ste 23|new york|ny|10001|us"
+    },
+    "17a74c16-1e40-4ded-8c53-4b79733c197e": {
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "address": {
+        "line1": "500 Market St",
+        "city": "Boston",
+        "state": "MA",
+        "postal_code": "02108",
+        "line2": "Suite 3",
+        "country": "US"
+      },
+      "normalized": "500 market st|ste 3|boston|ma|02108|us"
+    },
+    "b474b94d-681e-48b7-b834-921e629fcd0d": {
+      "org_id": "dd86ff63-833d-4491-b0ec-7f46ff15f59a",
+      "address": {
+        "line1": "500 Market St",
+        "city": "Boston",
+        "state": "MA",
+        "postal_code": "02108",
+        "line2": "Floor 8",
+        "country": "US"
+      },
+      "normalized": "500 market st|fl 8|boston|ma|02108|us"
+    },
+    "3baa428e-cb6a-417b-9b22-292afdaa1576": {
+      "org_id": "45d68497-d25e-4a6f-a13e-0a4171221701",
+      "address": {
+        "line1": "45 Main Street",
+        "city": "Boston",
+        "state": "MA",
+        "postal_code": "10010",
+        "line2": "Suite 2",
+        "country": "US"
+      },
+      "normalized": "45 main st|ste 2|boston|ma|10010|us"
+    },
+    "c1c71d1b-9460-467f-92d3-7fbb9dd029d6": {
+      "org_id": "45d68497-d25e-4a6f-a13e-0a4171221701",
+      "address": {
+        "line1": "45 Main Street",
+        "city": "Boston",
+        "state": "MA",
+        "postal_code": "10010",
+        "line2": "Suite 25",
+        "country": "US"
+      },
+      "normalized": "45 main st|ste 25|boston|ma|10010|us"
+    },
+    "cd0c453f-3887-4034-b592-f5517a691217": {
+      "org_id": "6cd98b94-f2d2-41de-b70a-3043064bf99e",
+      "address": {
+        "line1": "123 go drive",
+        "city": "chicago",
+        "state": "IL",
+        "postal_code": "19999",
+        "line2": null,
+        "country": "US"
+      },
+      "normalized": "123 go dr|chicago|il|19999|us"
+    }
+  }
+}

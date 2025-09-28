@@ -1,0 +1,42 @@
+{
+  "subject": "Security alert",
+  "from_name": "Google",
+  "from_email": "no-reply@accounts.google.com",
+  "to": [
+    "submissionassistant.ai@gmail.com"
+  ],
+  "cc": [],
+  "date": "Sun, 28 Sep 2025 23:02:54 GMT",
+  "message_id": "<aT0MBTVxv3Z2-NC0oLDx1Q@notifications.google.com>",
+  "body_text": "[image: Google]\r\nNew passkey added to your account\r\n\r\n\r\nsubmissionassistant.ai@gmail.com\r\nIf you didn’t add a passkey, someone might be using your account. Check and\r\nsecure your account now.\r\nCheck activity\r\n<https://accounts.google.com/AccountChooser?Email=submissionassistant.ai@gmail.com&continue=https://myaccount.google.com/alert/nt/1759100574245?rfn%3D364%26rfnc%3D1%26eid%3D-3241154033467157551%26et%3D0>\r\nYou can also see security activity at\r\nhttps://myaccount.google.com/notifications\r\nYou received this email to let you know about important changes to your\r\nGoogle Account and services.\r\n© 2025 Google LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043, USA\n\n.awl a {color: #FFFFFF; text-decoration: none;} .abml a {color: #000000; font-family: Roboto-Medium,Helvetica,Arial,sans-serif; font-weight: bold; text-decoration: none;} .adgl a {color: rgba(0, 0, 0, 0.87); text-decoration: none;} .afal a {color: #b0b0b0; text-decoration: none;} @media screen and (min-width: 600px) {.v2sp {padding: 6px 30px 0px;} .v2rsp {padding: 0px 10px;}} @media screen and (min-width: 600px) {.mdv2rw {padding: 40px 40px;}} New passkey added to your account submissionassistant.ai@gmail.com If you didn’t add a passkey, someone might be using your account. Check and secure your account now. Check activity You can also see security activity at https://myaccount.google.com/notifications You received this email to let you know about important changes to your Google Account and services. © 2025 Google LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043, USA",
+  "extracted_emails": [
+    "submissionassistant.ai@gmail.com",
+    "no-reply@accounts.google.com"
+  ],
+  "headers": {
+    "Delivered-To": "submissionassistant.ai@gmail.com",
+    "Received": "from mail-sor-f73.google.com (mail-sor-f73.google.com. [209.85.220.73])\r\n        by mx.google.com with SMTPS id 6a1803df08f44-800f80bca54sor58821616d6.0.2025.09.28.16.02.55\r\n        for <submissionassistant.ai@gmail.com>\r\n        (Google Transport Security);\r\n        Sun, 28 Sep 2025 16:02:55 -0700 (PDT)",
+    "X-Received": "by 2002:a05:6214:501a:b0:766:ab10:319e with SMTP id\r\n 6a1803df08f44-7fc294bbb00mr197067446d6.15.1759100574847; Sun, 28 Sep 2025\r\n 16:02:54 -0700 (PDT)",
+    "ARC-Seal": "i=1; a=rsa-sha256; t=1759100575; cv=none;\r\n        d=google.com; s=arc-20240605;\r\n        b=R0x0M/mDvujcO9kYsxBPZ0Aq9HhWNZgdM6wlf6gkbyBQNqxFCDTDlJCbuT4AhLrqiq\r\n         i6HNHfim9rlrOwjmQAe4pQLeFTVOFvh/0d5v4+7iNsMdkQAmrn8MGU48r6gyijkGfVKE\r\n         ZdpbfZL1F+y/g2JKhps3gmuPZMqpLgRvhy7x8Emqrw5rjxtEltePkbZXG+2fA9C6cJCj\r\n         AUcf/ou66Fmb7yrQjHynFCktfSCg7PGxGvKgIN68adRglQwPmtugeior57fvXDL0F4x1\r\n         ZpnPL8Xh75hdz94s3Vha/Ll3ASOW6yDjdY0YBf2CzUGJqauVC421jpzRK9K4+wRVYRbS\r\n         H4Sg==",
+    "ARC-Message-Signature": "i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;\r\n        h=to:from:subject:message-id:feedback-id:date:mime-version\r\n         :dkim-signature;\r\n        bh=lvP4+FqGfv4jz8ThhbZWIm+sU8bjuR+sLAd5/TW5mJg=;\r\n        fh=wwA5C7OVb7IOpON6F3xVUALU5VvtQgHGupc5C8BymGQ=;\r\n        b=SZi05Z+ccsHVMU6BXYSBY/87hghuCHsBn+wpqw/ctJSkXEqs3D7Bfe/cN2Go/3ke9c\r\n         wR9ZiUi0fPOVRCphnReoUB+PAmxWBik+MLChkVieeR6BbujL7MiiMOu7zLHLgdKCDkUv\r\n         cWexBxz7ZaETE9D70sgJ+GJeHbRB1fuAXMu5ihZwS+QsY8JRmWM/FYzV0C11K/PFRKzq\r\n         lUcGINjcxX2W6u0yO/0rcAo8k5SsqgvYjC4lfRs8aW5I9C0Pqf1YL0bbDXLyPDk7TduN\r\n         BaDSgpoVBlmhhbXmXOKD0qoRgy8Huy+5neHudmJc0m52S/TvETJoWfqIcc47BzvQh0r+\r\n         TFcA==;\r\n        dara=google.com",
+    "ARC-Authentication-Results": "i=1; mx.google.com;\r\n       dkim=pass header.i=@accounts.google.com header.s=20230601 header.b=DZaQuW12;\r\n       spf=pass (google.com: domain of 3nr7zaagtam889-cza6jvxx9f8ed.19916z.x97@gaia.bounces.google.com designates 209.85.220.73 as permitted sender) smtp.mailfrom=3nr7ZaAgTAM889-CzA6Jvxx9F8ED.19916z.x97@gaia.bounces.google.com;\r\n       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=accounts.google.com;\r\n       dara=pass header.i=@gmail.com",
+    "Return-Path": "<3nr7ZaAgTAM889-CzA6Jvxx9F8ED.19916z.x97@gaia.bounces.google.com>",
+    "Received-SPF": "pass (google.com: domain of 3nr7zaagtam889-cza6jvxx9f8ed.19916z.x97@gaia.bounces.google.com designates 209.85.220.73 as permitted sender) client-ip=209.85.220.73;",
+    "Authentication-Results": "mx.google.com;\r\n       dkim=pass header.i=@accounts.google.com header.s=20230601 header.b=DZaQuW12;\r\n       spf=pass (google.com: domain of 3nr7zaagtam889-cza6jvxx9f8ed.19916z.x97@gaia.bounces.google.com designates 209.85.220.73 as permitted sender) smtp.mailfrom=3nr7ZaAgTAM889-CzA6Jvxx9F8ED.19916z.x97@gaia.bounces.google.com;\r\n       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=accounts.google.com;\r\n       dara=pass header.i=@gmail.com",
+    "DKIM-Signature": "v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=accounts.google.com; s=20230601; t=1759100575; x=1759705375; dara=google.com;\r\n        h=to:from:subject:message-id:feedback-id:date:mime-version:from:to:cc\r\n         :subject:date:message-id:reply-to;\r\n        bh=lvP4+FqGfv4jz8ThhbZWIm+sU8bjuR+sLAd5/TW5mJg=;\r\n        b=DZaQuW12v40uln+A0dXKiXPjOsTpokA6l/xFFmW6Ax92EvR1gLNqCV+MfIMMNSYn0o\r\n         fW/pnmPh5yynjUHPqgD4qpjUWnXFN3YKnW6WCZ8ad7WIcDq6YQ4/nVJ0gxtLoDzaKzvM\r\n         u5ATU58zrC+FQ9PuhWuMk2EOThVS+3cnCj8bRN8rBW2cLtn88VxdXquzICzYT6JkzLGz\r\n         vIcj0yCjlSctpu3u+1PPoCNmH4X8IcDThdrT4KLE26pOakGl0575RFm5U4Zddi+rPyhk\r\n         nCaXoBsgTNwFwmQwgLJCrVT9T2coNk0J41AkxBNtougUt1M8+F+VIzyAWlAONzrC7AIq\r\n         Ykog==",
+    "X-Google-DKIM-Signature": "v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=1e100.net; s=20230601; t=1759100575; x=1759705375;\r\n        h=to:from:subject:message-id:feedback-id:date:mime-version\r\n         :x-gm-message-state:from:to:cc:subject:date:message-id:reply-to;\r\n        bh=lvP4+FqGfv4jz8ThhbZWIm+sU8bjuR+sLAd5/TW5mJg=;\r\n        b=IbqNGoZp0NNxWKVHq80A4pBIkK24G5nLPa2KnA07ku2qU3e7KYM6OV2iFpxXiFTJQO\r\n         k3iEfVQDtw+2t3hcoGs9m8mRIvGldMnawiLJgCaDopTrA5psUOts659HVUSsxXslEc2N\r\n         eV5yKrBTlT7GrCZ6xvU1UMNPJO4uW4DrIDeqDwJRN375OU3tLKA/zO5nghueOKnIPkZH\r\n         G1dr2ImlQ7oXNzNzr5v2t9U1YSMIiov04aigu7xKeb9SG/uUz4/H0OvaDALN3gk7gPZC\r\n         pPyMao4ZElbV+rXRmWzQWynxFvBIIWvkymUTBoqoxFDTyBXlLi0fP8wNw4XMgVb2pwk0\r\n         F/Qg==",
+    "X-Gm-Message-State": "AOJu0YyWhVDJKnm24sxLbyQPJf+kpQLAcMGFivrXGwS6RbdZ9/M0laty\r\n\t5uFN5NRWTPmlQhSyzRCzMVol4UaFnHrM2KQVIeyEqBVR4Fyw/mo5TR/P9JGpgmWd88r484fdIzv\r\n\tqVN1eIBeUG27wpI1ELvEZlICDmCvHFT+BGqvfigM=",
+    "X-Google-Smtp-Source": "AGHT+IG07DDgQyhJk8N3D9hnNMRA1p5pDtUEsg5OnXoj/sCer6h801iCYsGBXkf6PIVzxi5mGhOjuZaTTt+VuIRUeRc1LQ==",
+    "MIME-Version": "1.0",
+    "Date": "Sun, 28 Sep 2025 23:02:54 GMT",
+    "X-Account-Notification-Type": "364",
+    "Feedback-ID": "364:account-notifier",
+    "X-Notifications": "cf6513df97da0000",
+    "X-Notifications-Bounce-Info": "AeTnV4GYOGBmOR7aHGhjXUZLM134g4qwaNvHHVtpqABTt8k6GXuQc91FyLEaTIibbDduaKOg38QDGQXZZl8NHUrzHwMAauCyHmkzAN85_wNK32o5EyDaLCZMlvcd0xrJiOxH7nBeIP4fHPW-nqvzSW-qRx9OwcyutoQSVzJ12CUdMyU3DXZ-YGHWo8wSlamN_YnnC9a9OAg7AXKhmiLp-YrJgDkFU6YggQNjAwNjA0MDQxNTM1NTk2OTMzMg",
+    "Message-ID": "<aT0MBTVxv3Z2-NC0oLDx1Q@notifications.google.com>",
+    "Subject": "Security alert",
+    "From": "Google <no-reply@accounts.google.com>",
+    "To": "submissionassistant.ai@gmail.com",
+    "Content-Type": "multipart/alternative; boundary=\"000000000000e353c9063fe48406\""
+  }
+}
