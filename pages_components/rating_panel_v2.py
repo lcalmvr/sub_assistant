@@ -506,85 +506,129 @@ def _render_without_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_h
 def _render_limit_controls(sub_id: str, suffix: str = "") -> int:
     """Render policy limit controls"""
     st.markdown("**Policy Limit:**")
-    button_cols = st.columns([1, 1, 1, 1, 4])
-    
+
     limits = [
         (1_000_000, "1M"),
-        (2_000_000, "2M"), 
+        (2_000_000, "2M"),
         (3_000_000, "3M"),
         (5_000_000, "5M")
     ]
-    
-    for i, (limit_val, limit_text) in enumerate(limits):
-        with button_cols[i]:
-            if st.button(f"${limit_text}", key=f"limit_{limit_text.lower()}{suffix}_{sub_id}"):
-                st.session_state[f"selected_limit{suffix}_{sub_id}"] = limit_val
-                st.session_state[f"selected_limit{suffix}_text_{sub_id}"] = limit_text
-                st.rerun()
-    
-    # Text input for custom limit
+
+    # Create dropdown options including custom option
+    limit_options = [f"${limit_text}" for _, limit_text in limits] + ["Enter Custom Amount"]
+    limit_values = {f"${limit_text}": limit_val for limit_val, limit_text in limits}
+
+    # Get current selection or default to 2M
     current_limit = st.session_state.get(f"selected_limit{suffix}_{sub_id}", 2_000_000)
     current_limit_text = st.session_state.get(f"selected_limit{suffix}_text_{sub_id}", "2M")
-    
-    limit_input = st.text_input(
-        "Policy Limit (e.g., 2M, 500K)",
-        value=current_limit_text,
-        key=f"limit_text_input{suffix}_{sub_id}",
-        help="Enter limit using M for millions (2M = $2,000,000) or K for thousands (500K = $500,000)"
+
+    # Find default index
+    default_option = f"${current_limit_text}"
+    default_index = limit_options.index(default_option) if default_option in limit_options else 1
+
+    # Dropdown for policy limit selection
+    selected_option = st.selectbox(
+        "Select Policy Limit:",
+        options=limit_options,
+        index=default_index,
+        key=f"limit_dropdown{suffix}_{sub_id}",
+        help="Choose from standard policy limits or enter custom amount"
     )
-    
-    parsed_limit = _parse_dollar_input(limit_input)
-    if parsed_limit > 0:
-        st.session_state[f"selected_limit{suffix}_{sub_id}"] = parsed_limit
-        selected_limit = parsed_limit
-    else:
-        selected_limit = current_limit
+
+    # Handle selection
+    if selected_option == "Enter Custom Amount":
+        # Show custom input field
+        limit_input = st.text_input(
+            "Enter Custom Policy Limit (e.g., 2M, 500K):",
+            value="",
+            key=f"limit_text_input{suffix}_{sub_id}",
+            help="Enter limit using M for millions (2M = $2,000,000) or K for thousands (500K = $500,000)",
+            placeholder="Enter custom amount (e.g., 2M, 750K, 4M)"
+        )
+
+        # Process custom input
         if limit_input.strip():
-            st.error("Invalid format. Use: 2M, 500K, or 2000000")
-    
+            parsed_limit = _parse_dollar_input(limit_input)
+            if parsed_limit > 0:
+                st.session_state[f"selected_limit{suffix}_{sub_id}"] = parsed_limit
+                selected_limit = parsed_limit
+            else:
+                st.error("Invalid format. Use: 2M, 500K, or 2000000")
+                selected_limit = current_limit
+        else:
+            selected_limit = current_limit
+    else:
+        # Use dropdown selection
+        selected_limit = limit_values[selected_option]
+        selected_text = selected_option[1:]  # Remove the $ prefix
+        st.session_state[f"selected_limit{suffix}_{sub_id}"] = selected_limit
+        st.session_state[f"selected_limit{suffix}_text_{sub_id}"] = selected_text
+
     return selected_limit
 
 def _render_retention_controls(sub_id: str, suffix: str = "") -> int:
     """Render retention/deductible controls"""
     st.markdown("**Retention/Deductible:**")
-    ret_button_cols = st.columns(6)
-    
+
     retentions = [
         (10_000, "10K"),
         (25_000, "25K"),
-        (50_000, "50K"), 
+        (50_000, "50K"),
         (100_000, "100K"),
         (250_000, "250K"),
         (500_000, "500K")
     ]
-    
-    for i, (ret_val, ret_text) in enumerate(retentions):
-        with ret_button_cols[i]:
-            if st.button(f"${ret_text}", key=f"ret_{ret_text.lower()}{suffix}_{sub_id}"):
-                st.session_state[f"selected_retention{suffix}_{sub_id}"] = ret_val
-                st.session_state[f"selected_retention{suffix}_text_{sub_id}"] = ret_text
-                st.rerun()
-    
-    # Text input for custom retention
+
+    # Create dropdown options including custom option
+    retention_options = [f"${ret_text}" for _, ret_text in retentions] + ["Enter Custom Amount"]
+    retention_values = {f"${ret_text}": ret_val for ret_val, ret_text in retentions}
+
+    # Get current selection or default to 25K
     current_retention = st.session_state.get(f"selected_retention{suffix}_{sub_id}", 25_000)
     current_retention_text = st.session_state.get(f"selected_retention{suffix}_text_{sub_id}", "25K")
-    
-    retention_input = st.text_input(
-        "Retention Amount (e.g., 25K, 100K)",
-        value=current_retention_text,
-        key=f"retention_text_input{suffix}_{sub_id}",
-        help="Enter retention using K for thousands (25K = $25,000) or full amount (25000)"
+
+    # Find default index
+    default_option = f"${current_retention_text}"
+    default_index = retention_options.index(default_option) if default_option in retention_options else 1
+
+    # Dropdown for retention selection
+    selected_option = st.selectbox(
+        "Select Retention/Deductible:",
+        options=retention_options,
+        index=default_index,
+        key=f"retention_dropdown{suffix}_{sub_id}",
+        help="Choose from standard retention amounts or enter custom amount"
     )
-    
-    parsed_retention = _parse_dollar_input(retention_input)
-    if parsed_retention > 0:
-        st.session_state[f"selected_retention{suffix}_{sub_id}"] = parsed_retention
-        selected_retention = parsed_retention
-    else:
-        selected_retention = current_retention
+
+    # Handle selection
+    if selected_option == "Enter Custom Amount":
+        # Show custom input field
+        retention_input = st.text_input(
+            "Enter Custom Retention Amount (e.g., 25K, 100K):",
+            value="",
+            key=f"retention_text_input{suffix}_{sub_id}",
+            help="Enter retention using K for thousands (25K = $25,000) or full amount (25000)",
+            placeholder="Enter custom amount (e.g., 25K, 75K, 150K)"
+        )
+
+        # Process custom input
         if retention_input.strip():
-            st.error("Invalid format. Use: 25K, 100K, or 25000")
-    
+            parsed_retention = _parse_dollar_input(retention_input)
+            if parsed_retention > 0:
+                st.session_state[f"selected_retention{suffix}_{sub_id}"] = parsed_retention
+                selected_retention = parsed_retention
+            else:
+                st.error("Invalid format. Use: 25K, 100K, or 25000")
+                selected_retention = current_retention
+        else:
+            selected_retention = current_retention
+    else:
+        # Use dropdown selection
+        selected_retention = retention_values[selected_option]
+        selected_text = selected_option[1:]  # Remove the $ prefix
+        st.session_state[f"selected_retention{suffix}_{sub_id}"] = selected_retention
+        st.session_state[f"selected_retention{suffix}_text_{sub_id}"] = selected_text
+
     return selected_retention
 
 def _get_coverage_configuration(sub_id: str, aggregate_limit: int, suffix: str = "") -> dict:
