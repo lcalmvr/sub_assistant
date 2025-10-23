@@ -22,6 +22,7 @@ import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+from typing import Optional
 
 # Load environment variables
 load_dotenv()
@@ -37,6 +38,7 @@ import os
 import importlib.util
 spec = importlib.util.spec_from_file_location("pipeline", os.path.join(os.path.dirname(os.path.dirname(__file__)), "core", "pipeline.py"))
 pipeline = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = pipeline
 spec.loader.exec_module(pipeline)
 parse_controls_from_summary = pipeline.parse_controls_from_summary
 
@@ -227,9 +229,9 @@ def save_feedback(
     submission_id: str,
     section: str,
     original_text: str,
-    edited_text: str | None,
+    edited_text: Optional[str],
     feedback_label: str,
-    comment: str | None,
+    comment: Optional[str],
     user_id: str,
 ):
     with get_conn().cursor() as cur:

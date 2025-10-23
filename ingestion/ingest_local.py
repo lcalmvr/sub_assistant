@@ -126,16 +126,74 @@ base = Path(args.dir)
 subject, body = (base/"email.txt").read_text(encoding="utf-8").split("\n", 1)
 sender = "local-fixture@example.com"
 
+# Check for email dump data to use for broker matching
+email_dump_data = None
+for json_file in base.glob("*.json"):
+    try:
+        data = json.loads(json_file.read_text(encoding="utf-8"))
+        # Check if this is an email dump file by looking for email-specific fields
+        if (isinstance(data, dict) and 
+            "from_email" in data and 
+            "body_text" in data and 
+            "subject" in data and
+            "message_id" in data):
+            email_dump_data = data
+            print(f"📧 Found email dump data in {json_file.name}")
+            break
+    except Exception as e:
+        # Skip files that aren't valid JSON or don't match the pattern
+        continue
+
+# Use email dump data if available, otherwise fall back to email.txt
+if email_dump_data:
+    subject = email_dump_data.get("subject", subject)
+    body = email_dump_data.get("body_text", body)
+    sender = email_dump_data.get("from_email", sender)
+    print(f"📧 Using email dump data: sender={sender}")
+else:
+    print(f"📧 Using email.txt data: sender={sender}")
+
 # Process JSON files for the submission pipeline
 attachments = []
-for jf in base.glob("*.json"):
+json_files = list(base.glob("*.json"))
+
+# Sort to prioritize Application files first
+def sort_key(f):
+    j = json.loads(f.read_text(encoding="utf-8"))
+    if "data" in j and "generalInformation" in j.get("data", {}):
+        return (0, f.name)  # Application files first
+    elif "loss" in json.dumps(j).lower():
+        return (1, f.name)  # Loss Run files second
+    else:
+        return (2, f.name)  # Other files last
+
+json_files.sort(key=sort_key)
+
+for jf in json_files:
     j = json.loads(jf.read_text(encoding="utf-8"))
-    # crude type hint
-    hint = "Application" if "generalInformation" in j else ("Loss Run" if "loss" in json.dumps(j).lower() else "Other")
+    # crude type hint - check for generalInformation in data section
+    hint = "Application" if ("data" in j and "generalInformation" in j.get("data", {})) else ("Loss Run" if "loss" in json.dumps(j).lower() else "Other")
     attachments.append(Attachment(filename=jf.name, standardized_json=j, schema_hint=hint))
 
 sid = process_submission(subject.strip(), body.strip(), sender, attachments, use_docupipe=False)
 print("✅ Ingested fixture →", sid)
+
+# Process loss runs data if present
+if sid:
+    for jf in base.glob("*.json"):
+        j = json.loads(jf.read_text(encoding="utf-8"))
+        # Check if this is a loss runs file
+        if "loss" in json.dumps(j).lower() and "data" in j and "claims" in j.get("data", {}):
+            print(f"📊 Processing loss runs data from {jf.name}...")
+            try:
+                # Import the parse_loss_runs_json function
+                import sys
+                sys.path.append('.')
+                from ingestion.import_loss_runs import parse_loss_runs_json
+                parse_loss_runs_json(str(jf), sid)
+                print(f"✅ Processed loss history from {jf.name}")
+            except Exception as e:
+                print(f"❌ Error processing loss runs from {jf.name}: {e}")
 
 # Save ALL files in the fixture folder as documents
 if sid:
