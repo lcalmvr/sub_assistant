@@ -1,0 +1,11 @@
+[server]
+# Enable CORS for cross-origin requests
+enableCORS = false
+enableXsrfProtection = false
+
+# WebSocket configuration for better Safari compatibility
+enableWebsocketCompression = true
+
+[browser]
+# Improve Safari rendering
+gatherUsageStats = false

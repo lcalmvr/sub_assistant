@@ -46,7 +46,8 @@ ehthumbs.db
 Thumbs.db
 
 # Streamlit
-.streamlit/
+# Note: .streamlit/config.toml should be committed for deployment
+.streamlit/secrets.toml
 
 # Jupyter
 .ipynb_checkpoints/
