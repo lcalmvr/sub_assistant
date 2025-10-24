@@ -2,7 +2,7 @@ openai
 requests
 beautifulsoup4
 psycopg2-binary
-streamlit
+streamlit==1.32.2
 pandas
 pgvector
 Faker

@@ -4,8 +4,20 @@ enableCORS = false
 enableXsrfProtection = false
 
 # WebSocket configuration for better Safari compatibility
-enableWebsocketCompression = true
+enableWebsocketCompression = false
+headless = true
+runOnSave = false
+
+# Increase timeouts for slower mobile connections
+maxUploadSize = 200
+maxMessageSize = 200
 
 [browser]
 # Improve Safari rendering
 gatherUsageStats = false
+serverAddress = "0.0.0.0"
+serverPort = 8501
+
+[theme]
+# Ensure proper rendering on Safari
+base = "light"
