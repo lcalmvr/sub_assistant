@@ -38,35 +38,12 @@ class PerformanceMonitor:
         self._ensure_metrics_table()
     
     def _ensure_metrics_table(self):
-        """Create metrics table if it doesn't exist"""
-        create_table_sql = """
-        CREATE TABLE IF NOT EXISTS rag_metrics (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ DEFAULT NOW(),
-            operation_type VARCHAR(50) NOT NULL,
-            submission_id UUID,
-            query TEXT,
-            response_time_ms FLOAT NOT NULL,
-            retrieval_time_ms FLOAT,
-            generation_time_ms FLOAT,
-            num_documents_retrieved INTEGER,
-            num_tokens_input INTEGER,
-            num_tokens_output INTEGER,
-            user_feedback VARCHAR(20),
-            accuracy_score FLOAT,
-            error_message TEXT,
-            metadata JSONB
-        );
-        
-        CREATE INDEX IF NOT EXISTS idx_rag_metrics_timestamp ON rag_metrics(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_rag_metrics_operation ON rag_metrics(operation_type);
-        """
-        
+        """Check if metrics table exists (table should be created manually in Supabase)"""
         try:
-            # Note: This requires SUPABASE_SERVICE_ROLE key for DDL operations
-            self.supabase.postgrest.rpc('exec_sql', {'sql': create_table_sql}).execute()
+            # Just check if table exists by querying it
+            self.supabase.table('rag_metrics').select('id').limit(1).execute()
         except Exception as e:
-            print(f"Warning: Could not create metrics table: {e}")
+            print(f"Warning: rag_metrics table may not exist. Create it manually in Supabase: {e}")
     
     def start_tracking(self, operation_type: str, query: str, submission_id: str = None) -> Dict[str, Any]:
         """Start tracking a RAG operation"""
