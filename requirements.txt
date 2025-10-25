@@ -11,9 +11,9 @@ pyyaml
 jinja2
 weasyprint
 supabase>=2.0.0
-langchain>=0.1.16
-langchain-community>=0.2.0
-langchain-openai
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-openai==0.1.23
 tavily-python>=0.3.0
 unstructured
 python-docx

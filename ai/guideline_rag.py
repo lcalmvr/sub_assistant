@@ -6,7 +6,10 @@ from supabase import create_client
 from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import SupabaseVectorStore
-from langchain.chains import ConversationalRetrievalChain
+try:
+    from langchain.chains import ConversationalRetrievalChain
+except ImportError:
+    from langchain.chains.conversational_retrieval.base import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 
 from pathlib import Path
