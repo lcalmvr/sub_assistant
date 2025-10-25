@@ -241,7 +241,10 @@ def get_chat_response(question: str, submission_id: str = None, chat_history: li
         String response
     """
     from langchain_openai import ChatOpenAI
-    from langchain_community.tools import TavilySearchResults
+    try:
+        from langchain_community.tools.tavily_search import TavilySearchResults
+    except ImportError:
+        from langchain_community.tools import TavilySearchResults
     from langchain.agents import create_openai_tools_agent, AgentExecutor
     from langchain.prompts import ChatPromptTemplate
     from supabase import create_client
