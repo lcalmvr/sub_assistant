@@ -194,6 +194,47 @@ def _save_quote_row(sub_id: str, quote_json: dict, pdf_url: str):
             (sub_id, json.dumps(quote_json), pdf_url, CURRENT_USER),
         )
         return cur.fetchone()[0]
+
+def _get_quotes_for_submission(sub_id: str):
+    """Retrieve all quotes for a submission"""
+    with get_conn().cursor() as cur:
+        cur.execute(
+            """
+            select id, quote_json, pdf_url, created_by, created_at
+            from quotes
+            where submission_id = %s
+            order by created_at desc
+            """,
+            (sub_id,),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": row[0],
+                "quote_json": row[1],
+                "pdf_url": row[2],
+                "created_by": row[3],
+                "created_at": row[4],
+            }
+            for row in rows
+        ]
+
+def _update_quote_row(quote_id: str, quote_json: dict, pdf_url: str):
+    """Update an existing quote"""
+    with get_conn().cursor() as cur:
+        cur.execute(
+            """
+            update quotes
+            set quote_json = %s, pdf_url = %s, created_at = now()
+            where id = %s
+            """,
+            (json.dumps(quote_json), pdf_url, quote_id),
+        )
+
+def _delete_quote_row(quote_id: str):
+    """Delete a quote"""
+    with get_conn().cursor() as cur:
+        cur.execute("delete from quotes where id = %s", (quote_id,))
 # ░░░░░░░░░░░░░░  END QUOTE HELPERS  ░░░░░░░░░░░░░░
 
 # ─────────────────────── DB helpers ────────────────────────
@@ -1120,11 +1161,61 @@ def render():
                     with st.chat_message(message["role"]):
                         st.markdown(message["content"])
 
+        # ------------------- Saved Quotes --------------------
+        with st.expander("💾 Saved Quotes", expanded=True):
+            saved_quotes = _get_quotes_for_submission(sub_id)
+
+            if not saved_quotes:
+                st.info("No quotes saved yet. Create a quote below to get started.")
+            else:
+                for idx, quote_data in enumerate(saved_quotes, 1):
+                    quote_json = quote_data["quote_json"]
+                    with st.container():
+                        col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+
+                        with col1:
+                            st.markdown(f"**Quote #{idx}**")
+                            limit = quote_json.get("limit", "N/A")
+                            retention = quote_json.get("retention", "N/A")
+                            st.caption(f"${limit:,} / ${retention:,} retention")
+
+                        with col2:
+                            premium = quote_json.get("premium", 0)
+                            st.metric("Premium", f"${premium:,}")
+
+                        with col3:
+                            created_at = quote_data["created_at"]
+                            if created_at:
+                                date_str = created_at.strftime("%b %d, %Y %I:%M %p")
+                                st.caption(f"Created: {date_str}")
+
+                        with col4:
+                            col4a, col4b, col4c = st.columns(3)
+                            with col4a:
+                                if st.button("📄", key=f"view_pdf_{quote_data['id']}", help="View PDF"):
+                                    st.markdown(f"[Open PDF]({quote_data['pdf_url']})")
+                            with col4b:
+                                if st.button("📝", key=f"load_{quote_data['id']}", help="Load Parameters"):
+                                    # Store the loaded quote ID in session state
+                                    st.session_state["loaded_quote_id"] = quote_data["id"]
+                                    st.session_state["loaded_quote_data"] = quote_json
+                                    st.rerun()
+                            with col4c:
+                                if st.button("🗑️", key=f"delete_{quote_data['id']}", help="Delete Quote"):
+                                    _delete_quote_row(quote_data["id"])
+                                    st.success("Quote deleted!")
+                                    st.rerun()
+
+                        st.divider()
+
         # ------------------- Rating --------------------
         quote_helpers = {
             'render_pdf': _render_quote_pdf,
             'upload_pdf': _upload_pdf,
-            'save_quote': _save_quote_row
+            'save_quote': _save_quote_row,
+            'update_quote': _update_quote_row,
+            'get_loaded_quote_id': lambda: st.session_state.get("loaded_quote_id"),
+            'clear_loaded_quote': lambda: st.session_state.pop("loaded_quote_id", None)
         }
         render_rating_panel(sub_id, get_conn, quote_helpers)
     
