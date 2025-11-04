@@ -281,9 +281,123 @@ JSON:
 def summarize_bullet_points(app_data: dict[str, Any]) -> str:
     """Generate bullet point summary of security controls only"""
     prompt = f"""
-You are a cyber insurance underwriter. Review the following JSON-formatted application data. Provide a bullet-point summary of all notable security controls, grouped by category (e.g., MFA, Backups, EDR, Phishing Training). Use clear, concise, factual language.
+You are a cyber insurance underwriter. Review the following JSON-formatted application data and provide a structured bullet-point summary of security controls.
 
-Group controls by category and list specific implementations or gaps. Focus on factual statements about what is present, absent, or unclear.
+**MANDATORY CRITERIA** (must be tracked):
+- Phishing Training (JSON fields: conductsPhishingSimulations, etc.)
+- EDR (Endpoint Detection & Response)
+- MFA Email
+- MFA Privileged Account Access (JSON fields: mfaForCriticalInfoAccess, pamRequiresMfa, etc.)
+- MFA for Remote Access (also called "Remote Access MFA")
+- MFA Backups
+- Offline Backups
+- Offsite Backups
+- Immutable Backups
+- Encrypted Backups
+
+**INSTRUCTIONS:**
+
+1. **✅ PRESENT CONTROLS**:
+   - List ALL controls that are explicitly confirmed as YES/Present in the application data
+   - **Group by consolidated categories ONLY - use these exact categories, no others**:
+     * **Authentication & Access**: All MFA types, SSO, PAM, password managers, admin rights, AND ALL remote access controls (remote access MFA, remote access solutions like RDP/VPN, etc.)
+     * **Endpoint Protection**: EDR, endpoint security, firewall, IDS/IPS, antivirus
+     * **Backup & Recovery**: All backup types (offline, offsite, immutable, encrypted), frequencies, testing
+     * **Training & Awareness**: Phishing training, security awareness
+     * **Patch Management**: Patch policies, timeframes
+     * **Operational Technology**: OT/ICS systems
+     * **Security Management**: MDR, SOC, security teams
+   - **DO NOT create a separate "Remote Access" category - it belongs in "Authentication & Access"**
+   - For EACH control, include ALL available details on the same line: vendor names, specific systems, frequencies, percentages, methods, etc.
+   - If partial information is provided, add what's known AND what's missing in parentheses on the same line
+   - **DO NOT add redundant ": Yes" or similar** - being in PRESENT CONTROLS already means it's present
+   - Only add descriptive context when there's meaningful detail (vendor name, coverage %, etc.)
+   - Examples:
+     * Good: "⭐ MFA Email" (no need to say "Yes")
+     * Good: "⭐ EDR: CrowdStrike on domain controllers (endpoint/server coverage percentages not specified)"
+     * Bad: "⭐ MFA Email: Yes" (redundant)
+   - **Visual marker for mandatory controls in this section**: Add ⭐ before any mandatory control (from the mandatory list above)
+
+   **MARKDOWN FORMATTING RULES:**
+   - Use this exact format:
+     ```
+     ### ✅ PRESENT CONTROLS
+
+     **Category Name**
+     - Control item 1
+     - Control item 2
+
+     **Next Category Name**
+     - Control item 1
+     ```
+   - Major section headers use ### (PRESENT CONTROLS, NOT PRESENT CONTROLS, NOT ASKED)
+   - Category names use plain bold ** (Authentication & Access, Endpoint Protection, etc.)
+   - First bullet starts immediately on the next line after category name
+   - ONE blank line between last bullet and next category name
+
+   - Example: "⭐ EDR: CrowdStrike on domain controllers (endpoint/server coverage percentages not specified)"
+   - Example: "⭐ MFA Email"
+   - Example: "Patch Management: Central management in place, critical patches within 1 week (normal patching timeframe not specified)"
+
+2. **❌ NOT PRESENT CONTROLS**:
+   - List ALL controls that are explicitly confirmed as NO/Not Present
+   - This means the question WAS ASKED and the answer is NO
+   - **Use the same consolidated categories as PRESENT CONTROLS** (Authentication & Access, Endpoint Protection, Backup & Recovery, etc.)
+   - **DO NOT add redundant ": No" or similar** - being in NOT PRESENT CONTROLS already means it's not present
+   - Only add descriptive context if there's meaningful detail
+   - Examples:
+     * Good: "🔴 MFA Privileged Account Access" (no need to say "No")
+     * Good: "Password Manager" (not mandatory, no icon needed, no ": No" needed)
+     * Bad: "🔴 MFA Privileged Account Access: No" (redundant)
+   - **Add 🔴 before any mandatory control** (from the mandatory list above)
+   - **Use the EXACT same markdown formatting as PRESENT CONTROLS**:
+     * ### header for major section title "### ❌ NOT PRESENT CONTROLS"
+     * Plain bold ** for category names
+     * Items start immediately on next line after category name
+     * Blank line between categories
+
+3. **⚠️ NOT ASKED (MANDATORY ONLY)**:
+   - ONLY list mandatory criteria from the list above where the question was completely not asked
+   - This means the question/field does NOT appear in the application data at all
+   - **If a control is listed in PRESENT or NOT PRESENT, DO NOT list it here - even if it's mandatory**
+   - Example: If backup questions are completely absent from the JSON, list them in NOT ASKED
+   - Example: If backup questions exist but answered No, list them in NOT PRESENT
+   - Format: Use ### header for section title, then simple bullet list (no category grouping needed)
+   - **Add 🔶 before each item**
+
+**CRITICAL RULES:**
+- DO NOT lose any implementation details (vendor names, frequencies, specific systems, etc.)
+- DO NOT put a control in multiple sections - each control appears in EXACTLY ONE section only
+
+**PLACEMENT DECISION TREE (follow this exactly):**
+1. Look for the relevant field in the JSON data
+2. **CRITICAL**: Check if there's a corresponding `_is_present` field
+3. If `field_is_present` is **false** or field is null → question was NOT ASKED → NOT ASKED (if mandatory)
+4. If `field_is_present` is **true** and value is Yes/True/Present → PRESENT CONTROLS
+5. If `field_is_present` is **true** and value is No/False → NOT PRESENT CONTROLS
+6. Examples:
+   - "emailMfa": "Yes", "emailMfa_is_present": true → MFA Email goes to PRESENT
+   - "privilegedAccessManagement": false, "privilegedAccessManagement_is_present": true → PAM Tool (not mandatory, no icon) goes to NOT PRESENT
+   - "conductsPhishingSimulations": null, "conductsPhishingSimulations_is_present": false → Phishing Training goes to NOT ASKED
+   - "pamRequiresMfa": null, "pamRequiresMfa_is_present": false → MFA Privileged Account Access goes to NOT ASKED
+7. **For MFA Privileged Account Access**: Look for fields like "pamRequiresMfa", "mfaForCriticalInfoAccess", or similar. If these have `_is_present`: false, it goes to NOT ASKED (not NOT PRESENT)
+
+**ICON MARKERS (visual only, don't affect which section items go in):**
+- Mandatory controls in PRESENT CONTROLS: use ⭐
+- Mandatory controls in NOT PRESENT CONTROLS: use 🔴
+- All controls in NOT ASKED: use 🔶
+
+**FORMATTING:**
+- DO NOT add ": Yes" or ": No" - the section tells us that already
+- Only add descriptive context when there's meaningful detail (vendor names, coverage %, etc.)
+- DO include non-mandatory controls if they were answered (like Patch Management, Password Manager, etc.)
+- DO preserve granular gaps inline with each control
+
+**OUTPUT FORMAT:**
+- Respond with raw markdown ONLY
+- DO NOT wrap your response in code fences (```)
+- DO NOT include any preamble or explanation
+- Just return the formatted markdown starting with "### ✅ PRESENT CONTROLS"
 
 JSON:
 {json.dumps(app_data, indent=2)}
@@ -292,7 +406,7 @@ JSON:
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=800,
+        max_tokens=1200,
     )
     return rsp.choices[0].message.content.strip()
 
