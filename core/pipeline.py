@@ -278,24 +278,106 @@ JSON:
     return rsp.choices[0].message.content.strip()
 
 
+def extract_mandatory_controls(app_data: dict[str, Any]) -> dict[str, list[dict]]:
+    """
+    Deterministically extract and categorize mandatory controls from application JSON.
+    Returns: {"present": [...], "not_present": [...], "not_asked": [...]}
+    """
+    # Define mandatory control mappings: control_name -> list of possible JSON field names
+    MANDATORY_CONTROLS = {
+        "Phishing Training": ["conductsPhishingSimulations", "mandatoryTrainingTopics"],
+        "EDR": ["endpointSecurityTechnologies", "eppedrOnDomainControllers", "hasEdr"],
+        "MFA Email": ["emailMfa", "mfaEmail"],
+        "MFA Privileged Account Access": ["mfaForCriticalInfoAccess", "pamRequiresMfa"],
+        "MFA for Remote Access": ["remoteAccessMfa", "mfaForRemoteAccess"],
+        "MFA Backups": ["backupMfa", "mfaBackups"],
+        "Offline Backups": ["offlineBackups", "hasOfflineBackups"],
+        "Offsite Backups": ["offsiteBackups", "hasOffsiteBackups"],
+        "Immutable Backups": ["immutableBackups", "hasImmutableBackups"],
+        "Encrypted Backups": ["encryptedBackups", "backupEncryption"],
+    }
+
+    result = {"present": [], "not_present": [], "not_asked": []}
+
+    def find_field_value(data: dict, field_names: list[str]) -> tuple[bool, Any]:
+        """Search for field in nested dict, check _is_present flag. Returns (was_asked, value)"""
+        # Handle "data" wrapper if present
+        if "data" in data and isinstance(data["data"], dict):
+            search_data = data["data"]
+        else:
+            search_data = data
+
+        for field_name in field_names:
+            # Search in nested structure
+            for section in search_data.values():
+                if not isinstance(section, dict):
+                    continue
+
+                # Check if field exists
+                if field_name in section:
+                    # Check if there's an _is_present flag
+                    is_present_key = f"{field_name}_is_present"
+                    if is_present_key in section:
+                        was_asked = section[is_present_key]
+                        value = section[field_name]
+                        return (was_asked, value)
+                    else:
+                        # No _is_present flag, assume asked if value is not None
+                        value = section[field_name]
+                        was_asked = value is not None
+                        return (was_asked, value)
+
+        return (False, None)  # Field not found at all
+
+    # Categorize each mandatory control
+    for control_name, field_names in MANDATORY_CONTROLS.items():
+        was_asked, value = find_field_value(app_data, field_names)
+
+        if not was_asked:
+            result["not_asked"].append({"name": control_name})
+        elif value in [True, "Yes", "yes", "true", "True"]:
+            result["present"].append({"name": control_name})
+        elif isinstance(value, list) and len(value) > 0:
+            # Non-empty list means present
+            result["present"].append({"name": control_name})
+        elif value in [False, "No", "no", "false", "False"]:
+            result["not_present"].append({"name": control_name})
+        elif isinstance(value, list) and len(value) == 0:
+            # Empty list but was asked - treat as not present
+            result["not_present"].append({"name": control_name})
+        else:
+            # Value is ambiguous or null but was asked - treat as not present
+            if was_asked:
+                result["not_present"].append({"name": control_name})
+            else:
+                result["not_asked"].append({"name": control_name})
+
+    return result
+
+
 def summarize_bullet_points(app_data: dict[str, Any]) -> str:
     """Generate bullet point summary of security controls only"""
+    # First, deterministically extract mandatory controls
+    mandatory_categorized = extract_mandatory_controls(app_data)
+
     prompt = f"""
-You are a cyber insurance underwriter. Review the following JSON-formatted application data and provide a structured bullet-point summary of security controls.
+You are a cyber insurance underwriter. Create a formatted bullet-point summary of security controls from the application data.
 
-**MANDATORY CRITERIA** (must be tracked):
-- Phishing Training (JSON fields: conductsPhishingSimulations, etc.)
-- EDR (Endpoint Detection & Response)
-- MFA Email
-- MFA Privileged Account Access (JSON fields: mfaForCriticalInfoAccess, pamRequiresMfa, etc.)
-- MFA for Remote Access (also called "Remote Access MFA")
-- MFA Backups
-- Offline Backups
-- Offsite Backups
-- Immutable Backups
-- Encrypted Backups
+**PRE-CATEGORIZED MANDATORY CONTROLS:**
+PRESENT (these mandatory controls were confirmed as present):
+{json.dumps([c["name"] for c in mandatory_categorized["present"]], indent=2)}
 
-**INSTRUCTIONS:**
+NOT PRESENT (these mandatory controls were confirmed as absent):
+{json.dumps([c["name"] for c in mandatory_categorized["not_present"]], indent=2)}
+
+NOT ASKED (these mandatory controls were not asked about in the application):
+{json.dumps([c["name"] for c in mandatory_categorized["not_asked"]], indent=2)}
+
+**YOUR TASK:**
+Generate a formatted summary with three sections. For mandatory controls, STRICTLY use the pre-categorized data above.
+For non-mandatory controls, extract from the JSON below.
+
+**FORMATTING INSTRUCTIONS:**
 
 1. **✅ PRESENT CONTROLS**:
    - List ALL controls that are explicitly confirmed as YES/Present in the application data
@@ -340,58 +422,25 @@ You are a cyber insurance underwriter. Review the following JSON-formatted appli
    - Example: "Patch Management: Central management in place, critical patches within 1 week (normal patching timeframe not specified)"
 
 2. **❌ NOT PRESENT CONTROLS**:
-   - List ALL controls that are explicitly confirmed as NO/Not Present
-   - This means the question WAS ASKED and the answer is NO
-   - **Use the same consolidated categories as PRESENT CONTROLS** (Authentication & Access, Endpoint Protection, Backup & Recovery, etc.)
-   - **DO NOT add redundant ": No" or similar** - being in NOT PRESENT CONTROLS already means it's not present
-   - Only add descriptive context if there's meaningful detail
-   - Examples:
-     * Good: "🔴 MFA Privileged Account Access" (no need to say "No")
-     * Good: "Password Manager" (not mandatory, no icon needed, no ": No" needed)
-     * Bad: "🔴 MFA Privileged Account Access: No" (redundant)
-   - **Add 🔴 before any mandatory control** (from the mandatory list above)
-   - **Use the EXACT same markdown formatting as PRESENT CONTROLS**:
-     * ### header for major section title "### ❌ NOT PRESENT CONTROLS"
-     * Plain bold ** for category names
-     * Items start immediately on next line after category name
-     * Blank line between categories
+   - Include mandatory controls from the NOT PRESENT list above
+   - Add non-mandatory controls that were asked and answered No (from JSON)
+   - Use same consolidated categories
+   - **Add 🔴 before mandatory controls ONLY**
+   - DO NOT add ": No" - redundant
+   - Same markdown formatting as section 1
 
 3. **⚠️ NOT ASKED (MANDATORY ONLY)**:
-   - ONLY list mandatory criteria from the list above where the question was completely not asked
-   - This means the question/field does NOT appear in the application data at all
-   - **If a control is listed in PRESENT or NOT PRESENT, DO NOT list it here - even if it's mandatory**
-   - Example: If backup questions are completely absent from the JSON, list them in NOT ASKED
-   - Example: If backup questions exist but answered No, list them in NOT PRESENT
-   - Format: Use ### header for section title, then simple bullet list (no category grouping needed)
+   - List ONLY the mandatory controls from the NOT ASKED list above
+   - Simple bullet list, no categories
    - **Add 🔶 before each item**
+   - Format: "### ⚠️ NOT ASKED (MANDATORY ONLY)" then bullets
 
 **CRITICAL RULES:**
-- DO NOT lose any implementation details (vendor names, frequencies, specific systems, etc.)
-- DO NOT put a control in multiple sections - each control appears in EXACTLY ONE section only
-
-**PLACEMENT DECISION TREE (follow this exactly):**
-1. Look for the relevant field in the JSON data
-2. **CRITICAL**: Check if there's a corresponding `_is_present` field
-3. If `field_is_present` is **false** or field is null → question was NOT ASKED → NOT ASKED (if mandatory)
-4. If `field_is_present` is **true** and value is Yes/True/Present → PRESENT CONTROLS
-5. If `field_is_present` is **true** and value is No/False → NOT PRESENT CONTROLS
-6. Examples:
-   - "emailMfa": "Yes", "emailMfa_is_present": true → MFA Email goes to PRESENT
-   - "privilegedAccessManagement": false, "privilegedAccessManagement_is_present": true → PAM Tool (not mandatory, no icon) goes to NOT PRESENT
-   - "conductsPhishingSimulations": null, "conductsPhishingSimulations_is_present": false → Phishing Training goes to NOT ASKED
-   - "pamRequiresMfa": null, "pamRequiresMfa_is_present": false → MFA Privileged Account Access goes to NOT ASKED
-7. **For MFA Privileged Account Access**: Look for fields like "pamRequiresMfa", "mfaForCriticalInfoAccess", or similar. If these have `_is_present`: false, it goes to NOT ASKED (not NOT PRESENT)
-
-**ICON MARKERS (visual only, don't affect which section items go in):**
-- Mandatory controls in PRESENT CONTROLS: use ⭐
-- Mandatory controls in NOT PRESENT CONTROLS: use 🔴
-- All controls in NOT ASKED: use 🔶
-
-**FORMATTING:**
-- DO NOT add ": Yes" or ": No" - the section tells us that already
-- Only add descriptive context when there's meaningful detail (vendor names, coverage %, etc.)
-- DO include non-mandatory controls if they were answered (like Patch Management, Password Manager, etc.)
-- DO preserve granular gaps inline with each control
+- For mandatory controls: USE THE PRE-CATEGORIZED DATA ABOVE - do NOT reinterpret
+- For non-mandatory controls: extract from JSON using _is_present flags
+- DO NOT add ": Yes" or ": No" - the section itself indicates presence
+- Only add descriptive context for meaningful details (vendor names, coverage %, specific systems, etc.)
+- DO preserve all implementation details inline
 
 **OUTPUT FORMAT:**
 - Respond with raw markdown ONLY
