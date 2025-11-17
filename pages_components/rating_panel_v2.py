@@ -14,16 +14,104 @@ pipeline = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pipeline)
 parse_controls_from_summary = pipeline.parse_controls_from_summary
 
+def _load_quote_parameters_into_session(sub_id: str, quote_data: dict):
+    """Load quote parameters into session state for form population"""
+    # Load limit and retention with proper text format
+    limit = quote_data.get("limit")
+    retention = quote_data.get("retention")
+
+    if limit:
+        st.session_state[f"selected_limit_{sub_id}"] = limit
+        # Convert numeric to text format (e.g., 5000000 -> "5M")
+        if limit >= 1_000_000:
+            limit_text = f"{limit // 1_000_000}M"
+        else:
+            limit_text = f"{limit // 1_000}K"
+        st.session_state[f"selected_limit_text_{sub_id}"] = limit_text
+        # Also update the dropdown widget key to force it to show the new value
+        st.session_state[f"limit_dropdown_{sub_id}"] = f"${limit_text}"
+        print(f"DEBUG: Loaded limit: ${limit:,} ({limit_text})")  # Debug
+
+    if retention:
+        st.session_state[f"selected_retention_{sub_id}"] = retention
+        # Convert numeric to text format
+        if retention >= 1_000_000:
+            retention_text = f"{retention // 1_000_000}M"
+        else:
+            retention_text = f"{retention // 1_000}K"
+        st.session_state[f"selected_retention_text_{sub_id}"] = retention_text
+        # Also update the dropdown widget key
+        st.session_state[f"retention_dropdown_{sub_id}"] = f"${retention_text}"
+        print(f"DEBUG: Loaded retention: ${retention:,} ({retention_text})")  # Debug
+
+    # Load coverage limits
+    if "coverage_limits" in quote_data:
+        st.session_state[f"coverage_limits_{sub_id}"] = quote_data["coverage_limits"]
+
+    # Load subjectivities (convert to dict format if needed)
+    if "subjectivities" in quote_data:
+        subj_list = quote_data["subjectivities"]
+
+        if subj_list:
+            if isinstance(subj_list[0], dict) and 'id' in subj_list[0]:
+                # Already in correct format
+                st.session_state[f"subjectivities_{sub_id}"] = subj_list
+            elif isinstance(subj_list[0], str):
+                # Convert list of strings to ID-based dict format
+                converted_list = []
+                for i, text in enumerate(subj_list):
+                    converted_list.append({
+                        'id': i,
+                        'text': text
+                    })
+                st.session_state[f"subjectivities_{sub_id}"] = converted_list
+                st.session_state[f"subjectivities_id_counter_{sub_id}"] = len(converted_list)
+            else:
+                # Unknown format, skip
+                pass
+
+    # Load endorsements (convert to dict format if needed)
+    if "endorsements" in quote_data:
+        endorse_list = quote_data["endorsements"]
+        default_endorsements = ["OFAC Compliance", "Service of Suit"]
+
+        if endorse_list:
+            if isinstance(endorse_list[0], dict) and 'id' in endorse_list[0]:
+                # Already in correct format
+                st.session_state[f"endorsements_{sub_id}"] = endorse_list
+            elif isinstance(endorse_list[0], str):
+                # Convert list of strings to ID-based dict format
+                converted_list = []
+                for i, text in enumerate(endorse_list):
+                    converted_list.append({
+                        'id': i,
+                        'text': text,
+                        'is_default': text in default_endorsements
+                    })
+                st.session_state[f"endorsements_{sub_id}"] = converted_list
+                st.session_state[f"endorsements_id_counter_{sub_id}"] = len(converted_list)
+            else:
+                # Unknown format, skip
+                pass
+
 def render_rating_panel(sub_id: str, get_conn_func, quote_helpers=None):
     """
     Render the complete rating and quote panel for a submission.
-    
+
     Args:
         sub_id: Submission ID
         get_conn_func: Function that returns database connection
         quote_helpers: Optional dict with quote generation helper functions
-                      {'render_pdf': func, 'upload_pdf': func, 'save_quote': func}
+                      {'render_pdf': func, 'upload_pdf': func, 'save_quote': func, 'update_quote': func}
     """
+    # Check if we need to load quote parameters
+    if "loaded_quote_data" in st.session_state and "loaded_quote_id" in st.session_state:
+        _load_quote_parameters_into_session(sub_id, st.session_state["loaded_quote_data"])
+        # Clear the loaded data flag so we don't reload on every rerun
+        st.session_state.pop("loaded_quote_data", None)
+        # Show confirmation
+        st.success("✅ Quote parameters loaded! Scroll down to see the loaded values.")
+
     with st.expander("⭐ Rate & Quote", expanded=False):
         # Get submission data for both preview and quote generation
         with get_conn_func().cursor() as cur:
@@ -522,16 +610,23 @@ def _render_limit_controls(sub_id: str, suffix: str = "") -> int:
     current_limit = st.session_state.get(f"selected_limit{suffix}_{sub_id}", 2_000_000)
     current_limit_text = st.session_state.get(f"selected_limit{suffix}_text_{sub_id}", "2M")
 
+    print(f"DEBUG: Current limit in session: {current_limit:,}, text: {current_limit_text}")  # Debug
+
     # Find default index
     default_option = f"${current_limit_text}"
     default_index = limit_options.index(default_option) if default_option in limit_options else 1
+
+    # Set the widget's session state key to force the dropdown to show the loaded value
+    widget_key = f"limit_dropdown{suffix}_{sub_id}"
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = default_option
 
     # Dropdown for policy limit selection
     selected_option = st.selectbox(
         "Select Policy Limit:",
         options=limit_options,
         index=default_index,
-        key=f"limit_dropdown{suffix}_{sub_id}",
+        key=widget_key,
         help="Choose from standard policy limits or enter custom amount"
     )
 
@@ -796,8 +891,30 @@ def _render_rating_breakdown(rating_result: dict, breakdown: dict):
 
 def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get_conn_func, quote_helpers=None):
     """Render complete quote generation section"""
-    
-    if st.button("Generate Quote", key=f"generate_quote_{sub_id}", type="primary"):
+
+    # Check if a quote is loaded
+    loaded_quote_id = st.session_state.get("loaded_quote_id")
+
+    # Show different buttons based on whether a quote is loaded
+    if loaded_quote_id:
+        st.info(f"✏️ Editing loaded quote. You can update the existing quote or save as a new option.")
+        col1, col2, col3 = st.columns([2, 2, 1])
+        with col1:
+            update_clicked = st.button("Update This Quote", key=f"update_quote_{sub_id}", type="primary")
+        with col2:
+            new_clicked = st.button("Save as New Quote", key=f"save_new_quote_{sub_id}")
+        with col3:
+            if st.button("Cancel", key=f"cancel_edit_{sub_id}"):
+                st.session_state.pop("loaded_quote_id", None)
+                st.rerun()
+
+        generate_clicked = update_clicked or new_clicked
+        is_update = update_clicked
+    else:
+        generate_clicked = st.button("Generate Quote", key=f"generate_quote_{sub_id}", type="primary")
+        is_update = False
+
+    if generate_clicked:
         if not quote_helpers:
             st.error("Quote generation not available - helper functions not provided")
             return
@@ -809,11 +926,16 @@ def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get
                 
                 # Get helper functions from the passed dictionary
                 _render_quote_pdf = quote_helpers.get('render_pdf')
-                _upload_pdf = quote_helpers.get('upload_pdf') 
+                _upload_pdf = quote_helpers.get('upload_pdf')
                 _save_quote_row = quote_helpers.get('save_quote')
-                
+                _update_quote_row = quote_helpers.get('update_quote')
+
                 if not all([_render_quote_pdf, _upload_pdf, _save_quote_row]):
                     st.error("Quote generation helpers incomplete")
+                    return
+
+                if is_update and not _update_quote_row:
+                    st.error("Update quote helper not available")
                     return
                 
                 # Extract text-only lists for quote generation
@@ -858,15 +980,23 @@ def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get
                 
                 # Upload to storage
                 pdf_url = _upload_pdf(pdf_path)
-                
-                # Save quote record
-                quote_id = _save_quote_row(sub_id, quote_result, pdf_url)
-                
-                st.success(f"Quote generated successfully! ID: {quote_id}")
+
+                # Save or update quote record based on mode
+                if is_update:
+                    _update_quote_row(loaded_quote_id, quote_result, pdf_url)
+                    st.success(f"✅ Quote updated successfully!")
+                    st.session_state.pop("loaded_quote_id", None)  # Clear loaded quote after update
+                else:
+                    quote_id = _save_quote_row(sub_id, quote_result, pdf_url)
+                    st.success(f"✅ Quote generated successfully! ID: {quote_id}")
+
                 st.markdown(f"[📥 Download Quote PDF]({pdf_url})")
-                
+
                 # Clean up temp file
                 pdf_path.unlink()
+
+                # Trigger rerun to refresh the saved quotes list
+                st.rerun()
                 
             except Exception as e:
                 st.error(f"Error generating quote: {e}")
