@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 
-_MODEL_PRIMARY = os.getenv("TOWER_AI_MODEL", "gpt-4o-mini")
+_MODEL_PRIMARY = os.getenv("TOWER_AI_MODEL", "gpt-5.1")
 
 
 def _client() -> OpenAI:

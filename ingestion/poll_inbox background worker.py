@@ -57,10 +57,9 @@ def ask_business_ops(name, industry, website):
         f"Company info:\n• Industry: {industry}\n• Website: {website}"
     )
     resp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role":"user","content":prompt}],
         temperature=0.5,
-        max_tokens=200,
     )
     return resp.choices[0].message.content.strip()
 
@@ -93,10 +92,9 @@ def gpt_summary(subject, body, apps, losses):
         {"role":"user","content":f"Loss-run JSON list:\n{json.dumps(losses_small, indent=2)}"},
     ]
     resp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=messages,
         temperature=0.25,
-        max_tokens=1200,
     )
     return resp.choices[0].message.content.strip()
 

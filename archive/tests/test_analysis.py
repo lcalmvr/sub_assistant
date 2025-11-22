@@ -137,10 +137,10 @@ You are an analyst tasked with researching a company. Based on the name or domai
 Company: {name_or_domain}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=250,
+        # max_completion_tokens=250,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -197,10 +197,10 @@ Public Info:
 {public_info}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=300,
+        # max_completion_tokens=300,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -212,10 +212,10 @@ Business Summary:
 {business_summary}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=200,
+        # max_completion_tokens=200,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -260,10 +260,10 @@ JSON:
 {json.dumps(app_data, indent=2)}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=1000,
+        # max_completion_tokens=1000,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -279,10 +279,10 @@ Email:
 {email_text}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=180,
+        # max_completion_tokens=180,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -336,10 +336,10 @@ def _generate_industry_tags(description: str) -> list[str]:
         f"{description}"
     )
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=60,
+        # max_completion_tokens=60,
     ).choices[0].message.content.strip()
 
     import json, re
@@ -360,14 +360,14 @@ def classify_naics(description: str) -> dict:
 
     # 2) ask GPT to pick primary / secondary
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.1",
         messages=[
             {"role": "system", "content": _SYSTEM_NAICS},
             {"role": "user",
              "content": f"Description:\n{description}\n\nCandidates:\n{cands}"},
         ],
         temperature=0.0,
-        max_tokens=200,
+        # max_completion_tokens=200,
     ).choices[0].message.content.strip()
 
     import json, re

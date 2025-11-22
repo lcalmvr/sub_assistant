@@ -59,7 +59,7 @@ retriever = _store.as_retriever(
 
 # 4) Single, final chain
 _chain = ConversationalRetrievalChain.from_llm(
-    llm       = ChatOpenAI(model="gpt-4o-mini", temperature=0),
+    llm       = ChatOpenAI(model="gpt-5.1", temperature=0),
     retriever = retriever,
     combine_docs_chain_kwargs={
         "prompt": _PROMPT,
@@ -258,7 +258,7 @@ def get_chat_response(question: str, submission_id: str = None, chat_history: li
     
     try:
         # Initialize LLM
-        llm = ChatOpenAI(model="gpt-4o", temperature=0.7)
+        llm = ChatOpenAI(model="gpt-5.1", temperature=0.7)
         
         # Get submission context if available
         submission_context = ""

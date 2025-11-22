@@ -175,10 +175,9 @@ You are an analyst tasked with researching a company. Based on the name or domai
 Company: {name_or_domain}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=250,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -219,24 +218,31 @@ Website: {website or 'no website provided'}
 Public Info:\n{public_info}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=300,
     )
     return rsp.choices[0].message.content.strip()
 
 
 def summarize_cyber_exposures(business_summary: str) -> str:
     prompt = f"""
-You are a cyber insurance underwriter. Based on the business description below, identify the likely cyber risks and exposures this company faces. Focus only on the operations as described—do not speculate beyond what is stated. Format as bullet points.
+You are a cyber insurance underwriter assessing exposures for a Cyber & Technology E&O policy. Based on the business description below, identify the most significant and DISTINCT cyber risks this company faces. Focus only on the operations as described—do not speculate beyond what is stated.
+
+Select 4-5 exposures that are clearly different from each other. Avoid duplication—if two risks are similar, combine them or choose the more impactful one. Common distinct categories include: Operational Disruption, Intellectual Property Theft, Third-Party Liability, Business Email/Payment Fraud, Ransomware/Data Loss, Supply Chain, Industrial Espionage, etc.
+
+Format as 4-5 concise bullet points. Each bullet must start with a short **Bold Heading** (2-4 words maximum) followed by a colon, then 1-2 sentences of explanation. Be direct and avoid sub-bullets, repetition, or over-elaboration.
+
+Example format:
+- **Intellectual Property Theft**: Brief explanation of the risk in 1-2 sentences.
+- **Operational Disruptions**: Brief explanation in 1-2 sentences.
+
 Business Summary:\n{business_summary}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=200,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -270,10 +276,9 @@ JSON:
 {json.dumps(app_data, indent=2)}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=1000,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -452,10 +457,9 @@ JSON:
 {json.dumps(app_data, indent=2)}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        max_tokens=1200,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -484,10 +488,9 @@ Summarize this broker email into a short bullet list that identifies: what is be
 Email:\n{email_text}
 """
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=180,
     )
     return rsp.choices[0].message.content.strip()
 
@@ -530,10 +533,9 @@ def _generate_industry_tags(description: str) -> list[str]:
         f"{description}"
     )
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.1",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=60,
     ).choices[0].message.content.strip()
     m = re.search(r"\[.*\]", rsp, re.S)
     try:
@@ -546,13 +548,12 @@ def _generate_industry_tags(description: str) -> list[str]:
 def classify_naics(description: str) -> dict:
     cands = _top_k(description).to_dict("records")
     rsp = openai_client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5.1",
         messages=[
             {"role": "system", "content": _SYSTEM_NAICS},
             {"role": "user", "content": f"Description:\n{description}\n\nCandidates:\n{cands}"},
         ],
         temperature=0.0,
-        max_tokens=200,
     ).choices[0].message.content.strip()
     m = re.search(r"\{.*\}", rsp, re.S)
     try:
@@ -590,9 +591,9 @@ def _vector_from_flags(flags: dict) -> list[int]:
     return [code.get(flags.get(f, "⚠️"), 0) for f in order]
 
 
-def _embed_text(txt: str) -> list[float]:
+def _embed_text(txt: str) -> list[float] | None:
     if not (txt or "").strip():
-        return []
+        return None
     return openai_client.embeddings.create(
         model="text-embedding-3-small",
         input=txt,
