@@ -47,45 +47,72 @@ def _get_conn():
 
 
 def _save_tower(submission_id: str, tower_json: list, primary_retention: float | None,
-                sublimits: list | None = None) -> str:
-    """Save a new tower for a submission."""
+                sublimits: list | None = None, quote_name: str = "Option A",
+                quoted_premium: float | None = None, quote_notes: str | None = None) -> str:
+    """Save a new tower/quote option for a submission."""
     with _get_conn().cursor() as cur:
         cur.execute(
             """
             INSERT INTO insurance_towers (submission_id, tower_json, primary_retention,
-                                          sublimits, created_by)
-            VALUES (%s, %s, %s, %s, %s)
+                                          sublimits, quote_name, quoted_premium, quote_notes, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (submission_id, json.dumps(tower_json), primary_retention,
-             json.dumps(sublimits or []), CURRENT_USER),
+             json.dumps(sublimits or []), quote_name, quoted_premium, quote_notes, CURRENT_USER),
         )
         return str(cur.fetchone()[0])
 
 
 def _update_tower(tower_id: str, tower_json: list, primary_retention: float | None,
-                  sublimits: list | None = None):
-    """Update an existing tower."""
+                  sublimits: list | None = None, quote_name: str | None = None,
+                  quoted_premium: float | None = None, quote_notes: str | None = None):
+    """Update an existing tower/quote option."""
     with _get_conn().cursor() as cur:
         cur.execute(
             """
             UPDATE insurance_towers
             SET tower_json = %s, primary_retention = %s,
-                sublimits = %s, updated_at = now()
+                sublimits = %s, quote_name = COALESCE(%s, quote_name),
+                quoted_premium = %s, quote_notes = %s, updated_at = now()
             WHERE id = %s
             """,
             (json.dumps(tower_json), primary_retention,
-             json.dumps(sublimits or []), tower_id),
+             json.dumps(sublimits or []), quote_name, quoted_premium, quote_notes, tower_id),
         )
 
 
+def _parse_tower_json(val):
+    """Parse JSON field that could be string, list, or None."""
+    if val is None:
+        return []
+    if isinstance(val, list):
+        return val
+    return json.loads(val) if val else []
+
+
+def _row_to_quote(row) -> dict:
+    """Convert a database row to a quote dict."""
+    return {
+        "id": str(row[0]),
+        "tower_json": _parse_tower_json(row[1]),
+        "primary_retention": float(row[2]) if row[2] else None,
+        "sublimits": _parse_tower_json(row[3]),
+        "quote_name": row[4] or "Option A",
+        "quoted_premium": float(row[5]) if row[5] else None,
+        "quote_notes": row[6],
+        "created_at": row[7],
+        "updated_at": row[8],
+    }
+
+
 def _get_tower_for_submission(submission_id: str) -> dict | None:
-    """Get the tower for a submission (returns most recent if multiple)."""
+    """Get the most recent quote for a submission."""
     with _get_conn().cursor() as cur:
         cur.execute(
             """
             SELECT id, tower_json, primary_retention, sublimits,
-                   created_at, updated_at
+                   quote_name, quoted_premium, quote_notes, created_at, updated_at
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY updated_at DESC
@@ -94,27 +121,69 @@ def _get_tower_for_submission(submission_id: str) -> dict | None:
             (submission_id,),
         )
         row = cur.fetchone()
-    if row:
-        def _parse_json(val):
-            if val is None:
-                return []
-            if isinstance(val, list):
-                return val
-            return json.loads(val) if val else []
+    return _row_to_quote(row) if row else None
 
-        return {
-            "id": str(row[0]),
-            "tower_json": _parse_json(row[1]),
-            "primary_retention": float(row[2]) if row[2] else None,
-            "sublimits": _parse_json(row[3]),
-            "created_at": row[4],
-            "updated_at": row[5],
-        }
-    return None
+
+def _get_quote_by_id(quote_id: str) -> dict | None:
+    """Get a specific quote by ID."""
+    with _get_conn().cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, tower_json, primary_retention, sublimits,
+                   quote_name, quoted_premium, quote_notes, created_at, updated_at
+            FROM insurance_towers
+            WHERE id = %s
+            """,
+            (quote_id,),
+        )
+        row = cur.fetchone()
+    return _row_to_quote(row) if row else None
+
+
+def _list_quotes_for_submission(submission_id: str) -> list[dict]:
+    """List all quote options for a submission."""
+    with _get_conn().cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, tower_json, primary_retention, sublimits,
+                   quote_name, quoted_premium, quote_notes, created_at, updated_at
+            FROM insurance_towers
+            WHERE submission_id = %s
+            ORDER BY quote_name, created_at
+            """,
+            (submission_id,),
+        )
+        rows = cur.fetchall()
+    return [_row_to_quote(row) for row in rows]
+
+
+def _clone_quote(quote_id: str, new_name: str) -> str:
+    """Clone an existing quote with a new name. Returns new quote ID."""
+    original = _get_quote_by_id(quote_id)
+    if not original:
+        raise ValueError(f"Quote {quote_id} not found")
+
+    with _get_conn().cursor() as cur:
+        # Get submission_id for the original quote
+        cur.execute("SELECT submission_id FROM insurance_towers WHERE id = %s", (quote_id,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"Quote {quote_id} not found")
+        submission_id = str(row[0])
+
+    return _save_tower(
+        submission_id=submission_id,
+        tower_json=original["tower_json"],
+        primary_retention=original["primary_retention"],
+        sublimits=original["sublimits"],
+        quote_name=new_name,
+        quoted_premium=original["quoted_premium"],
+        quote_notes=original.get("quote_notes"),
+    )
 
 
 def _delete_tower(tower_id: str):
-    """Delete a tower."""
+    """Delete a tower/quote."""
     with _get_conn().cursor() as cur:
         cur.execute("DELETE FROM insurance_towers WHERE id = %s", (tower_id,))
 
@@ -761,89 +830,151 @@ def render():
                     st.session_state.primary_retention = tower_data["primary_retention"]
                     st.session_state.sublimits = tower_data.get("sublimits") or []
                     st.session_state.loaded_tower_id = tower_data["id"]
+                    st.session_state.quote_name = tower_data.get("quote_name", "Option A")
+                    st.session_state.quoted_premium = tower_data.get("quoted_premium")
                 else:
                     # No saved tower - start fresh
                     st.session_state.tower_layers = []
                     st.session_state.primary_retention = None
                     st.session_state.sublimits = []
                     st.session_state.loaded_tower_id = None
+                    st.session_state.quote_name = "Option A"
+                    st.session_state.quoted_premium = None
             except Exception:
                 st.session_state.tower_layers = []
                 st.session_state.sublimits = []
                 st.session_state.loaded_tower_id = None
+                st.session_state.quote_name = "Option A"
+                st.session_state.quoted_premium = None
             st.session_state._tower_loaded_for_sub = selected_sub_id
 
-        # Save/Load buttons
+        # Quote Options UI
         if selected_sub_id:
-            col_load, col_save, col_delete = st.columns([1, 1, 1])
+            # Get all quote options for this submission
+            all_quotes = _list_quotes_for_submission(selected_sub_id)
 
-            with col_load:
-                if st.button("📥 Load Tower", use_container_width=True):
-                    try:
-                        tower_data = _get_tower_for_submission(selected_sub_id)
-                        if tower_data:
-                            st.session_state.tower_layers = tower_data["tower_json"]
-                            st.session_state.primary_retention = tower_data["primary_retention"]
-                            st.session_state.loaded_tower_id = tower_data["id"]
-                            st.success(f"Loaded tower (updated {tower_data['updated_at'].strftime('%Y-%m-%d %H:%M')})")
+            # Quote selection row
+            col_select, col_actions = st.columns([2, 3])
+
+            with col_select:
+                if all_quotes:
+                    quote_options = {q["id"]: f"{q['quote_name']} ({q['updated_at'].strftime('%m/%d')})" for q in all_quotes}
+                    quote_options["__new__"] = "+ New Quote Option"
+
+                    current_quote_id = st.session_state.get("loaded_tower_id")
+                    default_idx = 0
+                    if current_quote_id and current_quote_id in quote_options:
+                        default_idx = list(quote_options.keys()).index(current_quote_id)
+
+                    selected_quote_id = st.selectbox(
+                        "Quote Option",
+                        options=list(quote_options.keys()),
+                        format_func=lambda x: quote_options[x],
+                        index=default_idx,
+                        key="quote_selector"
+                    )
+
+                    # Load selected quote if changed
+                    if selected_quote_id != "__new__" and selected_quote_id != current_quote_id:
+                        quote_data = _get_quote_by_id(selected_quote_id)
+                        if quote_data:
+                            st.session_state.tower_layers = quote_data["tower_json"]
+                            st.session_state.primary_retention = quote_data["primary_retention"]
+                            st.session_state.sublimits = quote_data.get("sublimits") or []
+                            st.session_state.loaded_tower_id = quote_data["id"]
+                            st.session_state.quote_name = quote_data.get("quote_name", "Option A")
+                            st.session_state.quoted_premium = quote_data.get("quoted_premium")
                             st.rerun()
-                        else:
-                            st.info("No saved tower found for this submission.")
-                    except Exception as e:
-                        st.error(f"Error loading tower: {e}")
-
-            with col_save:
-                if st.button("💾 Save Tower", type="primary", use_container_width=True):
-                    if not st.session_state.tower_layers:
-                        st.warning("No tower data to save. Build a tower first.")
-                    else:
-                        try:
-                            retention = st.session_state.get("primary_retention")
-                            sublimits = st.session_state.get("sublimits", [])
-                            if st.session_state.loaded_tower_id:
-                                _update_tower(
-                                    st.session_state.loaded_tower_id,
-                                    st.session_state.tower_layers,
-                                    retention,
-                                    sublimits
-                                )
-                                st.success("Tower updated!")
+                    elif selected_quote_id == "__new__":
+                        # Clear for new quote
+                        if st.session_state.get("loaded_tower_id"):
+                            st.session_state.tower_layers = []
+                            st.session_state.primary_retention = None
+                            st.session_state.sublimits = []
+                            st.session_state.loaded_tower_id = None
+                            # Auto-generate next option name
+                            existing_names = [q["quote_name"] for q in all_quotes]
+                            for letter in "BCDEFGHIJ":
+                                new_name = f"Option {letter}"
+                                if new_name not in existing_names:
+                                    st.session_state.quote_name = new_name
+                                    break
                             else:
-                                existing = _get_tower_for_submission(selected_sub_id)
-                                if existing:
+                                st.session_state.quote_name = f"Option {len(all_quotes) + 1}"
+                            st.session_state.quoted_premium = None
+                            st.rerun()
+                else:
+                    st.caption("No saved quotes yet")
+
+            with col_actions:
+                btn_cols = st.columns([1, 1, 1])
+
+                with btn_cols[0]:
+                    if st.button("💾 Save", type="primary", use_container_width=True):
+                        if not st.session_state.tower_layers:
+                            st.warning("No tower data to save.")
+                        else:
+                            try:
+                                retention = st.session_state.get("primary_retention")
+                                sublimits = st.session_state.get("sublimits", [])
+                                quote_name = st.session_state.get("quote_name", "Option A")
+                                quoted_premium = st.session_state.get("quoted_premium")
+
+                                if st.session_state.loaded_tower_id:
                                     _update_tower(
-                                        existing["id"],
+                                        st.session_state.loaded_tower_id,
                                         st.session_state.tower_layers,
                                         retention,
-                                        sublimits
+                                        sublimits,
+                                        quote_name,
+                                        quoted_premium
                                     )
-                                    st.session_state.loaded_tower_id = existing["id"]
-                                    st.success("Tower updated!")
+                                    st.success("Quote updated!")
                                 else:
                                     tower_id = _save_tower(
                                         selected_sub_id,
                                         st.session_state.tower_layers,
                                         retention,
-                                        sublimits
+                                        sublimits,
+                                        quote_name,
+                                        quoted_premium
                                     )
                                     st.session_state.loaded_tower_id = tower_id
-                                    st.success("Tower saved!")
-                        except Exception as e:
-                            st.error(f"Error saving tower: {e}")
+                                    st.success("Quote saved!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error saving: {e}")
 
-            with col_delete:
-                if st.session_state.loaded_tower_id:
-                    if st.button("🗑️ Delete Tower", use_container_width=True):
+                with btn_cols[1]:
+                    if st.session_state.loaded_tower_id and st.button("📋 Clone", use_container_width=True):
+                        try:
+                            existing_names = [q["quote_name"] for q in all_quotes]
+                            for letter in "BCDEFGHIJ":
+                                new_name = f"Option {letter}"
+                                if new_name not in existing_names:
+                                    break
+                            else:
+                                new_name = f"Option {len(all_quotes) + 1}"
+
+                            new_id = _clone_quote(st.session_state.loaded_tower_id, new_name)
+                            st.session_state.loaded_tower_id = new_id
+                            st.session_state.quote_name = new_name
+                            st.success(f"Cloned as '{new_name}'")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error cloning: {e}")
+
+                with btn_cols[2]:
+                    if st.session_state.loaded_tower_id and st.button("🗑️ Delete", use_container_width=True):
                         try:
                             _delete_tower(st.session_state.loaded_tower_id)
                             st.session_state.loaded_tower_id = None
-                            st.success("Tower deleted.")
+                            st.session_state.quote_name = "Option A"
+                            st.session_state.quoted_premium = None
+                            st.success("Quote deleted.")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error deleting tower: {e}")
-
-            if st.session_state.loaded_tower_id:
-                st.caption(f"Tower ID: {st.session_state.loaded_tower_id[:8]}...")
+                            st.error(f"Error deleting: {e}")
     else:
         st.warning("No submission selected. Select a submission from the **Submissions** page to save/load towers.")
 
@@ -1199,13 +1330,56 @@ def render():
         st.session_state.sublimits = updated_sublimits
         st.rerun()
 
-    # Tower Summary
+    # Rating & Summary
     if st.session_state.tower_layers:
-        st.subheader("Tower Summary")
-        
+        st.subheader("Rating & Summary")
+
         total_limit = sum(layer.get("limit", 0) for layer in st.session_state.tower_layers)
-        total_premium = sum(layer.get("premium", 0) for layer in st.session_state.tower_layers if layer.get("premium"))
-        
+        technical_premium = sum(layer.get("premium", 0) for layer in st.session_state.tower_layers if layer.get("premium"))
+
+        # Rating inputs row
+        rate_col1, rate_col2, rate_col3 = st.columns([1, 1, 1])
+
+        with rate_col1:
+            quote_name = st.text_input(
+                "Quote Name",
+                value=st.session_state.get("quote_name", "Option A"),
+                key="quote_name_input"
+            )
+            if quote_name != st.session_state.get("quote_name"):
+                st.session_state.quote_name = quote_name
+
+        with rate_col2:
+            st.metric("Technical Premium", _format_currency(technical_premium))
+            st.caption("Sum of layer premiums")
+
+        with rate_col3:
+            current_quoted = st.session_state.get("quoted_premium")
+            quoted_str = st.text_input(
+                "Quoted Premium",
+                value=_format_amount(current_quoted) if current_quoted else "",
+                placeholder="e.g., 150K, 1.2M",
+                key="quoted_premium_input"
+            )
+            if quoted_str:
+                parsed_quoted = _parse_amount(quoted_str)
+                if parsed_quoted != current_quoted:
+                    st.session_state.quoted_premium = parsed_quoted
+            elif current_quoted:
+                st.session_state.quoted_premium = None
+
+            # Show variance if both exist
+            if technical_premium and st.session_state.get("quoted_premium"):
+                variance = st.session_state.quoted_premium - technical_premium
+                variance_pct = (variance / technical_premium) * 100 if technical_premium else 0
+                if variance >= 0:
+                    st.caption(f"+{_format_currency(variance)} ({variance_pct:+.1f}%)")
+                else:
+                    st.caption(f"{_format_currency(variance)} ({variance_pct:+.1f}%)")
+
+        st.divider()
+
+        # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Layers", len(st.session_state.tower_layers))
@@ -1217,7 +1391,8 @@ def render():
         with col3:
             st.metric("Total Limit", _format_amount(total_limit))
         with col4:
-            st.metric("Total Premium", _format_amount(total_premium))
+            final_premium = st.session_state.get("quoted_premium") or technical_premium
+            st.metric("Final Premium", _format_currency(final_premium))
         
         # Show tower structure with consistent styling
         st.markdown("**Tower Structure:**")

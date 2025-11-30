@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS insurance_towers (
 -- Migration: Add sublimits column if table already exists
 ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS sublimits JSONB DEFAULT '[]'::jsonb;
 
+-- Migration: Add quote options columns
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS quote_name TEXT DEFAULT 'Option A';
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS quoted_premium NUMERIC;
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS quote_notes TEXT;
+
 -- Index for fast lookups by submission
 CREATE INDEX IF NOT EXISTS idx_insurance_towers_submission_id
 ON insurance_towers(submission_id);
