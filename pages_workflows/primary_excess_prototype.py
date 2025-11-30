@@ -13,11 +13,95 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import pandas as pd
 import streamlit as st
+import psycopg2
 from dotenv import load_dotenv
 
 load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+CURRENT_USER = os.getenv("CURRENT_USER", "system")
+
+
+# ───────────────────────── Database Helpers ─────────────────────────
+
+def _get_conn():
+    """Get database connection with session caching."""
+    conn = st.session_state.get("db_conn")
+    try:
+        if conn is not None and conn.closed == 0:
+            with conn.cursor() as test_cur:
+                test_cur.execute("SELECT 1")
+            return conn
+    except (psycopg2.OperationalError, psycopg2.InterfaceError):
+        st.session_state.pop("db_conn", None)
+        conn = None
+
+    if conn is None or conn.closed != 0:
+        conn = psycopg2.connect(DATABASE_URL)
+        conn.autocommit = True
+        st.session_state["db_conn"] = conn
+    return conn
+
+
+def _save_tower(submission_id: str, tower_json: list, primary_retention: float | None) -> str:
+    """Save a new tower for a submission."""
+    with _get_conn().cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO insurance_towers (submission_id, tower_json, primary_retention, created_by)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id
+            """,
+            (submission_id, json.dumps(tower_json), primary_retention, CURRENT_USER),
+        )
+        return str(cur.fetchone()[0])
+
+
+def _update_tower(tower_id: str, tower_json: list, primary_retention: float | None):
+    """Update an existing tower."""
+    with _get_conn().cursor() as cur:
+        cur.execute(
+            """
+            UPDATE insurance_towers
+            SET tower_json = %s, primary_retention = %s, updated_at = now()
+            WHERE id = %s
+            """,
+            (json.dumps(tower_json), primary_retention, tower_id),
+        )
+
+
+def _get_tower_for_submission(submission_id: str) -> dict | None:
+    """Get the tower for a submission (returns most recent if multiple)."""
+    with _get_conn().cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, tower_json, primary_retention, created_at, updated_at
+            FROM insurance_towers
+            WHERE submission_id = %s
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (submission_id,),
+        )
+        row = cur.fetchone()
+    if row:
+        return {
+            "id": str(row[0]),
+            "tower_json": row[1] if isinstance(row[1], list) else json.loads(row[1]) if row[1] else [],
+            "primary_retention": float(row[2]) if row[2] else None,
+            "created_at": row[3],
+            "updated_at": row[4],
+        }
+    return None
+
+
+def _delete_tower(tower_id: str):
+    """Delete a tower."""
+    with _get_conn().cursor() as cur:
+        cur.execute("DELETE FROM insurance_towers WHERE id = %s", (tower_id,))
 
 # ───────────────────────── Helper Functions ─────────────────────────
 
@@ -530,11 +614,120 @@ def _recalculate_manual_layers(layers: list, change_map: dict[int, set[str]] | N
 def render():
     st.title("🧪 Insurance Tower Builder")
     st.markdown("Enter natural language descriptions to build your insurance tower structure.")
-    
+
     # Initialize session state
     if "tower_layers" not in st.session_state:
         st.session_state.tower_layers = []
-    
+    if "loaded_tower_id" not in st.session_state:
+        st.session_state.loaded_tower_id = None
+
+    # ─────────────── Submission Context & Save/Load ───────────────
+    # Uses shared session state from submissions page
+    selected_sub_id = st.session_state.get("selected_submission_id")
+
+    if selected_sub_id:
+        # Fetch submission name for display
+        try:
+            with _get_conn().cursor() as cur:
+                cur.execute("SELECT applicant_name FROM submissions WHERE id = %s", (selected_sub_id,))
+                row = cur.fetchone()
+                sub_name = row[0] if row else "Unknown"
+        except Exception:
+            sub_name = "Unknown"
+
+        st.info(f"**Working on:** {sub_name} (`{selected_sub_id[:8]}...`)")
+
+        # Auto-load tower when submission changes
+        last_loaded_sub = st.session_state.get("_tower_loaded_for_sub")
+        if last_loaded_sub != selected_sub_id:
+            try:
+                tower_data = _get_tower_for_submission(selected_sub_id)
+                if tower_data:
+                    st.session_state.tower_layers = tower_data["tower_json"]
+                    st.session_state.primary_retention = tower_data["primary_retention"]
+                    st.session_state.loaded_tower_id = tower_data["id"]
+                else:
+                    # No saved tower - start fresh
+                    st.session_state.tower_layers = []
+                    st.session_state.primary_retention = None
+                    st.session_state.loaded_tower_id = None
+            except Exception:
+                st.session_state.tower_layers = []
+                st.session_state.loaded_tower_id = None
+            st.session_state._tower_loaded_for_sub = selected_sub_id
+
+        # Save/Load buttons
+        if selected_sub_id:
+            col_load, col_save, col_delete = st.columns([1, 1, 1])
+
+            with col_load:
+                if st.button("📥 Load Tower", use_container_width=True):
+                    try:
+                        tower_data = _get_tower_for_submission(selected_sub_id)
+                        if tower_data:
+                            st.session_state.tower_layers = tower_data["tower_json"]
+                            st.session_state.primary_retention = tower_data["primary_retention"]
+                            st.session_state.loaded_tower_id = tower_data["id"]
+                            st.success(f"Loaded tower (updated {tower_data['updated_at'].strftime('%Y-%m-%d %H:%M')})")
+                            st.rerun()
+                        else:
+                            st.info("No saved tower found for this submission.")
+                    except Exception as e:
+                        st.error(f"Error loading tower: {e}")
+
+            with col_save:
+                if st.button("💾 Save Tower", type="primary", use_container_width=True):
+                    if not st.session_state.tower_layers:
+                        st.warning("No tower data to save. Build a tower first.")
+                    else:
+                        try:
+                            retention = st.session_state.get("primary_retention")
+                            if st.session_state.loaded_tower_id:
+                                _update_tower(
+                                    st.session_state.loaded_tower_id,
+                                    st.session_state.tower_layers,
+                                    retention
+                                )
+                                st.success("Tower updated!")
+                            else:
+                                existing = _get_tower_for_submission(selected_sub_id)
+                                if existing:
+                                    _update_tower(
+                                        existing["id"],
+                                        st.session_state.tower_layers,
+                                        retention
+                                    )
+                                    st.session_state.loaded_tower_id = existing["id"]
+                                    st.success("Tower updated!")
+                                else:
+                                    tower_id = _save_tower(
+                                        selected_sub_id,
+                                        st.session_state.tower_layers,
+                                        retention
+                                    )
+                                    st.session_state.loaded_tower_id = tower_id
+                                    st.success("Tower saved!")
+                        except Exception as e:
+                            st.error(f"Error saving tower: {e}")
+
+            with col_delete:
+                if st.session_state.loaded_tower_id:
+                    if st.button("🗑️ Delete Tower", use_container_width=True):
+                        try:
+                            _delete_tower(st.session_state.loaded_tower_id)
+                            st.session_state.loaded_tower_id = None
+                            st.success("Tower deleted.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error deleting tower: {e}")
+
+            if st.session_state.loaded_tower_id:
+                st.caption(f"Tower ID: {st.session_state.loaded_tower_id[:8]}...")
+    else:
+        st.warning("No submission selected. Select a submission from the **Submissions** page to save/load towers.")
+
+    st.divider()
+
     # Natural Language Input Box (above the table)
     user_input = st.text_area(
         "Describe your insurance tower:",

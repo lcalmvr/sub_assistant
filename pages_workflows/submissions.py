@@ -492,8 +492,19 @@ def render():
     
         sub_df = load_submissions(where_sql, params)
         label_map = {f"{r.applicant_name} – {str(r.id)[:8]}": r.id for r in sub_df.itertuples()}
-        label_selected = st.selectbox("Open submission:", list(label_map.keys()) or ["—"])
+        # Restore previous selection if available
+        id_to_label = {str(v): k for k, v in label_map.items()}
+        current_sub_id = st.session_state.get("selected_submission_id")
+        current_label = id_to_label.get(current_sub_id) if current_sub_id else None
+        options = list(label_map.keys()) or ["—"]
+        default_idx = options.index(current_label) if current_label in options else 0
+
+        label_selected = st.selectbox("Open submission:", options, index=default_idx)
         sub_id = label_map.get(label_selected)
+
+        # Store in session state for cross-page access
+        if sub_id:
+            st.session_state.selected_submission_id = str(sub_id)
 
     # Configure column display (shared configuration)
     column_config = {
