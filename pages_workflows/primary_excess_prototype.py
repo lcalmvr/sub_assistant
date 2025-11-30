@@ -1330,54 +1330,21 @@ def render():
         st.session_state.sublimits = updated_sublimits
         st.rerun()
 
-    # Rating & Summary
+    # Tower Summary
     if st.session_state.tower_layers:
-        st.subheader("Rating & Summary")
+        st.subheader("Tower Summary")
 
         total_limit = sum(layer.get("limit", 0) for layer in st.session_state.tower_layers)
-        technical_premium = sum(layer.get("premium", 0) for layer in st.session_state.tower_layers if layer.get("premium"))
+        total_premium = sum(layer.get("premium", 0) for layer in st.session_state.tower_layers if layer.get("premium"))
 
-        # Rating inputs row
-        rate_col1, rate_col2, rate_col3 = st.columns([1, 1, 1])
-
-        with rate_col1:
-            quote_name = st.text_input(
-                "Quote Name",
-                value=st.session_state.get("quote_name", "Option A"),
-                key="quote_name_input"
-            )
-            if quote_name != st.session_state.get("quote_name"):
-                st.session_state.quote_name = quote_name
-
-        with rate_col2:
-            st.metric("Technical Premium", _format_currency(technical_premium))
-            st.caption("Sum of layer premiums")
-
-        with rate_col3:
-            current_quoted = st.session_state.get("quoted_premium")
-            quoted_str = st.text_input(
-                "Quoted Premium",
-                value=_format_amount(current_quoted) if current_quoted else "",
-                placeholder="e.g., 150K, 1.2M",
-                key="quoted_premium_input"
-            )
-            if quoted_str:
-                parsed_quoted = _parse_amount(quoted_str)
-                if parsed_quoted != current_quoted:
-                    st.session_state.quoted_premium = parsed_quoted
-            elif current_quoted:
-                st.session_state.quoted_premium = None
-
-            # Show variance if both exist
-            if technical_premium and st.session_state.get("quoted_premium"):
-                variance = st.session_state.quoted_premium - technical_premium
-                variance_pct = (variance / technical_premium) * 100 if technical_premium else 0
-                if variance >= 0:
-                    st.caption(f"+{_format_currency(variance)} ({variance_pct:+.1f}%)")
-                else:
-                    st.caption(f"{_format_currency(variance)} ({variance_pct:+.1f}%)")
-
-        st.divider()
+        # Quote name input
+        quote_name = st.text_input(
+            "Quote Name",
+            value=st.session_state.get("quote_name", "Option A"),
+            key="quote_name_input"
+        )
+        if quote_name != st.session_state.get("quote_name"):
+            st.session_state.quote_name = quote_name
 
         # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -1391,8 +1358,7 @@ def render():
         with col3:
             st.metric("Total Limit", _format_amount(total_limit))
         with col4:
-            final_premium = st.session_state.get("quoted_premium") or technical_premium
-            st.metric("Final Premium", _format_currency(final_premium))
+            st.metric("Total Premium", _format_currency(total_premium))
         
         # Show tower structure with consistent styling
         st.markdown("**Tower Structure:**")
