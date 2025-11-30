@@ -7,10 +7,14 @@ CREATE TABLE IF NOT EXISTS insurance_towers (
     submission_id UUID NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
     tower_json JSONB NOT NULL,
     primary_retention NUMERIC,
+    sublimits JSONB DEFAULT '[]'::jsonb,
     created_by TEXT,
     created_at TIMESTAMP DEFAULT now(),
     updated_at TIMESTAMP DEFAULT now()
 );
+
+-- Migration: Add sublimits column if table already exists
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS sublimits JSONB DEFAULT '[]'::jsonb;
 
 -- Index for fast lookups by submission
 CREATE INDEX IF NOT EXISTS idx_insurance_towers_submission_id

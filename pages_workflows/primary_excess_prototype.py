@@ -46,30 +46,36 @@ def _get_conn():
     return conn
 
 
-def _save_tower(submission_id: str, tower_json: list, primary_retention: float | None) -> str:
+def _save_tower(submission_id: str, tower_json: list, primary_retention: float | None,
+                sublimits: list | None = None) -> str:
     """Save a new tower for a submission."""
     with _get_conn().cursor() as cur:
         cur.execute(
             """
-            INSERT INTO insurance_towers (submission_id, tower_json, primary_retention, created_by)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO insurance_towers (submission_id, tower_json, primary_retention,
+                                          sublimits, created_by)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (submission_id, json.dumps(tower_json), primary_retention, CURRENT_USER),
+            (submission_id, json.dumps(tower_json), primary_retention,
+             json.dumps(sublimits or []), CURRENT_USER),
         )
         return str(cur.fetchone()[0])
 
 
-def _update_tower(tower_id: str, tower_json: list, primary_retention: float | None):
+def _update_tower(tower_id: str, tower_json: list, primary_retention: float | None,
+                  sublimits: list | None = None):
     """Update an existing tower."""
     with _get_conn().cursor() as cur:
         cur.execute(
             """
             UPDATE insurance_towers
-            SET tower_json = %s, primary_retention = %s, updated_at = now()
+            SET tower_json = %s, primary_retention = %s,
+                sublimits = %s, updated_at = now()
             WHERE id = %s
             """,
-            (json.dumps(tower_json), primary_retention, tower_id),
+            (json.dumps(tower_json), primary_retention,
+             json.dumps(sublimits or []), tower_id),
         )
 
 
@@ -78,7 +84,8 @@ def _get_tower_for_submission(submission_id: str) -> dict | None:
     with _get_conn().cursor() as cur:
         cur.execute(
             """
-            SELECT id, tower_json, primary_retention, created_at, updated_at
+            SELECT id, tower_json, primary_retention, sublimits,
+                   created_at, updated_at
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY updated_at DESC
@@ -88,12 +95,20 @@ def _get_tower_for_submission(submission_id: str) -> dict | None:
         )
         row = cur.fetchone()
     if row:
+        def _parse_json(val):
+            if val is None:
+                return []
+            if isinstance(val, list):
+                return val
+            return json.loads(val) if val else []
+
         return {
             "id": str(row[0]),
-            "tower_json": row[1] if isinstance(row[1], list) else json.loads(row[1]) if row[1] else [],
+            "tower_json": _parse_json(row[1]),
             "primary_retention": float(row[2]) if row[2] else None,
-            "created_at": row[3],
-            "updated_at": row[4],
+            "sublimits": _parse_json(row[3]),
+            "created_at": row[4],
+            "updated_at": row[5],
         }
     return None
 
@@ -620,6 +635,8 @@ def render():
         st.session_state.tower_layers = []
     if "loaded_tower_id" not in st.session_state:
         st.session_state.loaded_tower_id = None
+    if "sublimits" not in st.session_state:
+        st.session_state.sublimits = []
 
     # ─────────────── Submission Context & Save/Load ───────────────
     # Uses shared session state from submissions page
@@ -645,14 +662,20 @@ def render():
                 if tower_data:
                     st.session_state.tower_layers = tower_data["tower_json"]
                     st.session_state.primary_retention = tower_data["primary_retention"]
+                    st.session_state.sublimits = tower_data.get("sublimits") or []
+                    st.session_state.sublimits_raw = []  # Clear raw so it reloads from sublimits
                     st.session_state.loaded_tower_id = tower_data["id"]
                 else:
                     # No saved tower - start fresh
                     st.session_state.tower_layers = []
                     st.session_state.primary_retention = None
+                    st.session_state.sublimits = []
+                    st.session_state.sublimits_raw = []
                     st.session_state.loaded_tower_id = None
             except Exception:
                 st.session_state.tower_layers = []
+                st.session_state.sublimits = []
+                st.session_state.sublimits_raw = []
                 st.session_state.loaded_tower_id = None
             st.session_state._tower_loaded_for_sub = selected_sub_id
 
@@ -682,11 +705,13 @@ def render():
                     else:
                         try:
                             retention = st.session_state.get("primary_retention")
+                            sublimits = st.session_state.get("sublimits", [])
                             if st.session_state.loaded_tower_id:
                                 _update_tower(
                                     st.session_state.loaded_tower_id,
                                     st.session_state.tower_layers,
-                                    retention
+                                    retention,
+                                    sublimits
                                 )
                                 st.success("Tower updated!")
                             else:
@@ -695,7 +720,8 @@ def render():
                                     _update_tower(
                                         existing["id"],
                                         st.session_state.tower_layers,
-                                        retention
+                                        retention,
+                                        sublimits
                                     )
                                     st.session_state.loaded_tower_id = existing["id"]
                                     st.success("Tower updated!")
@@ -703,7 +729,8 @@ def render():
                                     tower_id = _save_tower(
                                         selected_sub_id,
                                         st.session_state.tower_layers,
-                                        retention
+                                        retention,
+                                        sublimits
                                     )
                                     st.session_state.loaded_tower_id = tower_id
                                     st.success("Tower saved!")
@@ -938,7 +965,263 @@ def render():
         _recalculate_manual_layers(recalculated_layers, change_map)
         st.session_state.tower_layers = recalculated_layers
         st.rerun()
-    
+
+    # ─────────────── Sublimits Section ───────────────
+    st.subheader("Sublimits")
+    st.caption("Define primary carrier sublimits, then specify your drop-down treatment for each.")
+
+    # Find CMAI layer in the tower to get our position (needed for context and calculations)
+    cmai_layer_idx = None
+    cmai_layer = None
+    for idx, layer in enumerate(st.session_state.tower_layers or []):
+        carrier_name = str(layer.get("carrier", "")).upper()
+        if "CMAI" in carrier_name:
+            cmai_layer_idx = idx
+            cmai_layer = layer
+            break
+
+    # Calculate our aggregate limit and attachment
+    our_aggregate_limit = 0.0
+    our_aggregate_attachment = 0.0
+    layers_below_count = 0
+    primary_aggregate_limit = 0.0
+
+    if st.session_state.tower_layers:
+        # Primary is always first layer
+        primary_aggregate_limit = st.session_state.tower_layers[0].get("limit", 0) or 0
+
+        if cmai_layer_idx is not None:
+            # Sum limits of all layers below CMAI (exclusive)
+            our_aggregate_attachment = sum(
+                layer.get("limit", 0) for layer in st.session_state.tower_layers[:cmai_layer_idx]
+            )
+            our_aggregate_limit = cmai_layer.get("limit", 0) or 0
+            layers_below_count = cmai_layer_idx  # Number of layers below us
+        else:
+            # CMAI not in tower - assume we're quoting above the entire tower
+            our_aggregate_attachment = sum(
+                layer.get("limit", 0) for layer in st.session_state.tower_layers
+            )
+            layers_below_count = len(st.session_state.tower_layers)
+            # Default our limit to match primary if not specified
+            our_aggregate_limit = primary_aggregate_limit
+
+    # Display CMAI position info
+    if cmai_layer_idx is not None:
+        st.info(f"**CMAI Layer:** {_format_amount(our_aggregate_limit)} xs {_format_amount(our_aggregate_attachment)} (Layer {cmai_layer_idx + 1} of {len(st.session_state.tower_layers)}) | Primary agg: {_format_amount(primary_aggregate_limit)} | {layers_below_count} layers below")
+    elif st.session_state.tower_layers:
+        st.warning("CMAI not found in tower. Add CMAI as a carrier to auto-calculate sublimits.")
+        st.caption(f"Tower has {len(st.session_state.tower_layers)} layers, primary agg: {_format_amount(primary_aggregate_limit)}")
+
+    # Natural language input for sublimits
+    sublimit_input = st.text_area(
+        "Describe sublimits:",
+        placeholder="Example: 'Primary has 1M ransomware, 500K business interruption, 250K social engineering'",
+        height=80,
+        key="sublimit_input"
+    )
+
+    col_process, col_clear = st.columns([1, 4])
+    with col_process:
+        process_sublimits = st.button("Process with AI", key="process_sublimits_btn")
+    with col_clear:
+        if st.button("Clear Sublimits", key="clear_sublimits_btn"):
+            st.session_state.sublimits = []
+            st.session_state.sublimits_raw = []
+            st.rerun()
+
+    if process_sublimits and sublimit_input.strip():
+        try:
+            from ai.sublimit_intel import parse_sublimits_with_ai, edit_sublimits_with_ai
+
+            current_sublimits = st.session_state.get("sublimits", [])
+
+            # If we have existing sublimits, use edit mode; otherwise parse fresh
+            if current_sublimits:
+                context = f"Primary aggregate limit: {_format_amount(primary_aggregate_limit)}" if primary_aggregate_limit else ""
+                result = edit_sublimits_with_ai(current_sublimits, sublimit_input)
+            else:
+                context = f"Primary aggregate limit: {_format_amount(primary_aggregate_limit)}" if primary_aggregate_limit else ""
+                result = parse_sublimits_with_ai(sublimit_input, context)
+
+            # Update session state
+            st.session_state.sublimits = result
+            st.session_state.sublimits_raw = [
+                {
+                    "coverage": s.get("coverage", ""),
+                    "primary_limit": s.get("primary_limit", 0),
+                    "treatment": s.get("treatment", "follow_form"),
+                    "our_limit_override": None,
+                    "our_attachment_override": None,
+                }
+                for s in result
+            ]
+
+            st.success(f"Parsed {len(result)} sublimits")
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Error processing sublimits: {e}")
+
+    # Helper to calculate proportional sublimit values
+    def calc_proportional_sublimit(primary_sublimit: float) -> tuple[float, float]:
+        """Calculate our sublimit and attachment based on proportional logic."""
+        if not primary_aggregate_limit or not primary_sublimit:
+            return primary_sublimit, 0.0
+
+        sublimit_ratio = primary_sublimit / primary_aggregate_limit
+        our_sublimit = sublimit_ratio * our_aggregate_limit if our_aggregate_limit else primary_sublimit
+
+        sublimit_attachment = 0.0
+        for layer in (st.session_state.tower_layers or [])[:layers_below_count]:
+            layer_limit = layer.get("limit", 0) or 0
+            sublimit_attachment += layer_limit * sublimit_ratio
+
+        return our_sublimit, sublimit_attachment
+
+    # Use session state key for the raw data editor to preserve edits
+    if "sublimits_raw" not in st.session_state:
+        st.session_state.sublimits_raw = []
+
+    # Sync from sublimits if sublimits_raw is empty but sublimits has data (e.g., after load)
+    if not st.session_state.sublimits_raw and st.session_state.get("sublimits"):
+        st.session_state.sublimits_raw = [
+            {
+                "coverage": s.get("coverage", ""),
+                "primary_limit": s.get("primary_limit", 0),
+                "treatment": s.get("treatment", "follow_form"),
+                "our_limit_override": s.get("our_limit"),
+                "our_attachment_override": s.get("our_attachment_override"),
+            }
+            for s in st.session_state.sublimits
+        ]
+
+    # Build display dataframe with calculated values
+    display_rows = []
+    for sub in st.session_state.sublimits_raw:
+        primary_limit = sub.get("primary_limit", 0) or 0
+        treatment = sub.get("treatment", "follow_form")
+
+        # Calculate proportional defaults
+        prop_limit, prop_attach = calc_proportional_sublimit(primary_limit)
+
+        # Determine displayed values
+        if treatment == "no_coverage":
+            disp_limit = "—"
+            disp_attach = "—"
+        else:
+            # Use override if set, otherwise use calculated
+            if sub.get("our_limit_override") is not None:
+                disp_limit = _format_amount(sub["our_limit_override"])
+            else:
+                disp_limit = _format_amount(prop_limit) if prop_limit else ""
+
+            if sub.get("our_attachment_override") is not None:
+                disp_attach = _format_amount(sub["our_attachment_override"])
+            else:
+                disp_attach = _format_amount(prop_attach) if prop_attach else ""
+
+        display_rows.append({
+            "coverage": sub.get("coverage", ""),
+            "primary_limit": _format_amount(primary_limit) if primary_limit else "",
+            "treatment": treatment,
+            "our_limit": disp_limit,
+            "our_attachment": disp_attach,
+        })
+
+    sublimits_df = pd.DataFrame(display_rows, columns=[
+        "coverage", "primary_limit", "treatment", "our_limit", "our_attachment"
+    ])
+
+    # Display editable table
+    edited_sublimits = st.data_editor(
+        sublimits_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "coverage": st.column_config.TextColumn("Coverage", width="medium"),
+            "primary_limit": st.column_config.TextColumn("Primary Limit", width="small", help="e.g., 250K, 1M, 500K"),
+            "treatment": st.column_config.SelectboxColumn(
+                "Our Treatment", width="small",
+                options=["follow_form", "different", "no_coverage"],
+                default="follow_form"
+            ),
+            "our_limit": st.column_config.TextColumn("Our Limit", width="small", help="Auto-calculated, can override"),
+            "our_attachment": st.column_config.TextColumn("Our Attachment", width="small", help="Auto-calculated, can override"),
+        },
+        key="sublimits_editor"
+    )
+
+    # Parse edits back - track what changed
+    new_raw = []
+    for idx, row in edited_sublimits.iterrows():
+        coverage = str(row.get("coverage", "") or "").strip()
+        primary_limit_str = str(row.get("primary_limit", "") or "").strip()
+        treatment = row.get("treatment") or "follow_form"
+        our_limit_str = str(row.get("our_limit", "") or "").strip()
+        our_attach_str = str(row.get("our_attachment", "") or "").strip()
+
+        # Skip fully empty rows
+        if not coverage and not primary_limit_str:
+            continue
+
+        # Parse primary limit
+        primary_limit = _parse_amount(primary_limit_str) if primary_limit_str else 0
+
+        # Get old values if this row existed
+        old_sub = st.session_state.sublimits_raw[idx] if idx < len(st.session_state.sublimits_raw) else {}
+        old_primary = old_sub.get("primary_limit", 0)
+
+        # Calculate current proportional values
+        prop_limit, prop_attach = calc_proportional_sublimit(primary_limit)
+
+        # Determine if user overrode our_limit
+        our_limit_override = None
+        if treatment != "no_coverage" and treatment != "follow_form" and our_limit_str and our_limit_str != "—":
+            parsed_limit = _parse_amount(our_limit_str)
+            # Only store override if user explicitly changed it (different from calculated)
+            if prop_limit and abs(parsed_limit - prop_limit) > 0.01:
+                our_limit_override = parsed_limit
+            elif not prop_limit and parsed_limit:
+                our_limit_override = parsed_limit
+
+        # Determine if user overrode attachment
+        our_attachment_override = None
+        if treatment != "no_coverage" and our_attach_str and our_attach_str != "—":
+            parsed_attach = _parse_amount(our_attach_str)
+            # Keep existing override if primary didn't change
+            if old_primary == primary_limit and old_sub.get("our_attachment_override") is not None:
+                # Primary didn't change - keep the override if display matches
+                if abs(parsed_attach - old_sub["our_attachment_override"]) < 0.01:
+                    our_attachment_override = old_sub["our_attachment_override"]
+                elif prop_attach and abs(parsed_attach - prop_attach) > 0.01:
+                    our_attachment_override = parsed_attach
+            elif prop_attach and abs(parsed_attach - prop_attach) > 0.01:
+                our_attachment_override = parsed_attach
+
+        new_raw.append({
+            "coverage": coverage,
+            "primary_limit": primary_limit,
+            "treatment": treatment,
+            "our_limit_override": our_limit_override,
+            "our_attachment_override": our_attachment_override,
+        })
+
+    # Update raw state
+    st.session_state.sublimits_raw = new_raw
+
+    # Also update sublimits for saving (convert to save format)
+    st.session_state.sublimits = [
+        {
+            "coverage": s["coverage"],
+            "primary_limit": s["primary_limit"],
+            "treatment": s["treatment"],
+            "our_limit": s["our_limit_override"],
+            "our_attachment_override": s["our_attachment_override"],
+        }
+        for s in new_raw
+    ]
+
     # Tower Summary
     if st.session_state.tower_layers:
         st.subheader("Tower Summary")

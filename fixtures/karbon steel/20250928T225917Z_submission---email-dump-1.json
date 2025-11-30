@@ -1,0 +1,39 @@
+{
+  "subject": "Submission - Email Dump 1",
+  "from_name": "Vinnie Regina",
+  "from_email": "vinnieregina@gmail.com",
+  "to": [
+    "submissionassistant.ai@gmail.com"
+  ],
+  "cc": [],
+  "date": "Sun, 28 Sep 2025 18:58:15 -0400",
+  "message_id": "<CAMofMa+yqZqmCjGBj6epKqJmhN=Ru=+4cykGMk9HJp8UARkxpQ@mail.gmail.com>",
+  "body_text": "Please see the attached submission\r\n\r\n-- \r\nVincent Regina\r\n732-397-4227\r\nvinnieregina@gmail.com\n\nPlease see the attached submission -- Vincent Regina 732-397-4227 vinnieregina@gmail.com",
+  "extracted_emails": [
+    "vinnieregina@gmail.com"
+  ],
+  "headers": {
+    "Delivered-To": "submissionassistant.ai@gmail.com",
+    "Received": "from mail-sor-f41.google.com (mail-sor-f41.google.com. [209.85.220.41])\r\n        by mx.google.com with SMTPS id 5b1f17b1804b1-46e33bff2dfsor24188255e9.10.2025.09.28.15.58.27\r\n        for <submissionassistant.ai@gmail.com>\r\n        (Google Transport Security);\r\n        Sun, 28 Sep 2025 15:58:27 -0700 (PDT)",
+    "X-Received": "by 2002:a05:600c:8b65:b0:46e:36f8:1eb7 with SMTP id\r\n 5b1f17b1804b1-46e36f81fbamr125436545e9.10.1759100306570; Sun, 28 Sep 2025\r\n 15:58:26 -0700 (PDT)",
+    "ARC-Seal": "i=1; a=rsa-sha256; t=1759100307; cv=none;\r\n        d=google.com; s=arc-20240605;\r\n        b=RGdmi6aJNTdO3Cb2GQ0O67RWhmLdU67Gv2/DdqFMnf6pUZ4r+GrjHmsUyN+LHJRFz/\r\n         7XwVeWabwTVpUOTkNSxLvbdIhJLyJQ54QGbyl6dh36kRRO4DCUZ0obvyOtOJl1CP2Sqf\r\n         DNyBYzi4sYbpRWWJHAsJ4bb6ZKDecZJcEl+uMH+qJ+M2KkeSQmJgGeoQInkgR5bJd1Wn\r\n         +y1AgIP7iNxpfPzS26UILJj/XkwiyTplCVNdx6A2LNa9ZnxPyX4p3gRKijkJZvlg6hgN\r\n         +UDBsQWW+yPoH4b9widfG9JUga+5jihLt/5xtjdbUPt3WAOMcSP46/qurk37lEG5JNZX\r\n         FZ8w==",
+    "ARC-Message-Signature": "i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;\r\n        h=to:subject:message-id:date:from:mime-version:dkim-signature;\r\n        bh=rfa7JLt/FjdvL6nUF68saEfcDU1Xtb+BfTphs8Und6E=;\r\n        fh=wwA5C7OVb7IOpON6F3xVUALU5VvtQgHGupc5C8BymGQ=;\r\n        b=Asqpwf6zV5habkVA6nOn80KAJBItJTbE6InmS4p3qEG8pVi/mgCDvAtswUB5wYXM94\r\n         3pvX0PQQUFQfPv7UfiPm9SZwWwFs7sltCMfBm2KRM2AC+FlJZf8DT3p3tpVtJ2+tqwVX\r\n         aQ9dhGYsJNBJCVqDpMjloXKqp2WHSKASt3HrlsKoQpBy1YyqYPU1cEPyaklIpw0GEFZz\r\n         Eomj+O2VusI7RebVTxRO1KirxAwZ2Y5Px6EM4KctVFl/HVNhpP3Gkze4S3hTTw/KcAKQ\r\n         jjelXktx3Ki+r9DuHzeWWb9S1ggQloAh8SrKXu7uuxcBYGJ2Tl7fNkhiY+lMV0i70D0i\r\n         8k6w==;\r\n        dara=google.com",
+    "ARC-Authentication-Results": "i=1; mx.google.com;\r\n       dkim=pass header.i=@gmail.com header.s=20230601 header.b=m1EpO6Y6;\r\n       spf=pass (google.com: domain of vinnieregina@gmail.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=vinnieregina@gmail.com;\r\n       dmarc=pass (p=NONE sp=QUARANTINE dis=NONE) header.from=gmail.com;\r\n       dara=pass header.i=@gmail.com",
+    "Return-Path": "<vinnieregina@gmail.com>",
+    "Received-SPF": "pass (google.com: domain of vinnieregina@gmail.com designates 209.85.220.41 as permitted sender) client-ip=209.85.220.41;",
+    "Authentication-Results": "mx.google.com;\r\n       dkim=pass header.i=@gmail.com header.s=20230601 header.b=m1EpO6Y6;\r\n       spf=pass (google.com: domain of vinnieregina@gmail.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=vinnieregina@gmail.com;\r\n       dmarc=pass (p=NONE sp=QUARANTINE dis=NONE) header.from=gmail.com;\r\n       dara=pass header.i=@gmail.com",
+    "DKIM-Signature": "v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=gmail.com; s=20230601; t=1759100307; x=1759705107; dara=google.com;\r\n        h=to:subject:message-id:date:from:mime-version:from:to:cc:subject\r\n         :date:message-id:reply-to;\r\n        bh=rfa7JLt/FjdvL6nUF68saEfcDU1Xtb+BfTphs8Und6E=;\r\n        b=m1EpO6Y62VyEGzYKVi4bGaQimlRTV9LWDQdXO0nfKSXKJYfoQ6XDwOa7IN6YrLObjV\r\n         nSADHu7nNrjUzgLezkqzrLW5LQa+EXMWq2MAEgv/MJqCKKbkXvfvgDzZ6m52Q/ZGUi7k\r\n         RqPb7nmUkYT/xxoLu3MR0QvrzRIBR8pAU8QoZHIquVneCpqM1Eshcnob2x2u+UdALrFv\r\n         DIejZOOOGf/oJQgdyCICaG9Gfem6vLtVzxKe+LjkUQWlRj8p5/6APDbkAXCsJa6zpUAj\r\n         igzb0QrK+2ASMsA/67qO6ILdTpp+T3juCfLdLF/LE7dRgkAgzvmWmHUe7OpbZWN9M99T\r\n         CV4g==",
+    "X-Google-DKIM-Signature": "v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=1e100.net; s=20230601; t=1759100307; x=1759705107;\r\n        h=to:subject:message-id:date:from:mime-version:x-gm-message-state\r\n         :from:to:cc:subject:date:message-id:reply-to;\r\n        bh=rfa7JLt/FjdvL6nUF68saEfcDU1Xtb+BfTphs8Und6E=;\r\n        b=X9ha4jm1b/aGbyLe+h/AS+3xp4WaFOpslXRkCSyRJI25F6wN9k5FWlvKGqfPqkTOhq\r\n         FCihfFx+p4NSlxgcSLNJSPVLM+CPIZMo0Dsgj5li8u/ffiL23x40vGVIVecjszF6+X60\r\n         VBy7BDQleBL+42b+Te0uUIHRELfRdKBGzzFzkJunvnr2UHuw0Hee33TzkQtUKwrXk7Aj\r\n         8gtXRUTo2+0cEsjWi9yYThxZcN3TSJEYcNTYBOcyCwT7sTbC58QKJarGBXLUe4/xRiR9\r\n         QbZugTuFc47X79+zKTeqt0K88GDicCDEIvxWbVJObpJy5wbAe2mHgHBkmscDy28zVu0q\r\n         LzLA==",
+    "X-Gm-Message-State": "AOJu0YwAjcfGzQPDP+hiYoYCbAJrmlLpdWKg/sKxViLKuUro1hNaa6GA\r\n\tzrfuulp0IEQygkFqAn0svaPVYVKg63790CMvmXWWY+2223UcxZaHNm7AQWwqdLfZn7AkCEF5elV\r\n\tSoBp2MMqV0Cqb74UqvUoApIM9qYE8A2bgwA==",
+    "X-Gm-Gg": "ASbGncsXEnqfkdfDIkAHCEWtJBU/MfYFngTS4y23zj+XwBJnC0nCIeqLeW4tV3a2car\r\n\tIgWsX3H9TQbNUTl9pD4wQdcV9DdnmJ7OB9q/7gSxHeIb89k5Om0Artnh2ZIfIZA3pW82l9FBCnG\r\n\t5QL6YA1worjhU/1cQPEiZEjZHHgjyJghJHVCpf87P3JzMsZUHULrnT74Slv8nbujgUjWgBYe2mz\r\n\tA3T1qEh4idaRJuxePeIj98uUpQ6BjTivgwdbx0JwBDtTyAwPuV160qeZ/Qn+Q==",
+    "X-Google-Smtp-Source": "AGHT+IGV7sDwJlx4majERvEOom3l4ihZ1n0QN3vVTgXTsaadjKnwI/2/ONqZl4Wnjn5+3XfPzGjbnCsADmGtTFgkHEg=",
+    "MIME-Version": "1.0",
+    "From": "Vinnie Regina <vinnieregina@gmail.com>",
+    "Date": "Sun, 28 Sep 2025 18:58:15 -0400",
+    "X-Gm-Features": "AS18NWAvzuOTZfL_VX8-sz9SKwNA4bikLjUoFUsGRPFYnbuQsHnYDLSXbog769M",
+    "Message-ID": "<CAMofMa+yqZqmCjGBj6epKqJmhN=Ru=+4cykGMk9HJp8UARkxpQ@mail.gmail.com>",
+    "Subject": "Submission - Email Dump 1",
+    "To": "submissionassistant.ai@gmail.com",
+    "Content-Type": "multipart/alternative; boundary=\"000000000000e5c277063fe474e2\""
+  }
+}

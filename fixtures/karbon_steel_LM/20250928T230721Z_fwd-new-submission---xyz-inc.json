@@ -1,0 +1,42 @@
+{
+  "subject": "Fwd: New submission - XYZ Inc",
+  "from_name": "Vinnie Regina",
+  "from_email": "vinnieregina@gmail.com",
+  "to": [
+    "submissionassistant.ai@gmail.com"
+  ],
+  "cc": [],
+  "date": "Sun, 28 Sep 2025 19:06:41 -0400",
+  "message_id": "<E7AFEA6B-3A5E-4570-8F13-837114A1138A@gmail.com>",
+  "body_text": "New submission from Lauren\r\n\r\n\r\n\r\n> Begin forwarded message:\r\n> \r\n> From: Lauren Edwards <lmarkows2001@yahoo.com>\r\n> Subject: New submission - XYZ Inc\r\n> Date: September 28, 2025 at 7:05:14 PM EDT\r\n> To: \"Vincent D. Regina\" <vinnieregina@gmail.com>\r\n> \r\n> Please find the submission attached\n\nNew submission from Lauren Begin forwarded message: From: Lauren Edwards Subject: New submission - XYZ Inc Date: September 28, 2025 at 7:05:14 PM EDT To: \"Vincent D. Regina\" Please find the submission attached",
+  "extracted_emails": [
+    "lmarkows2001@yahoo.com",
+    "vinnieregina@gmail.com"
+  ],
+  "headers": {
+    "Delivered-To": "submissionassistant.ai@gmail.com",
+    "Received": "from smtpclient.apple ([2600:4041:458d:9000:24a8:4c2:b5dc:632a])\r\n        by smtp.gmail.com with ESMTPSA id 6a1803df08f44-800fa5f6dd7sm62984756d6.0.2025.09.28.16.06.52\r\n        for <submissionassistant.ai@gmail.com>\r\n        (version=TLS1_2 cipher=ECDHE-ECDSA-AES128-GCM-SHA256 bits=128/128);\r\n        Sun, 28 Sep 2025 16:06:53 -0700 (PDT)",
+    "X-Received": "by 2002:a05:6214:494:b0:793:dce5:4540 with SMTP id 6a1803df08f44-7fc2c8a79c2mr223895296d6.2.1759100814028;\r\n        Sun, 28 Sep 2025 16:06:54 -0700 (PDT)",
+    "ARC-Seal": "i=1; a=rsa-sha256; t=1759100814; cv=none;\r\n        d=google.com; s=arc-20240605;\r\n        b=AO19bpIq9YESGHVIcDV7OmbkuJfOPrA0iJh4AHtvKwYp6rDrhLjFz6DjkQU/tr8HSn\r\n         ya+sm4D4c6CZcamJEqDvHhIb7buWPwVu1+peaJtCDMM35YLxGCKioYkNm12u/H2itBHB\r\n         oiZmNkinphyQqO500OMtlCb8pLMuRgaEGYjuRB9Jk+Up4i7WN2yDefCMFuWjMUGJeCYN\r\n         YX+HlTnRZ5Bi/vngli/yyprOSo03/XBr2o1HM9E8oRdkekn2ie8qZSQkb2Xn6o3nOay7\r\n         fstpyUTtNtIeBE+m93spGMx3dxmerT3ruCFLFzmdt+1mMCA3gBwS2H/jnvIgTbx/MYUL\r\n         mDxA==",
+    "ARC-Message-Signature": "i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;\r\n        h=date:to:references:message-id:subject:mime-version:from\r\n         :dkim-signature;\r\n        bh=ewLB+QbT2xGZXa9usR5NgGofGGeLjGy93U0kLBw5eEY=;\r\n        fh=wwA5C7OVb7IOpON6F3xVUALU5VvtQgHGupc5C8BymGQ=;\r\n        b=IZzq8/JclJmHmOUfNxPsG6iqKD/E5oXDEj45NFF/7kVO6S41ip8Se+mE2I8Rb99dQh\r\n         t2ZbH/6FTkKIZI913d9/Qm07MKESW7La7M6t2b6mn5N/jIsVBP/phjME97iY6x6OWAPP\r\n         iACjVCUUNaWg1iPrdCVdbVsj68gYNKgDCFdwZlf0mkvDu529nR7VXHs/olwiJpJBsrRz\r\n         XJUmYlMPj48ZccTyF2zrI1rJs9D2x7Qmyx0cuxkT61XsF85yV4yaOnEHT+P1xnJi/UrW\r\n         Sprbuak0WPIlpoSoclAd5puGmKBfKVFnIIVp4wzWKXt5US1VTSqJmMh4uyiQ9FE+3i96\r\n         RiEg==;\r\n        dara=google.com",
+    "ARC-Authentication-Results": "i=1; mx.google.com;\r\n       dkim=pass header.i=@gmail.com header.s=20230601 header.b=SZmbedbW;\r\n       spf=pass (google.com: domain of vinnieregina@gmail.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=vinnieregina@gmail.com;\r\n       dmarc=pass (p=NONE sp=QUARANTINE dis=NONE) header.from=gmail.com;\r\n       dara=pass header.i=@gmail.com",
+    "Return-Path": "<vinnieregina@gmail.com>",
+    "Received-SPF": "pass (google.com: domain of vinnieregina@gmail.com designates 209.85.220.41 as permitted sender) client-ip=209.85.220.41;",
+    "Authentication-Results": "mx.google.com;\r\n       dkim=pass header.i=@gmail.com header.s=20230601 header.b=SZmbedbW;\r\n       spf=pass (google.com: domain of vinnieregina@gmail.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=vinnieregina@gmail.com;\r\n       dmarc=pass (p=NONE sp=QUARANTINE dis=NONE) header.from=gmail.com;\r\n       dara=pass header.i=@gmail.com",
+    "DKIM-Signature": "v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=gmail.com; s=20230601; t=1759100814; x=1759705614; dara=google.com;\r\n        h=date:to:references:message-id:subject:mime-version:from:from:to:cc\r\n         :subject:date:message-id:reply-to;\r\n        bh=ewLB+QbT2xGZXa9usR5NgGofGGeLjGy93U0kLBw5eEY=;\r\n        b=SZmbedbWrPpsipd9P0OKpG9IK8XkcFzmLoPeDzldkwbCrXuXl6sK3nJYiHhE1GlY4K\r\n         vw6u+2SIq4ILW3oRczTRUCtkCKi5JAzOpwTbSQT8waG4Hw0ugTjw66ixTtye0/bONKDC\r\n         G0TOrxP7WM5FcbWhryyXqVHsdKPPtgy839o47oaEZPY3TE9EBP5JS1kpCcutas3qcUDk\r\n         LwGQl1qQKkZFr5TQ5KPTcR1rY54+QclaP4i7gmZs2nk6fS/zUgLr3gilLYm5zL1z6mIP\r\n         Uq1OiNh4pKKhh8VGbal6eWw2rthO86K7AbsSzBcymfpHQP/c1m6Y/y0r69jVXOiJ75zL\r\n         ys7g==",
+    "X-Google-DKIM-Signature": "v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=1e100.net; s=20230601; t=1759100814; x=1759705614;\r\n        h=date:to:references:message-id:subject:mime-version:from\r\n         :x-gm-message-state:from:to:cc:subject:date:message-id:reply-to;\r\n        bh=ewLB+QbT2xGZXa9usR5NgGofGGeLjGy93U0kLBw5eEY=;\r\n        b=bOlrN1nmjby5kBc+3A0X1QPfRQPhdms/1jxolxUka8mncENNyeS36GhWf77AHbR1WI\r\n         Fzk66CQcDtm/tIqAQabaFqKGZf3GTr7vTU32TIRWIKheIq2/CBhr8Qrrf92YYanUaioq\r\n         Nic0Bfc/HWUn8r9L6MjauqgiwlQ1SiqG7V3uLacIEwaqgOb1Vn5IrNWqIupaRVDmNrb2\r\n         B1zNszreioirl3jtksws+oOjQ6TSkUWnXnoQKOF6cmSVh2x27fthkQ7z45Y/tan/mGDr\r\n         HXlXlQj+hwkc9hrGvUfClUtlP1g19DLCM3WAIyw2WbfuH75QfABEnVCP1TM9uKLsDcRS\r\n         qddQ==",
+    "X-Gm-Message-State": "AOJu0YxumY8j5n+EG7d+kCOc2R3QsAuR1fDZv/snIkrKKU6jzfgaH057\r\n\tc6BWmxgnV/FFsxUXfduzSBL/8RpoR1a6Af8Opz7mVd5iq89AFxbqE6H25AvyYg==",
+    "X-Gm-Gg": "ASbGncsq8sCkEaLQsCdCDaz48pKEgTtSyc1VnYvX92yRND9uiWMTpO88efervQALU5t\r\n\tdPMfQRKg3FmXy6E4vVRgtHr10lMVx6Qpjo93+L2WKzpIvkY/tq15BHqSBsoBsWovwodibR5Pp+Y\r\n\tdZsV5MgvIINpKIDwPKIrMyFwyGs5pOfZua8hk97+slM+Uq1PitxNx5+mJMCa1aFdMa1sCDP45eq\r\n\tI2Ls2ths50aG5GUKzifqzDD4T0OIHS3pE1zG5AMkuFtTJHwWH1teElToLFrV6HxHsP1zlrKCY8p\r\n\t8tKUIF91vwfoBzsbHUtPf+jbLVJSsIX7Oc9hanrq6fdlwN89WD3PxxRPYqnJMoW24V0Da+Ip8z8\r\n\t+kK1nkyzT0atRKqMtUhLA+3s0Q+YFIUnis76ex9FeFXak6xy/JZ03zh31Oct1r5g=",
+    "X-Google-Smtp-Source": "AGHT+IEN7CSAfvRGN5GXQPRN94+KxN3SZ/53HQN1arGloZx5OccMfILaYQseYu8o4sm59KAqcOyqiA==",
+    "From": "Vinnie Regina <vinnieregina@gmail.com>",
+    "X-Google-Original-From": "Vinnie Regina <VinnieRegina@gmail.com>",
+    "Content-Type": "multipart/alternative;\r\n\tboundary=\"Apple-Mail=_33374716-2AA7-4ABE-A86F-90852DC82FD6\"",
+    "Mime-Version": "1.0 (Mac OS X Mail 16.0 \\(3826.700.81\\))",
+    "Subject": "Fwd: New submission - XYZ Inc",
+    "Message-Id": "<E7AFEA6B-3A5E-4570-8F13-837114A1138A@gmail.com>",
+    "References": "<A882924B-3413-4832-A6FA-0D069FF0A76F@yahoo.com>",
+    "To": "submissionassistant.ai@gmail.com",
+    "Date": "Sun, 28 Sep 2025 19:06:41 -0400",
+    "X-Mailer": "Apple Mail (2.3826.700.81)"
+  }
+}
