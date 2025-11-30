@@ -342,6 +342,103 @@ def _normalize_carrier_name(name: str) -> str:
     return re.sub(r"\s+", " ", str(name or "").strip())
 
 
+# ───────────────────────── Sublimits Helpers ─────────────────────────
+
+def _sublimits_to_dataframe(sublimits: list, calc_fn) -> pd.DataFrame:
+    """Convert sublimits list to DataFrame for display.
+
+    Args:
+        sublimits: List of sublimit dicts
+        calc_fn: Function(primary_limit) -> (our_limit, our_attachment) for proportional calc
+    """
+    if not sublimits:
+        return pd.DataFrame(columns=["coverage", "primary_limit", "treatment", "our_limit", "our_attachment"])
+
+    rows = []
+    for sub in sublimits:
+        primary_limit = sub.get("primary_limit", 0) or 0
+        treatment = sub.get("treatment", "follow_form")
+
+        # Calculate proportional defaults
+        prop_limit, prop_attach = calc_fn(primary_limit)
+
+        # Get stored overrides (if any)
+        stored_our_limit = sub.get("our_limit")
+        stored_our_attach = sub.get("our_attachment")
+
+        # Determine displayed values based on treatment
+        if treatment == "no_coverage":
+            disp_limit = ""
+            disp_attach = ""
+        elif treatment == "different":
+            # Use stored override or show calculated as starting point
+            disp_limit = _format_amount(stored_our_limit) if stored_our_limit else _format_amount(prop_limit)
+            disp_attach = _format_amount(stored_our_attach) if stored_our_attach else _format_amount(prop_attach)
+        else:  # follow_form
+            disp_limit = _format_amount(prop_limit) if prop_limit else ""
+            disp_attach = _format_amount(prop_attach) if prop_attach else ""
+
+        rows.append({
+            "coverage": sub.get("coverage", ""),
+            "primary_limit": _format_amount(primary_limit) if primary_limit else "",
+            "treatment": treatment,
+            "our_limit": disp_limit,
+            "our_attachment": disp_attach,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _dataframe_to_sublimits(df: pd.DataFrame, existing_sublimits: list, calc_fn) -> list:
+    """Convert DataFrame back to sublimits list.
+
+    Args:
+        df: Edited DataFrame from data_editor
+        existing_sublimits: Previous sublimits list (for detecting changes)
+        calc_fn: Function(primary_limit) -> (our_limit, our_attachment) for proportional calc
+    """
+    sublimits = []
+
+    for idx, row in df.iterrows():
+        coverage = str(row.get("coverage", "") or "").strip()
+        primary_limit_str = str(row.get("primary_limit", "") or "").strip()
+        treatment = row.get("treatment") or "follow_form"
+        our_limit_str = str(row.get("our_limit", "") or "").strip()
+        our_attach_str = str(row.get("our_attachment", "") or "").strip()
+
+        # Skip fully empty rows
+        if not coverage and not primary_limit_str:
+            continue
+
+        # Parse primary limit
+        primary_limit = _parse_amount(primary_limit_str) if primary_limit_str else 0
+
+        # Calculate expected proportional values
+        prop_limit, prop_attach = calc_fn(primary_limit)
+
+        # Determine our_limit - store only if treatment is "different" and value differs from calculated
+        our_limit = None
+        if treatment == "different" and our_limit_str:
+            parsed = _parse_amount(our_limit_str)
+            our_limit = parsed  # Always store for "different" treatment
+
+        # Determine our_attachment - store only if treatment is "different" and value differs from calculated
+        our_attachment = None
+        if treatment == "different" and our_attach_str:
+            parsed = _parse_amount(our_attach_str)
+            our_attachment = parsed  # Always store for "different" treatment
+
+        sublimits.append({
+            "coverage": coverage,
+            "primary_limit": primary_limit,
+            "treatment": treatment,
+            "our_limit": our_limit,
+            "our_attachment": our_attachment,
+        })
+
+    return sublimits
+
+
 def _parse_primary_carrier(text: str):
     if not text:
         return None
@@ -663,19 +760,16 @@ def render():
                     st.session_state.tower_layers = tower_data["tower_json"]
                     st.session_state.primary_retention = tower_data["primary_retention"]
                     st.session_state.sublimits = tower_data.get("sublimits") or []
-                    st.session_state.sublimits_raw = []  # Clear raw so it reloads from sublimits
                     st.session_state.loaded_tower_id = tower_data["id"]
                 else:
                     # No saved tower - start fresh
                     st.session_state.tower_layers = []
                     st.session_state.primary_retention = None
                     st.session_state.sublimits = []
-                    st.session_state.sublimits_raw = []
                     st.session_state.loaded_tower_id = None
             except Exception:
                 st.session_state.tower_layers = []
                 st.session_state.sublimits = []
-                st.session_state.sublimits_raw = []
                 st.session_state.loaded_tower_id = None
             st.session_state._tower_loaded_for_sub = selected_sub_id
 
@@ -1027,43 +1121,9 @@ def render():
     with col_clear:
         if st.button("Clear Sublimits", key="clear_sublimits_btn"):
             st.session_state.sublimits = []
-            st.session_state.sublimits_raw = []
             st.rerun()
 
-    if process_sublimits and sublimit_input.strip():
-        try:
-            from ai.sublimit_intel import parse_sublimits_with_ai, edit_sublimits_with_ai
-
-            current_sublimits = st.session_state.get("sublimits", [])
-
-            # If we have existing sublimits, use edit mode; otherwise parse fresh
-            if current_sublimits:
-                context = f"Primary aggregate limit: {_format_amount(primary_aggregate_limit)}" if primary_aggregate_limit else ""
-                result = edit_sublimits_with_ai(current_sublimits, sublimit_input)
-            else:
-                context = f"Primary aggregate limit: {_format_amount(primary_aggregate_limit)}" if primary_aggregate_limit else ""
-                result = parse_sublimits_with_ai(sublimit_input, context)
-
-            # Update session state
-            st.session_state.sublimits = result
-            st.session_state.sublimits_raw = [
-                {
-                    "coverage": s.get("coverage", ""),
-                    "primary_limit": s.get("primary_limit", 0),
-                    "treatment": s.get("treatment", "follow_form"),
-                    "our_limit_override": None,
-                    "our_attachment_override": None,
-                }
-                for s in result
-            ]
-
-            st.success(f"Parsed {len(result)} sublimits")
-            st.rerun()
-
-        except Exception as e:
-            st.error(f"Error processing sublimits: {e}")
-
-    # Helper to calculate proportional sublimit values
+    # Helper to calculate proportional sublimit values (defined early so it can be used everywhere)
     def calc_proportional_sublimit(primary_sublimit: float) -> tuple[float, float]:
         """Calculate our sublimit and attachment based on proportional logic."""
         if not primary_aggregate_limit or not primary_sublimit:
@@ -1079,59 +1139,30 @@ def render():
 
         return our_sublimit, sublimit_attachment
 
-    # Use session state key for the raw data editor to preserve edits
-    if "sublimits_raw" not in st.session_state:
-        st.session_state.sublimits_raw = []
+    if process_sublimits and sublimit_input.strip():
+        try:
+            from ai.sublimit_intel import parse_sublimits_with_ai, edit_sublimits_with_ai
 
-    # Sync from sublimits if sublimits_raw is empty but sublimits has data (e.g., after load)
-    if not st.session_state.sublimits_raw and st.session_state.get("sublimits"):
-        st.session_state.sublimits_raw = [
-            {
-                "coverage": s.get("coverage", ""),
-                "primary_limit": s.get("primary_limit", 0),
-                "treatment": s.get("treatment", "follow_form"),
-                "our_limit_override": s.get("our_limit"),
-                "our_attachment_override": s.get("our_attachment_override"),
-            }
-            for s in st.session_state.sublimits
-        ]
+            current_sublimits = st.session_state.get("sublimits", [])
 
-    # Build display dataframe with calculated values
-    display_rows = []
-    for sub in st.session_state.sublimits_raw:
-        primary_limit = sub.get("primary_limit", 0) or 0
-        treatment = sub.get("treatment", "follow_form")
-
-        # Calculate proportional defaults
-        prop_limit, prop_attach = calc_proportional_sublimit(primary_limit)
-
-        # Determine displayed values
-        if treatment == "no_coverage":
-            disp_limit = "—"
-            disp_attach = "—"
-        else:
-            # Use override if set, otherwise use calculated
-            if sub.get("our_limit_override") is not None:
-                disp_limit = _format_amount(sub["our_limit_override"])
+            # If we have existing sublimits, use edit mode; otherwise parse fresh
+            if current_sublimits:
+                context = f"Primary aggregate limit: {_format_amount(primary_aggregate_limit)}" if primary_aggregate_limit else ""
+                result = edit_sublimits_with_ai(current_sublimits, sublimit_input)
             else:
-                disp_limit = _format_amount(prop_limit) if prop_limit else ""
+                context = f"Primary aggregate limit: {_format_amount(primary_aggregate_limit)}" if primary_aggregate_limit else ""
+                result = parse_sublimits_with_ai(sublimit_input, context)
 
-            if sub.get("our_attachment_override") is not None:
-                disp_attach = _format_amount(sub["our_attachment_override"])
-            else:
-                disp_attach = _format_amount(prop_attach) if prop_attach else ""
+            # Update session state - single source of truth
+            st.session_state.sublimits = result
+            st.success(f"Parsed {len(result)} sublimits")
+            st.rerun()
 
-        display_rows.append({
-            "coverage": sub.get("coverage", ""),
-            "primary_limit": _format_amount(primary_limit) if primary_limit else "",
-            "treatment": treatment,
-            "our_limit": disp_limit,
-            "our_attachment": disp_attach,
-        })
+        except Exception as e:
+            st.error(f"Error processing sublimits: {e}")
 
-    sublimits_df = pd.DataFrame(display_rows, columns=[
-        "coverage", "primary_limit", "treatment", "our_limit", "our_attachment"
-    ])
+    # Convert sublimits to DataFrame for display using helper
+    sublimits_df = _sublimits_to_dataframe(st.session_state.sublimits, calc_proportional_sublimit)
 
     # Display editable table
     edited_sublimits = st.data_editor(
@@ -1146,81 +1177,27 @@ def render():
                 options=["follow_form", "different", "no_coverage"],
                 default="follow_form"
             ),
-            "our_limit": st.column_config.TextColumn("Our Limit", width="small", help="Auto-calculated, can override"),
-            "our_attachment": st.column_config.TextColumn("Our Attachment", width="small", help="Auto-calculated, can override"),
+            "our_limit": st.column_config.TextColumn(
+                "Our Limit", width="small",
+                help="Auto-calculated for follow_form. Editable when treatment is 'different'."
+            ),
+            "our_attachment": st.column_config.TextColumn(
+                "Our Attachment", width="small",
+                help="Auto-calculated for follow_form. Editable when treatment is 'different'."
+            ),
         },
         key="sublimits_editor"
     )
 
-    # Parse edits back - track what changed
-    new_raw = []
-    for idx, row in edited_sublimits.iterrows():
-        coverage = str(row.get("coverage", "") or "").strip()
-        primary_limit_str = str(row.get("primary_limit", "") or "").strip()
-        treatment = row.get("treatment") or "follow_form"
-        our_limit_str = str(row.get("our_limit", "") or "").strip()
-        our_attach_str = str(row.get("our_attachment", "") or "").strip()
-
-        # Skip fully empty rows
-        if not coverage and not primary_limit_str:
-            continue
-
-        # Parse primary limit
-        primary_limit = _parse_amount(primary_limit_str) if primary_limit_str else 0
-
-        # Get old values if this row existed
-        old_sub = st.session_state.sublimits_raw[idx] if idx < len(st.session_state.sublimits_raw) else {}
-        old_primary = old_sub.get("primary_limit", 0)
-
-        # Calculate current proportional values
-        prop_limit, prop_attach = calc_proportional_sublimit(primary_limit)
-
-        # Determine if user overrode our_limit
-        our_limit_override = None
-        if treatment != "no_coverage" and treatment != "follow_form" and our_limit_str and our_limit_str != "—":
-            parsed_limit = _parse_amount(our_limit_str)
-            # Only store override if user explicitly changed it (different from calculated)
-            if prop_limit and abs(parsed_limit - prop_limit) > 0.01:
-                our_limit_override = parsed_limit
-            elif not prop_limit and parsed_limit:
-                our_limit_override = parsed_limit
-
-        # Determine if user overrode attachment
-        our_attachment_override = None
-        if treatment != "no_coverage" and our_attach_str and our_attach_str != "—":
-            parsed_attach = _parse_amount(our_attach_str)
-            # Keep existing override if primary didn't change
-            if old_primary == primary_limit and old_sub.get("our_attachment_override") is not None:
-                # Primary didn't change - keep the override if display matches
-                if abs(parsed_attach - old_sub["our_attachment_override"]) < 0.01:
-                    our_attachment_override = old_sub["our_attachment_override"]
-                elif prop_attach and abs(parsed_attach - prop_attach) > 0.01:
-                    our_attachment_override = parsed_attach
-            elif prop_attach and abs(parsed_attach - prop_attach) > 0.01:
-                our_attachment_override = parsed_attach
-
-        new_raw.append({
-            "coverage": coverage,
-            "primary_limit": primary_limit,
-            "treatment": treatment,
-            "our_limit_override": our_limit_override,
-            "our_attachment_override": our_attachment_override,
-        })
-
-    # Update raw state
-    st.session_state.sublimits_raw = new_raw
-
-    # Also update sublimits for saving (convert to save format)
-    st.session_state.sublimits = [
-        {
-            "coverage": s["coverage"],
-            "primary_limit": s["primary_limit"],
-            "treatment": s["treatment"],
-            "our_limit": s["our_limit_override"],
-            "our_attachment_override": s["our_attachment_override"],
-        }
-        for s in new_raw
-    ]
+    # Update session state when table is edited (mirroring tower table pattern)
+    if not edited_sublimits.equals(sublimits_df):
+        updated_sublimits = _dataframe_to_sublimits(
+            edited_sublimits,
+            st.session_state.sublimits,
+            calc_proportional_sublimit
+        )
+        st.session_state.sublimits = updated_sublimits
+        st.rerun()
 
     # Tower Summary
     if st.session_state.tower_layers:
