@@ -2,6 +2,7 @@
 Quote Options Panel Component
 Manages quote option selection, naming, and persistence.
 """
+from __future__ import annotations
 
 import streamlit as st
 from pages_components.tower_db import (
@@ -12,6 +13,78 @@ from pages_components.tower_db import (
     clone_quote,
     delete_tower,
 )
+
+
+def _format_amount(amount: float) -> str:
+    """Format amount compactly (e.g., 1000000 -> '1M', 500000 -> '500K')."""
+    if not amount:
+        return ""
+    if amount >= 1_000_000 and amount % 1_000_000 == 0:
+        return f"${int(amount // 1_000_000)}M"
+    if amount >= 1_000 and amount % 1_000 == 0:
+        return f"${int(amount // 1_000)}K"
+    return f"${amount:,.0f}"
+
+
+def _generate_smart_name(sub_id: str) -> str:
+    """
+    Generate a smart quote name based on configuration.
+
+    Format examples:
+    - Primary: "$2M / $25K ret"
+    - Excess: "$1M xs $5M / $50K ret"
+    - With quota share: "$2M @ 50% / $25K ret"
+    - Excess with quota: "$1M @ 25% xs $5M / $50K ret"
+    """
+    tower_layers = st.session_state.get("tower_layers", [])
+    retention = st.session_state.get("primary_retention")
+
+    if not tower_layers:
+        # Fallback to dropdown values
+        limit = st.session_state.get(f"selected_limit_{sub_id}")
+        if limit:
+            ret_str = _format_amount(retention) if retention else ""
+            return f"{_format_amount(limit)}{' / ' + ret_str + ' ret' if ret_str else ''}"
+        return "New Quote"
+
+    # Find CMAI layer
+    cmai_layer = None
+    cmai_idx = None
+    for idx, layer in enumerate(tower_layers):
+        carrier = str(layer.get("carrier", "")).upper()
+        if "CMAI" in carrier:
+            cmai_layer = layer
+            cmai_idx = idx
+            break
+
+    if not cmai_layer:
+        # Use first layer if no CMAI found
+        cmai_layer = tower_layers[0]
+        cmai_idx = 0
+
+    limit = cmai_layer.get("limit", 0)
+    attachment = cmai_layer.get("attachment", 0)
+    quota_share = cmai_layer.get("quota_share")  # Percentage if quota share
+
+    # Build name parts
+    parts = []
+
+    # Limit (with quota share if applicable)
+    limit_str = _format_amount(limit)
+    if quota_share and quota_share < 100:
+        parts.append(f"{limit_str} @ {int(quota_share)}%")
+    else:
+        parts.append(limit_str)
+
+    # Attachment (if excess - attachment > 0)
+    if attachment and attachment > 0:
+        parts.append(f"xs {_format_amount(attachment)}")
+
+    # Retention
+    if retention:
+        parts.append(f"/ {_format_amount(retention)} ret")
+
+    return " ".join(parts) if parts else "New Quote"
 
 
 def render_quote_options_panel(sub_id: str):
@@ -78,7 +151,7 @@ def render_quote_options_panel(sub_id: str):
 
         with btn_cols[1]:
             if st.session_state.get("loaded_tower_id") and st.button("📋 Clone", use_container_width=True, key="clone_quote_btn"):
-                _clone_current_quote(all_quotes)
+                _clone_current_quote(sub_id, all_quotes)
 
         with btn_cols[2]:
             if st.session_state.get("loaded_tower_id") and st.button("🗑️ Delete", use_container_width=True, key="delete_quote_btn"):
@@ -127,10 +200,11 @@ def _save_quote(sub_id: str, all_quotes: list):
     try:
         retention = st.session_state.get("primary_retention")
         sublimits = st.session_state.get("sublimits", [])
-        quote_name = st.session_state.get("quote_name", "Option A")
         quoted_premium = st.session_state.get("quoted_premium")
 
         if st.session_state.get("loaded_tower_id"):
+            # Updating existing - regenerate smart name based on current config
+            quote_name = _generate_smart_name(sub_id)
             update_tower(
                 st.session_state.loaded_tower_id,
                 st.session_state.tower_layers,
@@ -139,8 +213,11 @@ def _save_quote(sub_id: str, all_quotes: list):
                 quote_name,
                 quoted_premium
             )
+            st.session_state.quote_name = quote_name
             st.success("Quote updated!")
         else:
+            # New save - generate smart name
+            quote_name = _generate_smart_name(sub_id)
             tower_id = save_tower(
                 sub_id,
                 st.session_state.tower_layers,
@@ -150,22 +227,27 @@ def _save_quote(sub_id: str, all_quotes: list):
                 quoted_premium
             )
             st.session_state.loaded_tower_id = tower_id
+            st.session_state.quote_name = quote_name
             st.success("Quote saved!")
         st.rerun()
     except Exception as e:
         st.error(f"Error saving: {e}")
 
 
-def _clone_current_quote(all_quotes: list):
-    """Clone the current quote."""
+def _clone_current_quote(sub_id: str, all_quotes: list):
+    """Clone the current quote with smart naming."""
     try:
+        # Generate smart name with "(copy)" suffix
+        base_name = _generate_smart_name(sub_id)
+        new_name = f"{base_name} (copy)"
+
+        # If that name already exists, add a number
         existing_names = [q["quote_name"] for q in all_quotes]
-        for letter in "BCDEFGHIJ":
-            new_name = f"Option {letter}"
-            if new_name not in existing_names:
-                break
-        else:
-            new_name = f"Option {len(all_quotes) + 1}"
+        if new_name in existing_names:
+            i = 2
+            while f"{base_name} (copy {i})" in existing_names:
+                i += 1
+            new_name = f"{base_name} (copy {i})"
 
         new_id = clone_quote(st.session_state.loaded_tower_id, new_name)
         st.session_state.loaded_tower_id = new_id
