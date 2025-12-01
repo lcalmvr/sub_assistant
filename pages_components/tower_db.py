@@ -2,9 +2,11 @@
 Tower/Quote Database Operations
 Shared database helpers for insurance tower and quote management.
 """
+from __future__ import annotations
 
 import os
 import json
+from typing import Optional
 import psycopg2
 import streamlit as st
 from dotenv import load_dotenv
@@ -60,9 +62,9 @@ def _row_to_quote(row) -> dict:
     }
 
 
-def save_tower(submission_id: str, tower_json: list, primary_retention: float | None,
-               sublimits: list | None = None, quote_name: str = "Option A",
-               quoted_premium: float | None = None, quote_notes: str | None = None) -> str:
+def save_tower(submission_id: str, tower_json: list, primary_retention: Optional[float],
+               sublimits: Optional[list] = None, quote_name: str = "Option A",
+               quoted_premium: Optional[float] = None, quote_notes: Optional[str] = None) -> str:
     """Save a new tower/quote option for a submission."""
     with get_conn().cursor() as cur:
         cur.execute(
@@ -78,9 +80,9 @@ def save_tower(submission_id: str, tower_json: list, primary_retention: float | 
         return str(cur.fetchone()[0])
 
 
-def update_tower(tower_id: str, tower_json: list, primary_retention: float | None,
-                 sublimits: list | None = None, quote_name: str | None = None,
-                 quoted_premium: float | None = None, quote_notes: str | None = None):
+def update_tower(tower_id: str, tower_json: list, primary_retention: Optional[float],
+                 sublimits: Optional[list] = None, quote_name: Optional[str] = None,
+                 quoted_premium: Optional[float] = None, quote_notes: Optional[str] = None):
     """Update an existing tower/quote option."""
     with get_conn().cursor() as cur:
         cur.execute(
@@ -96,7 +98,7 @@ def update_tower(tower_id: str, tower_json: list, primary_retention: float | Non
         )
 
 
-def get_tower_for_submission(submission_id: str) -> dict | None:
+def get_tower_for_submission(submission_id: str) -> Optional[dict]:
     """Get the most recent quote for a submission."""
     with get_conn().cursor() as cur:
         cur.execute(
@@ -114,7 +116,7 @@ def get_tower_for_submission(submission_id: str) -> dict | None:
     return _row_to_quote(row) if row else None
 
 
-def get_quote_by_id(quote_id: str) -> dict | None:
+def get_quote_by_id(quote_id: str) -> Optional[dict]:
     """Get a specific quote by ID."""
     with get_conn().cursor() as cur:
         cur.execute(

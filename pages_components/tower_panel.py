@@ -2,8 +2,10 @@
 Tower Panel Component
 Renders the insurance tower builder with natural language input and editable table.
 """
+from __future__ import annotations
 
 import re
+from typing import Optional
 import pandas as pd
 import streamlit as st
 

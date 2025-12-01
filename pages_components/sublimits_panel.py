@@ -2,6 +2,7 @@
 Sublimits Panel Component
 Manages sublimits with AI parsing and proportional calculations.
 """
+from __future__ import annotations
 
 import re
 import pandas as pd
