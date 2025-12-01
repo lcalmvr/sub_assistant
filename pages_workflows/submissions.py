@@ -586,7 +586,45 @@ def render():
     if sub_id:
         st.divider()
         st.subheader(label_selected)
-    
+
+        # ------------------- TABS -------------------
+        tab_details, tab_quote = st.tabs(["📋 Details", "💰 Quote"])
+
+        # Define quote_helpers up front for use in Quote tab
+        quote_helpers = {
+            'render_pdf': _render_quote_pdf,
+            'upload_pdf': _upload_pdf,
+            'save_quote': _save_quote_row,
+            'update_quote': _update_quote_row,
+            'get_loaded_quote_id': lambda: st.session_state.get("loaded_quote_id"),
+            'clear_loaded_quote': lambda: st.session_state.pop("loaded_quote_id", None)
+        }
+
+        with tab_quote:
+            # Import and render quote components
+            from pages_components.quote_options_panel import render_quote_options_panel, auto_load_quote_for_submission
+            from pages_components.tower_panel import render_tower_panel
+            from pages_components.sublimits_panel import render_sublimits_panel
+
+            # Auto-load quote data when submission changes
+            auto_load_quote_for_submission(sub_id)
+
+            # Quote options selector (Option A, B, C...)
+            render_quote_options_panel(sub_id)
+
+            st.divider()
+
+            # Rating inputs (limit/retention dropdowns) - uses existing rating_panel_v2
+            render_rating_panel(sub_id, get_conn, quote_helpers)
+
+            # Tower builder (collapsible)
+            render_tower_panel(sub_id, expanded=False)
+
+            # Sublimits (collapsible)
+            render_sublimits_panel(sub_id, expanded=False)
+
+        with tab_details:
+            st.info("Details content - migration in progress. See sections below for now.")
 
         # ------------------- pull AI originals -------------------
         # Pull core columns first, then optional broker columns depending on schema
@@ -1220,15 +1258,8 @@ def render():
                         st.divider()
 
         # ------------------- Rating --------------------
-        quote_helpers = {
-            'render_pdf': _render_quote_pdf,
-            'upload_pdf': _upload_pdf,
-            'save_quote': _save_quote_row,
-            'update_quote': _update_quote_row,
-            'get_loaded_quote_id': lambda: st.session_state.get("loaded_quote_id"),
-            'clear_loaded_quote': lambda: st.session_state.pop("loaded_quote_id", None)
-        }
-        render_rating_panel(sub_id, get_conn, quote_helpers)
+        # NOTE: Rating panel moved to Quote tab above
+        # quote_helpers defined at line ~594
     
         # ------------------- Feedback History --------------------
         with st.expander("🔎 Feedback History", expanded=False):
