@@ -128,6 +128,7 @@ def _generate_quote(
                 "limit": config["limit"],
                 "retention": config["retention"],
                 "controls": parsed_controls,
+                "coverage_limits": config.get("coverage_limits", {}),
                 "endorsements": endorsements,
                 "subjectivities": subjectivities,
                 "quote_date": datetime.now().strftime("%Y-%m-%d"),

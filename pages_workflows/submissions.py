@@ -658,6 +658,7 @@ def render():
             from pages_components.sublimits_panel import render_sublimits_panel
             from pages_components.endorsements_panel import render_endorsements_panel
             from pages_components.subjectivities_panel import render_subjectivities_panel
+            from pages_components.coverage_limits_panel import render_coverage_limits_panel, get_coverage_limits
             from pages_components.generate_quote_button import render_generate_quote_button
 
             # Auto-load quote data when submission changes
@@ -681,12 +682,18 @@ def render():
             # Sync dropdown values to tower layer 1 (for primary quotes)
             _sync_dropdowns_to_tower(sub_id)
 
+            # Coverage Limits (what goes on OUR policy form)
+            render_coverage_limits_panel(sub_id, config["limit"], expanded=False)
+
+            # Add coverage limits to config for quote generation
+            config["coverage_limits"] = get_coverage_limits(sub_id, config["limit"])
+
             # Tower builder (auto-expand if multi-layer, collapsed for simple primary)
             tower_layers = st.session_state.get("tower_layers", [])
             tower_expanded = len(tower_layers) > 1
             render_tower_panel(sub_id, expanded=tower_expanded)
 
-            # Sublimits (option-specific)
+            # Sublimits (for excess - proportional to underlying carrier)
             render_sublimits_panel(sub_id, expanded=False)
 
             # Endorsements (option-specific - varies by primary/excess/quote)
