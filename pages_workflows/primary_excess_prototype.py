@@ -853,8 +853,8 @@ def render():
             # Get all quote options for this submission
             all_quotes = _list_quotes_for_submission(selected_sub_id)
 
-            # Quote selection row
-            col_select, col_actions = st.columns([2, 3])
+            # Quote selection and name row
+            col_select, col_name, col_actions = st.columns([2, 2, 2])
 
             with col_select:
                 if all_quotes:
@@ -905,6 +905,17 @@ def render():
                             st.rerun()
                 else:
                     st.caption("No saved quotes yet")
+
+            with col_name:
+                quote_name = st.text_input(
+                    "Quote Name",
+                    value=st.session_state.get("quote_name", "Option A"),
+                    key="quote_name_input",
+                    label_visibility="collapsed",
+                    placeholder="Quote name..."
+                )
+                if quote_name != st.session_state.get("quote_name"):
+                    st.session_state.quote_name = quote_name
 
             with col_actions:
                 btn_cols = st.columns([1, 1, 1])
@@ -1336,15 +1347,6 @@ def render():
 
         total_limit = sum(layer.get("limit", 0) for layer in st.session_state.tower_layers)
         total_premium = sum(layer.get("premium", 0) for layer in st.session_state.tower_layers if layer.get("premium"))
-
-        # Quote name input
-        quote_name = st.text_input(
-            "Quote Name",
-            value=st.session_state.get("quote_name", "Option A"),
-            key="quote_name_input"
-        )
-        if quote_name != st.session_state.get("quote_name"):
-            st.session_state.quote_name = quote_name
 
         # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
