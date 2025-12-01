@@ -871,7 +871,8 @@ def render():
                         options=list(quote_options.keys()),
                         format_func=lambda x: quote_options[x],
                         index=default_idx,
-                        key="quote_selector"
+                        key="quote_selector",
+                        label_visibility="collapsed"
                     )
 
                     # Load selected quote if changed
