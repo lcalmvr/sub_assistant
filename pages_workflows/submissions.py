@@ -651,78 +651,103 @@ def render():
         }
 
         with tab_quote:
-            # Import and render quote components
+            # Import components
             from pages_components.quote_options_panel import render_quote_options_panel, auto_load_quote_for_submission
+            from pages_components.quote_config_inline import render_quote_config_inline
             from pages_components.tower_panel import render_tower_panel
             from pages_components.sublimits_panel import render_sublimits_panel
+            from pages_components.endorsements_panel import render_endorsements_panel
+            from pages_components.subjectivities_panel import render_subjectivities_panel
+            from pages_components.generate_quote_button import render_generate_quote_button
 
             # Auto-load quote data when submission changes
             auto_load_quote_for_submission(sub_id)
 
-            # Quote options selector (Option A, B, C...)
+            # ─────────────────────────────────────────────────────────────
+            # Quote Options selector (Option A, B, C...)
+            # ─────────────────────────────────────────────────────────────
             render_quote_options_panel(sub_id)
 
             st.divider()
 
-            # Rating inputs (limit/retention dropdowns) - uses existing rating_panel_v2
-            render_rating_panel(sub_id, get_conn, quote_helpers)
+            # ─────────────────────────────────────────────────────────────
+            # OPTION-SPECIFIC CONFIGURATION
+            # ─────────────────────────────────────────────────────────────
+            st.markdown("##### Option Configuration")
+
+            # Inline limit/retention dropdowns + premium display
+            config = render_quote_config_inline(sub_id, get_conn)
 
             # Sync dropdown values to tower layer 1 (for primary quotes)
             _sync_dropdowns_to_tower(sub_id)
 
-            # Saved Quotes (from rating panel)
-            with st.expander("💾 Saved Quotes", expanded=False):
-                saved_quotes = _get_quotes_for_submission(sub_id)
-
-                if not saved_quotes:
-                    st.info("No quotes saved yet. Use 'Generate Quote' above to create one.")
-                else:
-                    for idx, quote_data in enumerate(saved_quotes, 1):
-                        quote_json = quote_data["quote_json"]
-                        with st.container():
-                            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
-
-                            with col1:
-                                st.markdown(f"**Quote #{idx}**")
-                                limit = quote_json.get("limit", "N/A")
-                                retention = quote_json.get("retention", "N/A")
-                                st.caption(f"${limit:,} / ${retention:,} retention")
-
-                            with col2:
-                                premium = quote_json.get("premium", 0)
-                                st.metric("Premium", f"${premium:,}")
-
-                            with col3:
-                                created_at = quote_data["created_at"]
-                                if created_at:
-                                    date_str = created_at.strftime("%b %d, %Y %I:%M %p")
-                                    st.caption(f"Created: {date_str}")
-
-                            with col4:
-                                col4a, col4b, col4c = st.columns(3)
-                                with col4a:
-                                    if st.button("📄", key=f"qt_view_pdf_{quote_data['id']}", help="View PDF"):
-                                        st.markdown(f"[Open PDF]({quote_data['pdf_url']})")
-                                with col4b:
-                                    if st.button("📝", key=f"qt_load_{quote_data['id']}", help="Load Parameters"):
-                                        st.session_state["loaded_quote_id"] = quote_data["id"]
-                                        st.session_state["loaded_quote_data"] = quote_json
-                                        st.rerun()
-                                with col4c:
-                                    if st.button("🗑️", key=f"qt_delete_{quote_data['id']}", help="Delete Quote"):
-                                        _delete_quote_row(quote_data["id"])
-                                        st.success("Quote deleted!")
-                                        st.rerun()
-
-                            st.divider()
-
             # Tower builder (auto-expand if multi-layer, collapsed for simple primary)
             tower_layers = st.session_state.get("tower_layers", [])
-            tower_expanded = len(tower_layers) > 1  # Expand when excess/multi-layer
+            tower_expanded = len(tower_layers) > 1
             render_tower_panel(sub_id, expanded=tower_expanded)
 
-            # Sublimits (collapsible)
+            # Sublimits (option-specific)
             render_sublimits_panel(sub_id, expanded=False)
+
+            # Endorsements (option-specific - varies by primary/excess/quote)
+            render_endorsements_panel(sub_id, expanded=False)
+
+            # Generate Quote button (after all option inputs)
+            st.divider()
+            render_generate_quote_button(sub_id, get_conn, quote_helpers, config)
+
+            # ─────────────────────────────────────────────────────────────
+            # SUBMISSION-LEVEL TERMS
+            # ─────────────────────────────────────────────────────────────
+            st.divider()
+            st.markdown("##### Submission Terms")
+
+            # Subjectivities (submission-level - shared across options)
+            render_subjectivities_panel(sub_id, expanded=False)
+
+            # ─────────────────────────────────────────────────────────────
+            # GENERATED QUOTES (Quote History)
+            # ─────────────────────────────────────────────────────────────
+            st.divider()
+            st.markdown("##### Generated Quotes")
+
+            saved_quotes = _get_quotes_for_submission(sub_id)
+
+            if not saved_quotes:
+                st.caption("No quotes generated yet. Configure options above and click Generate Quote.")
+            else:
+                for idx, quote_data in enumerate(saved_quotes, 1):
+                    quote_json = quote_data["quote_json"]
+                    col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+
+                    with col1:
+                        limit = quote_json.get("limit", 0)
+                        retention = quote_json.get("retention", 0)
+                        st.markdown(f"**#{idx}** · ${limit:,} / ${retention:,}")
+
+                    with col2:
+                        premium = quote_json.get("premium", 0)
+                        st.caption(f"Premium: ${premium:,}")
+
+                    with col3:
+                        created_at = quote_data["created_at"]
+                        if created_at:
+                            st.caption(created_at.strftime("%b %d %I:%M%p"))
+
+                    with col4:
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            if st.button("📄", key=f"qt_pdf_{quote_data['id']}", help="View PDF"):
+                                st.markdown(f"[Open PDF]({quote_data['pdf_url']})")
+                        with c2:
+                            if st.button("📝", key=f"qt_load_{quote_data['id']}", help="Load"):
+                                st.session_state["loaded_quote_id"] = quote_data["id"]
+                                st.session_state["loaded_quote_data"] = quote_json
+                                st.rerun()
+                        with c3:
+                            if st.button("🗑️", key=f"qt_del_{quote_data['id']}", help="Delete"):
+                                _delete_quote_row(quote_data["id"])
+                                st.rerun()
 
         with tab_details:
             # ------------------- pull AI originals -------------------
