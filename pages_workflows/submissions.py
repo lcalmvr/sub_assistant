@@ -237,6 +237,56 @@ def _delete_quote_row(quote_id: str):
         cur.execute("delete from quotes where id = %s", (quote_id,))
 # ░░░░░░░░░░░░░░  END QUOTE HELPERS  ░░░░░░░░░░░░░░
 
+# ─────────────────────── Tower Sync ────────────────────────
+def _sync_dropdowns_to_tower(sub_id: str):
+    """
+    Sync Rating Panel dropdown values to tower layer 1.
+    For simple primary quotes, this auto-creates a CMAI primary layer.
+    """
+    # Get dropdown values from session state
+    limit = st.session_state.get(f"selected_limit_{sub_id}")
+    retention = st.session_state.get(f"selected_retention_{sub_id}")
+
+    if not limit:
+        return  # No limit selected yet
+
+    # Get current tower state
+    tower_layers = st.session_state.get("tower_layers", [])
+
+    # Case 1: Empty tower - create primary CMAI layer
+    if not tower_layers:
+        st.session_state.tower_layers = [{
+            "carrier": "CMAI",
+            "limit": limit,
+            "attachment": 0,  # Primary sits at ground
+            "premium": None,
+            "rpm": None,
+        }]
+        st.session_state.primary_retention = retention
+        return
+
+    # Case 2: Single layer tower - update the primary layer
+    if len(tower_layers) == 1:
+        layer = tower_layers[0]
+        # Only update if it's the CMAI layer or unnamed
+        carrier = str(layer.get("carrier", "")).upper()
+        if "CMAI" in carrier or not layer.get("carrier"):
+            # Update limit if it changed
+            if layer.get("limit") != limit:
+                st.session_state.tower_layers[0]["limit"] = limit
+                st.session_state.tower_layers[0]["carrier"] = "CMAI"
+        st.session_state.primary_retention = retention
+        return
+
+    # Case 3: Multi-layer tower - find and update CMAI layer
+    for idx, layer in enumerate(tower_layers):
+        carrier = str(layer.get("carrier", "")).upper()
+        if "CMAI" in carrier:
+            if layer.get("limit") != limit:
+                st.session_state.tower_layers[idx]["limit"] = limit
+            break
+    st.session_state.primary_retention = retention
+
 # ─────────────────────── DB helpers ────────────────────────
 def get_conn():
     conn = st.session_state.get("db_conn")
@@ -617,8 +667,59 @@ def render():
             # Rating inputs (limit/retention dropdowns) - uses existing rating_panel_v2
             render_rating_panel(sub_id, get_conn, quote_helpers)
 
-            # Tower builder (collapsible)
-            render_tower_panel(sub_id, expanded=False)
+            # Sync dropdown values to tower layer 1 (for primary quotes)
+            _sync_dropdowns_to_tower(sub_id)
+
+            # Saved Quotes (from rating panel)
+            with st.expander("💾 Saved Quotes", expanded=False):
+                saved_quotes = _get_quotes_for_submission(sub_id)
+
+                if not saved_quotes:
+                    st.info("No quotes saved yet. Use 'Generate Quote' above to create one.")
+                else:
+                    for idx, quote_data in enumerate(saved_quotes, 1):
+                        quote_json = quote_data["quote_json"]
+                        with st.container():
+                            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+
+                            with col1:
+                                st.markdown(f"**Quote #{idx}**")
+                                limit = quote_json.get("limit", "N/A")
+                                retention = quote_json.get("retention", "N/A")
+                                st.caption(f"${limit:,} / ${retention:,} retention")
+
+                            with col2:
+                                premium = quote_json.get("premium", 0)
+                                st.metric("Premium", f"${premium:,}")
+
+                            with col3:
+                                created_at = quote_data["created_at"]
+                                if created_at:
+                                    date_str = created_at.strftime("%b %d, %Y %I:%M %p")
+                                    st.caption(f"Created: {date_str}")
+
+                            with col4:
+                                col4a, col4b, col4c = st.columns(3)
+                                with col4a:
+                                    if st.button("📄", key=f"qt_view_pdf_{quote_data['id']}", help="View PDF"):
+                                        st.markdown(f"[Open PDF]({quote_data['pdf_url']})")
+                                with col4b:
+                                    if st.button("📝", key=f"qt_load_{quote_data['id']}", help="Load Parameters"):
+                                        st.session_state["loaded_quote_id"] = quote_data["id"]
+                                        st.session_state["loaded_quote_data"] = quote_json
+                                        st.rerun()
+                                with col4c:
+                                    if st.button("🗑️", key=f"qt_delete_{quote_data['id']}", help="Delete Quote"):
+                                        _delete_quote_row(quote_data["id"])
+                                        st.success("Quote deleted!")
+                                        st.rerun()
+
+                            st.divider()
+
+            # Tower builder (auto-expand if multi-layer, collapsed for simple primary)
+            tower_layers = st.session_state.get("tower_layers", [])
+            tower_expanded = len(tower_layers) > 1  # Expand when excess/multi-layer
+            render_tower_panel(sub_id, expanded=tower_expanded)
 
             # Sublimits (collapsible)
             render_sublimits_panel(sub_id, expanded=False)
@@ -1208,57 +1309,6 @@ def render():
                         with st.chat_message(message["role"]):
                             st.markdown(message["content"])
 
-            # ------------------- Saved Quotes --------------------
-            with st.expander("💾 Saved Quotes", expanded=True):
-                saved_quotes = _get_quotes_for_submission(sub_id)
-
-                if not saved_quotes:
-                    st.info("No quotes saved yet. Create a quote below to get started.")
-                else:
-                    for idx, quote_data in enumerate(saved_quotes, 1):
-                        quote_json = quote_data["quote_json"]
-                        with st.container():
-                            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
-
-                            with col1:
-                                st.markdown(f"**Quote #{idx}**")
-                                limit = quote_json.get("limit", "N/A")
-                                retention = quote_json.get("retention", "N/A")
-                                st.caption(f"${limit:,} / ${retention:,} retention")
-
-                            with col2:
-                                premium = quote_json.get("premium", 0)
-                                st.metric("Premium", f"${premium:,}")
-
-                            with col3:
-                                created_at = quote_data["created_at"]
-                                if created_at:
-                                    date_str = created_at.strftime("%b %d, %Y %I:%M %p")
-                                    st.caption(f"Created: {date_str}")
-
-                            with col4:
-                                col4a, col4b, col4c = st.columns(3)
-                                with col4a:
-                                    if st.button("📄", key=f"view_pdf_{quote_data['id']}", help="View PDF"):
-                                        st.markdown(f"[Open PDF]({quote_data['pdf_url']})")
-                                with col4b:
-                                    if st.button("📝", key=f"load_{quote_data['id']}", help="Load Parameters"):
-                                        # Store the loaded quote ID in session state
-                                        st.session_state["loaded_quote_id"] = quote_data["id"]
-                                        st.session_state["loaded_quote_data"] = quote_json
-                                        st.rerun()
-                                with col4c:
-                                    if st.button("🗑️", key=f"delete_{quote_data['id']}", help="Delete Quote"):
-                                        _delete_quote_row(quote_data["id"])
-                                        st.success("Quote deleted!")
-                                        st.rerun()
-
-                            st.divider()
-
-            # ------------------- Rating --------------------
-            # NOTE: Rating panel moved to Quote tab above
-            # quote_helpers defined at line ~594
-    
             # ------------------- Feedback History --------------------
             with st.expander("🔎 Feedback History", expanded=False):
                 hist_df = pd.read_sql(
