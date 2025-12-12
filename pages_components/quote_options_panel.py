@@ -1,95 +1,60 @@
 """
 Quote Options Panel Component
-Manages quote option selection, naming, and persistence.
+Displays saved quote options as a dropdown selector with View/Clone/Delete actions.
+Users create new options from the Draft Configuration section, not by editing saved ones.
 """
 from __future__ import annotations
 
 import streamlit as st
+import os
+import importlib.util
 from pages_components.tower_db import (
     list_quotes_for_submission,
     get_quote_by_id,
-    save_tower,
-    update_tower,
     clone_quote,
     delete_tower,
+    update_quote_field,
+    get_conn,
 )
 
+# Import shared premium calculator - single source of truth for premium calculations
+from rating_engine.premium_calculator import calculate_premium_for_submission
+from utils.quote_formatting import format_currency, generate_quote_name
 
-def _format_amount(amount: float) -> str:
-    """Format amount compactly (e.g., 1000000 -> '1M', 500000 -> '500K')."""
+
+def _format_premium(amount: float) -> str:
+    """Format premium for display."""
     if not amount:
-        return ""
-    if amount >= 1_000_000 and amount % 1_000_000 == 0:
-        return f"${int(amount // 1_000_000)}M"
-    if amount >= 1_000 and amount % 1_000 == 0:
-        return f"${int(amount // 1_000)}K"
+        return "—"
+    if amount >= 1_000_000:
+        return f"${amount/1_000_000:.1f}M"
+    if amount >= 1_000:
+        return f"${amount/1_000:.0f}K"
     return f"${amount:,.0f}"
 
 
-def _generate_smart_name(sub_id: str) -> str:
-    """
-    Generate a smart quote name based on configuration.
-
-    Format examples:
-    - Primary: "$2M / $25K ret"
-    - Excess: "$1M xs $5M / $50K ret"
-    - With quota share: "$2M @ 50% / $25K ret"
-    - Excess with quota: "$1M @ 25% xs $5M / $50K ret"
-    """
-    tower_layers = st.session_state.get("tower_layers", [])
-    retention = st.session_state.get("primary_retention")
-
-    if not tower_layers:
-        # Fallback to dropdown values
-        limit = st.session_state.get(f"selected_limit_{sub_id}")
-        if limit:
-            ret_str = _format_amount(retention) if retention else ""
-            return f"{_format_amount(limit)}{' / ' + ret_str + ' ret' if ret_str else ''}"
-        return "New Quote"
-
-    # Find CMAI layer
-    cmai_layer = None
-    cmai_idx = None
-    for idx, layer in enumerate(tower_layers):
-        carrier = str(layer.get("carrier", "")).upper()
-        if "CMAI" in carrier:
-            cmai_layer = layer
-            cmai_idx = idx
-            break
-
-    if not cmai_layer:
-        # Use first layer if no CMAI found
-        cmai_layer = tower_layers[0]
-        cmai_idx = 0
-
-    limit = cmai_layer.get("limit", 0)
-    attachment = cmai_layer.get("attachment", 0)
-    quota_share = cmai_layer.get("quota_share")  # Percentage if quota share
-
-    # Build name parts
-    parts = []
-
-    # Limit (with quota share if applicable)
-    limit_str = _format_amount(limit)
-    if quota_share and quota_share < 100:
-        parts.append(f"{limit_str} @ {int(quota_share)}%")
-    else:
-        parts.append(limit_str)
-
-    # Attachment (if excess - attachment > 0)
-    if attachment and attachment > 0:
-        parts.append(f"xs {_format_amount(attachment)}")
-
-    # Retention
-    if retention:
-        parts.append(f"/ {_format_amount(retention)} ret")
-
-    return " ".join(parts) if parts else "New Quote"
+def _parse_currency(val) -> float:
+    """Parse currency input including K/M notation."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().upper().replace(",", "").replace("$", "")
+    if not s:
+        return None
+    try:
+        if s.endswith("K"):
+            return float(s[:-1]) * 1_000
+        if s.endswith("M"):
+            return float(s[:-1]) * 1_000_000
+        return float(s)
+    except Exception:
+        return None
 
 
 def render_quote_options_panel(sub_id: str):
     """
-    Render the quote options selector and management UI.
+    Render saved quote options as a dropdown selector with action buttons.
 
     Args:
         sub_id: Submission ID
@@ -98,173 +63,435 @@ def render_quote_options_panel(sub_id: str):
         st.warning("No submission selected.")
         return
 
-    # Get all quote options for this submission
+    # Get all saved quote options for this submission
     all_quotes = list_quotes_for_submission(sub_id)
 
-    # Quote selection and name row
-    col_select, col_name, col_actions = st.columns([2, 2, 2])
+    if not all_quotes:
+        st.caption("No saved options yet. Configure your quote below and click 'Save as New Option'.")
+        return
+
+    # Build dropdown options
+    # Quote name already includes date in format: "$1M x $25K - 12.17.25"
+    quote_options = {}
+    for quote in all_quotes:
+        quote_id = quote["id"]
+        quote_name = quote.get("quote_name", "Unnamed Option")
+
+        quote_options[quote_id] = {
+            "label": quote_name,
+            "name": quote_name,
+        }
+
+    # Currently viewing quote
+    viewing_quote_id = st.session_state.get("viewing_quote_id")
+
+    # Layout: Dropdown | Clone | Delete
+    col_select, col_clone, col_delete = st.columns([4, 1, 1])
 
     with col_select:
-        if all_quotes:
-            quote_options = {q["id"]: f"{q['quote_name']} ({q['updated_at'].strftime('%m/%d')})" for q in all_quotes}
-            quote_options["__new__"] = "+ New Quote Option"
+        # Build options list with IDs
+        option_ids = [""] + list(quote_options.keys())
+        option_labels = ["— Select saved option —"] + [quote_options[qid]["label"] for qid in quote_options.keys()]
 
-            current_quote_id = st.session_state.get("loaded_tower_id")
-            default_idx = 0
-            if current_quote_id and current_quote_id in quote_options:
-                default_idx = list(quote_options.keys()).index(current_quote_id)
+        # Find current index
+        default_idx = 0
+        if viewing_quote_id and viewing_quote_id in quote_options:
+            default_idx = option_ids.index(viewing_quote_id)
 
-            selected_quote_id = st.selectbox(
-                "Quote Option",
-                options=list(quote_options.keys()),
-                format_func=lambda x: quote_options[x],
-                index=default_idx,
-                key="quote_selector",
-                label_visibility="collapsed"
+        selected_id = st.selectbox(
+            f"Saved Quote Options ({len(all_quotes)})",
+            options=option_ids,
+            format_func=lambda x: option_labels[option_ids.index(x)] if x in option_ids else x,
+            index=default_idx,
+            key="saved_quote_selector",
+        )
+
+        # Auto-load when selection changes
+        if selected_id and selected_id != viewing_quote_id:
+            _view_quote(selected_id)
+
+    with col_clone:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
+        clone_disabled = not viewing_quote_id
+        if st.button("Clone", key="clone_selected_btn", use_container_width=True, disabled=clone_disabled):
+            if viewing_quote_id:
+                _clone_quote_to_draft(viewing_quote_id, sub_id, all_quotes)
+
+    with col_delete:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
+        delete_disabled = not viewing_quote_id
+        if st.button("Delete", key="delete_selected_btn", use_container_width=True, disabled=delete_disabled):
+            if viewing_quote_id:
+                _delete_quote(viewing_quote_id, viewing_quote_id)
+
+    # Show premium summary when viewing a quote
+    if viewing_quote_id:
+        _render_premium_summary(viewing_quote_id)
+
+
+def _update_quote_limit_retention(quote_id: str, quote_data: dict, new_limit: int, new_retention: int):
+    """
+    Update the quote's limit, retention, regenerate quote name, and recalculate premiums.
+    """
+    import json
+    from pages_components.tower_db import get_conn
+
+    # Update tower_json with new limit
+    tower_json = quote_data.get("tower_json", [])
+    if tower_json and len(tower_json) > 0:
+        tower_json[0]["limit"] = new_limit
+        # Update attachment point for layers above the first
+        for i, layer in enumerate(tower_json):
+            if i == 0:
+                layer["attachment"] = new_retention
+            else:
+                # Excess layers attach on top of previous
+                prev_limit = tower_json[i-1].get("limit", 0)
+                prev_attach = tower_json[i-1].get("attachment", 0)
+                layer["attachment"] = prev_attach + prev_limit
+
+    # Generate new quote name using shared utility
+    new_name = generate_quote_name(new_limit, new_retention)
+
+    # Recalculate premiums using rating engine
+    technical_premium = None
+    risk_adjusted_premium = None
+    sub_id = quote_data.get("submission_id")
+
+    if sub_id:
+        premium_result = _calculate_premium_for_quote(sub_id, new_limit, new_retention)
+        if premium_result and "error" not in premium_result:
+            technical_premium = premium_result.get("technical_premium")
+            risk_adjusted_premium = premium_result.get("risk_adjusted_premium")
+            # Update first layer premium in tower_json
+            if tower_json and len(tower_json) > 0 and risk_adjusted_premium:
+                tower_json[0]["premium"] = risk_adjusted_premium
+
+    # Update in database
+    with get_conn().cursor() as cur:
+        cur.execute(
+            """
+            UPDATE insurance_towers
+            SET tower_json = %s,
+                primary_retention = %s,
+                quote_name = %s,
+                technical_premium = %s,
+                risk_adjusted_premium = %s,
+                quoted_premium = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (json.dumps(tower_json), new_retention, new_name,
+             technical_premium, risk_adjusted_premium, risk_adjusted_premium, quote_id)
+        )
+        get_conn().commit()
+
+    # Update session state
+    st.session_state.tower_layers = tower_json
+    st.session_state.primary_retention = new_retention
+    st.session_state.quote_name = new_name
+
+    st.rerun()
+
+
+def _calculate_premium_for_quote(sub_id: str, limit: int, retention: int) -> dict:
+    """
+    Calculate both technical and risk-adjusted premiums using the shared premium calculator.
+    This ensures Quote tab premiums match Rating tab premiums exactly.
+    """
+    # Use the shared premium calculator - single source of truth
+    return calculate_premium_for_submission(sub_id, limit, retention)
+
+
+def _map_industry_to_slug(industry_name: str) -> str:
+    """Map NAICS industry names to rating engine slugs."""
+    if not industry_name:
+        return "Professional_Services_Consulting"
+
+    industry_mapping = {
+        "Media Buying Agencies": "Advertising_Marketing_Technology",
+        "Advertising Agencies": "Advertising_Marketing_Technology",
+        "Marketing Consultants": "Advertising_Marketing_Technology",
+        "Software Publishers": "Software_as_a_Service_SaaS",
+        "Computer Systems Design Services": "Professional_Services_Consulting",
+        "Management Consultants": "Professional_Services_Consulting",
+    }
+    return industry_mapping.get(industry_name, "Professional_Services_Consulting")
+
+
+def _save_calculated_premiums(quote_id: str, technical_premium: float, risk_adjusted_premium: float):
+    """Save calculated premiums to the database."""
+    try:
+        from pages_components.tower_db import get_conn
+        with get_conn().cursor() as cur:
+            cur.execute(
+                """
+                UPDATE insurance_towers
+                SET technical_premium = %s,
+                    risk_adjusted_premium = %s,
+                    quoted_premium = COALESCE(quoted_premium, %s),
+                    updated_at = NOW()
+                WHERE id = %s
+                """,
+                (technical_premium, risk_adjusted_premium, risk_adjusted_premium, quote_id)
+            )
+            get_conn().commit()
+    except Exception as e:
+        pass  # Silent fail - premiums will just recalculate on next load
+
+
+def _render_premium_summary(quote_id: str, sub_id: str = None):
+    """
+    Render premium summary with:
+      - Row 1: Limit (dropdown) | Retention (dropdown) | Sold Premium (editable)
+      - Row 2: Technical | Risk-Adjusted | Market Adjustment
+
+    Three-tier premium model:
+      - Technical Premium: Pure exposure-based (before controls)
+      - Risk-Adjusted Premium: After control credits/debits
+      - Sold Premium: UW's final quoted price (editable)
+      - Market Adjustment: Sold - Risk Adjusted (calculated)
+    """
+    quote_data = get_quote_by_id(quote_id)
+    if not quote_data:
+        return
+
+    # Get sold premium from DB (user-entered, should be preserved)
+    sold_premium = quote_data.get("sold_premium") or quote_data.get("quoted_premium")
+
+    # Get limit/retention from tower data
+    tower_json = quote_data.get("tower_json", [])
+    current_limit = tower_json[0].get("limit") if tower_json else 2_000_000
+    current_retention = quote_data.get("primary_retention") or 25_000
+
+    # ALWAYS calculate premiums fresh from rating engine
+    # This ensures Quote tab reflects any rating factor changes (hazard, controls) from Rating tab
+    premium_error = None
+    technical_premium = None
+    risk_adjusted_premium = None
+    sub_id = quote_data.get("submission_id")
+
+    if sub_id:
+        premium_result = _calculate_premium_for_quote(sub_id, current_limit, current_retention)
+        if premium_result:
+            if "error" in premium_result:
+                premium_error = premium_result["error"]
+            else:
+                technical_premium = premium_result.get("technical_premium")
+                risk_adjusted_premium = premium_result.get("risk_adjusted_premium")
+
+    # Fallback: use quoted_premium as risk_adjusted if calculation failed
+    if not risk_adjusted_premium:
+        risk_adjusted_premium = quote_data.get("quoted_premium")
+
+    # Calculate market adjustment
+    market_adjustment = None
+    if sold_premium and risk_adjusted_premium:
+        market_adjustment = sold_premium - risk_adjusted_premium
+
+    # Standard options for dropdowns
+    limit_options = [
+        ("$1M", 1_000_000),
+        ("$2M", 2_000_000),
+        ("$3M", 3_000_000),
+        ("$5M", 5_000_000),
+    ]
+    retention_options = [
+        ("$10K", 10_000),
+        ("$25K", 25_000),
+        ("$50K", 50_000),
+        ("$100K", 100_000),
+        ("$250K", 250_000),
+        ("$500K", 500_000),
+    ]
+
+    # ROW 1: Limit (dropdown) | Retention (dropdown) | Sold Premium (editable)
+    col_limit, col_ret, col_sold = st.columns([1, 1, 1])
+
+    with col_limit:
+        limit_labels = [opt[0] for opt in limit_options]
+        limit_values = {opt[0]: opt[1] for opt in limit_options}
+        limit_default_idx = next(
+            (i for i, opt in enumerate(limit_options) if opt[1] == current_limit), 1
+        )
+        selected_limit_label = st.selectbox(
+            "Limit",
+            options=limit_labels,
+            index=limit_default_idx,
+            key=f"view_limit_{quote_id}",
+        )
+        selected_limit = limit_values[selected_limit_label]
+
+        # Auto-save limit change
+        if selected_limit != current_limit:
+            _update_quote_limit_retention(quote_id, quote_data, selected_limit, current_retention)
+
+    with col_ret:
+        retention_labels = [opt[0] for opt in retention_options]
+        retention_values = {opt[0]: opt[1] for opt in retention_options}
+        retention_default_idx = next(
+            (i for i, opt in enumerate(retention_options) if opt[1] == current_retention), 1
+        )
+        selected_retention_label = st.selectbox(
+            "Retention",
+            options=retention_labels,
+            index=retention_default_idx,
+            key=f"view_retention_{quote_id}",
+        )
+        selected_retention = retention_values[selected_retention_label]
+
+        # Auto-save retention change
+        if selected_retention != current_retention:
+            _update_quote_limit_retention(quote_id, quote_data, current_limit, selected_retention)
+
+    with col_sold:
+        # Editable sold premium field with dollar formatting
+        widget_key = f"sold_premium_{quote_id}"
+
+        # Initialize session state if not present (use DB value)
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = f"${sold_premium:,.0f}" if sold_premium else ""
+        else:
+            # Reformat if user entered unformatted value (e.g., "45000" -> "$45,000")
+            current_val = st.session_state[widget_key]
+            parsed = _parse_currency(current_val)
+            if parsed is not None:
+                expected = f"${parsed:,.0f}"
+                if current_val.strip() != expected:
+                    # Save to database BEFORE reformatting and rerun
+                    if parsed != sold_premium:
+                        update_quote_field(quote_id, "sold_premium", parsed)
+                    st.session_state[widget_key] = expected
+                    st.rerun()
+
+        new_sold_str = st.text_input(
+            "Sold Premium",
+            key=widget_key,
+            placeholder="$0"
+        )
+        new_sold = _parse_currency(new_sold_str)
+
+        # Auto-save on change
+        if new_sold != sold_premium and new_sold is not None:
+            update_quote_field(quote_id, "sold_premium", new_sold)
+
+    # ROW 2: Technical | Risk-Adjusted | Market Adjustment
+    col_tech, col_risk, col_mkt = st.columns([1, 1, 1])
+
+    with col_tech:
+        if premium_error:
+            st.metric(
+                "Technical",
+                "—",
+                help=premium_error
+            )
+            st.caption(f"⚠️ {premium_error}")
+        else:
+            st.metric(
+                "Technical",
+                f"${technical_premium:,.0f}" if technical_premium else "—",
+                help="Pure exposure-based premium (hazard + revenue + limit + retention factors)"
             )
 
-            # Load selected quote if changed
-            if selected_quote_id != "__new__" and selected_quote_id != current_quote_id:
-                _load_quote(selected_quote_id)
-            elif selected_quote_id == "__new__":
-                _start_new_quote(all_quotes)
-        else:
-            st.caption("No saved quotes yet")
-
-    with col_name:
-        quote_name = st.text_input(
-            "Quote Name",
-            value=st.session_state.get("quote_name", "Option A"),
-            key="quote_name_input",
-            label_visibility="collapsed",
-            placeholder="Quote name..."
+    with col_risk:
+        st.metric(
+            "Risk-Adjusted",
+            f"${risk_adjusted_premium:,.0f}" if risk_adjusted_premium else "—",
+            help="Premium after control credits/debits"
         )
-        if quote_name != st.session_state.get("quote_name"):
-            st.session_state.quote_name = quote_name
 
-    with col_actions:
-        btn_cols = st.columns([1, 1, 1])
-
-        with btn_cols[0]:
-            if st.button("💾 Save", type="primary", use_container_width=True, key="save_quote_btn"):
-                _save_quote(sub_id, all_quotes)
-
-        with btn_cols[1]:
-            if st.session_state.get("loaded_tower_id") and st.button("📋 Clone", use_container_width=True, key="clone_quote_btn"):
-                _clone_current_quote(sub_id, all_quotes)
-
-        with btn_cols[2]:
-            if st.session_state.get("loaded_tower_id") and st.button("🗑️ Delete", use_container_width=True, key="delete_quote_btn"):
-                _delete_current_quote()
+    with col_mkt:
+        # Market adjustment (calculated, color-coded)
+        if market_adjustment is not None:
+            if market_adjustment > 0:
+                st.metric("Market Adj", f"+${market_adjustment:,.0f}")
+            elif market_adjustment < 0:
+                st.metric("Market Adj", f"${market_adjustment:,.0f}")
+            else:
+                st.metric("Market Adj", "$0")
+        else:
+            st.metric("Market Adj", "—", help="Set sold premium to see adjustment")
 
 
-def _load_quote(quote_id: str):
-    """Load a quote into session state."""
+def _view_quote(quote_id: str):
+    """
+    Load a saved quote for VIEWING (read-only comparison).
+    This populates the tower display but does NOT enable editing.
+    """
     quote_data = get_quote_by_id(quote_id)
     if quote_data:
+        # Store viewing state
+        st.session_state.viewing_quote_id = quote_id
+
+        # Load tower data for display
         st.session_state.tower_layers = quote_data["tower_json"]
         st.session_state.primary_retention = quote_data["primary_retention"]
         st.session_state.sublimits = quote_data.get("sublimits") or []
         st.session_state.loaded_tower_id = quote_data["id"]
         st.session_state.quote_name = quote_data.get("quote_name", "Option A")
         st.session_state.quoted_premium = quote_data.get("quoted_premium")
+
+        # Mark as viewing (read-only), not as a draft being edited
+        st.session_state._viewing_saved_option = True
+        st.session_state._quote_just_loaded = True
+
+        # Sync dropdowns to show the viewed option's values
+        tower_json = quote_data["tower_json"]
+        if tower_json and len(tower_json) > 0:
+            first_layer = tower_json[0]
+            st.session_state._loaded_quote_limit = first_layer.get("limit")
+            st.session_state._loaded_quote_retention = quote_data.get("primary_retention")
+
         st.rerun()
 
 
-def _start_new_quote(all_quotes: list):
-    """Start a new quote option."""
-    if st.session_state.get("loaded_tower_id"):
-        st.session_state.tower_layers = []
-        st.session_state.primary_retention = None
-        st.session_state.sublimits = []
-        st.session_state.loaded_tower_id = None
-        # Auto-generate next option name
-        existing_names = [q["quote_name"] for q in all_quotes]
-        for letter in "BCDEFGHIJ":
-            new_name = f"Option {letter}"
-            if new_name not in existing_names:
-                st.session_state.quote_name = new_name
-                break
-        else:
-            st.session_state.quote_name = f"Option {len(all_quotes) + 1}"
-        st.session_state.quoted_premium = None
-        st.rerun()
-
-
-def _save_quote(sub_id: str, all_quotes: list):
-    """Save current quote to database."""
-    if not st.session_state.get("tower_layers"):
-        st.warning("No tower data to save.")
-        return
-
+def _clone_quote_to_draft(quote_id: str, sub_id: str, all_quotes: list):
+    """
+    Clone a saved quote to create a new saved option in the database.
+    The new option will be immediately selectable in the dropdown.
+    """
     try:
-        retention = st.session_state.get("primary_retention")
-        sublimits = st.session_state.get("sublimits", [])
-        quoted_premium = st.session_state.get("quoted_premium")
+        # Generate unique name for the clone
+        quote_data = get_quote_by_id(quote_id)
+        if not quote_data:
+            st.error("Could not load quote data")
+            return
 
-        if st.session_state.get("loaded_tower_id"):
-            # Updating existing - regenerate smart name based on current config
-            quote_name = _generate_smart_name(sub_id)
-            update_tower(
-                st.session_state.loaded_tower_id,
-                st.session_state.tower_layers,
-                retention,
-                sublimits,
-                quote_name,
-                quoted_premium
-            )
-            st.session_state.quote_name = quote_name
-            st.success("Quote updated!")
-        else:
-            # New save - generate smart name
-            quote_name = _generate_smart_name(sub_id)
-            tower_id = save_tower(
-                sub_id,
-                st.session_state.tower_layers,
-                retention,
-                sublimits,
-                quote_name,
-                quoted_premium
-            )
-            st.session_state.loaded_tower_id = tower_id
-            st.session_state.quote_name = quote_name
-            st.success("Quote saved!")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Error saving: {e}")
+        original_name = quote_data.get("quote_name", "Option")
+        existing_names = [q.get("quote_name", "") for q in all_quotes]
 
-
-def _clone_current_quote(sub_id: str, all_quotes: list):
-    """Clone the current quote with smart naming."""
-    try:
-        # Generate smart name with "(copy)" suffix
-        base_name = _generate_smart_name(sub_id)
-        new_name = f"{base_name} (copy)"
-
-        # If that name already exists, add a number
-        existing_names = [q["quote_name"] for q in all_quotes]
+        # Generate "Copy of X" or "Copy of X (2)" etc.
+        new_name = f"Copy of {original_name}"
         if new_name in existing_names:
             i = 2
-            while f"{base_name} (copy {i})" in existing_names:
+            while f"Copy of {original_name} ({i})" in existing_names:
                 i += 1
-            new_name = f"{base_name} (copy {i})"
+            new_name = f"Copy of {original_name} ({i})"
 
-        new_id = clone_quote(st.session_state.loaded_tower_id, new_name)
-        st.session_state.loaded_tower_id = new_id
-        st.session_state.quote_name = new_name
-        st.success(f"Cloned as '{new_name}'")
+        # Actually create new record in database
+        new_quote_id = clone_quote(quote_id, new_name)
+
+        # Select the newly created clone
+        st.session_state.viewing_quote_id = new_quote_id
+
+        st.success(f"Created: {new_name}")
         st.rerun()
+
     except Exception as e:
         st.error(f"Error cloning: {e}")
 
 
-def _delete_current_quote():
-    """Delete the current quote."""
+def _delete_quote(quote_id: str, viewing_quote_id: str):
+    """Delete a saved quote option."""
     try:
-        delete_tower(st.session_state.loaded_tower_id)
-        st.session_state.loaded_tower_id = None
-        st.session_state.quote_name = "Option A"
-        st.session_state.quoted_premium = None
+        delete_tower(quote_id)
+
+        # If we were viewing the deleted quote, clear viewing state
+        if viewing_quote_id == quote_id:
+            st.session_state.viewing_quote_id = None
+            st.session_state.loaded_tower_id = None
+            st.session_state._viewing_saved_option = False
+
         st.success("Quote deleted.")
         st.rerun()
     except Exception as e:
@@ -273,36 +500,41 @@ def _delete_current_quote():
 
 def auto_load_quote_for_submission(sub_id: str):
     """
-    Auto-load the most recent quote when submission changes.
-    Call this before rendering the quote panel.
+    Handle submission changes - clear state when switching submissions.
     """
     if not sub_id:
         return
 
     last_loaded_sub = st.session_state.get("_tower_loaded_for_sub")
     if last_loaded_sub != sub_id:
-        try:
-            from pages_components.tower_db import get_tower_for_submission
-            tower_data = get_tower_for_submission(sub_id)
-            if tower_data:
-                st.session_state.tower_layers = tower_data["tower_json"]
-                st.session_state.primary_retention = tower_data["primary_retention"]
-                st.session_state.sublimits = tower_data.get("sublimits") or []
-                st.session_state.loaded_tower_id = tower_data["id"]
-                st.session_state.quote_name = tower_data.get("quote_name", "Option A")
-                st.session_state.quoted_premium = tower_data.get("quoted_premium")
-            else:
-                # No saved tower - start fresh
-                st.session_state.tower_layers = []
-                st.session_state.primary_retention = None
-                st.session_state.sublimits = []
-                st.session_state.loaded_tower_id = None
-                st.session_state.quote_name = "Option A"
-                st.session_state.quoted_premium = None
-        except Exception:
-            st.session_state.tower_layers = []
-            st.session_state.sublimits = []
-            st.session_state.loaded_tower_id = None
-            st.session_state.quote_name = "Option A"
-            st.session_state.quoted_premium = None
+        # Switching to a different submission - reset state
+        st.session_state.tower_layers = []
+        st.session_state.primary_retention = None
+        st.session_state.sublimits = []
+        st.session_state.loaded_tower_id = None
+        st.session_state.viewing_quote_id = None
+        st.session_state._viewing_saved_option = False
+        st.session_state.quote_name = "New Option"
+        st.session_state.quoted_premium = None
+        st.session_state.draft_quote_name = None
         st.session_state._tower_loaded_for_sub = sub_id
+
+
+def is_viewing_saved_option() -> bool:
+    """
+    Check if we're currently viewing a saved option (read-only mode).
+    Used by other components to determine if editing should be disabled.
+    """
+    return st.session_state.get("_viewing_saved_option", False)
+
+
+def get_draft_name() -> str:
+    """Get the current draft name for saving a new option."""
+    return st.session_state.get("draft_quote_name", "New Option")
+
+
+def clear_draft_state():
+    """Clear the draft state after saving."""
+    st.session_state.draft_quote_name = None
+    st.session_state.viewing_quote_id = None
+    st.session_state._viewing_saved_option = False
