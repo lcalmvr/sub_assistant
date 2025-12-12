@@ -48,7 +48,13 @@ def _parse_tower_json(val):
 
 
 def _row_to_quote(row) -> dict:
-    """Convert a database row to a quote dict."""
+    """Convert a database row to a quote dict.
+
+    Three-tier premium model:
+      - technical_premium: Pure exposure-based (before controls)
+      - risk_adjusted_premium: After control credits/debits
+      - sold_premium: UW's final quoted price (market adjustment = sold - risk_adjusted)
+    """
     return {
         "id": str(row[0]),
         "tower_json": _parse_tower_json(row[1]),
@@ -59,30 +65,54 @@ def _row_to_quote(row) -> dict:
         "quote_notes": row[6],
         "created_at": row[7],
         "updated_at": row[8],
+        "technical_premium": float(row[9]) if len(row) > 9 and row[9] else None,
+        "risk_adjusted_premium": float(row[10]) if len(row) > 10 and row[10] else None,
+        "sold_premium": float(row[11]) if len(row) > 11 and row[11] else None,
+        "endorsements": _parse_tower_json(row[12]) if len(row) > 12 else [],
+        "position": row[13] if len(row) > 13 else "primary",
+        "submission_id": str(row[14]) if len(row) > 14 and row[14] else None,
     }
 
 
 def save_tower(submission_id: str, tower_json: list, primary_retention: Optional[float],
                sublimits: Optional[list] = None, quote_name: str = "Option A",
-               quoted_premium: Optional[float] = None, quote_notes: Optional[str] = None) -> str:
-    """Save a new tower/quote option for a submission."""
+               quoted_premium: Optional[float] = None, quote_notes: Optional[str] = None,
+               technical_premium: Optional[float] = None, risk_adjusted_premium: Optional[float] = None,
+               sold_premium: Optional[float] = None,
+               endorsements: Optional[list] = None, position: str = "primary") -> str:
+    """Save a new tower/quote option for a submission.
+
+    Three-tier premium model:
+      - technical_premium: Pure exposure-based (before controls)
+      - risk_adjusted_premium: After control credits/debits
+      - sold_premium: UW's final quoted price (market adjustment = sold - risk_adjusted)
+    """
+    # Use sold_premium if provided, otherwise fall back to quoted_premium for backwards compat
+    final_sold = sold_premium if sold_premium is not None else quoted_premium
     with get_conn().cursor() as cur:
         cur.execute(
             """
             INSERT INTO insurance_towers (submission_id, tower_json, primary_retention,
-                                          sublimits, quote_name, quoted_premium, quote_notes, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                          sublimits, quote_name, quoted_premium, quote_notes,
+                                          technical_premium, risk_adjusted_premium, sold_premium,
+                                          endorsements, position, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (submission_id, json.dumps(tower_json), primary_retention,
-             json.dumps(sublimits or []), quote_name, quoted_premium, quote_notes, CURRENT_USER),
+             json.dumps(sublimits or []), quote_name, quoted_premium, quote_notes,
+             technical_premium, risk_adjusted_premium, final_sold,
+             json.dumps(endorsements or []), position, CURRENT_USER),
         )
         return str(cur.fetchone()[0])
 
 
 def update_tower(tower_id: str, tower_json: list, primary_retention: Optional[float],
                  sublimits: Optional[list] = None, quote_name: Optional[str] = None,
-                 quoted_premium: Optional[float] = None, quote_notes: Optional[str] = None):
+                 quoted_premium: Optional[float] = None, quote_notes: Optional[str] = None,
+                 technical_premium: Optional[float] = None, risk_adjusted_premium: Optional[float] = None,
+                 sold_premium: Optional[float] = None,
+                 endorsements: Optional[list] = None, position: Optional[str] = None):
     """Update an existing tower/quote option."""
     with get_conn().cursor() as cur:
         cur.execute(
@@ -90,11 +120,20 @@ def update_tower(tower_id: str, tower_json: list, primary_retention: Optional[fl
             UPDATE insurance_towers
             SET tower_json = %s, primary_retention = %s,
                 sublimits = %s, quote_name = COALESCE(%s, quote_name),
-                quoted_premium = %s, quote_notes = %s, updated_at = now()
+                quoted_premium = %s, quote_notes = %s,
+                technical_premium = COALESCE(%s, technical_premium),
+                risk_adjusted_premium = COALESCE(%s, risk_adjusted_premium),
+                sold_premium = COALESCE(%s, sold_premium),
+                endorsements = COALESCE(%s, endorsements),
+                position = COALESCE(%s, position),
+                updated_at = now()
             WHERE id = %s
             """,
             (json.dumps(tower_json), primary_retention,
-             json.dumps(sublimits or []), quote_name, quoted_premium, quote_notes, tower_id),
+             json.dumps(sublimits or []), quote_name, quoted_premium, quote_notes,
+             technical_premium, risk_adjusted_premium, sold_premium,
+             json.dumps(endorsements) if endorsements is not None else None,
+             position, tower_id),
         )
 
 
@@ -104,7 +143,9 @@ def get_tower_for_submission(submission_id: str) -> Optional[dict]:
         cur.execute(
             """
             SELECT id, tower_json, primary_retention, sublimits,
-                   quote_name, quoted_premium, quote_notes, created_at, updated_at
+                   quote_name, quoted_premium, quote_notes, created_at, updated_at,
+                   technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
+                   submission_id
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY updated_at DESC
@@ -122,7 +163,9 @@ def get_quote_by_id(quote_id: str) -> Optional[dict]:
         cur.execute(
             """
             SELECT id, tower_json, primary_retention, sublimits,
-                   quote_name, quoted_premium, quote_notes, created_at, updated_at
+                   quote_name, quoted_premium, quote_notes, created_at, updated_at,
+                   technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
+                   submission_id
             FROM insurance_towers
             WHERE id = %s
             """,
@@ -138,7 +181,9 @@ def list_quotes_for_submission(submission_id: str) -> list[dict]:
         cur.execute(
             """
             SELECT id, tower_json, primary_retention, sublimits,
-                   quote_name, quoted_premium, quote_notes, created_at, updated_at
+                   quote_name, quoted_premium, quote_notes, created_at, updated_at,
+                   technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
+                   submission_id
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY quote_name, created_at
@@ -170,6 +215,11 @@ def clone_quote(quote_id: str, new_name: str) -> str:
         quote_name=new_name,
         quoted_premium=original["quoted_premium"],
         quote_notes=original.get("quote_notes"),
+        technical_premium=original.get("technical_premium"),
+        risk_adjusted_premium=original.get("risk_adjusted_premium"),
+        sold_premium=original.get("sold_premium"),
+        endorsements=original.get("endorsements"),
+        position=original.get("position", "primary"),
     )
 
 
@@ -177,3 +227,67 @@ def delete_tower(tower_id: str):
     """Delete a tower/quote."""
     with get_conn().cursor() as cur:
         cur.execute("DELETE FROM insurance_towers WHERE id = %s", (tower_id,))
+
+
+def update_quote_field(quote_id: str, field: str, value):
+    """
+    Update a single field on a quote. Used for auto-save inline edits.
+
+    Allowed fields: sold_premium, technical_premium, risk_adjusted_premium,
+                   primary_retention, quote_name, endorsements, sublimits, position
+    """
+    allowed_fields = {
+        "sold_premium", "technical_premium", "risk_adjusted_premium",
+        "primary_retention", "quote_name", "endorsements", "sublimits", "position"
+    }
+    if field not in allowed_fields:
+        raise ValueError(f"Field {field} not allowed for direct update")
+
+    # Handle JSON fields
+    if field in ("endorsements", "sublimits") and isinstance(value, list):
+        value = json.dumps(value)
+
+    with get_conn().cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE insurance_towers
+            SET {field} = %s, updated_at = now()
+            WHERE id = %s
+            """,
+            (value, quote_id),
+        )
+
+
+def update_quote_limit(quote_id: str, new_limit: float):
+    """
+    Update the limit in the tower_json for the CMAI layer.
+    Returns the updated tower_json.
+    """
+    quote = get_quote_by_id(quote_id)
+    if not quote:
+        raise ValueError(f"Quote {quote_id} not found")
+
+    tower_json = quote["tower_json"]
+
+    # Find and update CMAI layer limit
+    for layer in tower_json:
+        carrier = str(layer.get("carrier", "")).upper()
+        if "CMAI" in carrier:
+            layer["limit"] = new_limit
+            break
+    else:
+        # If no CMAI layer, update first layer
+        if tower_json:
+            tower_json[0]["limit"] = new_limit
+
+    with get_conn().cursor() as cur:
+        cur.execute(
+            """
+            UPDATE insurance_towers
+            SET tower_json = %s, updated_at = now()
+            WHERE id = %s
+            """,
+            (json.dumps(tower_json), quote_id),
+        )
+
+    return tower_json

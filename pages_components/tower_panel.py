@@ -119,7 +119,7 @@ def _layers_to_dataframe(layers: list) -> pd.DataFrame:
         return pd.DataFrame(columns=["carrier", "limit", "attachment", "premium", "rpm", "ilf"])
 
     rows = []
-    for layer in layers:
+    for idx, layer in enumerate(layers):
         limit_value = layer.get("limit", 0) or 0
         quota_total = layer.get("quota_share_total_limit")
         quota_percent = layer.get("quota_share_percentage")
@@ -131,10 +131,17 @@ def _layers_to_dataframe(layers: list) -> pd.DataFrame:
             except Exception:
                 quota_percent = None
 
+        # For Layer 1 (idx 0), show retention in attachment column
+        if idx == 0:
+            retention = layer.get("retention") or st.session_state.get("primary_retention", 0)
+            attachment_display = _format_amount(retention) if retention else ""
+        else:
+            attachment_display = _format_amount(layer.get("attachment", 0))
+
         rows.append({
             "carrier": layer.get("carrier", ""),
             "limit": _format_amount(limit_value),
-            "attachment": _format_amount(layer.get("attachment", 0)),
+            "attachment": attachment_display,
             "premium": _format_currency(layer.get("premium")) if layer.get("premium") is not None else "",
             "rpm": _format_rpm(layer.get("rpm", 0)) if layer.get("rpm") else "",
             "ilf": layer.get("ilf", ""),
@@ -156,17 +163,33 @@ def _dataframe_to_layers(df: pd.DataFrame, existing_layers=None) -> list:
         if not any(str(row.get(col, "")).strip() for col in ["carrier", "limit", "attachment"]):
             continue
 
-        layer = {
-            "carrier": str(row.get("carrier", "")).strip(),
-            "limit": _parse_amount(row.get("limit", 0)),
-            "attachment": _parse_amount(row.get("attachment", 0)),
-            "premium": _parse_premium(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
-            "rpm": _parse_rpm(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
-            "ilf": str(row.get("ilf", "")).strip() or None,
-        }
+        attachment_value = _parse_amount(row.get("attachment", 0))
 
-        if idx < len(existing_layers):
-            layer["retention"] = existing_layers[idx].get("retention")
+        # For Layer 1 (idx 0), attachment column represents retention
+        if idx == 0:
+            layer = {
+                "carrier": str(row.get("carrier", "")).strip(),
+                "limit": _parse_amount(row.get("limit", 0)),
+                "attachment": 0,  # Primary layer attachment is always 0
+                "retention": attachment_value if attachment_value else None,
+                "premium": _parse_premium(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
+                "rpm": _parse_rpm(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
+                "ilf": str(row.get("ilf", "")).strip() or None,
+            }
+            # Also update session state
+            if attachment_value:
+                st.session_state.primary_retention = attachment_value
+        else:
+            layer = {
+                "carrier": str(row.get("carrier", "")).strip(),
+                "limit": _parse_amount(row.get("limit", 0)),
+                "attachment": attachment_value,
+                "premium": _parse_premium(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
+                "rpm": _parse_rpm(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
+                "ilf": str(row.get("ilf", "")).strip() or None,
+            }
+            if idx < len(existing_layers):
+                layer["retention"] = existing_layers[idx].get("retention")
 
         if has_quota_part_of:
             part_of_val = _parse_amount(row.get("quota_share_part_of")) if str(row.get("quota_share_part_of", "")).strip() else None
@@ -416,28 +439,11 @@ def render_tower_panel(sub_id: str, expanded: bool = True):
         st.session_state.primary_retention = None
 
     with st.expander("🏗️ Insurance Tower", expanded=expanded):
-        # Natural Language Input Box
-        user_input = st.text_area(
-            "Describe your insurance tower:",
-            placeholder="Example: 'Primary carrier is ABC Insurance with 5M limit and 100K retention. Excess layers: Coalition 5M x 5M at 50K premium, Beazley 5M x 10M at 40K premium.'",
-            height=100,
-            key="tower_input"
-        )
-
-        # Process Button
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            process_button = st.button("Process with AI", type="primary", key="tower_process_btn")
-
-        with col2:
-            if st.button("Clear Tower", key="tower_clear_btn"):
-                st.session_state.tower_layers = []
-                st.session_state.primary_retention = None
-                st.rerun()
-
-        # Process the natural language input
-        if process_button and user_input.strip():
-            _process_natural_language_input(user_input)
+        # Clear button only - NL input is handled by unified AI command box
+        if st.button("Clear Tower", key="tower_clear_btn"):
+            st.session_state.tower_layers = []
+            st.session_state.primary_retention = None
+            st.rerun()
 
         # Tower Table
         _render_tower_table()
@@ -592,6 +598,11 @@ def _render_tower_table():
         display_columns.append("quota_share_percentage")
     df_for_editor = df[display_columns] if not df.empty else pd.DataFrame(columns=display_columns)
 
+    # Use dynamic key that changes when a different quote is loaded
+    # This forces the data_editor to re-render with new data
+    loaded_quote_id = st.session_state.get("loaded_tower_id", "new")
+    editor_key = f"tower_editor_{loaded_quote_id}"
+
     edited_df = st.data_editor(
         df_for_editor,
         num_rows="dynamic",
@@ -599,7 +610,11 @@ def _render_tower_table():
         column_config={
             "carrier": st.column_config.TextColumn("Carrier", width="medium"),
             "limit": st.column_config.TextColumn("Limit", width="small"),
-            "attachment": st.column_config.TextColumn("Attachment", width="small"),
+            "attachment": st.column_config.TextColumn(
+                "Attach/Ret",
+                width="small",
+                help="Layer 1: Retention/Deductible. Layer 2+: Attachment point."
+            ),
             "premium": st.column_config.TextColumn("Premium", width="small"),
             "rpm": st.column_config.TextColumn("RPM", width="small"),
             "ilf": st.column_config.TextColumn("ILF", width="small"),
@@ -614,7 +629,7 @@ def _render_tower_table():
                 help="Carrier's share of the quota layer (optional).",
             ),
         },
-        key="tower_editor"
+        key=editor_key
     )
 
     if not edited_df.equals(df_for_editor):

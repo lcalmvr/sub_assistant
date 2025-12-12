@@ -62,9 +62,22 @@ def render_quote_config_inline(sub_id: str, get_conn_func) -> dict:
         ("$500K", 500_000),
     ]
 
-    # Get current values from session state
-    current_limit = st.session_state.get(f"selected_limit_{sub_id}", 2_000_000)
-    current_retention = st.session_state.get(f"selected_retention_{sub_id}", 25_000)
+    # Check if a quote was just loaded - use its values for dropdowns
+    loaded_limit = st.session_state.pop("_loaded_quote_limit", None)
+    loaded_retention = st.session_state.pop("_loaded_quote_retention", None)
+
+    # Get current values from session state, preferring loaded quote values
+    if loaded_limit:
+        current_limit = loaded_limit
+        st.session_state[f"selected_limit_{sub_id}"] = loaded_limit
+    else:
+        current_limit = st.session_state.get(f"selected_limit_{sub_id}", 2_000_000)
+
+    if loaded_retention:
+        current_retention = loaded_retention
+        st.session_state[f"selected_retention_{sub_id}"] = loaded_retention
+    else:
+        current_retention = st.session_state.get(f"selected_retention_{sub_id}", 25_000)
 
     # Find default indices
     limit_labels = [opt[0] for opt in limit_options]
@@ -101,23 +114,36 @@ def render_quote_config_inline(sub_id: str, get_conn_func) -> dict:
         st.session_state[f"selected_retention_{sub_id}"] = selected_retention
 
     with col_premium:
-        # Calculate premium
-        premium = _calculate_premium(sub_id, selected_limit, selected_retention, get_conn_func)
-        if premium:
-            rpm = (premium / selected_limit) * 1_000_000
-            st.metric("Premium", f"${premium:,}", delta=f"RPM: ${rpm:,.0f}")
+        # Calculate premium (returns both technical and risk-adjusted)
+        result = _calculate_premium_full(sub_id, selected_limit, selected_retention, get_conn_func)
+        if result:
+            technical = result.get("technical_premium")
+            risk_adj = result.get("risk_adjusted_premium")
+            # Show risk-adjusted as the main premium metric
+            st.metric(
+                "Risk-Adj Premium",
+                f"${risk_adj:,}" if risk_adj else "—",
+                help=f"Technical: ${technical:,}" if technical else None
+            )
         else:
             st.metric("Premium", "—", help="Add revenue to calculate")
 
     return {
         "limit": selected_limit,
         "retention": selected_retention,
-        "premium": premium,
+        "premium": result.get("risk_adjusted_premium") if result else None,
+        "technical_premium": result.get("technical_premium") if result else None,
+        "risk_adjusted_premium": result.get("risk_adjusted_premium") if result else None,
     }
 
 
-def _calculate_premium(sub_id: str, limit: int, retention: int, get_conn_func) -> Optional[int]:
-    """Calculate premium using rating engine."""
+def _calculate_premium_full(sub_id: str, limit: int, retention: int, get_conn_func) -> Optional[dict]:
+    """Calculate both technical and risk-adjusted premiums using rating engine.
+
+    Returns dict with:
+        - technical_premium: Exposure-based premium (before controls)
+        - risk_adjusted_premium: Premium after control credits/debits
+    """
     try:
         from rating_engine.engine import price_with_breakdown
         from core.pipeline import parse_controls_from_summary
@@ -157,10 +183,19 @@ def _calculate_premium(sub_id: str, limit: int, retention: int, get_conn_func) -
         }
 
         result = price_with_breakdown(quote_data)
-        return result.get("premium")
+        return {
+            "technical_premium": result.get("technical_premium"),
+            "risk_adjusted_premium": result.get("risk_adjusted_premium"),
+        }
 
     except Exception as e:
         return None
+
+
+def _calculate_premium(sub_id: str, limit: int, retention: int, get_conn_func) -> Optional[int]:
+    """Calculate premium using rating engine (backwards compat)."""
+    result = _calculate_premium_full(sub_id, limit, retention, get_conn_func)
+    return result.get("risk_adjusted_premium") if result else None
 
 
 def _map_industry_to_slug(industry_name: str) -> str:
