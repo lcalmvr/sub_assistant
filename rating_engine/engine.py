@@ -143,6 +143,11 @@ def price_with_breakdown(submission: dict) -> dict:
     breakdown["retention_factor"] = ret_factor
     breakdown["premium_after_retention"] = prem
 
+    # Store Technical Premium (before any control adjustments)
+    # This is pure exposure-based: hazard class + revenue + limit factor + retention factor
+    technical_prem = Decimal(prem).quantize(Decimal("100"), rounding=ROUND_HALF_UP)
+    breakdown["technical_premium"] = int(technical_prem)
+
     # 5️⃣  Control modifiers
     applied_modifiers = []
     for ctrl_slug, mod in CTRL_MODS.items():
@@ -158,14 +163,17 @@ def price_with_breakdown(submission: dict) -> dict:
     breakdown["control_modifiers"] = applied_modifiers
     breakdown["premium_after_controls"] = prem
 
-    # 6️⃣  Round to nearest 100
-    final_prem = Decimal(prem).quantize(Decimal("100"), rounding=ROUND_HALF_UP)
-    
-    breakdown["final_premium"] = int(final_prem)
+    # 6️⃣  Round to nearest 100 - this is the Risk-Adjusted Premium
+    risk_adjusted_prem = Decimal(prem).quantize(Decimal("100"), rounding=ROUND_HALF_UP)
+
+    breakdown["risk_adjusted_premium"] = int(risk_adjusted_prem)
+    breakdown["final_premium"] = int(risk_adjusted_prem)  # Keep for backwards compatibility
 
     return {
         "hazard_class": hazard,
-        "premium": int(final_prem),
+        "premium": int(risk_adjusted_prem),  # Keep for backwards compatibility
+        "technical_premium": int(technical_prem),  # Exposure-based (before controls)
+        "risk_adjusted_premium": int(risk_adjusted_prem),  # After control credits/debits
         "limit": limit,
         "retention": retention,
         "coverage_limits": coverage_limits,

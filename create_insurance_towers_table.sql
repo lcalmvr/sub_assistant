@@ -21,6 +21,24 @@ ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS quote_name TEXT DEFAULT 'O
 ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS quoted_premium NUMERIC;
 ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS quote_notes TEXT;
 
+-- Migration: Add new quote tab redesign columns (Dec 2024)
+-- Three-tier premium model:
+--   technical_premium: Pure exposure-based (hazard class + revenue + limit + retention factors, BEFORE controls)
+--   risk_adjusted_premium: After control credits/debits are applied
+--   sold_premium: UW's final quoted price (market rate adjustment = sold - risk_adjusted)
+-- endorsements: JSON array of endorsement selections
+-- position: "primary" or "excess"
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS technical_premium NUMERIC;
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS risk_adjusted_premium NUMERIC;
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS sold_premium NUMERIC;
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS endorsements JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS position TEXT DEFAULT 'primary';
+
+-- Migrate existing quoted_premium to sold_premium if sold_premium is null
+UPDATE insurance_towers
+SET sold_premium = quoted_premium
+WHERE sold_premium IS NULL AND quoted_premium IS NOT NULL;
+
 -- Index for fast lookups by submission
 CREATE INDEX IF NOT EXISTS idx_insurance_towers_submission_id
 ON insurance_towers(submission_id);
@@ -39,3 +57,16 @@ CREATE TRIGGER insurance_towers_updated_at
     BEFORE UPDATE ON insurance_towers
     FOR EACH ROW
     EXECUTE FUNCTION update_insurance_towers_timestamp();
+
+-- ========================================
+-- Submissions Table Rating Overrides
+-- ========================================
+-- These columns store account-level rating adjustments that apply globally
+-- to all quote options for a submission (not per-option)
+
+-- hazard_override: Override the auto-detected hazard class (integer 1-5)
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS hazard_override INTEGER;
+
+-- control_overrides: JSON object of control category adjustments
+-- Example: {"network_security": -0.05, "endpoint_protection": 0.10}
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS control_overrides JSONB DEFAULT '{}'::jsonb;

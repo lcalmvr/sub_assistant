@@ -33,6 +33,7 @@ CURRENT_USER = st.session_state.get("current_user", os.getenv("USER", "unknown")
 
 # ░░░░░░░░░░░░░░  QUOTE HELPERS  ░░░░░░░░░░░░░░░
 from rating_engine.engine import price as rate_quote, price_with_breakdown
+from rating_engine.premium_calculator import calculate_premium, map_industry_to_slug
 import sys
 import os
 import importlib.util
@@ -243,6 +244,11 @@ def _sync_dropdowns_to_tower(sub_id: str):
     Sync Rating Panel dropdown values to tower layer 1.
     For simple primary quotes, this auto-creates a CMAI primary layer.
     """
+    # Skip if a quote was just loaded - don't overwrite loaded tower data
+    if st.session_state.get("_quote_just_loaded"):
+        st.session_state._quote_just_loaded = False  # Clear the flag
+        return
+
     # Get dropdown values from session state
     limit = st.session_state.get(f"selected_limit_{sub_id}")
     retention = st.session_state.get(f"selected_retention_{sub_id}")
@@ -638,7 +644,7 @@ def render():
         st.subheader(label_selected)
 
         # ------------------- TABS -------------------
-        tab_details, tab_quote = st.tabs(["📋 Details", "💰 Quote"])
+        tab_details, tab_rating, tab_quote = st.tabs(["📋 Details", "📊 Rating", "💰 Quote"])
 
         # Define quote_helpers up front for use in Quote tab
         quote_helpers = {
@@ -650,9 +656,258 @@ def render():
             'clear_loaded_quote': lambda: st.session_state.pop("loaded_quote_id", None)
         }
 
+        # ------------------- RATING TAB -------------------
+        with tab_rating:
+            st.markdown("##### Premium Calculator")
+
+            # Get submission data for rating
+            with get_conn().cursor() as cur:
+                cur.execute("""
+                    SELECT annual_revenue, naics_primary_title,
+                           hazard_override, control_overrides
+                    FROM submissions WHERE id = %s
+                """, (sub_id,))
+                rating_row = cur.fetchone()
+
+            if rating_row:
+                import json as json_mod
+                rating_sub = {
+                    "revenue": rating_row[0],
+                    "industry": rating_row[1] or "Technology",
+                    "hazard_override": rating_row[2],
+                    "control_overrides": rating_row[3]
+                }
+
+                # Get raw industry for premium calculation (shared function handles slug mapping)
+                raw_industry = rating_sub.get("industry") or "Technology"
+
+                # ─────────────────────────────────────────────────────────────
+                # Rating Parameters Row
+                # ─────────────────────────────────────────────────────────────
+                col_ret, col_haz, col_adj = st.columns(3)
+
+                with col_ret:
+                    # Retention selector
+                    retention_options = [25_000, 50_000, 100_000, 150_000, 250_000]
+                    retention_labels = ["$25K", "$50K", "$100K", "$150K", "$250K"]
+                    selected_retention = st.selectbox(
+                        "Retention",
+                        options=retention_options,
+                        format_func=lambda x: retention_labels[retention_options.index(x)],
+                        index=1,  # Default to 50K
+                        key=f"rating_retention_{sub_id}"
+                    )
+
+                with col_haz:
+                    # Hazard class override
+                    current_hazard = rating_sub.get("hazard_override")
+                    hazard_options = [None, 1, 2, 3, 4, 5]
+                    hazard_labels = ["Auto-detect", "1 - Low", "2 - Below Avg", "3 - Average", "4 - Above Avg", "5 - High"]
+                    hazard_idx = hazard_options.index(current_hazard) if current_hazard in hazard_options else 0
+                    new_hazard = st.selectbox(
+                        "Hazard Class",
+                        options=hazard_options,
+                        format_func=lambda x: hazard_labels[hazard_options.index(x)],
+                        index=hazard_idx,
+                        key=f"rating_hazard_{sub_id}"
+                    )
+                    if new_hazard != current_hazard:
+                        with get_conn().cursor() as cur:
+                            cur.execute(
+                                "UPDATE submissions SET hazard_override = %s WHERE id = %s",
+                                (new_hazard, sub_id)
+                            )
+                        st.rerun()
+
+                with col_adj:
+                    # Control adjustment
+                    current_overrides = rating_sub.get("control_overrides") or {}
+                    if isinstance(current_overrides, str):
+                        try:
+                            current_overrides = json_mod.loads(current_overrides)
+                        except:
+                            current_overrides = {}
+                    current_adj = current_overrides.get("overall", 0)
+                    adj_options = [-0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15]
+                    adj_labels = ["-15%", "-10%", "-5%", "None", "+5%", "+10%", "+15%"]
+                    adj_idx = adj_options.index(current_adj) if current_adj in adj_options else 3
+                    new_adj = st.selectbox(
+                        "Control Adjustment",
+                        options=adj_options,
+                        format_func=lambda x: adj_labels[adj_options.index(x)],
+                        index=adj_idx,
+                        key=f"rating_ctrl_adj_{sub_id}"
+                    )
+                    if new_adj != current_adj:
+                        with get_conn().cursor() as cur:
+                            cur.execute(
+                                "UPDATE submissions SET control_overrides = %s WHERE id = %s",
+                                (json_mod.dumps({"overall": new_adj}), sub_id)
+                            )
+                        st.rerun()
+
+                st.divider()
+
+                # ─────────────────────────────────────────────────────────────
+                # Premium Matrix
+                # ─────────────────────────────────────────────────────────────
+                st.markdown("##### Premium Matrix")
+
+                # Build rating inputs
+                revenue = rating_sub.get("revenue") or 0
+                display_revenue = revenue if revenue else 10_000_000
+
+                # Determine effective hazard class
+                # If hazard override is set, use it; otherwise use industry default
+                effective_hazard = new_hazard if new_hazard else None
+
+                limits = [1_000_000, 2_000_000, 3_000_000, 5_000_000]
+                limit_labels = ["1M", "2M", "3M", "5M"]
+
+                # Calculate premiums for each limit and get breakdown for first one
+                premiums = []
+                breakdown_data = None
+
+                for i, limit in enumerate(limits):
+                    try:
+                        # Use shared premium calculator - single source of truth
+                        result = calculate_premium(
+                            revenue=display_revenue,
+                            limit=limit,
+                            retention=selected_retention,
+                            industry=raw_industry,  # Pass raw industry - shared function handles slug mapping
+                            hazard_override=effective_hazard,
+                            control_adjustment=new_adj if new_adj else 0,
+                        )
+
+                        # Get risk-adjusted premium (includes both hazard and control adjustments)
+                        adjusted_premium = result.get("risk_adjusted_premium", 0)
+                        premiums.append(adjusted_premium)
+
+                        # Store breakdown for display (use 1M limit breakdown)
+                        if i == 0:
+                            breakdown_data = result.get("breakdown", {})
+                            breakdown_data["final_adjusted"] = adjusted_premium
+
+                    except Exception as e:
+                        premiums.append(0)
+
+                # Format retention for display
+                ret_label = f"${selected_retention // 1000}K"
+
+                # Display premium metrics with create option buttons
+                col1, col2, col3, col4 = st.columns(4)
+                cols = [col1, col2, col3, col4]
+
+                for i, (col, limit_label, limit, premium) in enumerate(zip(cols, limit_labels, limits, premiums)):
+                    with col:
+                        st.metric(
+                            label=f"{limit_label} / {ret_label}",
+                            value=f"${premium:,.0f}" if premium > 0 else "N/A"
+                        )
+                        # Create Quote Option button
+                        if premium > 0:
+                            if st.button("+ Create Option", key=f"create_opt_{limit}_{selected_retention}_{sub_id}", use_container_width=True):
+                                from pages_components.tower_db import save_tower, list_quotes_for_submission
+                                # Create a simple tower with CMAI as primary
+                                tower_json = [{
+                                    "carrier": "CMAI",
+                                    "limit": limit,
+                                    "attachment": 0,
+                                    "premium": premium
+                                }]
+                                # Use shared quote naming utility
+                                from utils.quote_formatting import generate_quote_name
+                                quote_name = generate_quote_name(limit, selected_retention)
+
+                                # Check if this exact name already exists
+                                existing = list_quotes_for_submission(sub_id)
+                                existing_names = [q["quote_name"] for q in existing]
+                                if quote_name in existing_names:
+                                    # Add a number suffix
+                                    n = 2
+                                    while f"{quote_name} ({n})" in existing_names:
+                                        n += 1
+                                    quote_name = f"{quote_name} ({n})"
+
+                                save_tower(
+                                    submission_id=sub_id,
+                                    tower_json=tower_json,
+                                    primary_retention=selected_retention,
+                                    quote_name=quote_name,
+                                    technical_premium=premium,
+                                    position="primary"
+                                )
+                                st.success(f"Created: {quote_name}")
+                                st.rerun()
+
+                st.caption(f"Revenue: ${display_revenue:,.0f} | Industry: {raw_industry}")
+
+                # ─────────────────────────────────────────────────────────────
+                # Rating Factors Summary (concise, universal)
+                # ─────────────────────────────────────────────────────────────
+                if breakdown_data:
+                    with st.expander("Rating Factors", expanded=False):
+                        bd = breakdown_data
+
+                        # Compact summary in columns using markdown for single-spaced output
+                        col_base, col_factors, col_mods = st.columns(3)
+
+                        with col_base:
+                            auto_hazard = bd.get('hazard_class', 3)
+                            eff_hazard = bd.get('effective_hazard', auto_hazard)
+                            hazard_text = f"Auto: {auto_hazard}" if eff_hazard == auto_hazard else f"Auto: {auto_hazard} → **{eff_hazard}**"
+                            st.markdown(f"**Base**<br>Band: {bd.get('revenue_band', 'N/A')}<br>Rate: {bd.get('base_rate_per_1k', 0):.4f} / $1K<br>Hazard: {hazard_text}", unsafe_allow_html=True)
+
+                        with col_factors:
+                            ret_factor = bd.get('retention_factor', 1.0)
+                            st.markdown(f"**Factors**<br>Retention: {ret_factor:.2f}x<br>Limits: 1M=1.0, 2M=1.7, 3M=2.3, 5M=3.2", unsafe_allow_html=True)
+
+                        with col_mods:
+                            control_mods = bd.get('control_modifiers', [])
+                            manual_adj = bd.get('control_adjustment', 0)
+
+                            # Build itemized control list
+                            ctrl_lines = []
+                            total_ctrl_mod = 0
+                            for mod in control_mods:
+                                mod_val = mod.get('modifier', 0)
+                                total_ctrl_mod += mod_val
+                                pct = mod_val * 100
+                                sign = "+" if pct > 0 else ""
+                                reason = mod.get('reason', '?').replace('Missing ', '').replace('Has ', '')
+                                ctrl_lines.append(f"{reason}: {sign}{pct:.0f}%")
+
+                            if ctrl_lines:
+                                total_pct = total_ctrl_mod * 100
+                                total_sign = "+" if total_pct > 0 else ""
+                                ctrl_text = "<br>".join(ctrl_lines)
+                                adj_text = f"<b>Total: {total_sign}{total_pct:.0f}%</b>"
+                            else:
+                                ctrl_text = "None"
+                                adj_text = "<b>Total: 0%</b>"
+
+                            # Add override if present
+                            if manual_adj != 0:
+                                adj_pct = manual_adj * 100
+                                adj_sign = "+" if adj_pct > 0 else ""
+                                override_text = f"<br>Override: {adj_sign}{adj_pct:.0f}%"
+                            else:
+                                override_text = ""
+
+                            st.markdown(f"**Controls**<br>{ctrl_text}<br>{adj_text}{override_text}", unsafe_allow_html=True)
+            else:
+                st.warning("No submission data available for rating.")
+
         with tab_quote:
             # Import components
-            from pages_components.quote_options_panel import render_quote_options_panel, auto_load_quote_for_submission
+            from pages_components.quote_options_panel import (
+                render_quote_options_panel,
+                auto_load_quote_for_submission,
+                is_viewing_saved_option,
+                get_draft_name,
+                clear_draft_state,
+            )
             from pages_components.quote_config_inline import render_quote_config_inline
             from pages_components.tower_panel import render_tower_panel
             from pages_components.sublimits_panel import render_sublimits_panel
@@ -660,24 +915,25 @@ def render():
             from pages_components.subjectivities_panel import render_subjectivities_panel
             from pages_components.coverage_limits_panel import render_coverage_limits_panel, get_coverage_limits
             from pages_components.generate_quote_button import render_generate_quote_button
+            from pages_components.tower_db import save_tower, list_quotes_for_submission
 
             # Auto-load quote data when submission changes
             auto_load_quote_for_submission(sub_id)
 
             # ─────────────────────────────────────────────────────────────
-            # Quote Options selector (Option A, B, C...)
+            # SAVED QUOTE OPTIONS (Read-Only)
             # ─────────────────────────────────────────────────────────────
             render_quote_options_panel(sub_id)
 
-            st.divider()
-
-            # ─────────────────────────────────────────────────────────────
-            # OPTION-SPECIFIC CONFIGURATION
-            # ─────────────────────────────────────────────────────────────
-            st.markdown("##### Option Configuration")
-
-            # Inline limit/retention dropdowns + premium display
-            config = render_quote_config_inline(sub_id, get_conn)
+            # Get config from session state (set by quote_options_panel when viewing saved option)
+            viewing_saved = is_viewing_saved_option()
+            config = {
+                "limit": st.session_state.get(f"selected_limit_{sub_id}", 2_000_000),
+                "retention": st.session_state.get(f"selected_retention_{sub_id}", 25_000),
+                "premium": None,
+                "technical_premium": None,
+                "risk_adjusted_premium": None,
+            }
 
             # Sync dropdown values to tower layer 1 (for primary quotes)
             _sync_dropdowns_to_tower(sub_id)
