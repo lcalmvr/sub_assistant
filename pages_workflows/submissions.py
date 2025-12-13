@@ -809,6 +809,13 @@ def render():
                         if premium > 0:
                             if st.button("+ Create Option", key=f"create_opt_{limit}_{selected_retention}_{sub_id}", use_container_width=True):
                                 from pages_components.tower_db import save_tower, list_quotes_for_submission
+                                from pages_components.coverages_panel import build_coverages_from_rating
+                                from rating_engine.coverage_config import get_default_policy_form
+
+                                # Get policy form and build coverages from Rating tab config
+                                policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
+                                coverages = build_coverages_from_rating(sub_id, limit)
+
                                 # Create a simple tower with CMAI as primary
                                 tower_json = [{
                                     "carrier": "CMAI",
@@ -830,18 +837,34 @@ def render():
                                         n += 1
                                     quote_name = f"{quote_name} ({n})"
 
+                                # Get policy form and build coverages from Rating tab config
+                                coverages = build_coverages_from_rating(sub_id, limit)
+
                                 save_tower(
                                     submission_id=sub_id,
                                     tower_json=tower_json,
                                     primary_retention=selected_retention,
                                     quote_name=quote_name,
                                     technical_premium=premium,
-                                    position="primary"
+                                    position="primary",
+                                    policy_form=policy_form,
+                                    coverages=coverages,
                                 )
                                 st.success(f"Created: {quote_name}")
                                 st.rerun()
 
                 st.caption(f"Revenue: ${display_revenue:,.0f} | Industry: {raw_industry}")
+
+                # ─────────────────────────────────────────────────────────────
+                # Coverage Configuration
+                # ─────────────────────────────────────────────────────────────
+                st.divider()
+                from pages_components.coverage_summary_panel import render_coverage_summary_panel
+                coverage_config = render_coverage_summary_panel(
+                    sub_id=sub_id,
+                    aggregate_limit=limits[0],  # Use first limit option for ballpark
+                    get_conn_func=get_conn,
+                )
 
                 # ─────────────────────────────────────────────────────────────
                 # Rating Factors Summary (concise, universal)
@@ -913,7 +936,7 @@ def render():
             from pages_components.sublimits_panel import render_sublimits_panel
             from pages_components.endorsements_panel import render_endorsements_panel
             from pages_components.subjectivities_panel import render_subjectivities_panel
-            from pages_components.coverage_limits_panel import render_coverage_limits_panel, get_coverage_limits
+            from pages_components.coverages_panel import render_coverages_panel, get_coverages_for_quote
             from pages_components.generate_quote_button import render_generate_quote_button
             from pages_components.tower_db import save_tower, list_quotes_for_submission
 
@@ -938,11 +961,11 @@ def render():
             # Sync dropdown values to tower layer 1 (for primary quotes)
             _sync_dropdowns_to_tower(sub_id)
 
-            # Coverage Limits (what goes on OUR policy form)
-            render_coverage_limits_panel(sub_id, config["limit"], expanded=False)
+            # Coverage Schedule (what goes on OUR policy form)
+            render_coverages_panel(sub_id, expanded=False)
 
-            # Add coverage limits to config for quote generation
-            config["coverage_limits"] = get_coverage_limits(sub_id, config["limit"])
+            # Add coverages to config for quote generation
+            config["coverages"] = get_coverages_for_quote(sub_id)
 
             # Tower builder (auto-expand if multi-layer, collapsed for simple primary)
             tower_layers = st.session_state.get("tower_layers", [])

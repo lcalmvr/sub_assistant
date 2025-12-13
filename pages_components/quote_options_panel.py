@@ -435,12 +435,37 @@ def _view_quote(quote_id: str):
         st.session_state._viewing_saved_option = True
         st.session_state._quote_just_loaded = True
 
+        # Load coverages and policy form from saved quote
+        sub_id = quote_data.get("submission_id")
+        if sub_id:
+            # Clear old widget keys so selectboxes pick up new values
+            keys_to_clear = [k for k in list(st.session_state.keys())
+                           if k.startswith(f"quote_sublimit_{sub_id}_")
+                           or k.startswith(f"quote_agg_{sub_id}_")]
+            for k in keys_to_clear:
+                del st.session_state[k]
+
+            # Load saved coverages into session state for the coverages panel
+            saved_coverages = quote_data.get("coverages")
+            if saved_coverages:
+                st.session_state[f"quote_coverages_{sub_id}"] = saved_coverages
+
+            # Load policy form
+            saved_policy_form = quote_data.get("policy_form")
+            if saved_policy_form:
+                st.session_state[f"policy_form_{sub_id}"] = saved_policy_form
+
         # Sync dropdowns to show the viewed option's values
         tower_json = quote_data["tower_json"]
         if tower_json and len(tower_json) > 0:
             first_layer = tower_json[0]
-            st.session_state._loaded_quote_limit = first_layer.get("limit")
+            limit = first_layer.get("limit")
+            st.session_state._loaded_quote_limit = limit
             st.session_state._loaded_quote_retention = quote_data.get("primary_retention")
+
+            # Update selected_limit so coverages panel uses correct aggregate
+            if sub_id and limit:
+                st.session_state[f"selected_limit_{sub_id}"] = limit
 
         st.rerun()
 

@@ -1,0 +1,136 @@
+# Coverage Defaults Configuration
+# Defines policy forms, aggregate coverages, and sublimit coverages
+
+policy_forms:
+  - id: cyber
+    label: "Cyber"
+    description: "Cyber coverage only, no Tech E&O"
+  - id: cyber_tech
+    label: "Cyber/Tech"
+    description: "Full cyber coverage plus Tech E&O"
+  - id: tech
+    label: "Tech"
+    description: "Tech E&O only"
+
+default_form: cyber
+
+# Aggregate coverages - typically at full policy limit
+# Values: "aggregate" = matches policy limit, 0 = no coverage
+aggregate_coverages:
+  - id: network_security_privacy
+    label: "Network Security & Privacy Liability"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: privacy_regulatory
+    label: "Privacy Regulatory Proceedings"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: pci
+    label: "Payment Card Industry (PCI)"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: media_liability
+    label: "Media Liability"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: business_interruption
+    label: "Business Interruption"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: system_failure
+    label: "System Failure"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: dependent_bi
+    label: "Dependent Business Interruption"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: cyber_extortion
+    label: "Cyber Extortion"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: data_recovery
+    label: "Data Recovery"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: reputational_harm
+    label: "Reputational Harm"
+    cyber: aggregate
+    cyber_tech: aggregate
+    tech: 0
+
+  - id: tech_eo
+    label: "Tech E&O"
+    cyber: 0
+    cyber_tech: aggregate
+    tech: aggregate
+
+# Sublimit coverages - have explicit defaults, negotiable per deal
+# Values: "sublimit" = uses default value, 0 = no coverage
+sublimit_coverages:
+  - id: dependent_system_failure
+    label: "Dependent System Failure"
+    default: 1000000
+    cyber: sublimit
+    cyber_tech: sublimit
+    tech: 0
+
+  - id: social_engineering
+    label: "Social Engineering"
+    default: 250000
+    cyber: sublimit
+    cyber_tech: sublimit
+    tech: 0
+
+  - id: invoice_manipulation
+    label: "Invoice Manipulation"
+    default: 250000
+    cyber: sublimit
+    cyber_tech: sublimit
+    tech: 0
+
+  - id: funds_transfer_fraud
+    label: "Funds Transfer Fraud"
+    default: 250000
+    cyber: sublimit
+    cyber_tech: sublimit
+    tech: 0
+
+  - id: telecom_fraud
+    label: "Telecommunications Fraud"
+    default: 250000
+    cyber: sublimit
+    cyber_tech: sublimit
+    tech: 0
+
+  - id: cryptojacking
+    label: "Cryptojacking"
+    default: 500000
+    cyber: sublimit
+    cyber_tech: sublimit
+    tech: 0
+
+# Standard dropdown options for sublimits (in addition to "Aggregate" and "Custom")
+sublimit_options:
+  - 100000
+  - 250000
+  - 500000
+  - 1000000

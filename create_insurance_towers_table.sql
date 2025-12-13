@@ -70,3 +70,24 @@ ALTER TABLE submissions ADD COLUMN IF NOT EXISTS hazard_override INTEGER;
 -- control_overrides: JSON object of control category adjustments
 -- Example: {"network_security": -0.05, "endpoint_protection": 0.10}
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS control_overrides JSONB DEFAULT '{}'::jsonb;
+
+-- ========================================
+-- Coverage & Policy Form Columns (Dec 2024)
+-- ========================================
+
+-- policy_form on insurance_towers: Override policy form per quote option
+-- Values: "cyber", "cyber_tech", "tech"
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS policy_form TEXT DEFAULT 'cyber';
+
+-- coverages: Full coverage schedule with limits
+-- Structure: {
+--   "policy_form": "cyber",
+--   "aggregate_limit": 1000000,
+--   "aggregate_coverages": {"network_security_privacy": 1000000, "tech_eo": 0, ...},
+--   "sublimit_coverages": {"social_engineering": 250000, ...}
+-- }
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS coverages JSONB;
+
+-- default_policy_form on submissions: Account-level default policy form
+-- Can be overridden at quote option level
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS default_policy_form TEXT DEFAULT 'cyber';
