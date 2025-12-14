@@ -43,16 +43,23 @@ def render_bulk_coverage_modal(sub_id: str, saved_options: list[dict]):
     if not saved_options:
         return
 
-    # Modal trigger button
+    modal_key = f"show_bulk_cov_modal_{sub_id}"
+    trigger_key = f"bulk_cov_modal_triggered_{sub_id}"
+
+    # Modal trigger button - set a trigger flag
     if st.button("Update Coverage Across Options", key=f"bulk_cov_modal_btn_{sub_id}"):
-        st.session_state[f"show_bulk_cov_modal_{sub_id}"] = True
+        st.session_state[trigger_key] = True
+        st.session_state[modal_key] = True
 
-    # Modal dialog
-    @st.dialog("Update Coverage Across Options", width="large")
-    def show_modal():
-        _render_bulk_update_ui(sub_id, saved_options, in_modal=True)
+    # Only show modal if it was just triggered (not on random reruns)
+    if st.session_state.get(trigger_key, False):
+        # Clear the trigger immediately so it doesn't persist
+        st.session_state[trigger_key] = False
 
-    if st.session_state.get(f"show_bulk_cov_modal_{sub_id}", False):
+        @st.dialog("Update Coverage Across Options", width="large")
+        def show_modal():
+            _render_bulk_update_ui(sub_id, saved_options, in_modal=True)
+
         show_modal()
 
 
