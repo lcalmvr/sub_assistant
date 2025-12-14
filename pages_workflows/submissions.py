@@ -930,6 +930,7 @@ def render():
                 is_viewing_saved_option,
                 get_draft_name,
                 clear_draft_state,
+                get_current_quote_position,
             )
             from pages_components.quote_config_inline import render_quote_config_inline
             from pages_components.tower_panel import render_tower_panel
@@ -937,6 +938,7 @@ def render():
             from pages_components.endorsements_panel import render_endorsements_panel
             from pages_components.subjectivities_panel import render_subjectivities_panel
             from pages_components.coverages_panel import render_coverages_panel, get_coverages_for_quote
+            from pages_components.excess_coverages_panel import render_excess_coverages_panel
             from pages_components.generate_quote_button import render_generate_quote_button
             from pages_components.tower_db import save_tower, list_quotes_for_submission
             # Bulk coverage buttons are now embedded in coverage panels
@@ -962,10 +964,16 @@ def render():
             # Sync dropdown values to tower layer 1 (for primary quotes)
             _sync_dropdowns_to_tower(sub_id)
 
-            # Coverage Schedule (what goes on OUR policy form)
-            render_coverages_panel(sub_id, expanded=False)
+            # Coverage Schedule - different panel based on primary vs excess
+            current_position = get_current_quote_position(sub_id)
+            viewing_quote_id = st.session_state.get("viewing_quote_id")
 
-            # Bulk coverage update buttons are now embedded in the coverage panels above
+            if current_position == "excess" and viewing_quote_id:
+                # Excess quote: show excess coverage panel
+                render_excess_coverages_panel(sub_id, viewing_quote_id, expanded=False)
+            else:
+                # Primary quote: show standard coverage panel
+                render_coverages_panel(sub_id, expanded=False)
 
             # Add coverages to config for quote generation
             config["coverages"] = get_coverages_for_quote(sub_id)
@@ -975,8 +983,11 @@ def render():
             tower_expanded = len(tower_layers) > 1
             render_tower_panel(sub_id, expanded=tower_expanded)
 
-            # Sublimits (for excess - proportional to underlying carrier)
-            render_sublimits_panel(sub_id, expanded=False)
+            # Sublimits panel - only show for excess quotes (primary uses coverage schedule)
+            # Note: The excess_coverages_panel now handles coverages, but sublimits panel
+            # provides additional granular control for specific sublimit overrides
+            if current_position == "excess":
+                render_sublimits_panel(sub_id, expanded=False)
 
             # Endorsements (option-specific - varies by primary/excess/quote)
             render_endorsements_panel(sub_id, expanded=False)

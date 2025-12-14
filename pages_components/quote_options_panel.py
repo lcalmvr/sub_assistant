@@ -1,7 +1,7 @@
 """
 Quote Options Panel Component
 Displays saved quote options as a dropdown selector with View/Clone/Delete actions.
-Users create new options from the Draft Configuration section, not by editing saved ones.
+Provides buttons to create new Primary or Excess quote options.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pages_components.tower_db import (
     clone_quote,
     delete_tower,
     update_quote_field,
+    save_tower,
     get_conn,
 )
 
@@ -66,8 +67,11 @@ def render_quote_options_panel(sub_id: str):
     # Get all saved quote options for this submission
     all_quotes = list_quotes_for_submission(sub_id)
 
+    # Add Primary/Excess option buttons
+    _render_add_option_buttons(sub_id, all_quotes)
+
     if not all_quotes:
-        st.caption("No saved options yet. Configure your quote below and click 'Save as New Option'.")
+        st.caption("No saved options yet. Use the buttons above to create your first quote option.")
         return
 
     # Build dropdown options
@@ -563,3 +567,249 @@ def clear_draft_state():
     st.session_state.draft_quote_name = None
     st.session_state.viewing_quote_id = None
     st.session_state._viewing_saved_option = False
+
+
+# ─────────────────────── Add Option Buttons ───────────────────────
+
+def _render_add_option_buttons(sub_id: str, all_quotes: list):
+    """Render buttons to add new Primary or Excess quote options."""
+    col_primary, col_excess, col_spacer = st.columns([1, 1, 2])
+
+    with col_primary:
+        if st.button("+ Add Primary", key=f"add_primary_opt_{sub_id}", use_container_width=True):
+            _create_primary_option(sub_id, all_quotes)
+            st.rerun()
+
+    with col_excess:
+        if st.button("+ Add Excess", key=f"add_excess_opt_{sub_id}", use_container_width=True):
+            st.session_state[f"show_excess_dialog_{sub_id}"] = True
+
+    # Handle excess dialog
+    if st.session_state.get(f"show_excess_dialog_{sub_id}"):
+        _render_excess_option_dialog(sub_id, all_quotes)
+
+
+def _create_primary_option(sub_id: str, all_quotes: list):
+    """Create a new primary quote option with defaults."""
+    from pages_components.coverages_panel import build_coverages_from_rating
+    from rating_engine.coverage_config import get_default_policy_form
+
+    default_limit = 1_000_000
+    default_retention = 25_000
+
+    # Build tower with CMAI as primary
+    tower_json = [{
+        "carrier": "CMAI",
+        "limit": default_limit,
+        "attachment": 0,
+        "premium": None,
+    }]
+
+    # Count existing primary options for naming
+    primary_quotes = [q for q in all_quotes if q.get("position", "primary") == "primary"]
+    next_num = len(primary_quotes) + 1
+    quote_name = generate_quote_name(default_limit, default_retention)
+
+    # Check for duplicate names
+    existing_names = [q["quote_name"] for q in all_quotes]
+    if quote_name in existing_names:
+        n = 2
+        while f"{quote_name} ({n})" in existing_names:
+            n += 1
+        quote_name = f"{quote_name} ({n})"
+
+    # Get policy form and coverages from Rating tab
+    policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
+    coverages = build_coverages_from_rating(sub_id, default_limit)
+
+    # Save to database
+    new_id = save_tower(
+        submission_id=sub_id,
+        tower_json=tower_json,
+        primary_retention=default_retention,
+        quote_name=quote_name,
+        position="primary",
+        policy_form=policy_form,
+        coverages=coverages,
+    )
+
+    # Select the new option
+    st.session_state.viewing_quote_id = new_id
+    st.success(f"Created: {quote_name}")
+
+
+def _render_excess_option_dialog(sub_id: str, all_quotes: list):
+    """Render dialog to collect underlying carrier info for excess option."""
+
+    @st.dialog("Add Excess Option", width="large")
+    def show_dialog():
+        st.markdown("Enter the **underlying primary carrier** details:")
+        st.markdown("---")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            underlying_carrier = st.text_input(
+                "Primary Carrier",
+                placeholder="e.g., XL Catlin, Beazley, AIG",
+                key=f"excess_carrier_{sub_id}",
+            )
+
+            underlying_limit = st.selectbox(
+                "Primary Limit",
+                options=["$1M", "$2M", "$3M", "$5M", "$10M"],
+                index=2,  # Default to $3M
+                key=f"excess_limit_{sub_id}",
+            )
+
+        with col2:
+            underlying_retention = st.selectbox(
+                "Primary Retention",
+                options=["$10K", "$25K", "$50K", "$100K", "$250K"],
+                index=1,  # Default to $25K
+                key=f"excess_retention_{sub_id}",
+            )
+
+            underlying_premium = st.text_input(
+                "Primary Premium",
+                placeholder="e.g., 85000 or 85K",
+                key=f"excess_premium_{sub_id}",
+            )
+
+        st.markdown("---")
+        st.markdown("**Our Layer:**")
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            our_limit = st.selectbox(
+                "Our Limit",
+                options=["$1M", "$2M", "$3M", "$5M", "$10M"],
+                index=2,  # Default to $3M
+                key=f"our_excess_limit_{sub_id}",
+            )
+
+        with col4:
+            # Attachment is auto-calculated from primary limit
+            limit_map = {"$1M": 1_000_000, "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000, "$10M": 10_000_000}
+            primary_limit_val = limit_map.get(underlying_limit, 3_000_000)
+            st.text_input(
+                "Our Attachment",
+                value=f"${primary_limit_val:,}",
+                disabled=True,
+                key=f"our_attachment_display_{sub_id}",
+                help="Automatically set to primary limit"
+            )
+
+        st.markdown("---")
+
+        col_cancel, col_create = st.columns(2)
+
+        with col_cancel:
+            if st.button("Cancel", key=f"excess_cancel_{sub_id}", use_container_width=True):
+                st.session_state[f"show_excess_dialog_{sub_id}"] = False
+                st.rerun()
+
+        with col_create:
+            if st.button("Create Excess Option", key=f"excess_create_{sub_id}", type="primary", use_container_width=True):
+                # Parse values
+                limit_map = {"$1M": 1_000_000, "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000, "$10M": 10_000_000}
+                retention_map = {"$10K": 10_000, "$25K": 25_000, "$50K": 50_000, "$100K": 100_000, "$250K": 250_000}
+
+                primary_limit_val = limit_map.get(underlying_limit, 3_000_000)
+                primary_retention_val = retention_map.get(underlying_retention, 25_000)
+                our_limit_val = limit_map.get(our_limit, 3_000_000)
+                primary_premium_val = _parse_currency(underlying_premium) if underlying_premium else None
+
+                # Create the excess option
+                _create_excess_option(
+                    sub_id=sub_id,
+                    all_quotes=all_quotes,
+                    underlying_carrier=underlying_carrier or "Primary Carrier",
+                    primary_limit=primary_limit_val,
+                    primary_retention=primary_retention_val,
+                    primary_premium=primary_premium_val,
+                    our_limit=our_limit_val,
+                )
+
+                st.session_state[f"show_excess_dialog_{sub_id}"] = False
+                st.rerun()
+
+    show_dialog()
+
+
+def _create_excess_option(
+    sub_id: str,
+    all_quotes: list,
+    underlying_carrier: str,
+    primary_limit: int,
+    primary_retention: int,
+    primary_premium: float,
+    our_limit: int,
+):
+    """Create a new excess quote option."""
+    from rating_engine.coverage_config import get_default_policy_form
+
+    # Calculate our attachment (equals primary limit for simple drop-down excess)
+    our_attachment = primary_limit
+
+    # Build tower with primary carrier and CMAI excess
+    tower_json = [
+        {
+            "carrier": underlying_carrier,
+            "limit": primary_limit,
+            "attachment": 0,
+            "retention": primary_retention,
+            "premium": primary_premium,
+        },
+        {
+            "carrier": "CMAI",
+            "limit": our_limit,
+            "attachment": our_attachment,
+            "premium": None,
+        },
+    ]
+
+    # Count existing excess options for naming
+    excess_quotes = [q for q in all_quotes if q.get("position") == "excess"]
+    next_num = len(excess_quotes) + 1
+
+    # Generate name showing our layer
+    quote_name = f"${our_limit // 1_000_000}M xs ${our_attachment // 1_000_000}M"
+
+    # Check for duplicate names
+    existing_names = [q["quote_name"] for q in all_quotes]
+    if quote_name in existing_names:
+        n = 2
+        while f"{quote_name} ({n})" in existing_names:
+            n += 1
+        quote_name = f"{quote_name} ({n})"
+
+    policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
+
+    # Save to database
+    new_id = save_tower(
+        submission_id=sub_id,
+        tower_json=tower_json,
+        primary_retention=primary_retention,
+        quote_name=quote_name,
+        position="excess",
+        policy_form=policy_form,
+    )
+
+    # Select the new option
+    st.session_state.viewing_quote_id = new_id
+    st.success(f"Created: {quote_name}")
+
+
+def get_current_quote_position(sub_id: str) -> str:
+    """Get the position (primary/excess) of the currently viewed quote."""
+    viewing_quote_id = st.session_state.get("viewing_quote_id")
+    if not viewing_quote_id:
+        return "primary"  # Default to primary
+
+    quote = get_quote_by_id(viewing_quote_id)
+    if not quote:
+        return "primary"
+
+    return quote.get("position", "primary")
