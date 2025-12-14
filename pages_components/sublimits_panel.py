@@ -1,12 +1,22 @@
 """
-Sublimits Panel Component
-Manages sublimits with AI parsing and proportional calculations.
+Sublimits Panel Component (Coverage Schedule for Excess Quotes)
+
+For excess quotes, this panel serves as the Coverage Schedule, showing:
+- Dynamic coverages from the underlying primary carrier (not predefined)
+- Primary Limit | Our Limit | Our Attachment per coverage
+- AI parsing to extract coverages from quote documents
+- Proportional defaults with UW override capability
+
+Each excess quote option can have different coverage settings.
 """
 from __future__ import annotations
 
 import re
 import pandas as pd
 import streamlit as st
+from typing import Optional
+
+from pages_components.tower_db import get_quote_by_id, update_quote_field
 
 
 # ─────────────────────── Formatting Helpers ───────────────────────
@@ -141,53 +151,77 @@ def _dataframe_to_sublimits(df: pd.DataFrame, existing_sublimits: list, calc_fn)
 
 # ─────────────────────── Main Render Function ───────────────────────
 
-def render_sublimits_panel(sub_id: str, expanded: bool = False):
+def render_sublimits_panel(sub_id: str, quote_id: Optional[str] = None, expanded: bool = False):
     """
-    Render the sublimits panel.
+    Render the sublimits/excess coverage panel.
+
+    For excess quotes, this serves as the Coverage Schedule showing dynamic
+    coverages from the underlying carrier (not our predefined list).
 
     Args:
         sub_id: Submission ID
+        quote_id: Quote ID for per-option storage (required for excess quotes)
         expanded: Whether to expand the section by default
     """
-    # Initialize session state
-    if "sublimits" not in st.session_state:
-        st.session_state.sublimits = []
+    # Determine if this is being used for an excess quote
+    is_excess_mode = quote_id is not None
 
-    with st.expander("📋 Sublimits", expanded=expanded):
-        st.caption("Define primary carrier sublimits, then specify your drop-down treatment for each.")
+    # Session key for this quote's sublimits
+    session_key = f"quote_sublimits_{quote_id}" if quote_id else "sublimits"
+
+    # Load sublimits from database if viewing a saved quote
+    if quote_id:
+        _load_sublimits_from_quote(quote_id, session_key)
+
+    # Initialize session state if needed
+    if session_key not in st.session_state:
+        st.session_state[session_key] = []
+
+    # Panel title changes based on mode
+    panel_title = "📋 Coverage Schedule (Excess)" if is_excess_mode else "📋 Sublimits"
+    panel_caption = (
+        "Define the underlying carrier's coverages and your treatment for each."
+        if is_excess_mode else
+        "Define primary carrier sublimits, then specify your drop-down treatment for each."
+    )
+
+    with st.expander(panel_title, expanded=expanded):
+        st.caption(panel_caption)
 
         # Calculate tower context for proportional sublimit calculations
-        tower_context = _get_tower_context()
+        tower_context = _get_tower_context_for_quote(quote_id) if quote_id else _get_tower_context()
 
         # Display position info
         _render_position_info(tower_context)
 
         # Natural language input for sublimits
         sublimit_input = st.text_area(
-            "Describe sublimits:",
+            "Describe coverages:" if is_excess_mode else "Describe sublimits:",
             placeholder="Example: 'Primary has 1M ransomware, 500K business interruption, 250K social engineering'",
             height=80,
-            key="sublimit_input"
+            key=f"sublimit_input_{quote_id or sub_id}"
         )
 
         col_process, col_clear = st.columns([1, 4])
         with col_process:
-            process_sublimits = st.button("Process with AI", key="process_sublimits_btn")
+            process_sublimits = st.button("Process with AI", key=f"process_sublimits_btn_{quote_id or sub_id}")
         with col_clear:
-            if st.button("Clear Sublimits", key="clear_sublimits_btn"):
-                st.session_state.sublimits = []
+            if st.button("Clear All", key=f"clear_sublimits_btn_{quote_id or sub_id}"):
+                st.session_state[session_key] = []
+                if quote_id:
+                    _save_sublimits_to_quote(quote_id, [])
                 st.rerun()
 
         # Process with AI
         if process_sublimits and sublimit_input.strip():
-            _process_sublimits_with_ai(sublimit_input, tower_context)
+            _process_sublimits_with_ai(sublimit_input, tower_context, session_key, quote_id)
 
         # Create the proportional calculation function
         def calc_proportional_sublimit(primary_sublimit: float) -> tuple[float, float]:
             return _calc_proportional_sublimit(primary_sublimit, tower_context)
 
         # Convert sublimits to DataFrame for display
-        sublimits_df = _sublimits_to_dataframe(st.session_state.sublimits, calc_proportional_sublimit)
+        sublimits_df = _sublimits_to_dataframe(st.session_state[session_key], calc_proportional_sublimit)
 
         # Display editable table
         edited_sublimits = st.data_editor(
@@ -211,24 +245,65 @@ def render_sublimits_panel(sub_id: str, expanded: bool = False):
                     help="Auto-calculated for follow_form. Editable when treatment is 'different'."
                 ),
             },
-            key="sublimits_editor"
+            key=f"sublimits_editor_{quote_id or sub_id}"
         )
 
-        # Update session state when table is edited
+        # Update when table is edited
         if not edited_sublimits.equals(sublimits_df):
             updated_sublimits = _dataframe_to_sublimits(
                 edited_sublimits,
-                st.session_state.sublimits,
+                st.session_state[session_key],
                 calc_proportional_sublimit
             )
-            st.session_state.sublimits = updated_sublimits
+            st.session_state[session_key] = updated_sublimits
+
+            # Auto-save to database for saved quotes
+            if quote_id:
+                _save_sublimits_to_quote(quote_id, updated_sublimits)
+
             st.rerun()
 
 
-def _get_tower_context() -> dict:
-    """Get tower context needed for sublimit calculations."""
-    tower_layers = st.session_state.get("tower_layers", [])
+def _load_sublimits_from_quote(quote_id: str, session_key: str):
+    """Load sublimits from the quote's database record."""
+    # Track which quote we last loaded to detect option switches
+    last_loaded_key = f"last_loaded_sublimits_quote"
+    last_loaded_quote = st.session_state.get(last_loaded_key)
 
+    if last_loaded_quote != quote_id:
+        # Switching to a different quote - load from database
+        quote = get_quote_by_id(quote_id)
+        if quote:
+            sublimits = quote.get("sublimits") or []
+            st.session_state[session_key] = sublimits
+        else:
+            st.session_state[session_key] = []
+        st.session_state[last_loaded_key] = quote_id
+
+
+def _save_sublimits_to_quote(quote_id: str, sublimits: list):
+    """Save sublimits to the quote's database record."""
+    update_quote_field(quote_id, "sublimits", sublimits)
+
+
+def _get_tower_context_for_quote(quote_id: str) -> dict:
+    """Get tower context from a specific quote's tower_json."""
+    quote = get_quote_by_id(quote_id)
+    if not quote:
+        return _get_tower_context()
+
+    tower_json = quote.get("tower_json", [])
+    return _build_tower_context(tower_json)
+
+
+def _get_tower_context() -> dict:
+    """Get tower context from session state tower_layers."""
+    tower_layers = st.session_state.get("tower_layers", [])
+    return _build_tower_context(tower_layers)
+
+
+def _build_tower_context(tower_layers: list) -> dict:
+    """Build tower context from tower_json for sublimit calculations."""
     # Find CMAI layer in the tower
     cmai_layer_idx = None
     cmai_layer = None
@@ -308,12 +383,12 @@ def _calc_proportional_sublimit(primary_sublimit: float, ctx: dict) -> tuple[flo
     return our_sublimit, sublimit_attachment
 
 
-def _process_sublimits_with_ai(sublimit_input: str, ctx: dict):
+def _process_sublimits_with_ai(sublimit_input: str, ctx: dict, session_key: str = "sublimits", quote_id: Optional[str] = None):
     """Process sublimit input with AI."""
     try:
         from ai.sublimit_intel import parse_sublimits_with_ai, edit_sublimits_with_ai
 
-        current_sublimits = st.session_state.get("sublimits", [])
+        current_sublimits = st.session_state.get(session_key, [])
         primary_aggregate_limit = ctx["primary_aggregate_limit"]
 
         context = f"Primary aggregate limit: {_format_amount(primary_aggregate_limit)}" if primary_aggregate_limit else ""
@@ -323,9 +398,14 @@ def _process_sublimits_with_ai(sublimit_input: str, ctx: dict):
         else:
             result = parse_sublimits_with_ai(sublimit_input, context)
 
-        st.session_state.sublimits = result
-        st.success(f"Parsed {len(result)} sublimits")
+        st.session_state[session_key] = result
+
+        # Auto-save to database for saved quotes
+        if quote_id:
+            _save_sublimits_to_quote(quote_id, result)
+
+        st.success(f"Parsed {len(result)} coverages")
         st.rerun()
 
     except Exception as e:
-        st.error(f"Error processing sublimits: {e}")
+        st.error(f"Error processing: {e}")

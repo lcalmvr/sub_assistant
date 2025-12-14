@@ -938,7 +938,6 @@ def render():
             from pages_components.endorsements_panel import render_endorsements_panel
             from pages_components.subjectivities_panel import render_subjectivities_panel
             from pages_components.coverages_panel import render_coverages_panel, get_coverages_for_quote
-            from pages_components.excess_coverages_panel import render_excess_coverages_panel
             from pages_components.generate_quote_button import render_generate_quote_button
             from pages_components.tower_db import save_tower, list_quotes_for_submission
             # Bulk coverage buttons are now embedded in coverage panels
@@ -969,10 +968,11 @@ def render():
             viewing_quote_id = st.session_state.get("viewing_quote_id")
 
             if current_position == "excess" and viewing_quote_id:
-                # Excess quote: show excess coverage panel
-                render_excess_coverages_panel(sub_id, viewing_quote_id, expanded=False)
+                # Excess quote: sublimits panel serves as the coverage schedule
+                # (shows dynamic coverages from underlying carrier, not our predefined list)
+                render_sublimits_panel(sub_id, quote_id=viewing_quote_id, expanded=True)
             else:
-                # Primary quote: show standard coverage panel
+                # Primary quote: show standard coverage panel (our predefined coverages)
                 render_coverages_panel(sub_id, expanded=False)
 
             # Add coverages to config for quote generation
@@ -983,11 +983,8 @@ def render():
             tower_expanded = len(tower_layers) > 1
             render_tower_panel(sub_id, expanded=tower_expanded)
 
-            # Sublimits panel - only show for excess quotes (primary uses coverage schedule)
-            # Note: The excess_coverages_panel now handles coverages, but sublimits panel
-            # provides additional granular control for specific sublimit overrides
-            if current_position == "excess":
-                render_sublimits_panel(sub_id, expanded=False)
+            # Note: Sublimits panel is rendered above as "Coverage Schedule (Excess)"
+            # for excess quotes, replacing the standard coverage panel
 
             # Endorsements (option-specific - varies by primary/excess/quote)
             render_endorsements_panel(sub_id, expanded=False)
