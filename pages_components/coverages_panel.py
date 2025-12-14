@@ -19,6 +19,7 @@ from rating_engine.coverage_config import (
     validate_sublimit,
 )
 from pages_components.tower_db import update_quote_field
+from pages_components.bulk_coverage_update import render_bulk_coverage_buttons
 
 
 def render_coverages_panel(
@@ -84,6 +85,10 @@ def render_coverages_panel(
         with col_summary:
             st.markdown("**Summary**")
             _render_summary(coverages, aggregate_limit)
+
+            # Bulk update buttons
+            st.markdown("---")
+            render_bulk_coverage_buttons(sub_id, coverages, "this option")
 
 
 def build_coverages_from_rating(sub_id: str, aggregate_limit: int) -> dict:

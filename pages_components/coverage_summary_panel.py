@@ -18,6 +18,7 @@ from rating_engine.coverage_config import (
     get_aggregate_coverage_definitions,
     get_sublimit_coverage_definitions,
 )
+from pages_components.bulk_coverage_update import render_bulk_coverage_buttons_rating
 
 
 def render_coverage_summary_panel(
@@ -111,6 +112,15 @@ def render_coverage_summary_panel(
         with col_summary:
             st.markdown("**Summary**")
             _render_unified_summary(sub_id, selected_form, aggregate_limit)
+
+            # Bulk update buttons
+            st.markdown("---")
+            render_bulk_coverage_buttons_rating(
+                sub_id,
+                selected_form,
+                st.session_state[sublimit_key],
+                st.session_state[agg_override_key],
+            )
 
     # Build final coverage config
     final_coverages = {
