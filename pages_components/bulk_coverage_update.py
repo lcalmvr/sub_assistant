@@ -68,8 +68,9 @@ def render_bulk_coverage_modal(sub_id: str, saved_options: list[dict]):
         show_modal()
 
 
-def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: bool = False):
+def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: bool = False, key_prefix: str = ""):
     """Render the bulk update UI (shared between expander and modal)."""
+    prefix = f"{key_prefix}_" if key_prefix else ""
 
     # Get all coverage definitions
     sublimit_covs = get_sublimit_coverage_definitions()
@@ -99,7 +100,7 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
         selected_coverage_label = st.selectbox(
             "Coverage",
             options=coverage_labels,
-            key=f"bulk_cov_select_{sub_id}"
+            key=f"{prefix}bulk_cov_select_{sub_id}"
         )
         selected_coverage = next(c for c in coverage_options if c["label"] == selected_coverage_label)
 
@@ -124,7 +125,7 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
         selected_value_label = st.selectbox(
             "New Value",
             options=value_labels,
-            key=f"bulk_val_select_{sub_id}"
+            key=f"{prefix}bulk_val_select_{sub_id}"
         )
         selected_value = next(v[1] for v in value_options if v[0] == selected_value_label)
 
@@ -132,18 +133,18 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
     st.markdown("**Apply to:**")
 
     # Initialize selection state
-    selection_key = f"bulk_cov_selections_{sub_id}"
+    selection_key = f"{prefix}bulk_cov_selections_{sub_id}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = {opt["id"]: True for opt in saved_options}
 
     # Select All / Select None buttons
     col_all, col_none, col_spacer = st.columns([1, 1, 3])
     with col_all:
-        if st.button("Select All", key=f"bulk_select_all_{sub_id}", use_container_width=True):
+        if st.button("Select All", key=f"{prefix}bulk_select_all_{sub_id}", use_container_width=True):
             st.session_state[selection_key] = {opt["id"]: True for opt in saved_options}
             st.rerun()
     with col_none:
-        if st.button("Select None", key=f"bulk_select_none_{sub_id}", use_container_width=True):
+        if st.button("Select None", key=f"{prefix}bulk_select_none_{sub_id}", use_container_width=True):
             st.session_state[selection_key] = {opt["id"]: False for opt in saved_options}
             st.rerun()
 
@@ -169,7 +170,7 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
             is_selected = st.checkbox(
                 opt_name,
                 value=st.session_state[selection_key].get(opt_id, True),
-                key=f"bulk_opt_{sub_id}_{opt_id}"
+                key=f"{prefix}bulk_opt_{sub_id}_{opt_id}"
             )
             st.session_state[selection_key][opt_id] = is_selected
         with col_current:
@@ -183,7 +184,7 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
     # Apply button
     if st.button(
         f"Apply to {selected_count} Option{'s' if selected_count != 1 else ''}",
-        key=f"bulk_apply_{sub_id}",
+        key=f"{prefix}bulk_apply_{sub_id}",
         type="primary",
         disabled=selected_count == 0
     ):
@@ -244,7 +245,7 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
                 del st.session_state[f"last_synced_quote_{sub_id}"]
 
         if in_modal:
-            st.session_state[f"show_bulk_cov_modal_{sub_id}"] = False
+            st.session_state[f"show_{prefix}bulk_cov_modal_{sub_id}"] = False
             st.rerun()
 
 
@@ -334,11 +335,11 @@ def render_bulk_coverage_buttons(sub_id: str, source_coverages: dict, source_lab
 
     with col1:
         # Button 1: Single coverage update modal
-        _render_single_coverage_button(sub_id, primary_options)
+        _render_single_coverage_button(sub_id, primary_options, key_prefix="quote")
 
     with col2:
         # Button 2: Push all coverages
-        _render_push_all_button(sub_id, primary_options, source_coverages, source_label)
+        _render_push_all_button(sub_id, primary_options, source_coverages, source_label, key_prefix="quote")
 
 
 def render_bulk_coverage_buttons_rating(
@@ -364,19 +365,20 @@ def render_bulk_coverage_buttons_rating(
 
     with col1:
         # Button 1: Single coverage update modal
-        _render_single_coverage_button(sub_id, primary_options)
+        _render_single_coverage_button(sub_id, primary_options, key_prefix="rating")
 
     with col2:
         # Button 2: Push all coverages from Rating defaults
         _render_push_all_rating_button(sub_id, primary_options, policy_form, sublimit_defaults, agg_overrides)
 
 
-def _render_single_coverage_button(sub_id: str, saved_options: list[dict]):
+def _render_single_coverage_button(sub_id: str, saved_options: list[dict], key_prefix: str = ""):
     """Render the single coverage update modal button."""
-    modal_key = f"show_bulk_cov_modal_{sub_id}"
-    trigger_key = f"bulk_cov_modal_triggered_{sub_id}"
+    prefix = f"{key_prefix}_" if key_prefix else ""
+    modal_key = f"show_{prefix}bulk_cov_modal_{sub_id}"
+    trigger_key = f"{prefix}bulk_cov_modal_triggered_{sub_id}"
 
-    if st.button("Edit One Coverage", key=f"bulk_cov_modal_btn_{sub_id}", use_container_width=True):
+    if st.button("Edit One Coverage", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", use_container_width=True):
         st.session_state[trigger_key] = True
         st.session_state[modal_key] = True
 
@@ -385,16 +387,17 @@ def _render_single_coverage_button(sub_id: str, saved_options: list[dict]):
 
         @st.dialog("Update Coverage Across Options", width="large")
         def show_modal():
-            _render_bulk_update_ui(sub_id, saved_options, in_modal=True)
+            _render_bulk_update_ui(sub_id, saved_options, in_modal=True, key_prefix=key_prefix)
 
         show_modal()
 
 
-def _render_push_all_button(sub_id: str, primary_options: list[dict], source_coverages: dict, source_label: str):
+def _render_push_all_button(sub_id: str, primary_options: list[dict], source_coverages: dict, source_label: str, key_prefix: str = ""):
     """Render the push all coverages button (Quote tab version)."""
-    trigger_key = f"push_all_cov_triggered_{sub_id}"
+    prefix = f"{key_prefix}_" if key_prefix else ""
+    trigger_key = f"{prefix}push_all_cov_triggered_{sub_id}"
 
-    if st.button("Push All to Options", key=f"push_all_cov_btn_{sub_id}", use_container_width=True):
+    if st.button("Push All to Options", key=f"{prefix}push_all_cov_btn_{sub_id}", use_container_width=True):
         st.session_state[trigger_key] = True
 
     if st.session_state.get(trigger_key, False):
@@ -402,7 +405,7 @@ def _render_push_all_button(sub_id: str, primary_options: list[dict], source_cov
 
         @st.dialog("Push All Coverages", width="large")
         def show_push_modal():
-            _render_push_all_ui(sub_id, primary_options, source_coverages, source_label)
+            _render_push_all_ui(sub_id, primary_options, source_coverages, source_label, key_prefix=key_prefix)
 
         show_push_modal()
 
@@ -430,8 +433,9 @@ def _render_push_all_rating_button(
         show_push_modal()
 
 
-def _render_push_all_ui(sub_id: str, primary_options: list[dict], source_coverages: dict, source_label: str):
+def _render_push_all_ui(sub_id: str, primary_options: list[dict], source_coverages: dict, source_label: str, key_prefix: str = ""):
     """Render the push all coverages UI."""
+    prefix = f"{key_prefix}_" if key_prefix else ""
     st.markdown(f"Push **{source_label}** coverage settings to all primary options.")
     st.markdown("---")
 
@@ -479,11 +483,11 @@ def _render_push_all_ui(sub_id: str, primary_options: list[dict], source_coverag
     col_cancel, col_apply = st.columns(2)
 
     with col_cancel:
-        if st.button("Cancel", key=f"push_all_cancel_{sub_id}", use_container_width=True):
+        if st.button("Cancel", key=f"{prefix}push_all_cancel_{sub_id}", use_container_width=True):
             st.rerun()
 
     with col_apply:
-        if st.button("Push to All", key=f"push_all_apply_{sub_id}", type="primary", use_container_width=True):
+        if st.button("Push to All", key=f"{prefix}push_all_apply_{sub_id}", type="primary", use_container_width=True):
             updated_count = 0
 
             for opt in primary_options:

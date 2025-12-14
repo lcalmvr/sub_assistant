@@ -939,7 +939,7 @@ def render():
             from pages_components.coverages_panel import render_coverages_panel, get_coverages_for_quote
             from pages_components.generate_quote_button import render_generate_quote_button
             from pages_components.tower_db import save_tower, list_quotes_for_submission
-            from pages_components.bulk_coverage_update import render_bulk_coverage_expander, render_bulk_coverage_modal
+            # Bulk coverage buttons are now embedded in coverage panels
 
             # Auto-load quote data when submission changes
             auto_load_quote_for_submission(sub_id)
@@ -965,13 +965,7 @@ def render():
             # Coverage Schedule (what goes on OUR policy form)
             render_coverages_panel(sub_id, expanded=False)
 
-            # Bulk Coverage Update - update a coverage across multiple options
-            saved_options = list_quotes_for_submission(sub_id)
-            if saved_options and len(saved_options) >= 1:
-                # Expander version:
-                # render_bulk_coverage_expander(sub_id, saved_options)
-                # Modal version:
-                render_bulk_coverage_modal(sub_id, saved_options)
+            # Bulk coverage update buttons are now embedded in the coverage panels above
 
             # Add coverages to config for quote generation
             config["coverages"] = get_coverages_for_quote(sub_id)
