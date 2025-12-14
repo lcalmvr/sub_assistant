@@ -18,6 +18,7 @@ from rating_engine.coverage_config import (
     format_limit_display,
     validate_sublimit,
 )
+from pages_components.tower_db import update_quote_field
 
 
 def render_coverages_panel(
@@ -33,25 +34,14 @@ def render_coverages_panel(
     aggregate_limit = st.session_state.get(f"selected_limit_{sub_id}", 1_000_000)
 
     with st.expander("Coverage Schedule", expanded=expanded):
-        # Initialize from Rating tab or saved quote
+        # Initialize from Rating tab or saved quote (only if not already set)
         session_key = f"quote_coverages_{sub_id}"
 
-        # Check if we're viewing a saved quote option
-        viewing_saved = st.session_state.get("viewing_quote_id") is not None
-
-        if viewing_saved:
-            # Use coverages loaded by _view_quote() or build fresh if not set
-            if session_key not in st.session_state:
-                st.session_state[session_key] = build_coverages_from_rating(sub_id, aggregate_limit)
-        else:
-            # Not viewing a saved option - always build fresh from Rating tab
+        # Only initialize if not already in session state - preserves edits
+        if session_key not in st.session_state:
             st.session_state[session_key] = build_coverages_from_rating(sub_id, aggregate_limit)
-            # Also clear widget keys so selectboxes use fresh values
-            keys_to_clear = [k for k in list(st.session_state.keys())
-                           if k.startswith(f"quote_sublimit_{sub_id}_")
-                           or k.startswith(f"quote_agg_{sub_id}_")]
-            for k in keys_to_clear:
-                del st.session_state[k]
+            # Clear widget keys so selectboxes use fresh values from coverages
+            _clear_coverage_widget_keys(sub_id)
 
         coverages = st.session_state[session_key]
 
@@ -60,38 +50,40 @@ def render_coverages_panel(
         if stored_limit != aggregate_limit:
             coverages = _update_for_new_limit(coverages, aggregate_limit, sub_id)
             st.session_state[session_key] = coverages
+            _clear_coverage_widget_keys(sub_id)
+
+        # Sync widget keys with coverages only when viewing a different quote option
+        # This prevents overwriting user edits while still syncing on option switch
+        current_quote_id = st.session_state.get("viewing_quote_id")
+        last_synced_quote_key = f"last_synced_quote_{sub_id}"
+        last_synced_quote = st.session_state.get(last_synced_quote_key)
+
+        if current_quote_id != last_synced_quote:
+            # Option changed - sync widget keys to match loaded coverages
+            _sync_widget_keys_with_coverages(sub_id, coverages, aggregate_limit)
+            st.session_state[last_synced_quote_key] = current_quote_id
 
         # Header
         form_label = _get_form_label(coverages.get("policy_form", "cyber"))
         st.caption(f"Policy Form: {form_label} · Limit: {format_limit_display(aggregate_limit)}")
 
-        # Edit mode state
-        edit_key = f"edit_quote_cov_{sub_id}"
-        if edit_key not in st.session_state:
-            st.session_state[edit_key] = False
+        # Two-column layout: Edit tabs on left, Summary on right (same as Rating tab)
+        col_edit, col_summary = st.columns([1, 1])
 
-        if not st.session_state[edit_key]:
-            # Summary view with edit button
-            if st.button("Edit", key=f"edit_cov_btn_{sub_id}"):
-                st.session_state[edit_key] = True
-                st.rerun()
+        # Process edit column FIRST to update session state
+        with col_edit:
+            tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
 
-            # Two-column summary: Full Limits on left, Sub Limit + No Coverage on right
-            _render_two_column_summary(coverages, aggregate_limit)
-        else:
-            # Edit mode
-            if st.button("Done", key=f"done_cov_btn_{sub_id}"):
-                st.session_state[edit_key] = False
-                st.rerun()
-
-            # Two-column edit: Variable on left, Standard on right
-            col_var, col_std = st.columns(2)
-            with col_var:
-                st.markdown("**Variable Limits**")
+            with tab_var:
                 _render_variable_limits_edit(sub_id, coverages, aggregate_limit)
-            with col_std:
-                st.markdown("**Standard Limits**")
+
+            with tab_std:
                 _render_standard_limits_edit(sub_id, coverages, aggregate_limit)
+
+        # Then render summary using updated values
+        with col_summary:
+            st.markdown("**Summary**")
+            _render_summary(coverages, aggregate_limit)
 
 
 def build_coverages_from_rating(sub_id: str, aggregate_limit: int) -> dict:
@@ -203,6 +195,66 @@ def _update_for_new_limit(coverages: dict, new_limit: int, sub_id: str) -> dict:
     return build_coverages_from_rating(sub_id, new_limit)
 
 
+def _clear_coverage_widget_keys(sub_id: str):
+    """Clear all coverage-related widget keys so selectboxes use fresh values."""
+    keys_to_clear = [k for k in list(st.session_state.keys())
+                     if k.startswith(f"quote_sublimit_{sub_id}_")
+                     or k.startswith(f"quote_agg_{sub_id}_")]
+    for k in keys_to_clear:
+        del st.session_state[k]
+
+
+def _sync_widget_keys_with_coverages(sub_id: str, coverages: dict, aggregate_limit: int):
+    """
+    Sync widget keys with coverages values.
+    Set widget keys to match coverages so selectboxes show correct values.
+    """
+    sub_values = coverages.get("sublimit_coverages", {})
+    agg_values = coverages.get("aggregate_coverages", {})
+
+    # Variable limits options (must match order in _render_variable_limits_edit)
+    var_options = [100_000, 250_000, 500_000, 1_000_000, aggregate_limit // 2, aggregate_limit, 0]
+
+    # Set sublimit widget keys to correct index
+    for cov in get_sublimit_coverage_definitions():
+        cov_id = cov["id"]
+        widget_key = f"quote_sublimit_{sub_id}_{cov_id}"
+        coverage_val = sub_values.get(cov_id, 0)
+
+        # Find correct index for this coverage value
+        if coverage_val in var_options:
+            correct_idx = var_options.index(coverage_val)
+        elif coverage_val == 0:
+            correct_idx = var_options.index(0)
+        else:
+            correct_idx = 0
+
+        # Set widget key to correct index (will be used by selectbox)
+        st.session_state[widget_key] = correct_idx
+
+    # Standard limits options (must match order in _render_standard_limits_edit)
+    std_options = [aggregate_limit, 1_000_000, 0]
+
+    # Set aggregate widget keys to correct index
+    for cov in get_aggregate_coverage_definitions():
+        cov_id = cov["id"]
+        widget_key = f"quote_agg_{sub_id}_{cov_id}"
+        coverage_val = agg_values.get(cov_id, 0)
+
+        # Find correct index for this coverage value
+        if coverage_val in std_options:
+            correct_idx = std_options.index(coverage_val)
+        elif coverage_val == aggregate_limit:
+            correct_idx = 0
+        elif coverage_val == 0:
+            correct_idx = 2
+        else:
+            correct_idx = 0
+
+        # Set widget key to correct index (will be used by selectbox)
+        st.session_state[widget_key] = correct_idx
+
+
 def _get_form_label(form_id: str) -> str:
     """Get display label for policy form."""
     forms = get_policy_forms()
@@ -212,8 +264,8 @@ def _get_form_label(form_id: str) -> str:
     return form_id
 
 
-def _render_two_column_summary(coverages: dict, aggregate_limit: int):
-    """Render two-column summary: Full Limits on left, Sub Limit + No Coverage on right."""
+def _render_summary(coverages: dict, aggregate_limit: int):
+    """Render summary showing only Sub Limit and No Coverage (Full Limits assumed for rest)."""
     agg_values = coverages.get("aggregate_coverages", {})
     sub_values = coverages.get("sublimit_coverages", {})
 
@@ -221,8 +273,7 @@ def _render_two_column_summary(coverages: dict, aggregate_limit: int):
     agg_defs = {c["id"]: c["label"] for c in get_aggregate_coverage_definitions()}
     sub_defs = {c["id"]: c["label"] for c in get_sublimit_coverage_definitions()}
 
-    # Group all coverages by their limit type
-    full_limits = []
+    # Group coverages - only track sublimits and no coverage
     sublimits = []
     no_coverage = []
 
@@ -231,9 +282,8 @@ def _render_two_column_summary(coverages: dict, aggregate_limit: int):
         label = agg_defs.get(cov_id, cov_id)
         if value == 0:
             no_coverage.append(label)
-        elif value == aggregate_limit:
-            full_limits.append(label)
-        else:
+        elif value != aggregate_limit:
+            # Not full limit - it's a sublimit
             sublimits.append((label, value))
 
     # Process variable/sublimit coverages
@@ -241,27 +291,22 @@ def _render_two_column_summary(coverages: dict, aggregate_limit: int):
         label = sub_defs.get(cov_id, cov_id)
         if value == 0:
             no_coverage.append(label)
-        elif value == aggregate_limit:
-            full_limits.append(label)
-        else:
+        elif value != aggregate_limit:
+            # Not full limit - it's a sublimit
             sublimits.append((label, value))
 
-    # Two-column layout
-    col_left, col_right = st.columns(2)
+    # Display only Sub Limit and No Coverage (Full Limits assumed for anything not listed)
+    if sublimits:
+        items = "".join([f"<div>{label} - {format_limit_display(value)}</div>" for label, value in sublimits])
+        st.markdown(f"<div><strong>Sub Limit:</strong>{items}</div>", unsafe_allow_html=True)
 
-    with col_left:
-        if full_limits:
-            items = "".join([f"<div>{label}</div>" for label in full_limits])
-            st.markdown(f"<div><strong>Full Limits:</strong>{items}</div>", unsafe_allow_html=True)
+    if no_coverage:
+        items = "".join([f"<div>{label}</div>" for label in no_coverage])
+        margin = "margin-top: 1em;" if sublimits else ""
+        st.markdown(f"<div style='{margin}'><strong>No Coverage:</strong>{items}</div>", unsafe_allow_html=True)
 
-    with col_right:
-        if sublimits:
-            items = "".join([f"<div>{label} - {format_limit_display(value)}</div>" for label, value in sublimits])
-            st.markdown(f"<div><strong>Sub Limit:</strong>{items}</div>", unsafe_allow_html=True)
-
-        if no_coverage:
-            items = "".join([f"<div>{label}</div>" for label in no_coverage])
-            st.markdown(f"<div style='margin-top: 1em;'><strong>No Coverage:</strong>{items}</div>", unsafe_allow_html=True)
+    if not sublimits and not no_coverage:
+        st.markdown("_All coverages at Full Limits_")
 
 
 def _render_variable_limits_edit(sub_id: str, coverages: dict, aggregate_limit: int):
@@ -269,6 +314,9 @@ def _render_variable_limits_edit(sub_id: str, coverages: dict, aggregate_limit: 
     session_key = f"quote_coverages_{sub_id}"
     sub_defs = get_sublimit_coverage_definitions()
     sub_values = coverages.get("sublimit_coverages", {})
+
+    # Check if we're editing a saved quote
+    quote_id = st.session_state.get("viewing_quote_id")
 
     # Options for dropdown
     options = [
@@ -310,6 +358,9 @@ def _render_variable_limits_edit(sub_id: str, coverages: dict, aggregate_limit: 
         if new_val != current_val:
             coverages["sublimit_coverages"][cov_id] = new_val
             st.session_state[session_key] = coverages
+            # Save to database if editing a saved quote
+            if quote_id:
+                update_quote_field(quote_id, "coverages", coverages)
 
 
 def _render_standard_limits_edit(sub_id: str, coverages: dict, aggregate_limit: int):
@@ -317,6 +368,9 @@ def _render_standard_limits_edit(sub_id: str, coverages: dict, aggregate_limit: 
     session_key = f"quote_coverages_{sub_id}"
     agg_defs = get_aggregate_coverage_definitions()
     agg_values = coverages.get("aggregate_coverages", {})
+
+    # Check if we're editing a saved quote
+    quote_id = st.session_state.get("viewing_quote_id")
 
     # Options for edit mode
     options = [
@@ -364,6 +418,9 @@ def _render_standard_limits_edit(sub_id: str, coverages: dict, aggregate_limit: 
         if new_val != current_val:
             coverages["aggregate_coverages"][cov_id] = new_val
             st.session_state[session_key] = coverages
+            # Save to database if editing a saved quote
+            if quote_id:
+                update_quote_field(quote_id, "coverages", coverages)
 
 
 # Keep old functions for backward compatibility but they're no longer used

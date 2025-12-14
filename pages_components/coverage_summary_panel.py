@@ -92,9 +92,9 @@ def render_coverage_summary_panel(
             if cov_id not in current:
                 current[cov_id] = new_default
 
-    # Single container with summary on left, edit dropdowns on right
+    # Single container with edit dropdowns on left, summary on right
     with st.expander("Coverage Limits", expanded=True):
-        col_summary, col_edit = st.columns([1, 1])
+        col_edit, col_summary = st.columns([1, 1])
 
         # Process edit column FIRST to update session state
         with col_edit:
@@ -209,18 +209,19 @@ def _render_unified_summary(sub_id: str, policy_form: str, aggregate_limit: int)
         else:
             sublimits.append((label, str(current_val)))
 
-    # Display grouped summary using div elements for reliable line breaks
-    if full_limits:
-        items = "".join([f"<div>{label}</div>" for label in full_limits])
-        st.markdown(f"<div><strong>Full Limits:</strong>{items}</div>", unsafe_allow_html=True)
-
+    # Display grouped summary - only Sub Limit and No Coverage
+    # (Full Limits are assumed for anything not listed)
     if sublimits:
         items = "".join([f"<div>{label} - {val}</div>" for label, val in sublimits])
-        st.markdown(f"<div style='margin-top: 1em;'><strong>Sub Limit:</strong>{items}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div><strong>Sub Limit:</strong>{items}</div>", unsafe_allow_html=True)
 
     if no_coverage:
         items = "".join([f"<div>{label}</div>" for label in no_coverage])
-        st.markdown(f"<div style='margin-top: 1em;'><strong>No Coverage:</strong>{items}</div>", unsafe_allow_html=True)
+        margin = "margin-top: 1em;" if sublimits else ""
+        st.markdown(f"<div style='{margin}'><strong>No Coverage:</strong>{items}</div>", unsafe_allow_html=True)
+
+    if not sublimits and not no_coverage:
+        st.markdown("_All coverages at Full Limits_")
 
 
 def _render_aggregate_coverages_edit(sub_id: str, policy_form: str) -> None:
