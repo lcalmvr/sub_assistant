@@ -12,7 +12,6 @@ Each excess quote option can have different coverage settings.
 from __future__ import annotations
 
 import re
-import pandas as pd
 import streamlit as st
 from typing import Optional
 
@@ -55,98 +54,15 @@ def _format_amount(amount: float) -> str:
     return f"{amount:,.0f}"
 
 
-# ─────────────────────── Sublimit Conversion ───────────────────────
-
-def _sublimits_to_dataframe(sublimits: list, calc_fn) -> pd.DataFrame:
-    """Convert sublimits list to DataFrame for display.
-
-    Args:
-        sublimits: List of sublimit dicts
-        calc_fn: Function(primary_limit) -> (our_limit, our_attachment) for proportional calc
-    """
-    if not sublimits:
-        return pd.DataFrame(columns=["coverage", "primary_limit", "treatment", "our_limit", "our_attachment"])
-
-    rows = []
-    for sub in sublimits:
-        primary_limit = sub.get("primary_limit", 0) or 0
-        treatment = sub.get("treatment", "follow_form")
-
-        # Calculate proportional defaults
-        prop_limit, prop_attach = calc_fn(primary_limit)
-
-        # Get stored overrides (if any)
-        stored_our_limit = sub.get("our_limit")
-        stored_our_attach = sub.get("our_attachment")
-
-        # Determine displayed values based on treatment
-        if treatment == "no_coverage":
-            disp_limit = ""
-            disp_attach = ""
-        elif treatment == "different":
-            disp_limit = _format_amount(stored_our_limit) if stored_our_limit else _format_amount(prop_limit)
-            disp_attach = _format_amount(stored_our_attach) if stored_our_attach else _format_amount(prop_attach)
-        else:  # follow_form
-            disp_limit = _format_amount(prop_limit) if prop_limit else ""
-            disp_attach = _format_amount(prop_attach) if prop_attach else ""
-
-        rows.append({
-            "coverage": sub.get("coverage", ""),
-            "primary_limit": _format_amount(primary_limit) if primary_limit else "",
-            "treatment": treatment,
-            "our_limit": disp_limit,
-            "our_attachment": disp_attach,
-        })
-
-    return pd.DataFrame(rows)
-
-
-def _dataframe_to_sublimits(df: pd.DataFrame, existing_sublimits: list, calc_fn) -> list:
-    """Convert DataFrame back to sublimits list.
-
-    Args:
-        df: Edited DataFrame from data_editor
-        existing_sublimits: Previous sublimits list (for detecting changes)
-        calc_fn: Function(primary_limit) -> (our_limit, our_attachment) for proportional calc
-    """
-    sublimits = []
-
-    for idx, row in df.iterrows():
-        coverage = str(row.get("coverage", "") or "").strip()
-        primary_limit_str = str(row.get("primary_limit", "") or "").strip()
-        treatment = row.get("treatment") or "follow_form"
-        our_limit_str = str(row.get("our_limit", "") or "").strip()
-        our_attach_str = str(row.get("our_attachment", "") or "").strip()
-
-        # Skip fully empty rows
-        if not coverage and not primary_limit_str:
-            continue
-
-        # Parse primary limit
-        primary_limit = _parse_amount(primary_limit_str) if primary_limit_str else 0
-
-        # Calculate expected proportional values
-        prop_limit, prop_attach = calc_fn(primary_limit)
-
-        # Determine our_limit - store only if treatment is "different"
-        our_limit = None
-        if treatment == "different" and our_limit_str:
-            our_limit = _parse_amount(our_limit_str)
-
-        # Determine our_attachment - store only if treatment is "different"
-        our_attachment = None
-        if treatment == "different" and our_attach_str:
-            our_attachment = _parse_amount(our_attach_str)
-
-        sublimits.append({
-            "coverage": coverage,
-            "primary_limit": primary_limit,
-            "treatment": treatment,
-            "our_limit": our_limit,
-            "our_attachment": our_attachment,
-        })
-
-    return sublimits
+def _format_amount_short(amount: float) -> str:
+    """Format amount for compact display (no $ to avoid LaTeX issues)."""
+    if amount is None or amount == 0:
+        return "—"
+    if amount >= 1_000_000:
+        return f"{int(amount // 1_000_000)}M"
+    if amount >= 1_000:
+        return f"{int(amount // 1_000)}K"
+    return f"{int(amount)}"
 
 
 # ─────────────────────── Main Render Function ───────────────────────
@@ -163,10 +79,7 @@ def render_sublimits_panel(sub_id: str, quote_id: Optional[str] = None, expanded
         quote_id: Quote ID for per-option storage (required for excess quotes)
         expanded: Whether to expand the section by default
     """
-    # Determine if this is being used for an excess quote
     is_excess_mode = quote_id is not None
-
-    # Session key for this quote's sublimits
     session_key = f"quote_sublimits_{quote_id}" if quote_id else "sublimits"
 
     # Load sublimits from database if viewing a saved quote
@@ -177,34 +90,462 @@ def render_sublimits_panel(sub_id: str, quote_id: Optional[str] = None, expanded
     if session_key not in st.session_state:
         st.session_state[session_key] = []
 
-    # Panel title changes based on mode
     panel_title = "📋 Coverage Schedule (Excess)" if is_excess_mode else "📋 Sublimits"
-    panel_caption = (
-        "Define the underlying carrier's coverages and your treatment for each."
-        if is_excess_mode else
-        "Define primary carrier sublimits, then specify your drop-down treatment for each."
-    )
 
     with st.expander(panel_title, expanded=expanded):
-        st.caption(panel_caption)
-
         # Calculate tower context for proportional sublimit calculations
         tower_context = _get_tower_context_for_quote(quote_id) if quote_id else _get_tower_context()
 
-        # Display position info
+        # Display position info (compact)
         _render_position_info(tower_context)
 
-        # Natural language input for sublimits
+        # Header row with toggle
+        col_title, col_toggle = st.columns([3, 1])
+        with col_title:
+            st.caption("Define underlying coverages and your treatment for each")
+        with col_toggle:
+            view_mode = st.toggle("Card", key=f"sublimits_card_view_{quote_id or sub_id}", help="Switch to card view for mobile")
+
+        # Add coverage button
+        if st.button("+ Add Coverage", key=f"add_coverage_btn_{quote_id or sub_id}", use_container_width=True):
+            _add_new_coverage(session_key, quote_id)
+
+        sublimits = st.session_state.get(session_key, [])
+
+        if not sublimits:
+            st.caption("No coverages defined yet.")
+            _render_bulk_add_section(sub_id, quote_id, session_key, tower_context)
+            return
+
+        # Proportional calculation function
+        def calc_proportional(primary_limit: float) -> tuple[float, float]:
+            return _calc_proportional_sublimit(primary_limit, tower_context)
+
+        if view_mode:
+            # Card view - compact clickable cards
+            st.caption("Tap a card to edit")
+            for idx, coverage in enumerate(sublimits):
+                _render_coverage_card(sub_id, quote_id, session_key, idx, coverage, calc_proportional)
+        else:
+            # Table view - desktop
+            _render_coverage_table_headers()
+            for idx, coverage in enumerate(sublimits):
+                _render_coverage_row(sub_id, quote_id, session_key, idx, coverage, calc_proportional)
+
+        # Bulk add section at bottom
+        st.markdown("---")
+        _render_bulk_add_section(sub_id, quote_id, session_key, tower_context)
+
+
+# ─────────────────────── Table View ───────────────────────
+
+def _render_coverage_table_headers():
+    """Render column headers for coverage table."""
+    hdr_cov, hdr_primary, hdr_treatment, hdr_limit, hdr_attach, hdr_del = st.columns([2, 1, 1.2, 1, 1, 0.4])
+    hdr_cov.caption("Coverage")
+    hdr_primary.caption("Primary Limit")
+    hdr_treatment.caption("Treatment")
+    hdr_limit.caption("Our Limit")
+    hdr_attach.caption("Our Attach")
+
+
+def _render_coverage_row(sub_id: str, quote_id: str, session_key: str, idx: int, coverage: dict, calc_fn):
+    """Render a single coverage as an inline editable row."""
+    cov_name = coverage.get("coverage", "")
+    primary_limit = coverage.get("primary_limit", 0)
+    treatment = coverage.get("treatment", "follow_form")
+    stored_our_limit = coverage.get("our_limit")
+    stored_our_attach = coverage.get("our_attachment")
+
+    # Calculate proportional defaults
+    prop_limit, prop_attach = calc_fn(primary_limit)
+
+    # Columns: Coverage | Primary Limit | Treatment | Our Limit | Our Attach | Delete
+    col_cov, col_primary, col_treatment, col_limit, col_attach, col_delete = st.columns([2, 1, 1.2, 1, 1, 0.4])
+
+    with col_cov:
+        new_cov = st.text_input(
+            "Coverage",
+            value=cov_name,
+            key=f"cov_name_{quote_id}_{idx}",
+            label_visibility="collapsed",
+            placeholder="Coverage name"
+        )
+
+    with col_primary:
+        # Primary limit dropdown
+        limit_options = ["$100K", "$250K", "$500K", "$1M", "$2M", "$3M", "$5M"]
+        limit_map = {"$100K": 100_000, "$250K": 250_000, "$500K": 500_000, "$1M": 1_000_000,
+                     "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000}
+        reverse_map = {v: k for k, v in limit_map.items()}
+
+        current_label = reverse_map.get(primary_limit, "$1M")
+        new_primary_label = st.selectbox(
+            "Primary Limit",
+            options=limit_options,
+            index=limit_options.index(current_label) if current_label in limit_options else 3,
+            key=f"cov_primary_{quote_id}_{idx}",
+            label_visibility="collapsed"
+        )
+        new_primary_limit = limit_map[new_primary_label]
+
+    with col_treatment:
+        treatment_options = ["follow_form", "different", "no_coverage"]
+        treatment_labels = {"follow_form": "Follow Form", "different": "Different", "no_coverage": "No Coverage"}
+        current_treatment_idx = treatment_options.index(treatment) if treatment in treatment_options else 0
+
+        new_treatment = st.selectbox(
+            "Treatment",
+            options=treatment_options,
+            index=current_treatment_idx,
+            format_func=lambda x: treatment_labels.get(x, x),
+            key=f"cov_treatment_{quote_id}_{idx}",
+            label_visibility="collapsed"
+        )
+
+    # Recalculate proportional with potentially new primary limit
+    prop_limit, prop_attach = calc_fn(new_primary_limit)
+
+    with col_limit:
+        # Our limit - editable dropdown, defaults to proportional
+        our_limit_options = ["$100K", "$250K", "$500K", "$1M", "$2M", "$3M", "$5M", "Prop"]
+        our_limit_map = {"$100K": 100_000, "$250K": 250_000, "$500K": 500_000, "$1M": 1_000_000,
+                        "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000}
+
+        if new_treatment == "no_coverage":
+            st.text_input("Our Limit", value="—", disabled=True, label_visibility="collapsed", key=f"cov_our_limit_{quote_id}_{idx}")
+            new_our_limit = None
+        else:
+            # Determine current value - use stored if "different", else proportional
+            if new_treatment == "different" and stored_our_limit:
+                current_our_label = reverse_map.get(stored_our_limit) if stored_our_limit in reverse_map.values() else f"${stored_our_limit/1000:.0f}K" if stored_our_limit >= 1000 else ""
+                if current_our_label not in our_limit_options:
+                    current_our_label = "Prop"
+            else:
+                current_our_label = "Prop"
+
+            new_our_limit_label = st.selectbox(
+                "Our Limit",
+                options=our_limit_options,
+                index=our_limit_options.index(current_our_label) if current_our_label in our_limit_options else 7,
+                key=f"cov_our_limit_{quote_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+            if new_our_limit_label == "Prop":
+                new_our_limit = prop_limit
+            else:
+                new_our_limit = our_limit_map.get(new_our_limit_label, prop_limit)
+
+    with col_attach:
+        # Our attachment - editable dropdown, defaults to proportional
+        attach_options = ["$0", "$100K", "$250K", "$500K", "$1M", "$2M", "$3M", "$5M", "Prop"]
+        attach_map = {"$0": 0, "$100K": 100_000, "$250K": 250_000, "$500K": 500_000, "$1M": 1_000_000,
+                      "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000}
+        attach_reverse = {v: k for k, v in attach_map.items()}
+
+        if new_treatment == "no_coverage":
+            st.text_input("Our Attach", value="—", disabled=True, label_visibility="collapsed", key=f"cov_our_attach_{quote_id}_{idx}")
+            new_our_attach = None
+        else:
+            # Determine current value
+            if new_treatment == "different" and stored_our_attach is not None:
+                current_attach_label = attach_reverse.get(stored_our_attach, "Prop")
+                if current_attach_label not in attach_options:
+                    current_attach_label = "Prop"
+            else:
+                current_attach_label = "Prop"
+
+            new_attach_label = st.selectbox(
+                "Our Attach",
+                options=attach_options,
+                index=attach_options.index(current_attach_label) if current_attach_label in attach_options else 8,
+                key=f"cov_our_attach_{quote_id}_{idx}",
+                label_visibility="collapsed"
+            )
+
+            if new_attach_label == "Prop":
+                new_our_attach = prop_attach
+            else:
+                new_our_attach = attach_map.get(new_attach_label, prop_attach)
+
+    with col_delete:
+        if st.button("×", key=f"delete_cov_{quote_id}_{idx}", help="Remove coverage"):
+            sublimits = st.session_state.get(session_key, [])
+            sublimits.pop(idx)
+            st.session_state[session_key] = sublimits
+            if quote_id:
+                _save_sublimits_to_quote(quote_id, sublimits)
+            st.rerun()
+
+    # Check for changes and save
+    changed = False
+    if new_cov != cov_name:
+        coverage["coverage"] = new_cov
+        changed = True
+    if new_primary_limit != primary_limit:
+        coverage["primary_limit"] = new_primary_limit
+        changed = True
+    if new_treatment != treatment:
+        coverage["treatment"] = new_treatment
+        changed = True
+
+    # Store our_limit/our_attachment only if treatment is "different" and not proportional
+    if new_treatment == "different":
+        if new_our_limit != stored_our_limit:
+            coverage["our_limit"] = new_our_limit
+            changed = True
+        if new_our_attach != stored_our_attach:
+            coverage["our_attachment"] = new_our_attach
+            changed = True
+    elif new_treatment == "follow_form":
+        # Clear overrides when switching to follow_form
+        if stored_our_limit is not None or stored_our_attach is not None:
+            coverage["our_limit"] = None
+            coverage["our_attachment"] = None
+            changed = True
+
+    if changed:
+        sublimits = st.session_state.get(session_key, [])
+        st.session_state[session_key] = sublimits
+        if quote_id:
+            _save_sublimits_to_quote(quote_id, sublimits)
+
+
+# ─────────────────────── Card View ───────────────────────
+
+def _render_coverage_card(sub_id: str, quote_id: str, session_key: str, idx: int, coverage: dict, calc_fn):
+    """Render a single coverage as a compact clickable card."""
+    cov_name = coverage.get("coverage", "") or "Unnamed Coverage"
+    primary_limit = coverage.get("primary_limit", 0)
+    treatment = coverage.get("treatment", "follow_form")
+    stored_our_limit = coverage.get("our_limit")
+    stored_our_attach = coverage.get("our_attachment")
+
+    # Calculate proportional defaults
+    prop_limit, prop_attach = calc_fn(primary_limit)
+
+    # Determine display values based on treatment
+    if treatment == "no_coverage":
+        our_limit_str = "No Cov"
+        our_attach_str = ""
+    elif treatment == "different" and stored_our_limit:
+        our_limit_str = _format_amount_short(stored_our_limit)
+        our_attach_str = f"xs {_format_amount_short(stored_our_attach)}" if stored_our_attach else ""
+    else:
+        our_limit_str = _format_amount_short(prop_limit)
+        our_attach_str = f"xs {_format_amount_short(prop_attach)}" if prop_attach else ""
+
+    # Treatment label
+    treatment_labels = {"follow_form": "Follow", "different": "Modified", "no_coverage": "Excluded"}
+    treatment_str = treatment_labels.get(treatment, treatment)
+
+    # Build card content (no $ to avoid LaTeX issues)
+    line1 = f"**{cov_name}**"
+    line2 = f"Primary: {_format_amount_short(primary_limit)} · {treatment_str}"
+    line3 = f"Ours: {our_limit_str}" + (f" {our_attach_str}" if our_attach_str else "")
+
+    # Clickable card button
+    card_key = f"coverage_card_{quote_id}_{idx}"
+    if st.button(
+        f"{line1}\n\n{line2}\n\n{line3}",
+        key=card_key,
+        use_container_width=True,
+        help="Tap to edit"
+    ):
+        st.session_state[f"editing_coverage_{quote_id}_{idx}"] = True
+        st.rerun()
+
+    # Show edit dialog if this card is being edited
+    if st.session_state.get(f"editing_coverage_{quote_id}_{idx}"):
+        _render_coverage_edit_dialog(sub_id, quote_id, session_key, idx, coverage, calc_fn)
+
+
+def _render_coverage_edit_dialog(sub_id: str, quote_id: str, session_key: str, idx: int, coverage: dict, calc_fn):
+    """Render edit dialog for a coverage."""
+
+    @st.dialog("Edit Coverage", width="small")
+    def show_edit():
+        cov_name = coverage.get("coverage", "")
+        primary_limit = coverage.get("primary_limit", 0)
+        treatment = coverage.get("treatment", "follow_form")
+        stored_our_limit = coverage.get("our_limit")
+        stored_our_attach = coverage.get("our_attachment")
+
+        new_cov = st.text_input("Coverage Name", value=cov_name, key=f"edit_cov_name_{quote_id}_{idx}")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            limit_options = ["$100K", "$250K", "$500K", "$1M", "$2M", "$3M", "$5M"]
+            limit_map = {"$100K": 100_000, "$250K": 250_000, "$500K": 500_000, "$1M": 1_000_000,
+                         "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000}
+            reverse_map = {v: k for k, v in limit_map.items()}
+
+            current_label = reverse_map.get(primary_limit, "$1M")
+            new_primary_label = st.selectbox(
+                "Primary Limit",
+                options=limit_options,
+                index=limit_options.index(current_label) if current_label in limit_options else 3,
+                key=f"edit_cov_primary_{quote_id}_{idx}"
+            )
+            new_primary_limit = limit_map[new_primary_label]
+
+        with col2:
+            treatment_options = ["follow_form", "different", "no_coverage"]
+            treatment_labels = {"follow_form": "Follow Form", "different": "Different", "no_coverage": "No Coverage"}
+            current_treatment_idx = treatment_options.index(treatment) if treatment in treatment_options else 0
+
+            new_treatment = st.selectbox(
+                "Treatment",
+                options=treatment_options,
+                index=current_treatment_idx,
+                format_func=lambda x: treatment_labels.get(x, x),
+                key=f"edit_cov_treatment_{quote_id}_{idx}"
+            )
+
+        # Calculate proportional with new primary
+        prop_limit, prop_attach = calc_fn(new_primary_limit)
+
+        st.markdown("---")
+        st.caption("Our Coverage (editable)")
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            if new_treatment == "no_coverage":
+                st.text_input("Our Limit", value="—", disabled=True, key=f"edit_our_limit_{quote_id}_{idx}")
+                new_our_limit = None
+            else:
+                our_limit_options = ["$100K", "$250K", "$500K", "$1M", "$2M", "$3M", "$5M", "Proportional"]
+                our_limit_map = {"$100K": 100_000, "$250K": 250_000, "$500K": 500_000, "$1M": 1_000_000,
+                                "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000}
+                our_reverse = {v: k for k, v in our_limit_map.items()}
+
+                if new_treatment == "different" and stored_our_limit:
+                    current_our_label = our_reverse.get(stored_our_limit, "Proportional")
+                else:
+                    current_our_label = "Proportional"
+
+                new_our_limit_label = st.selectbox(
+                    "Our Limit",
+                    options=our_limit_options,
+                    index=our_limit_options.index(current_our_label) if current_our_label in our_limit_options else 7,
+                    key=f"edit_our_limit_{quote_id}_{idx}"
+                )
+
+                if new_our_limit_label == "Proportional":
+                    new_our_limit = prop_limit
+                    st.caption(f"= {_format_amount(prop_limit)}")
+                else:
+                    new_our_limit = our_limit_map.get(new_our_limit_label, prop_limit)
+
+        with col4:
+            if new_treatment == "no_coverage":
+                st.text_input("Our Attachment", value="—", disabled=True, key=f"edit_our_attach_{quote_id}_{idx}")
+                new_our_attach = None
+            else:
+                attach_options = ["$0", "$100K", "$250K", "$500K", "$1M", "$2M", "$3M", "$5M", "Proportional"]
+                attach_map = {"$0": 0, "$100K": 100_000, "$250K": 250_000, "$500K": 500_000, "$1M": 1_000_000,
+                              "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000}
+                attach_reverse = {v: k for k, v in attach_map.items()}
+
+                if new_treatment == "different" and stored_our_attach is not None:
+                    current_attach_label = attach_reverse.get(stored_our_attach, "Proportional")
+                else:
+                    current_attach_label = "Proportional"
+
+                new_attach_label = st.selectbox(
+                    "Our Attachment",
+                    options=attach_options,
+                    index=attach_options.index(current_attach_label) if current_attach_label in attach_options else 8,
+                    key=f"edit_our_attach_{quote_id}_{idx}"
+                )
+
+                if new_attach_label == "Proportional":
+                    new_our_attach = prop_attach
+                    st.caption(f"= {_format_amount(prop_attach)}")
+                else:
+                    new_our_attach = attach_map.get(new_attach_label, prop_attach)
+
+        st.markdown("---")
+
+        col_save, col_delete, col_cancel = st.columns(3)
+
+        with col_save:
+            if st.button("Save", type="primary", use_container_width=True, key=f"save_cov_{quote_id}_{idx}"):
+                coverage["coverage"] = new_cov
+                coverage["primary_limit"] = new_primary_limit
+                coverage["treatment"] = new_treatment
+
+                if new_treatment == "different":
+                    coverage["our_limit"] = new_our_limit
+                    coverage["our_attachment"] = new_our_attach
+                else:
+                    coverage["our_limit"] = None
+                    coverage["our_attachment"] = None
+
+                sublimits = st.session_state.get(session_key, [])
+                st.session_state[session_key] = sublimits
+                if quote_id:
+                    _save_sublimits_to_quote(quote_id, sublimits)
+                st.session_state[f"editing_coverage_{quote_id}_{idx}"] = False
+                st.rerun()
+
+        with col_delete:
+            if st.button("Delete", use_container_width=True, key=f"del_cov_{quote_id}_{idx}"):
+                sublimits = st.session_state.get(session_key, [])
+                sublimits.pop(idx)
+                st.session_state[session_key] = sublimits
+                if quote_id:
+                    _save_sublimits_to_quote(quote_id, sublimits)
+                st.session_state[f"editing_coverage_{quote_id}_{idx}"] = False
+                st.rerun()
+
+        with col_cancel:
+            if st.button("Cancel", use_container_width=True, key=f"cancel_cov_{quote_id}_{idx}"):
+                st.session_state[f"editing_coverage_{quote_id}_{idx}"] = False
+                st.rerun()
+
+    show_edit()
+
+
+# ─────────────────────── Add/Bulk Functions ───────────────────────
+
+def _add_new_coverage(session_key: str, quote_id: str):
+    """Add a new empty coverage row."""
+    sublimits = st.session_state.get(session_key, [])
+    sublimits.append({
+        "coverage": "",
+        "primary_limit": 1_000_000,
+        "treatment": "follow_form",
+        "our_limit": None,
+        "our_attachment": None,
+    })
+    st.session_state[session_key] = sublimits
+    if quote_id:
+        _save_sublimits_to_quote(quote_id, sublimits)
+    st.rerun()
+
+
+def _render_bulk_add_section(sub_id: str, quote_id: str, session_key: str, tower_context: dict):
+    """Render section for bulk adding coverages via AI."""
+    with st.container():
+        st.caption("Bulk add via AI")
+
         sublimit_input = st.text_area(
-            "Describe coverages:" if is_excess_mode else "Describe sublimits:",
+            "Describe coverages:",
             placeholder="Example: 'Primary has 1M ransomware, 500K business interruption, 250K social engineering'",
             height=80,
-            key=f"sublimit_input_{quote_id or sub_id}"
+            key=f"sublimit_input_{quote_id or sub_id}",
+            label_visibility="collapsed"
         )
 
         col_process, col_clear = st.columns([1, 4])
         with col_process:
-            process_sublimits = st.button("Process with AI", key=f"process_sublimits_btn_{quote_id or sub_id}")
+            if st.button("Parse", key=f"process_sublimits_btn_{quote_id or sub_id}"):
+                if sublimit_input.strip():
+                    _process_sublimits_with_ai(sublimit_input, tower_context, session_key, quote_id)
         with col_clear:
             if st.button("Clear All", key=f"clear_sublimits_btn_{quote_id or sub_id}"):
                 st.session_state[session_key] = []
@@ -212,66 +553,15 @@ def render_sublimits_panel(sub_id: str, quote_id: Optional[str] = None, expanded
                     _save_sublimits_to_quote(quote_id, [])
                 st.rerun()
 
-        # Process with AI
-        if process_sublimits and sublimit_input.strip():
-            _process_sublimits_with_ai(sublimit_input, tower_context, session_key, quote_id)
 
-        # Create the proportional calculation function
-        def calc_proportional_sublimit(primary_sublimit: float) -> tuple[float, float]:
-            return _calc_proportional_sublimit(primary_sublimit, tower_context)
-
-        # Convert sublimits to DataFrame for display
-        sublimits_df = _sublimits_to_dataframe(st.session_state[session_key], calc_proportional_sublimit)
-
-        # Display editable table
-        edited_sublimits = st.data_editor(
-            sublimits_df,
-            num_rows="dynamic",
-            use_container_width=True,
-            column_config={
-                "coverage": st.column_config.TextColumn("Coverage", width="medium"),
-                "primary_limit": st.column_config.TextColumn("Primary Limit", width="small", help="e.g., 250K, 1M, 500K"),
-                "treatment": st.column_config.SelectboxColumn(
-                    "Our Treatment", width="small",
-                    options=["follow_form", "different", "no_coverage"],
-                    default="follow_form"
-                ),
-                "our_limit": st.column_config.TextColumn(
-                    "Our Limit", width="small",
-                    help="Auto-calculated for follow_form. Editable when treatment is 'different'."
-                ),
-                "our_attachment": st.column_config.TextColumn(
-                    "Our Attachment", width="small",
-                    help="Auto-calculated for follow_form. Editable when treatment is 'different'."
-                ),
-            },
-            key=f"sublimits_editor_{quote_id or sub_id}"
-        )
-
-        # Update when table is edited
-        if not edited_sublimits.equals(sublimits_df):
-            updated_sublimits = _dataframe_to_sublimits(
-                edited_sublimits,
-                st.session_state[session_key],
-                calc_proportional_sublimit
-            )
-            st.session_state[session_key] = updated_sublimits
-
-            # Auto-save to database for saved quotes
-            if quote_id:
-                _save_sublimits_to_quote(quote_id, updated_sublimits)
-
-            st.rerun()
-
+# ─────────────────────── Tower Context & Calculations ───────────────────────
 
 def _load_sublimits_from_quote(quote_id: str, session_key: str):
     """Load sublimits from the quote's database record."""
-    # Track which quote we last loaded to detect option switches
-    last_loaded_key = f"last_loaded_sublimits_quote"
+    last_loaded_key = "last_loaded_sublimits_quote"
     last_loaded_quote = st.session_state.get(last_loaded_key)
 
     if last_loaded_quote != quote_id:
-        # Switching to a different quote - load from database
         quote = get_quote_by_id(quote_id)
         if quote:
             sublimits = quote.get("sublimits") or []
@@ -304,7 +594,6 @@ def _get_tower_context() -> dict:
 
 def _build_tower_context(tower_layers: list) -> dict:
     """Build tower context from tower_json for sublimit calculations."""
-    # Find CMAI layer in the tower
     cmai_layer_idx = None
     cmai_layer = None
     for idx, layer in enumerate(tower_layers or []):
@@ -314,7 +603,6 @@ def _build_tower_context(tower_layers: list) -> dict:
             cmai_layer = layer
             break
 
-    # Calculate aggregates
     our_aggregate_limit = 0.0
     our_aggregate_attachment = 0.0
     layers_below_count = 0
@@ -350,16 +638,13 @@ def _build_tower_context(tower_layers: list) -> dict:
 def _render_position_info(ctx: dict):
     """Render position information in the tower."""
     if ctx["cmai_layer_idx"] is not None:
-        st.info(
-            f"**CMAI Layer:** {_format_amount(ctx['our_aggregate_limit'])} xs "
-            f"{_format_amount(ctx['our_aggregate_attachment'])} "
-            f"(Layer {ctx['cmai_layer_idx'] + 1} of {len(ctx['tower_layers'])}) | "
-            f"Primary agg: {_format_amount(ctx['primary_aggregate_limit'])} | "
-            f"{ctx['layers_below_count']} layers below"
+        st.caption(
+            f"**CMAI:** {_format_amount(ctx['our_aggregate_limit'])} xs "
+            f"{_format_amount(ctx['our_aggregate_attachment'])} · "
+            f"Primary agg: {_format_amount(ctx['primary_aggregate_limit'])}"
         )
     elif ctx["tower_layers"]:
-        st.warning("CMAI not found in tower. Add CMAI as a carrier to auto-calculate sublimits.")
-        st.caption(f"Tower has {len(ctx['tower_layers'])} layers, primary agg: {_format_amount(ctx['primary_aggregate_limit'])}")
+        st.warning("CMAI not found in tower. Add CMAI as a carrier to auto-calculate.")
 
 
 def _calc_proportional_sublimit(primary_sublimit: float, ctx: dict) -> tuple[float, float]:
@@ -400,7 +685,6 @@ def _process_sublimits_with_ai(sublimit_input: str, ctx: dict, session_key: str 
 
         st.session_state[session_key] = result
 
-        # Auto-save to database for saved quotes
         if quote_id:
             _save_sublimits_to_quote(quote_id, result)
 
