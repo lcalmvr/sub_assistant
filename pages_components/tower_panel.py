@@ -713,9 +713,9 @@ def _add_underlying_layer(sub_id: str):
 
 
 def _save_tower_changes(sub_id: str):
-    """Save tower changes to the database."""
+    """Save tower changes to the database, including quote name update for excess quotes."""
     import json
-    from pages_components.tower_db import get_conn
+    from pages_components.tower_db import get_conn, get_quote_by_id
 
     viewing_quote_id = st.session_state.get("viewing_quote_id")
     if not viewing_quote_id:
@@ -725,18 +725,53 @@ def _save_tower_changes(sub_id: str):
         tower_json = st.session_state.tower_layers
         primary_retention = st.session_state.get("primary_retention")
 
+        # Check if this is an excess quote and update name based on CMAI limit/attachment
+        quote_data = get_quote_by_id(viewing_quote_id)
+        new_quote_name = None
+
+        if quote_data and quote_data.get("position") == "excess":
+            # Find CMAI layer to get our limit and attachment
+            cmai_limit = None
+            cmai_attachment = None
+            for layer in tower_json or []:
+                if "CMAI" in str(layer.get("carrier", "")).upper():
+                    cmai_limit = layer.get("limit")
+                    cmai_attachment = layer.get("attachment")
+                    break
+
+            if cmai_limit and cmai_attachment is not None:
+                new_quote_name = _generate_excess_quote_name(cmai_limit, cmai_attachment)
+
         with get_conn().cursor() as cur:
-            cur.execute(
-                """
-                UPDATE insurance_towers
-                SET tower_json = %s, primary_retention = %s, updated_at = NOW()
-                WHERE id = %s
-                """,
-                (json.dumps(tower_json), primary_retention, viewing_quote_id)
-            )
+            if new_quote_name:
+                cur.execute(
+                    """
+                    UPDATE insurance_towers
+                    SET tower_json = %s, primary_retention = %s, quote_name = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (json.dumps(tower_json), primary_retention, new_quote_name, viewing_quote_id)
+                )
+                st.session_state.quote_name = new_quote_name
+            else:
+                cur.execute(
+                    """
+                    UPDATE insurance_towers
+                    SET tower_json = %s, primary_retention = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (json.dumps(tower_json), primary_retention, viewing_quote_id)
+                )
             get_conn().commit()
     except Exception:
         pass  # Silent fail - will retry on next save
+
+
+def _generate_excess_quote_name(our_limit: int, our_attachment: int) -> str:
+    """Generate quote name for excess quotes: '$XM xs $YM' format."""
+    limit_str = f"${our_limit // 1_000_000}M" if our_limit >= 1_000_000 else f"${our_limit // 1_000}K"
+    attach_str = f"${our_attachment // 1_000_000}M" if our_attachment >= 1_000_000 else f"${our_attachment // 1_000}K" if our_attachment >= 1_000 else "$0"
+    return f"{limit_str} xs {attach_str}"
 
 
 # ─────────────────────── Bulk Add Dialog ───────────────────────
