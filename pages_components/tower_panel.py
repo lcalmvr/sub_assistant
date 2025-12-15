@@ -352,20 +352,21 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
         if not underlying_layers:
             st.caption("No underlying layers defined yet.")
 
-        # Calculate primary RPM for ILF calculations
-        primary_rpm = None
-        if underlying_layers:
-            primary_layer = underlying_layers[0][1]  # First layer (idx 0) is primary
-            primary_premium = primary_layer.get("premium")
-            primary_limit = primary_layer.get("limit")
-            if primary_premium and primary_limit:
-                primary_rpm = primary_premium / (primary_limit / 1_000_000)
+        # Build RPM map for ILF calculations (ILF = this layer RPM / layer below RPM)
+        layer_rpms = {}
+        for idx, layer in underlying_layers:
+            layer_premium = layer.get("premium")
+            layer_limit = layer.get("limit")
+            if layer_premium and layer_limit:
+                layer_rpms[idx] = layer_premium / (layer_limit / 1_000_000)
 
         if view_mode:
             # Card view - compact clickable cards
             st.caption("Tap a card to edit")
             for idx, layer in reversed(underlying_layers):
-                _render_underlying_layer_card(sub_id, idx, layer, is_primary=(idx == 0), primary_rpm=primary_rpm)
+                # Get RPM of layer below for ILF calculation
+                below_rpm = layer_rpms.get(idx - 1) if idx > 0 else None
+                _render_underlying_layer_card(sub_id, idx, layer, is_primary=(idx == 0), below_rpm=below_rpm)
         else:
             # Table view - desktop
             if underlying_layers:
@@ -380,10 +381,12 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
 
             # Render underlying layers (bottom to top visually = primary at bottom)
             for idx, layer in reversed(underlying_layers):
-                _render_underlying_layer_row(sub_id, idx, layer, is_primary=(idx == 0), primary_rpm=primary_rpm)
+                # Get RPM of layer below for ILF calculation
+                below_rpm = layer_rpms.get(idx - 1) if idx > 0 else None
+                _render_underlying_layer_row(sub_id, idx, layer, is_primary=(idx == 0), below_rpm=below_rpm)
 
 
-def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, primary_rpm: float = None):
+def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, below_rpm: float = None):
     """Render a single underlying layer as an inline editable row."""
     carrier = layer.get("carrier", "")
     limit = layer.get("limit", 0)
@@ -463,8 +466,8 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
     ilf = None
     if calc_premium and calc_limit:
         rpm = calc_premium / (calc_limit / 1_000_000)
-        if primary_rpm and primary_rpm > 0:
-            ilf = rpm / primary_rpm
+        if below_rpm and below_rpm > 0:
+            ilf = rpm / below_rpm
 
     with col_rpm:
         # RPM display (calculated, read-only)
@@ -518,7 +521,7 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
         _save_tower_changes(sub_id)
 
 
-def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, primary_rpm: float = None):
+def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, below_rpm: float = None):
     """Render a single underlying layer as a compact clickable card."""
     carrier = layer.get("carrier", "") or "Unnamed"
     limit = layer.get("limit", 0)
@@ -526,13 +529,13 @@ def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_p
     retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
     premium = layer.get("premium")
 
-    # Calculate RPM and ILF
+    # Calculate RPM and ILF (ILF = this layer RPM / layer below RPM)
     rpm = None
     ilf = None
     if premium and limit:
         rpm = premium / (limit / 1_000_000)
-        if primary_rpm and primary_rpm > 0:
-            ilf = rpm / primary_rpm
+        if below_rpm and below_rpm > 0:
+            ilf = rpm / below_rpm
 
     # Format display values (no $ to avoid LaTeX issues)
     if limit >= 1_000_000:
