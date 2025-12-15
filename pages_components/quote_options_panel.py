@@ -246,34 +246,44 @@ def _save_calculated_premiums(quote_id: str, technical_premium: float, risk_adju
 
 def _render_premium_summary(quote_id: str, sub_id: str = None):
     """
-    Render premium summary with:
+    Render premium summary - handles both primary and excess quotes.
+
+    For PRIMARY quotes:
       - Row 1: Limit (dropdown) | Retention (dropdown) | Sold Premium (editable)
       - Row 2: Technical | Risk-Adjusted | Market Adjustment
 
-    Three-tier premium model:
-      - Technical Premium: Pure exposure-based (before controls)
-      - Risk-Adjusted Premium: After control credits/debits
-      - Sold Premium: UW's final quoted price (editable)
-      - Market Adjustment: Sold - Risk Adjusted (calculated)
+    For EXCESS quotes:
+      - Primary Pricing Analysis: Technical/Risk-Adjusted based on primary's limit
+      - Market Adj compares primary's actual premium to our model
     """
     quote_data = get_quote_by_id(quote_id)
     if not quote_data:
         return
 
-    # Get sold premium from DB (user-entered, should be preserved)
-    sold_premium = quote_data.get("sold_premium") or quote_data.get("quoted_premium")
+    position = quote_data.get("position", "primary")
+    is_excess = position == "excess"
 
-    # Get limit/retention from tower data
+    # Get tower data
     tower_json = quote_data.get("tower_json", [])
-    current_limit = tower_json[0].get("limit") if tower_json else 2_000_000
     current_retention = quote_data.get("primary_retention") or 25_000
+    sub_id = quote_data.get("submission_id")
 
-    # ALWAYS calculate premiums fresh from rating engine
-    # This ensures Quote tab reflects any rating factor changes (hazard, controls) from Rating tab
+    if is_excess:
+        _render_excess_premium_summary(quote_id, quote_data, tower_json, current_retention, sub_id)
+    else:
+        _render_primary_premium_summary(quote_id, quote_data, tower_json, current_retention, sub_id)
+
+
+def _render_primary_premium_summary(quote_id: str, quote_data: dict, tower_json: list, current_retention: int, sub_id: str):
+    """Render premium summary for primary quotes."""
+    # Get sold premium from DB
+    sold_premium = quote_data.get("sold_premium") or quote_data.get("quoted_premium")
+    current_limit = tower_json[0].get("limit") if tower_json else 2_000_000
+
+    # Calculate premiums from rating engine
     premium_error = None
     technical_premium = None
     risk_adjusted_premium = None
-    sub_id = quote_data.get("submission_id")
 
     if sub_id:
         premium_result = _calculate_premium_for_quote(sub_id, current_limit, current_retention)
@@ -284,7 +294,7 @@ def _render_premium_summary(quote_id: str, sub_id: str = None):
                 technical_premium = premium_result.get("technical_premium")
                 risk_adjusted_premium = premium_result.get("risk_adjusted_premium")
 
-    # Fallback: use quoted_premium as risk_adjusted if calculation failed
+    # Fallback
     if not risk_adjusted_premium:
         risk_adjusted_premium = quote_data.get("quoted_premium")
 
@@ -293,6 +303,134 @@ def _render_premium_summary(quote_id: str, sub_id: str = None):
     if sold_premium and risk_adjusted_premium:
         market_adjustment = sold_premium - risk_adjusted_premium
 
+    # ROW 1: Limit | Retention | Sold Premium
+    _render_primary_premium_row1(quote_id, quote_data, tower_json, current_limit, current_retention, sold_premium)
+
+    # ROW 2: Technical | Risk-Adjusted | Market Adjustment
+    col_tech, col_risk, col_mkt = st.columns([1, 1, 1])
+
+    with col_tech:
+        if premium_error:
+            st.metric("Technical", "—", help=premium_error)
+            st.caption(f"⚠️ {premium_error}")
+        else:
+            st.metric(
+                "Technical",
+                f"${technical_premium:,.0f}" if technical_premium else "—",
+                help="Pure exposure-based premium (hazard + revenue + limit + retention factors)"
+            )
+
+    with col_risk:
+        st.metric(
+            "Risk-Adjusted",
+            f"${risk_adjusted_premium:,.0f}" if risk_adjusted_premium else "—",
+            help="Premium after control credits/debits"
+        )
+
+    with col_mkt:
+        if market_adjustment is not None:
+            if market_adjustment > 0:
+                st.metric("Market Adj", f"+${market_adjustment:,.0f}")
+            elif market_adjustment < 0:
+                st.metric("Market Adj", f"${market_adjustment:,.0f}")
+            else:
+                st.metric("Market Adj", "$0")
+        else:
+            st.metric("Market Adj", "—", help="Set sold premium to see adjustment")
+
+
+def _render_excess_premium_summary(quote_id: str, quote_data: dict, tower_json: list, current_retention: int, sub_id: str):
+    """
+    Render premium summary for excess quotes - analyzes PRIMARY layer pricing.
+
+    Shows how the primary's actual premium compares to our model's price for that layer.
+    """
+    # Find primary layer (first non-CMAI layer)
+    primary_layer = None
+    for layer in tower_json:
+        if "CMAI" not in str(layer.get("carrier", "")).upper():
+            primary_layer = layer
+            break
+
+    if not primary_layer:
+        st.caption("Add underlying layers to see primary pricing analysis.")
+        return
+
+    primary_limit = primary_layer.get("limit", 0)
+    primary_premium = primary_layer.get("premium")
+
+    # Calculate what we'd price the primary layer at
+    premium_error = None
+    technical_premium = None
+    risk_adjusted_premium = None
+
+    if sub_id and primary_limit:
+        premium_result = _calculate_premium_for_quote(sub_id, primary_limit, current_retention)
+        if premium_result:
+            if "error" in premium_result:
+                premium_error = premium_result["error"]
+            else:
+                technical_premium = premium_result.get("technical_premium")
+                risk_adjusted_premium = premium_result.get("risk_adjusted_premium")
+
+    # Market adjustment: how primary is priced vs our model
+    primary_vs_model = None
+    if primary_premium and risk_adjusted_premium:
+        primary_vs_model = primary_premium - risk_adjusted_premium
+
+    # Section header
+    st.caption("Primary Pricing Analysis")
+
+    # Single row: Technical | Risk-Adjusted | Primary vs Model
+    col_tech, col_risk, col_mkt = st.columns([1, 1, 1])
+
+    with col_tech:
+        if premium_error:
+            st.metric("Our Technical", "—", help=premium_error)
+        else:
+            st.metric(
+                "Our Technical",
+                f"${technical_premium:,.0f}" if technical_premium else "—",
+                help=f"What we'd price a ${primary_limit/1_000_000:.0f}M primary at (technical)"
+            )
+
+    with col_risk:
+        st.metric(
+            "Our Risk-Adj",
+            f"${risk_adjusted_premium:,.0f}" if risk_adjusted_premium else "—",
+            help=f"What we'd price a ${primary_limit/1_000_000:.0f}M primary at (risk-adjusted)"
+        )
+
+    with col_mkt:
+        if primary_vs_model is not None:
+            delta_pct = (primary_vs_model / risk_adjusted_premium * 100) if risk_adjusted_premium else 0
+            if primary_vs_model > 0:
+                st.metric(
+                    "Primary vs Model",
+                    f"+${primary_vs_model:,.0f}",
+                    delta=f"{delta_pct:+.0f}%",
+                    help="Primary is priced above our model (rich)"
+                )
+            elif primary_vs_model < 0:
+                st.metric(
+                    "Primary vs Model",
+                    f"${primary_vs_model:,.0f}",
+                    delta=f"{delta_pct:+.0f}%",
+                    delta_color="inverse",
+                    help="Primary is priced below our model (cheap)"
+                )
+            else:
+                st.metric("Primary vs Model", "$0", help="Primary matches our model")
+        else:
+            st.metric(
+                "Primary vs Model",
+                "—",
+                help="Enter primary's premium in the tower to see comparison"
+            )
+
+
+def _render_primary_premium_row1(quote_id: str, quote_data: dict, tower_json: list, current_limit: int, current_retention: int, sold_premium: float):
+    """Render row 1 for primary quotes - editable limit/retention dropdowns."""
     # Standard options for dropdowns
     limit_options = [
         ("$1M", 1_000_000),
@@ -309,7 +447,6 @@ def _render_premium_summary(quote_id: str, sub_id: str = None):
         ("$500K", 500_000),
     ]
 
-    # ROW 1: Limit (dropdown) | Retention (dropdown) | Sold Premium (editable)
     col_limit, col_ret, col_sold = st.columns([1, 1, 1])
 
     with col_limit:
@@ -349,72 +486,39 @@ def _render_premium_summary(quote_id: str, sub_id: str = None):
             _update_quote_limit_retention(quote_id, quote_data, current_limit, selected_retention)
 
     with col_sold:
-        # Editable sold premium field with dollar formatting
-        widget_key = f"sold_premium_{quote_id}"
+        _render_sold_premium_input(quote_id, sold_premium)
 
-        # Initialize session state if not present (use DB value)
-        if widget_key not in st.session_state:
-            st.session_state[widget_key] = f"${sold_premium:,.0f}" if sold_premium else ""
-        else:
-            # Reformat if user entered unformatted value (e.g., "45000" -> "$45,000")
-            current_val = st.session_state[widget_key]
-            parsed = _parse_currency(current_val)
-            if parsed is not None:
-                expected = f"${parsed:,.0f}"
-                if current_val.strip() != expected:
-                    # Save to database BEFORE reformatting and rerun
-                    if parsed != sold_premium:
-                        update_quote_field(quote_id, "sold_premium", parsed)
-                    st.session_state[widget_key] = expected
-                    st.rerun()
 
-        new_sold_str = st.text_input(
-            "Sold Premium",
-            key=widget_key,
-            placeholder="$0"
-        )
-        new_sold = _parse_currency(new_sold_str)
+def _render_sold_premium_input(quote_id: str, sold_premium: float):
+    """Render the editable sold premium input field."""
+    widget_key = f"sold_premium_{quote_id}"
 
-        # Auto-save on change
-        if new_sold != sold_premium and new_sold is not None:
-            update_quote_field(quote_id, "sold_premium", new_sold)
+    # Initialize session state if not present (use DB value)
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = f"${sold_premium:,.0f}" if sold_premium else ""
+    else:
+        # Reformat if user entered unformatted value (e.g., "45000" -> "$45,000")
+        current_val = st.session_state[widget_key]
+        parsed = _parse_currency(current_val)
+        if parsed is not None:
+            expected = f"${parsed:,.0f}"
+            if current_val.strip() != expected:
+                # Save to database BEFORE reformatting and rerun
+                if parsed != sold_premium:
+                    update_quote_field(quote_id, "sold_premium", parsed)
+                st.session_state[widget_key] = expected
+                st.rerun()
 
-    # ROW 2: Technical | Risk-Adjusted | Market Adjustment
-    col_tech, col_risk, col_mkt = st.columns([1, 1, 1])
+    new_sold_str = st.text_input(
+        "Sold Premium",
+        key=widget_key,
+        placeholder="$0"
+    )
+    new_sold = _parse_currency(new_sold_str)
 
-    with col_tech:
-        if premium_error:
-            st.metric(
-                "Technical",
-                "—",
-                help=premium_error
-            )
-            st.caption(f"⚠️ {premium_error}")
-        else:
-            st.metric(
-                "Technical",
-                f"${technical_premium:,.0f}" if technical_premium else "—",
-                help="Pure exposure-based premium (hazard + revenue + limit + retention factors)"
-            )
-
-    with col_risk:
-        st.metric(
-            "Risk-Adjusted",
-            f"${risk_adjusted_premium:,.0f}" if risk_adjusted_premium else "—",
-            help="Premium after control credits/debits"
-        )
-
-    with col_mkt:
-        # Market adjustment (calculated, color-coded)
-        if market_adjustment is not None:
-            if market_adjustment > 0:
-                st.metric("Market Adj", f"+${market_adjustment:,.0f}")
-            elif market_adjustment < 0:
-                st.metric("Market Adj", f"${market_adjustment:,.0f}")
-            else:
-                st.metric("Market Adj", "$0")
-        else:
-            st.metric("Market Adj", "—", help="Set sold premium to see adjustment")
+    # Auto-save on change
+    if new_sold != sold_premium and new_sold is not None:
+        update_quote_field(quote_id, "sold_premium", new_sold)
 
 
 def _view_quote(quote_id: str):
@@ -577,8 +681,8 @@ def _render_add_option_buttons(sub_id: str, all_quotes: list):
 
     with col_primary:
         if st.button("+ Add Primary", key=f"add_primary_opt_{sub_id}", use_container_width=True):
+            # _view_quote inside _create_primary_option calls rerun
             _create_primary_option(sub_id, all_quotes)
-            st.rerun()
 
     with col_excess:
         if st.button("+ Add Excess", key=f"add_excess_opt_{sub_id}", use_container_width=True):
@@ -633,55 +737,24 @@ def _create_primary_option(sub_id: str, all_quotes: list):
         coverages=coverages,
     )
 
-    # Select the new option
-    st.session_state.viewing_quote_id = new_id
+    # Load the newly created quote into session state
+    # This ensures the tower panel displays correctly
+    _view_quote(new_id)
     st.success(f"Created: {quote_name}")
 
 
 def _render_excess_option_dialog(sub_id: str, all_quotes: list):
-    """Render dialog to collect underlying carrier info for excess option."""
+    """Render dialog to collect our excess layer info."""
 
     @st.dialog("Add Excess Option", width="large")
     def show_dialog():
-        st.markdown("Enter the **underlying primary carrier** details:")
+        st.markdown("Define **our excess layer** position:")
+        st.caption("You can add underlying carrier details via the Tower panel after creation.")
         st.markdown("---")
 
         col1, col2 = st.columns(2)
 
         with col1:
-            underlying_carrier = st.text_input(
-                "Primary Carrier",
-                placeholder="e.g., XL Catlin, Beazley, AIG",
-                key=f"excess_carrier_{sub_id}",
-            )
-
-            underlying_limit = st.selectbox(
-                "Primary Limit",
-                options=["$1M", "$2M", "$3M", "$5M", "$10M"],
-                index=2,  # Default to $3M
-                key=f"excess_limit_{sub_id}",
-            )
-
-        with col2:
-            underlying_retention = st.selectbox(
-                "Primary Retention",
-                options=["$10K", "$25K", "$50K", "$100K", "$250K"],
-                index=1,  # Default to $25K
-                key=f"excess_retention_{sub_id}",
-            )
-
-            underlying_premium = st.text_input(
-                "Primary Premium",
-                placeholder="e.g., 85000 or 85K",
-                key=f"excess_premium_{sub_id}",
-            )
-
-        st.markdown("---")
-        st.markdown("**Our Layer:**")
-
-        col3, col4 = st.columns(2)
-
-        with col3:
             our_limit = st.selectbox(
                 "Our Limit",
                 options=["$1M", "$2M", "$3M", "$5M", "$10M"],
@@ -689,16 +762,33 @@ def _render_excess_option_dialog(sub_id: str, all_quotes: list):
                 key=f"our_excess_limit_{sub_id}",
             )
 
-        with col4:
-            # Attachment is auto-calculated from primary limit
-            limit_map = {"$1M": 1_000_000, "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000, "$10M": 10_000_000}
-            primary_limit_val = limit_map.get(underlying_limit, 3_000_000)
-            st.text_input(
+        with col2:
+            our_attachment = st.selectbox(
                 "Our Attachment",
-                value=f"${primary_limit_val:,}",
-                disabled=True,
-                key=f"our_attachment_display_{sub_id}",
-                help="Automatically set to primary limit"
+                options=["$1M", "$2M", "$3M", "$5M", "$10M", "$15M", "$20M", "$25M"],
+                index=2,  # Default to $3M
+                key=f"our_excess_attachment_{sub_id}",
+                help="Total underlying limits below us"
+            )
+
+        st.markdown("---")
+        st.markdown("**Underlying Primary** (optional - can add via Tower later):")
+
+        col3, col4 = st.columns(2)
+
+        with col3:
+            underlying_carrier = st.text_input(
+                "Primary Carrier",
+                placeholder="e.g., XL Catlin, Beazley, AIG",
+                key=f"excess_carrier_{sub_id}",
+            )
+
+        with col4:
+            underlying_retention = st.selectbox(
+                "Primary Retention",
+                options=["$10K", "$25K", "$50K", "$100K", "$250K"],
+                index=1,  # Default to $25K
+                key=f"excess_retention_{sub_id}",
             )
 
         st.markdown("---")
@@ -713,27 +803,29 @@ def _render_excess_option_dialog(sub_id: str, all_quotes: list):
         with col_create:
             if st.button("Create Excess Option", key=f"excess_create_{sub_id}", type="primary", use_container_width=True):
                 # Parse values
-                limit_map = {"$1M": 1_000_000, "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000, "$10M": 10_000_000}
+                limit_map = {
+                    "$1M": 1_000_000, "$2M": 2_000_000, "$3M": 3_000_000,
+                    "$5M": 5_000_000, "$10M": 10_000_000, "$15M": 15_000_000,
+                    "$20M": 20_000_000, "$25M": 25_000_000
+                }
                 retention_map = {"$10K": 10_000, "$25K": 25_000, "$50K": 50_000, "$100K": 100_000, "$250K": 250_000}
 
-                primary_limit_val = limit_map.get(underlying_limit, 3_000_000)
-                primary_retention_val = retention_map.get(underlying_retention, 25_000)
                 our_limit_val = limit_map.get(our_limit, 3_000_000)
-                primary_premium_val = _parse_currency(underlying_premium) if underlying_premium else None
+                our_attachment_val = limit_map.get(our_attachment, 3_000_000)
+                primary_retention_val = retention_map.get(underlying_retention, 25_000)
 
-                # Create the excess option
+                # Close dialog before creating (since _view_quote calls rerun)
+                st.session_state[f"show_excess_dialog_{sub_id}"] = False
+
+                # Create the excess option (this will call _view_quote -> rerun)
                 _create_excess_option(
                     sub_id=sub_id,
                     all_quotes=all_quotes,
                     underlying_carrier=underlying_carrier or "Primary Carrier",
-                    primary_limit=primary_limit_val,
-                    primary_retention=primary_retention_val,
-                    primary_premium=primary_premium_val,
                     our_limit=our_limit_val,
+                    our_attachment=our_attachment_val,
+                    primary_retention=primary_retention_val,
                 )
-
-                st.session_state[f"show_excess_dialog_{sub_id}"] = False
-                st.rerun()
 
     show_dialog()
 
@@ -742,25 +834,31 @@ def _create_excess_option(
     sub_id: str,
     all_quotes: list,
     underlying_carrier: str,
-    primary_limit: int,
-    primary_retention: int,
-    primary_premium: float,
     our_limit: int,
+    our_attachment: int,
+    primary_retention: int,
 ):
-    """Create a new excess quote option."""
+    """Create a new excess quote option.
+
+    Args:
+        sub_id: Submission ID
+        all_quotes: List of existing quotes
+        underlying_carrier: Primary carrier name (optional placeholder)
+        our_limit: Our CMAI excess limit
+        our_attachment: Our attachment point (total underlying limits)
+        primary_retention: Primary retention for the tower
+    """
     from rating_engine.coverage_config import get_default_policy_form
 
-    # Calculate our attachment (equals primary limit for simple drop-down excess)
-    our_attachment = primary_limit
-
-    # Build tower with primary carrier and CMAI excess
+    # Build tower showing underlying + CMAI excess
+    # The underlying layer represents total limits below us
     tower_json = [
         {
             "carrier": underlying_carrier,
-            "limit": primary_limit,
+            "limit": our_attachment,  # Underlying limits = our attachment
             "attachment": 0,
             "retention": primary_retention,
-            "premium": primary_premium,
+            "premium": None,  # Unknown until captured
         },
         {
             "carrier": "CMAI",
@@ -797,8 +895,9 @@ def _create_excess_option(
         policy_form=policy_form,
     )
 
-    # Select the new option
-    st.session_state.viewing_quote_id = new_id
+    # Load the newly created quote into session state
+    # This ensures the tower panel displays correctly
+    _view_quote(new_id)
     st.success(f"Created: {quote_name}")
 
 

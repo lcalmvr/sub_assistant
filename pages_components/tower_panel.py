@@ -1,6 +1,6 @@
 """
 Tower Panel Component
-Renders the insurance tower builder with natural language input and editable table.
+Renders the insurance tower builder with card-based editing and read-only table view.
 """
 from __future__ import annotations
 
@@ -55,13 +55,6 @@ def _format_rpm(rpm: float) -> str:
     return f"{rpm:,.0f}"
 
 
-def _format_percent(percent: float) -> str:
-    """Format percentage for display."""
-    if percent is None:
-        return ""
-    return f"{percent:.1f}%"
-
-
 def _format_currency(amount: float) -> str:
     """Format currency for display."""
     if amount is None:
@@ -73,19 +66,1267 @@ def _format_currency(amount: float) -> str:
     return f"${amount:,.0f}"
 
 
-def _parse_percent(val):
-    """Parse a percentage string into a float."""
-    if val is None:
+def _parse_premium(val):
+    """Parse a premium value, accepting K/M notation."""
+    if val is None or str(val).strip() == "":
         return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip().replace("%", "")
-    if not s:
-        return None
+    return _parse_amount(val)
+
+
+# ─────────────────────── Standard Options ───────────────────────
+
+LIMIT_OPTIONS = [
+    ("$1M", 1_000_000),
+    ("$2M", 2_000_000),
+    ("$3M", 3_000_000),
+    ("$5M", 5_000_000),
+    ("$10M", 10_000_000),
+    ("$15M", 15_000_000),
+    ("$20M", 20_000_000),
+    ("$25M", 25_000_000),
+]
+
+RETENTION_OPTIONS = [
+    ("$10K", 10_000),
+    ("$25K", 25_000),
+    ("$50K", 50_000),
+    ("$100K", 100_000),
+    ("$250K", 250_000),
+    ("$500K", 500_000),
+    ("$1M", 1_000_000),
+]
+
+
+# ─────────────────────── Layer Calculations ───────────────────────
+
+def _recalculate_attachments(layers: list) -> None:
+    """Recalculate attachment points based on layer stacking."""
+    if not layers:
+        return
+
+    running_attachment = 0.0
+    for idx, layer in enumerate(layers):
+        if idx == 0:
+            layer["attachment"] = 0
+        else:
+            layer["attachment"] = running_attachment
+        running_attachment += layer.get("limit", 0) or 0
+
+
+def _recalculate_rpm_ilf(layers: list) -> None:
+    """Recalculate RPM and ILF for all layers."""
+    if not layers:
+        return
+
+    # Get primary RPM for ILF calculation
+    primary = layers[0] if layers else {}
+    primary_limit = primary.get("limit") or 0
+    primary_premium = primary.get("premium")
+    base_rpm = primary.get("rpm")
+
+    if not base_rpm and primary_premium and primary_limit:
+        base_rpm = primary_premium / max(1.0, (primary_limit / 1_000_000.0))
+        primary["rpm"] = base_rpm
+
+    # Calculate RPM and ILF for each layer
+    for layer in layers:
+        limit_val = layer.get("limit") or 0
+        premium = layer.get("premium")
+
+        exposure = limit_val / 1_000_000.0 if limit_val else 0
+
+        # Calculate RPM from premium
+        if premium and exposure:
+            layer["rpm"] = premium / exposure
+
+        # Calculate ILF relative to primary
+        if base_rpm and layer.get("rpm"):
+            layer["ilf"] = f"{layer['rpm'] / base_rpm:.2f}"
+
+
+def _recalculate_all(layers: list) -> None:
+    """Recalculate all derived fields."""
+    _recalculate_attachments(layers)
+    _recalculate_rpm_ilf(layers)
+
+
+# ─────────────────────── Main Render Function ───────────────────────
+
+def render_tower_panel(sub_id: str, expanded: bool = True, position: str = None):
+    """
+    Render the insurance tower panel.
+
+    For excess quotes: structured template with CMAI at top, underlying below.
+    For primary quotes: simple card-based editing.
+
+    Args:
+        sub_id: Submission ID
+        expanded: Whether to expand the tower section by default
+        position: "primary" or "excess" - if None, will detect from current quote
+    """
+    # Detect position if not provided
+    if position is None:
+        from pages_components.quote_options_panel import get_current_quote_position
+        position = get_current_quote_position(sub_id)
+
+    # Initialize session state
+    if "tower_layers" not in st.session_state:
+        st.session_state.tower_layers = []
+    if "primary_retention" not in st.session_state:
+        st.session_state.primary_retention = None
+    if "editing_layer_idx" not in st.session_state:
+        st.session_state.editing_layer_idx = None
+    if "adding_new_layer" not in st.session_state:
+        st.session_state.adding_new_layer = False
+
+    # Use different rendering for excess vs primary
+    if position == "excess":
+        _render_excess_tower_panel(sub_id, expanded)
+    else:
+        _render_primary_tower_panel(sub_id, expanded)
+
+
+def _render_primary_tower_panel(sub_id: str, expanded: bool = True):
+    """Render tower panel for primary quotes - simple card-based editing."""
+    with st.expander("🏗️ Insurance Tower", expanded=expanded):
+        # Action buttons row
+        col_add, col_bulk, col_clear, col_spacer = st.columns([1, 1, 1, 1])
+
+        with col_add:
+            if st.button("+ Add Layer", key="tower_add_layer_btn", use_container_width=True):
+                st.session_state.adding_new_layer = True
+                st.session_state.editing_layer_idx = None
+                st.rerun()
+
+        with col_bulk:
+            if st.button("Bulk Add", key="tower_bulk_btn", use_container_width=True):
+                st.session_state.show_bulk_add_dialog = True
+
+        with col_clear:
+            if st.button("Clear", key="tower_clear_btn", use_container_width=True):
+                st.session_state.tower_layers = []
+                st.session_state.primary_retention = None
+                st.session_state.editing_layer_idx = None
+                st.session_state.adding_new_layer = False
+                st.rerun()
+
+        # Show bulk add dialog if triggered
+        if st.session_state.get("show_bulk_add_dialog"):
+            _render_bulk_add_dialog()
+
+        # Show layer card if adding or editing
+        if st.session_state.adding_new_layer:
+            _render_new_layer_card()
+        elif st.session_state.editing_layer_idx is not None:
+            _render_edit_layer_card(st.session_state.editing_layer_idx)
+
+        # Tower Cards (responsive, click to edit)
+        _render_tower_cards()
+
+        # Tower Summary
+        _render_tower_summary()
+
+
+def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
+    """
+    Render structured excess tower panel.
+
+    Layout:
+    ┌─ Our Layer (CMAI) ─────────────────┐
+    │ Limit: [$5M ▾]   Attach: $5M (auto)│
+    └────────────────────────────────────┘
+             ↑ We attach here
+    ┌─ Underlying Program ───────────────┐
+    │ [Excess layers if any]             │
+    │ Primary: [Carrier] $[5M] x $[25K]  │
+    └────────────────────────────────────┘
+    """
+    layers = st.session_state.tower_layers or []
+
+    with st.expander("🏗️ Excess Tower Structure", expanded=expanded):
+        # Find CMAI layer and underlying layers
+        cmai_layer = None
+        cmai_idx = None
+        underlying_layers = []
+
+        for idx, layer in enumerate(layers):
+            if "CMAI" in str(layer.get("carrier", "")).upper():
+                cmai_layer = layer
+                cmai_idx = idx
+            else:
+                underlying_layers.append((idx, layer))
+
+        # ─────────────────────────────────────────────────────
+        # OUR LAYER (CMAI) - Always at top
+        # ─────────────────────────────────────────────────────
+        st.markdown("##### Our Layer (CMAI)")
+
+        # Calculate our attachment from underlying layers
+        underlying_total = sum(layer.get("limit", 0) for _, layer in underlying_layers)
+
+        col_limit, col_attach, col_premium = st.columns(3)
+
+        with col_limit:
+            # Our limit dropdown
+            limit_options = [
+                ("$1M", 1_000_000),
+                ("$2M", 2_000_000),
+                ("$3M", 3_000_000),
+                ("$5M", 5_000_000),
+                ("$10M", 10_000_000),
+            ]
+            limit_labels = [opt[0] for opt in limit_options]
+            limit_values = {opt[0]: opt[1] for opt in limit_options}
+
+            current_cmai_limit = cmai_layer.get("limit", 5_000_000) if cmai_layer else 5_000_000
+            default_idx = next(
+                (i for i, opt in enumerate(limit_options) if opt[1] == current_cmai_limit),
+                3  # Default to $5M
+            )
+
+            selected_limit_label = st.selectbox(
+                "Our Limit",
+                options=limit_labels,
+                index=default_idx,
+                key="cmai_limit_select"
+            )
+            new_cmai_limit = limit_values[selected_limit_label]
+
+        with col_attach:
+            # Auto-calculated attachment (read-only display)
+            st.metric(
+                "Our Attachment",
+                f"${underlying_total / 1_000_000:.0f}M" if underlying_total >= 1_000_000 else f"${underlying_total / 1_000:,.0f}K" if underlying_total >= 1_000 else "$0",
+                help="Auto-calculated from underlying limits"
+            )
+
+        with col_premium:
+            # Our premium input
+            current_cmai_premium = cmai_layer.get("premium") if cmai_layer else None
+            premium_display = f"${current_cmai_premium / 1_000:.0f}K" if current_cmai_premium and current_cmai_premium >= 1_000 else ""
+            new_premium_str = st.text_input(
+                "Our Premium",
+                value=premium_display,
+                key="cmai_premium_input",
+                placeholder="e.g., $75K"
+            )
+            new_cmai_premium = _parse_amount(new_premium_str) if new_premium_str else None
+
+        # Update CMAI layer if values changed
+        cmai_changed = False
+        if cmai_layer:
+            if new_cmai_limit != cmai_layer.get("limit"):
+                cmai_layer["limit"] = new_cmai_limit
+                cmai_layer["attachment"] = underlying_total
+                cmai_changed = True
+            if new_cmai_premium != cmai_layer.get("premium"):
+                cmai_layer["premium"] = new_cmai_premium
+                cmai_changed = True
+            if cmai_changed:
+                _save_tower_changes(sub_id)
+        elif not cmai_layer and layers:
+            # Create CMAI layer if missing
+            new_cmai = {
+                "carrier": "CMAI",
+                "limit": new_cmai_limit,
+                "attachment": underlying_total,
+                "premium": new_cmai_premium,
+            }
+            st.session_state.tower_layers.append(new_cmai)
+            _recalculate_all(st.session_state.tower_layers)
+
+        # ─────────────────────────────────────────────────────
+        # UNDERLYING PROGRAM
+        # ─────────────────────────────────────────────────────
+        col_title, col_toggle = st.columns([3, 1])
+        with col_title:
+            st.markdown("##### Underlying Program")
+        with col_toggle:
+            # View toggle: Table vs Card
+            view_mode = st.toggle("Card", key="tower_card_view", help="Switch to card view for mobile")
+
+        # Add button at top (new layers go at top of tower)
+        if st.button("+ Add Underlying Layer", key="add_underlying_btn", use_container_width=True):
+            _add_underlying_layer(sub_id)
+
+        if not underlying_layers:
+            st.caption("No underlying layers defined yet.")
+
+        # Calculate primary RPM for ILF calculations
+        primary_rpm = None
+        if underlying_layers:
+            primary_layer = underlying_layers[0][1]  # First layer (idx 0) is primary
+            primary_premium = primary_layer.get("premium")
+            primary_limit = primary_layer.get("limit")
+            if primary_premium and primary_limit:
+                primary_rpm = primary_premium / (primary_limit / 1_000_000)
+
+        if view_mode:
+            # Card view - compact clickable cards
+            st.caption("Tap a card to edit")
+            for idx, layer in reversed(underlying_layers):
+                _render_underlying_layer_card(sub_id, idx, layer, is_primary=(idx == 0), primary_rpm=primary_rpm)
+        else:
+            # Table view - desktop
+            if underlying_layers:
+                # Column headers
+                hdr_carrier, hdr_limit, hdr_attach, hdr_premium, hdr_rpm, hdr_ilf, hdr_del = st.columns([2, 1, 1, 1.2, 0.8, 0.6, 0.4])
+                hdr_carrier.caption("Carrier")
+                hdr_limit.caption("Limit")
+                hdr_attach.caption("Ret/Attach")
+                hdr_premium.caption("Premium")
+                hdr_rpm.caption("RPM")
+                hdr_ilf.caption("ILF")
+
+            # Render underlying layers (bottom to top visually = primary at bottom)
+            for idx, layer in reversed(underlying_layers):
+                _render_underlying_layer_row(sub_id, idx, layer, is_primary=(idx == 0), primary_rpm=primary_rpm)
+
+
+def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, primary_rpm: float = None):
+    """Render a single underlying layer as an inline editable row."""
+    carrier = layer.get("carrier", "")
+    limit = layer.get("limit", 0)
+    attachment = layer.get("attachment", 0)
+    retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
+    premium = layer.get("premium")
+
+    # Column structure: Carrier | Limit | Ret/Attach | Premium | RPM | ILF | Delete
+    col_carrier, col_limit, col_ret_attach, col_premium, col_rpm, col_ilf, col_delete = st.columns([2, 1, 1, 1.2, 0.8, 0.6, 0.4])
+
+    with col_carrier:
+        new_carrier = st.text_input(
+            "Carrier",
+            value=carrier,
+            key=f"underlying_carrier_{layer_idx}",
+            label_visibility="collapsed",
+            placeholder="Carrier name"
+        )
+
+    with col_limit:
+        limit_options = ["$1M", "$2M", "$3M", "$5M", "$10M", "$15M", "$20M", "$25M"]
+        limit_map = {"$1M": 1_000_000, "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000,
+                     "$10M": 10_000_000, "$15M": 15_000_000, "$20M": 20_000_000, "$25M": 25_000_000}
+
+        current_label = next((k for k, v in limit_map.items() if v == limit), "$5M")
+        new_limit_label = st.selectbox(
+            "Limit",
+            options=limit_options,
+            index=limit_options.index(current_label) if current_label in limit_options else 3,
+            key=f"underlying_limit_{layer_idx}",
+            label_visibility="collapsed"
+        )
+        new_limit = limit_map[new_limit_label]
+
+    # Retention/Attachment column: retention dropdown for primary, attachment display for excess
+    new_retention = None
+    with col_ret_attach:
+        if is_primary:
+            ret_options = ["$10K", "$25K", "$50K", "$100K", "$250K"]
+            ret_map = {"$10K": 10_000, "$25K": 25_000, "$50K": 50_000, "$100K": 100_000, "$250K": 250_000}
+
+            current_ret_label = next((k for k, v in ret_map.items() if v == retention), "$25K")
+            new_ret_label = st.selectbox(
+                "Retention",
+                options=ret_options,
+                index=ret_options.index(current_ret_label) if current_ret_label in ret_options else 1,
+                key=f"underlying_ret_{layer_idx}",
+                label_visibility="collapsed"
+            )
+            new_retention = ret_map[new_ret_label]
+        else:
+            # Show attachment point (auto-calculated)
+            attach_display = f"xs ${attachment / 1_000_000:.0f}M" if attachment >= 1_000_000 else f"xs ${attachment / 1_000:.0f}K" if attachment >= 1_000 else "xs $0"
+            st.text_input(
+                "Attachment",
+                value=attach_display,
+                key=f"underlying_attach_{layer_idx}",
+                label_visibility="collapsed",
+                disabled=True
+            )
+
+    with col_premium:
+        premium_display = f"${premium / 1_000:.0f}K" if premium and premium >= 1_000 else ""
+        new_premium_str = st.text_input(
+            "Premium",
+            value=premium_display,
+            key=f"underlying_premium_{layer_idx}",
+            label_visibility="collapsed",
+            placeholder="$"
+        )
+        new_premium = _parse_amount(new_premium_str) if new_premium_str else None
+
+    # Calculate RPM and ILF using current values (new_premium if entered, else stored premium)
+    calc_premium = new_premium if new_premium else premium
+    calc_limit = new_limit if new_limit else limit
+    rpm = None
+    ilf = None
+    if calc_premium and calc_limit:
+        rpm = calc_premium / (calc_limit / 1_000_000)
+        if primary_rpm and primary_rpm > 0:
+            ilf = rpm / primary_rpm
+
+    with col_rpm:
+        # RPM display (calculated, read-only)
+        rpm_display = f"${rpm/1000:.1f}K" if rpm and rpm >= 1000 else f"${rpm:,.0f}" if rpm else "—"
+        st.text_input(
+            "RPM",
+            value=rpm_display,
+            key=f"underlying_rpm_{layer_idx}",
+            label_visibility="collapsed",
+            disabled=True
+        )
+
+    with col_ilf:
+        # ILF display (calculated, read-only)
+        ilf_display = f"{ilf:.2f}" if ilf else "1.00" if is_primary and rpm else "—"
+        st.text_input(
+            "ILF",
+            value=ilf_display,
+            key=f"underlying_ilf_{layer_idx}",
+            label_visibility="collapsed",
+            disabled=True
+        )
+
+    with col_delete:
+        if st.button("×", key=f"delete_underlying_{layer_idx}", help="Remove layer"):
+            st.session_state.tower_layers.pop(layer_idx)
+            _recalculate_all(st.session_state.tower_layers)
+            _save_tower_changes(sub_id)
+            st.rerun()
+
+    # Check for changes and save
+    changed = False
+    if new_carrier != carrier:
+        layer["carrier"] = new_carrier
+        changed = True
+    if new_limit != limit:
+        layer["limit"] = new_limit
+        changed = True
+    if new_premium != premium:
+        layer["premium"] = new_premium
+        if new_premium and new_limit:
+            layer["rpm"] = new_premium / (new_limit / 1_000_000.0)
+        changed = True
+    if is_primary and new_retention != retention:
+        layer["retention"] = new_retention
+        st.session_state.primary_retention = new_retention
+        changed = True
+
+    if changed:
+        _recalculate_all(st.session_state.tower_layers)
+        _save_tower_changes(sub_id)
+
+
+def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, primary_rpm: float = None):
+    """Render a single underlying layer as a compact clickable card."""
+    carrier = layer.get("carrier", "") or "Unnamed"
+    limit = layer.get("limit", 0)
+    attachment = layer.get("attachment", 0)
+    retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
+    premium = layer.get("premium")
+
+    # Calculate RPM and ILF
+    rpm = None
+    ilf = None
+    if premium and limit:
+        rpm = premium / (limit / 1_000_000)
+        if primary_rpm and primary_rpm > 0:
+            ilf = rpm / primary_rpm
+
+    # Format display values (no $ to avoid LaTeX issues)
+    if limit >= 1_000_000:
+        limit_str = f"{int(limit // 1_000_000)}M"
+    elif limit >= 1_000:
+        limit_str = f"{int(limit // 1_000)}K"
+    else:
+        limit_str = "—"
+
+    if is_primary:
+        attach_str = f"{int(retention // 1_000)}K ret" if retention else ""
+    else:
+        if attachment >= 1_000_000:
+            attach_str = f"xs {int(attachment // 1_000_000)}M"
+        elif attachment >= 1_000:
+            attach_str = f"xs {int(attachment // 1_000)}K"
+        else:
+            attach_str = ""
+
+    if premium and premium >= 1_000:
+        premium_str = f"{int(premium // 1_000)}K"
+    else:
+        premium_str = "—"
+
+    if rpm and rpm >= 1000:
+        rpm_str = f"{int(rpm // 1000)}K"
+    elif rpm:
+        rpm_str = f"{int(rpm)}"
+    else:
+        rpm_str = "—"
+
+    if ilf:
+        ilf_str = f"{ilf:.2f}"
+    elif is_primary and rpm:
+        ilf_str = "1.00"
+    else:
+        ilf_str = "—"
+
+    # Build card content
+    line1 = f"**{carrier}**"
+    line2 = f"{limit_str} · {attach_str} · {premium_str}" if attach_str else f"{limit_str} · {premium_str}"
+    line3 = f"RPM: {rpm_str} · ILF: {ilf_str}"
+
+    # Clickable card button
+    card_key = f"underlying_card_{layer_idx}"
+    if st.button(
+        f"{line1}\n\n{line2}\n\n{line3}",
+        key=card_key,
+        use_container_width=True,
+        help="Tap to edit"
+    ):
+        st.session_state[f"editing_underlying_{layer_idx}"] = True
+        st.rerun()
+
+    # Show edit dialog if this card is being edited
+    if st.session_state.get(f"editing_underlying_{layer_idx}"):
+        _render_underlying_edit_dialog(sub_id, layer_idx, layer, is_primary)
+
+
+def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_primary: bool):
+    """Render edit dialog for an underlying layer."""
+
+    @st.dialog(f"Edit Layer", width="small")
+    def show_edit():
+        carrier = layer.get("carrier", "")
+        limit = layer.get("limit", 0)
+        attachment = layer.get("attachment", 0)
+        retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
+        premium = layer.get("premium")
+
+        new_carrier = st.text_input("Carrier", value=carrier, key=f"edit_carrier_{layer_idx}")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            limit_options = ["$1M", "$2M", "$3M", "$5M", "$10M", "$15M", "$20M", "$25M"]
+            limit_map = {"$1M": 1_000_000, "$2M": 2_000_000, "$3M": 3_000_000, "$5M": 5_000_000,
+                         "$10M": 10_000_000, "$15M": 15_000_000, "$20M": 20_000_000, "$25M": 25_000_000}
+            current_label = next((k for k, v in limit_map.items() if v == limit), "$5M")
+            new_limit_label = st.selectbox(
+                "Limit",
+                options=limit_options,
+                index=limit_options.index(current_label) if current_label in limit_options else 3,
+                key=f"edit_limit_{layer_idx}"
+            )
+            new_limit = limit_map[new_limit_label]
+
+        with col2:
+            if is_primary:
+                ret_options = ["$10K", "$25K", "$50K", "$100K", "$250K"]
+                ret_map = {"$10K": 10_000, "$25K": 25_000, "$50K": 50_000, "$100K": 100_000, "$250K": 250_000}
+                current_ret_label = next((k for k, v in ret_map.items() if v == retention), "$25K")
+                new_ret_label = st.selectbox(
+                    "Retention",
+                    options=ret_options,
+                    index=ret_options.index(current_ret_label) if current_ret_label in ret_options else 1,
+                    key=f"edit_ret_{layer_idx}"
+                )
+                new_retention = ret_map[new_ret_label]
+            else:
+                attach_display = f"xs ${attachment // 1_000_000}M" if attachment >= 1_000_000 else f"xs ${attachment // 1_000}K"
+                st.text_input("Attachment", value=attach_display, disabled=True)
+                new_retention = None
+
+        premium_display = f"${premium // 1_000}K" if premium and premium >= 1_000 else ""
+        new_premium_str = st.text_input("Premium", value=premium_display, key=f"edit_premium_{layer_idx}", placeholder="$")
+        new_premium = _parse_amount(new_premium_str) if new_premium_str else None
+
+        st.markdown("---")
+
+        col_save, col_delete, col_cancel = st.columns(3)
+
+        with col_save:
+            if st.button("Save", type="primary", use_container_width=True):
+                layer["carrier"] = new_carrier
+                layer["limit"] = new_limit
+                layer["premium"] = new_premium
+                if is_primary and new_retention:
+                    layer["retention"] = new_retention
+                    st.session_state.primary_retention = new_retention
+                _recalculate_all(st.session_state.tower_layers)
+                _save_tower_changes(sub_id)
+                st.session_state[f"editing_underlying_{layer_idx}"] = False
+                st.rerun()
+
+        with col_delete:
+            if st.button("Delete", use_container_width=True):
+                st.session_state.tower_layers.pop(layer_idx)
+                _recalculate_all(st.session_state.tower_layers)
+                _save_tower_changes(sub_id)
+                st.session_state[f"editing_underlying_{layer_idx}"] = False
+                st.rerun()
+
+        with col_cancel:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state[f"editing_underlying_{layer_idx}"] = False
+                st.rerun()
+
+    show_edit()
+
+
+def _add_underlying_layer(sub_id: str):
+    """Add a new underlying layer (inserted before CMAI)."""
+    layers = st.session_state.tower_layers or []
+
+    # Find CMAI index
+    cmai_idx = None
+    for idx, layer in enumerate(layers):
+        if "CMAI" in str(layer.get("carrier", "")).upper():
+            cmai_idx = idx
+            break
+
+    # Calculate attachment for new layer
+    underlying_total = sum(
+        layer.get("limit", 0) for layer in layers
+        if "CMAI" not in str(layer.get("carrier", "")).upper()
+    )
+
+    new_layer = {
+        "carrier": "",
+        "limit": 5_000_000,
+        "attachment": underlying_total,
+        "premium": None,
+    }
+
+    # Insert before CMAI or at end
+    if cmai_idx is not None:
+        layers.insert(cmai_idx, new_layer)
+    else:
+        layers.append(new_layer)
+
+    st.session_state.tower_layers = layers
+    _recalculate_all(st.session_state.tower_layers)
+    _save_tower_changes(sub_id)
+    st.rerun()
+
+
+def _save_tower_changes(sub_id: str):
+    """Save tower changes to the database."""
+    import json
+    from pages_components.tower_db import get_conn
+
+    viewing_quote_id = st.session_state.get("viewing_quote_id")
+    if not viewing_quote_id:
+        return
+
     try:
-        return float(s)
+        tower_json = st.session_state.tower_layers
+        primary_retention = st.session_state.get("primary_retention")
+
+        with get_conn().cursor() as cur:
+            cur.execute(
+                """
+                UPDATE insurance_towers
+                SET tower_json = %s, primary_retention = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (json.dumps(tower_json), primary_retention, viewing_quote_id)
+            )
+            get_conn().commit()
     except Exception:
-        return None
+        pass  # Silent fail - will retry on next save
+
+
+# ─────────────────────── Bulk Add Dialog ───────────────────────
+
+def _render_bulk_add_dialog():
+    """Render dialog for bulk adding layers via CSV or natural language."""
+
+    @st.dialog("Bulk Add Layers", width="large")
+    def show_dialog():
+        tab_csv, tab_ai = st.tabs(["📋 Paste CSV", "💬 Describe"])
+
+        with tab_csv:
+            st.markdown("Paste tower data in CSV format:")
+            st.caption("Columns: Carrier, Limit, Attachment, Premium (optional)")
+
+            csv_example = """Carrier, Limit, Attachment, Premium
+Beazley, 5M, 0, 100K
+XL Catlin, 5M, 5M, 75K
+Argo, 5M, 10M, 50K"""
+
+            csv_input = st.text_area(
+                "CSV Data",
+                placeholder=csv_example,
+                height=150,
+                key="bulk_csv_input",
+                help="First row should be headers. Supports K/M notation."
+            )
+
+            st.caption("Example format:")
+            st.code(csv_example, language=None)
+
+            if st.button("Parse & Add Layers", key="bulk_csv_parse", type="primary", use_container_width=True):
+                if csv_input.strip():
+                    result = _parse_csv_to_layers(csv_input)
+                    if result.get("success"):
+                        st.session_state.show_bulk_add_dialog = False
+                        st.rerun()
+                    else:
+                        st.error(result.get("error", "Failed to parse CSV"))
+                else:
+                    st.warning("Please paste CSV data first")
+
+        with tab_ai:
+            st.markdown("Describe the tower in natural language:")
+
+            ai_example = "Primary is Beazley at $5M with $25K retention and $100K premium. Excess layers: XL Catlin $5M xs $5M at $75K, then Argo $5M xs $10M at $50K."
+
+            ai_input = st.text_area(
+                "Tower Description",
+                placeholder=ai_example,
+                height=150,
+                key="bulk_ai_input",
+                help="Describe carriers, limits, attachments, and premiums naturally."
+            )
+
+            st.caption("Example:")
+            st.code(ai_example, language=None)
+
+            if st.button("Parse & Add Layers", key="bulk_ai_parse", type="primary", use_container_width=True):
+                if ai_input.strip():
+                    result = process_tower_with_ai(ai_input)
+                    if result.get("success"):
+                        st.success(result.get("message", "Tower updated"))
+                        st.session_state.show_bulk_add_dialog = False
+                        st.rerun()
+                    else:
+                        st.error(result.get("error", "Failed to parse description"))
+                else:
+                    st.warning("Please enter a description first")
+
+        st.markdown("---")
+        if st.button("Cancel", key="bulk_cancel", use_container_width=True):
+            st.session_state.show_bulk_add_dialog = False
+            st.rerun()
+
+    show_dialog()
+
+
+def _parse_csv_to_layers(csv_text: str) -> dict:
+    """Parse CSV text into tower layers."""
+    try:
+        import io
+        import csv
+
+        lines = csv_text.strip().split("\n")
+        if len(lines) < 2:
+            return {"success": False, "error": "Need at least a header row and one data row"}
+
+        # Parse header
+        reader = csv.reader(io.StringIO(csv_text))
+        headers = [h.strip().lower() for h in next(reader)]
+
+        # Map common column names
+        col_map = {
+            "carrier": ["carrier", "name", "company", "insurer"],
+            "limit": ["limit", "limits", "amount"],
+            "attachment": ["attachment", "attach", "xs", "excess", "excess point"],
+            "premium": ["premium", "prem", "price", "cost"],
+            "retention": ["retention", "ret", "deductible", "ded", "sir"],
+        }
+
+        def find_col(target_names):
+            for i, h in enumerate(headers):
+                for name in target_names:
+                    if name in h:
+                        return i
+            return None
+
+        carrier_idx = find_col(col_map["carrier"])
+        limit_idx = find_col(col_map["limit"])
+        attach_idx = find_col(col_map["attachment"])
+        premium_idx = find_col(col_map["premium"])
+        retention_idx = find_col(col_map["retention"])
+
+        if carrier_idx is None:
+            return {"success": False, "error": "Could not find 'Carrier' column"}
+        if limit_idx is None:
+            return {"success": False, "error": "Could not find 'Limit' column"}
+
+        # Parse data rows
+        new_layers = []
+        for row in reader:
+            if not row or not any(cell.strip() for cell in row):
+                continue
+
+            carrier = row[carrier_idx].strip() if carrier_idx < len(row) else ""
+            limit = _parse_amount(row[limit_idx]) if limit_idx < len(row) else 0
+            attachment = _parse_amount(row[attach_idx]) if attach_idx is not None and attach_idx < len(row) else None
+            premium = _parse_amount(row[premium_idx]) if premium_idx is not None and premium_idx < len(row) else None
+            retention = _parse_amount(row[retention_idx]) if retention_idx is not None and retention_idx < len(row) else None
+
+            if not carrier or not limit:
+                continue
+
+            layer = {
+                "carrier": carrier,
+                "limit": limit,
+                "attachment": attachment if attachment else 0,
+                "premium": premium if premium else None,
+            }
+
+            # Calculate RPM if we have premium
+            if premium and limit:
+                layer["rpm"] = premium / (limit / 1_000_000.0)
+
+            # First layer gets retention
+            if len(new_layers) == 0 and retention:
+                layer["retention"] = retention
+
+            new_layers.append(layer)
+
+        if not new_layers:
+            return {"success": False, "error": "No valid layers found in CSV"}
+
+        # Add to existing layers or replace
+        existing_layers = st.session_state.tower_layers or []
+
+        # If first new layer has attachment=0, treat as full tower replacement
+        if new_layers[0].get("attachment", 0) == 0:
+            st.session_state.tower_layers = new_layers
+            if new_layers[0].get("retention"):
+                st.session_state.primary_retention = new_layers[0]["retention"]
+        else:
+            # Append to existing
+            st.session_state.tower_layers = existing_layers + new_layers
+
+        # Recalculate attachments and derived fields
+        _recalculate_all(st.session_state.tower_layers)
+
+        return {"success": True, "message": f"Added {len(new_layers)} layers"}
+
+    except Exception as e:
+        return {"success": False, "error": f"Parse error: {str(e)}"}
+
+
+# ─────────────────────── Layer Card Components ───────────────────────
+
+def _render_new_layer_card():
+    """Render card for adding a new layer."""
+    layers = st.session_state.tower_layers
+    new_idx = len(layers)
+    is_primary = new_idx == 0
+
+    st.markdown("---")
+
+    # Card header
+    layer_label = "Layer 1 (Primary)" if is_primary else f"Layer {new_idx + 1}"
+    st.subheader(f"➕ Add {layer_label}")
+
+    # Carrier name
+    carrier = st.text_input(
+        "Carrier Name",
+        placeholder="e.g., Beazley, AIG, CMAI",
+        key="new_layer_carrier"
+    )
+
+    # Limit and Retention/Attachment row
+    col1, col2 = st.columns(2)
+
+    with col1:
+        limit_labels = [opt[0] for opt in LIMIT_OPTIONS]
+        limit_values = {opt[0]: opt[1] for opt in LIMIT_OPTIONS}
+        selected_limit_label = st.selectbox(
+            "Limit",
+            options=limit_labels,
+            index=0,
+            key="new_layer_limit"
+        )
+        limit = limit_values[selected_limit_label]
+
+    with col2:
+        if is_primary:
+            retention_labels = [opt[0] for opt in RETENTION_OPTIONS]
+            retention_values = {opt[0]: opt[1] for opt in RETENTION_OPTIONS}
+            selected_retention_label = st.selectbox(
+                "Retention",
+                options=retention_labels,
+                index=1,  # Default to $25K
+                key="new_layer_retention"
+            )
+            retention = retention_values[selected_retention_label]
+            # Calculate attachment
+            attachment = 0
+        else:
+            # Auto-calculate attachment from layers below
+            attachment = sum(layer.get("limit", 0) for layer in layers)
+            st.metric("Attachment (auto)", _format_amount(attachment))
+            retention = None
+
+    # Premium input
+    premium_str = st.text_input(
+        "Premium (optional)",
+        placeholder="e.g., $45,000 or 45K",
+        key="new_layer_premium"
+    )
+    premium = _parse_premium(premium_str) if premium_str else None
+
+    # Show calculated fields
+    if premium and limit:
+        exposure = limit / 1_000_000.0
+        rpm = premium / exposure if exposure else 0
+
+        # Calculate ILF if we have a primary layer
+        ilf = None
+        if layers and layers[0].get("rpm"):
+            base_rpm = layers[0]["rpm"]
+            ilf = rpm / base_rpm if base_rpm else None
+
+        col_rpm, col_ilf = st.columns(2)
+        with col_rpm:
+            st.metric("RPM (calculated)", _format_currency(rpm))
+        with col_ilf:
+            st.metric("ILF (calculated)", f"{ilf:.2f}" if ilf else "—")
+
+    st.markdown("---")
+
+    # Action buttons
+    col_save, col_cancel = st.columns(2)
+
+    with col_save:
+        if st.button("Save Layer", key="new_layer_save", type="primary", use_container_width=True):
+            if not carrier.strip():
+                st.error("Please enter a carrier name")
+            else:
+                # Create new layer
+                new_layer = {
+                    "carrier": carrier.strip(),
+                    "limit": limit,
+                    "attachment": attachment,
+                    "premium": premium,
+                    "rpm": (premium / (limit / 1_000_000.0)) if premium and limit else None,
+                }
+                if is_primary:
+                    new_layer["retention"] = retention
+                    st.session_state.primary_retention = retention
+
+                # Add to layers and recalculate
+                st.session_state.tower_layers.append(new_layer)
+                _recalculate_all(st.session_state.tower_layers)
+
+                # Close card
+                st.session_state.adding_new_layer = False
+                st.rerun()
+
+    with col_cancel:
+        if st.button("Cancel", key="new_layer_cancel", use_container_width=True):
+            st.session_state.adding_new_layer = False
+            st.rerun()
+
+
+def _render_edit_layer_card(layer_idx: int):
+    """Render card for editing an existing layer."""
+    layers = st.session_state.tower_layers
+
+    if layer_idx >= len(layers):
+        st.session_state.editing_layer_idx = None
+        st.rerun()
+        return
+
+    layer = layers[layer_idx]
+    is_primary = layer_idx == 0
+
+    st.markdown("---")
+
+    # Card header with reorder/delete buttons
+    layer_label = "Layer 1 (Primary)" if is_primary else f"Layer {layer_idx + 1}"
+
+    col_title, col_up, col_down, col_delete = st.columns([3, 0.5, 0.5, 0.5])
+
+    with col_title:
+        st.subheader(f"✏️ Edit {layer_label}")
+
+    with col_up:
+        # Can't move up if already at top
+        if layer_idx > 0:
+            if st.button("↑", key=f"layer_up_{layer_idx}", help="Move up"):
+                layers[layer_idx], layers[layer_idx - 1] = layers[layer_idx - 1], layers[layer_idx]
+                _recalculate_all(layers)
+                st.session_state.editing_layer_idx = layer_idx - 1
+                st.rerun()
+        else:
+            st.write("")  # Placeholder
+
+    with col_down:
+        # Can't move down if already at bottom
+        if layer_idx < len(layers) - 1:
+            if st.button("↓", key=f"layer_down_{layer_idx}", help="Move down"):
+                layers[layer_idx], layers[layer_idx + 1] = layers[layer_idx + 1], layers[layer_idx]
+                _recalculate_all(layers)
+                st.session_state.editing_layer_idx = layer_idx + 1
+                st.rerun()
+        else:
+            st.write("")  # Placeholder
+
+    with col_delete:
+        if st.button("×", key=f"layer_delete_{layer_idx}", help="Delete layer"):
+            layers.pop(layer_idx)
+            _recalculate_all(layers)
+            st.session_state.editing_layer_idx = None
+            st.rerun()
+
+    # Carrier name
+    carrier = st.text_input(
+        "Carrier Name",
+        value=layer.get("carrier", ""),
+        key=f"edit_layer_carrier_{layer_idx}"
+    )
+
+    # Find current limit index
+    current_limit = layer.get("limit", 0)
+    limit_labels = [opt[0] for opt in LIMIT_OPTIONS]
+    limit_values = {opt[0]: opt[1] for opt in LIMIT_OPTIONS}
+    limit_default_idx = next(
+        (i for i, opt in enumerate(LIMIT_OPTIONS) if opt[1] == current_limit),
+        0
+    )
+
+    # Limit and Retention/Attachment row
+    col1, col2 = st.columns(2)
+
+    with col1:
+        selected_limit_label = st.selectbox(
+            "Limit",
+            options=limit_labels,
+            index=limit_default_idx,
+            key=f"edit_layer_limit_{layer_idx}"
+        )
+        limit = limit_values[selected_limit_label]
+
+    with col2:
+        if is_primary:
+            current_retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
+            retention_labels = [opt[0] for opt in RETENTION_OPTIONS]
+            retention_values = {opt[0]: opt[1] for opt in RETENTION_OPTIONS}
+            retention_default_idx = next(
+                (i for i, opt in enumerate(RETENTION_OPTIONS) if opt[1] == current_retention),
+                1
+            )
+            selected_retention_label = st.selectbox(
+                "Retention",
+                options=retention_labels,
+                index=retention_default_idx,
+                key=f"edit_layer_retention_{layer_idx}"
+            )
+            retention = retention_values[selected_retention_label]
+            attachment = 0
+        else:
+            # Auto-calculate attachment from layers below
+            attachment = sum(layers[i].get("limit", 0) for i in range(layer_idx))
+            st.metric("Attachment (auto)", _format_amount(attachment))
+            retention = None
+
+    # Premium input
+    current_premium = layer.get("premium")
+    premium_default = _format_currency(current_premium) if current_premium else ""
+    premium_str = st.text_input(
+        "Premium",
+        value=premium_default,
+        placeholder="e.g., $45,000 or 45K",
+        key=f"edit_layer_premium_{layer_idx}"
+    )
+    premium = _parse_premium(premium_str) if premium_str else None
+
+    # Show calculated fields
+    col_rpm, col_ilf = st.columns(2)
+
+    rpm = None
+    ilf = None
+    if premium and limit:
+        exposure = limit / 1_000_000.0
+        rpm = premium / exposure if exposure else 0
+
+        # Calculate ILF if we have a primary layer with RPM
+        if layer_idx > 0 and layers[0].get("rpm"):
+            base_rpm = layers[0]["rpm"]
+            ilf = rpm / base_rpm if base_rpm else None
+        elif layer_idx == 0:
+            ilf = 1.0  # Primary is always 1.0
+
+    with col_rpm:
+        st.metric("RPM (calculated)", _format_currency(rpm) if rpm else "—")
+    with col_ilf:
+        st.metric("ILF (calculated)", f"{ilf:.2f}" if ilf else "—")
+
+    st.markdown("---")
+
+    # Action buttons
+    col_save, col_cancel = st.columns(2)
+
+    with col_save:
+        if st.button("Save Changes", key=f"edit_layer_save_{layer_idx}", type="primary", use_container_width=True):
+            if not carrier.strip():
+                st.error("Please enter a carrier name")
+            else:
+                # Update layer
+                layer["carrier"] = carrier.strip()
+                layer["limit"] = limit
+                layer["attachment"] = attachment
+                layer["premium"] = premium
+                layer["rpm"] = rpm
+                layer["ilf"] = f"{ilf:.2f}" if ilf else None
+
+                if is_primary:
+                    layer["retention"] = retention
+                    st.session_state.primary_retention = retention
+
+                # Recalculate all layers (attachments may have changed)
+                _recalculate_all(st.session_state.tower_layers)
+
+                # Close card
+                st.session_state.editing_layer_idx = None
+                st.rerun()
+
+    with col_cancel:
+        if st.button("Cancel", key=f"edit_layer_cancel_{layer_idx}", use_container_width=True):
+            st.session_state.editing_layer_idx = None
+            st.rerun()
+
+
+# ─────────────────────── Card-Based Layer Display ───────────────────────
+
+def _render_tower_cards():
+    """Render tower layers as responsive cards with click-to-edit."""
+    layers = st.session_state.tower_layers
+
+    if not layers:
+        st.caption("No layers yet. Click '+ Add Layer' to build your tower.")
+        return
+
+    st.markdown("---")
+    st.caption("Tap a card to edit")
+
+    # Inject card styling CSS
+    st.markdown("""
+    <style>
+    .tower-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        background: #fafafa;
+        cursor: pointer;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .tower-card:hover {
+        border-color: #1f77b4;
+        box-shadow: 0 2px 8px rgba(31, 119, 180, 0.15);
+    }
+    .tower-card-header {
+        font-weight: 600;
+        font-size: 1.05em;
+        margin-bottom: 4px;
+        color: #333;
+    }
+    .tower-card-primary {
+        font-size: 0.95em;
+        color: #444;
+        margin-bottom: 2px;
+    }
+    .tower-card-secondary {
+        font-size: 0.85em;
+        color: #888;
+    }
+    .tower-card-cmai {
+        border-left: 3px solid #1f77b4;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Render each layer as a card
+    for idx, layer in enumerate(layers):
+        is_primary = idx == 0
+        carrier = layer.get("carrier", "Unknown")
+        limit = layer.get("limit", 0)
+        premium = layer.get("premium")
+        rpm = layer.get("rpm")
+        ilf = layer.get("ilf")
+
+        # Determine attachment or retention display
+        if is_primary:
+            retention = layer.get("retention") or st.session_state.get("primary_retention", 0)
+            attach_ret_text = f"{_format_amount(retention)} ret" if retention else ""
+        else:
+            attachment = layer.get("attachment", 0)
+            attach_ret_text = f"xs {_format_amount(attachment)}" if attachment else ""
+
+        # Build display strings
+        limit_text = f"{_format_amount(limit)} limit" if limit else ""
+        premium_text = f"{_format_currency(premium)}" if premium else "—"
+
+        # Primary line: limit · retention/attachment · premium
+        primary_parts = [p for p in [limit_text, attach_ret_text, premium_text] if p and p != "—"]
+        primary_line = " · ".join(primary_parts) if primary_parts else "No details"
+
+        # Secondary line: RPM · ILF
+        secondary_parts = []
+        if rpm:
+            secondary_parts.append(f"RPM: {_format_currency(rpm)}")
+        if ilf:
+            secondary_parts.append(f"ILF: {ilf}")
+        secondary_line = " · ".join(secondary_parts) if secondary_parts else ""
+
+        # Check if this is CMAI layer for special styling
+        is_cmai = "CMAI" in carrier.upper() if carrier else False
+        card_class = "tower-card tower-card-cmai" if is_cmai else "tower-card"
+
+        # Use a button that spans the full card area
+        # We'll use a container with the card visuals, then an invisible button overlay
+        card_key = f"tower_card_{idx}"
+
+        # Create the card with a button
+        with st.container():
+            if st.button(
+                f"**#{idx + 1} · {carrier}**\n\n{primary_line}\n\n{secondary_line if secondary_line else ''}",
+                key=card_key,
+                use_container_width=True,
+                help="Click to edit this layer"
+            ):
+                st.session_state.editing_layer_idx = idx
+                st.session_state.adding_new_layer = False
+                st.rerun()
+
+
+def _render_tower_summary():
+    """Render tower summary metrics."""
+    layers = st.session_state.tower_layers
+
+    if not layers:
+        return
+
+    st.markdown("---")
+
+    total_limit = sum(layer.get("limit", 0) for layer in layers)
+    total_premium = sum(layer.get("premium", 0) for layer in layers if layer.get("premium"))
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Layers", len(layers))
+    with col2:
+        retention_val = st.session_state.get("primary_retention")
+        if retention_val is None and layers:
+            retention_val = layers[0].get("retention")
+        st.metric("Retention", _format_amount(retention_val or 0))
+    with col3:
+        st.metric("Total Limit", _format_amount(total_limit))
+    with col4:
+        st.metric("Total Premium", _format_currency(total_premium))
+
+
+# ─────────────────────── AI Processing (kept for compatibility) ───────────────────────
+
+def _normalize_carrier_name(name: str) -> str:
+    return re.sub(r"\s+", " ", str(name or "").strip())
 
 
 def _parse_retention_from_text(text: str):
@@ -95,173 +1336,6 @@ def _parse_retention_from_text(text: str):
     if match:
         return _parse_amount(match.group(1))
     return None
-
-
-def _parse_premium(val):
-    """Parse a premium value, accepting K/M notation."""
-    if val is None or str(val).strip() == "":
-        return None
-    return _parse_amount(val)
-
-
-def _parse_rpm(val):
-    """Parse an RPM value, accepting K/M notation."""
-    if val is None or str(val).strip() == "":
-        return None
-    return _parse_amount(val)
-
-
-# ─────────────────────── Layer Conversion ───────────────────────
-
-def _layers_to_dataframe(layers: list) -> pd.DataFrame:
-    """Convert layers list to DataFrame for display."""
-    if not layers:
-        return pd.DataFrame(columns=["carrier", "limit", "attachment", "premium", "rpm", "ilf"])
-
-    rows = []
-    for idx, layer in enumerate(layers):
-        limit_value = layer.get("limit", 0) or 0
-        quota_total = layer.get("quota_share_total_limit")
-        quota_percent = layer.get("quota_share_percentage")
-
-        if quota_percent is None and quota_total:
-            try:
-                if quota_total:
-                    quota_percent = (limit_value / quota_total) * 100 if quota_total else None
-            except Exception:
-                quota_percent = None
-
-        # For Layer 1 (idx 0), show retention in attachment column
-        if idx == 0:
-            retention = layer.get("retention") or st.session_state.get("primary_retention", 0)
-            attachment_display = _format_amount(retention) if retention else ""
-        else:
-            attachment_display = _format_amount(layer.get("attachment", 0))
-
-        rows.append({
-            "carrier": layer.get("carrier", ""),
-            "limit": _format_amount(limit_value),
-            "attachment": attachment_display,
-            "premium": _format_currency(layer.get("premium")) if layer.get("premium") is not None else "",
-            "rpm": _format_rpm(layer.get("rpm", 0)) if layer.get("rpm") else "",
-            "ilf": layer.get("ilf", ""),
-            "quota_share_part_of": _format_amount(quota_total) if quota_total else "",
-            "quota_share_percentage": _format_percent(quota_percent) if quota_percent else "",
-        })
-
-    return pd.DataFrame(rows)
-
-
-def _dataframe_to_layers(df: pd.DataFrame, existing_layers=None) -> list:
-    """Convert DataFrame back to layers list."""
-    layers = []
-    existing_layers = existing_layers or []
-    has_quota_part_of = "quota_share_part_of" in df.columns
-    has_quota_percentage = "quota_share_percentage" in df.columns
-
-    for idx, row in df.iterrows():
-        if not any(str(row.get(col, "")).strip() for col in ["carrier", "limit", "attachment"]):
-            continue
-
-        attachment_value = _parse_amount(row.get("attachment", 0))
-
-        # For Layer 1 (idx 0), attachment column represents retention
-        if idx == 0:
-            layer = {
-                "carrier": str(row.get("carrier", "")).strip(),
-                "limit": _parse_amount(row.get("limit", 0)),
-                "attachment": 0,  # Primary layer attachment is always 0
-                "retention": attachment_value if attachment_value else None,
-                "premium": _parse_premium(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
-                "rpm": _parse_rpm(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
-                "ilf": str(row.get("ilf", "")).strip() or None,
-            }
-            # Also update session state
-            if attachment_value:
-                st.session_state.primary_retention = attachment_value
-        else:
-            layer = {
-                "carrier": str(row.get("carrier", "")).strip(),
-                "limit": _parse_amount(row.get("limit", 0)),
-                "attachment": attachment_value,
-                "premium": _parse_premium(row.get("premium", 0)) if str(row.get("premium", "")).strip() else None,
-                "rpm": _parse_rpm(row.get("rpm", 0)) if str(row.get("rpm", "")).strip() else None,
-                "ilf": str(row.get("ilf", "")).strip() or None,
-            }
-            if idx < len(existing_layers):
-                layer["retention"] = existing_layers[idx].get("retention")
-
-        if has_quota_part_of:
-            part_of_val = _parse_amount(row.get("quota_share_part_of")) if str(row.get("quota_share_part_of", "")).strip() else None
-            layer["quota_share_total_limit"] = part_of_val if part_of_val else None
-        elif idx < len(existing_layers):
-            layer["quota_share_total_limit"] = existing_layers[idx].get("quota_share_total_limit")
-
-        if has_quota_percentage:
-            percent_val = _parse_percent(row.get("quota_share_percentage")) if str(row.get("quota_share_percentage", "")).strip() else None
-            layer["quota_share_percentage"] = percent_val if percent_val else None
-        elif idx < len(existing_layers):
-            layer["quota_share_percentage"] = existing_layers[idx].get("quota_share_percentage")
-
-        layers.append(layer)
-
-    return layers
-
-
-def _has_quota_share_layer(layers: list) -> bool:
-    """Detect whether any excess layer carries quota share data."""
-    for idx, layer in enumerate(layers):
-        if idx == 0:
-            continue
-        total = layer.get("quota_share_total_limit")
-        if total and _parse_amount(total):
-            return True
-    return False
-
-
-def _normalize_carrier_name(name: str) -> str:
-    return re.sub(r"\s+", " ", str(name or "").strip())
-
-
-# ─────────────────────── Change Detection ───────────────────────
-
-def _detect_table_changes(original: pd.DataFrame, edited: pd.DataFrame) -> dict[int, set[str]]:
-    """Identify which columns were modified by the user in the data editor."""
-    changes: dict[int, set[str]] = {}
-    orig = original.reset_index(drop=True)
-    edit = edited.reset_index(drop=True)
-    columns = list(edit.columns)
-
-    def _norm(val):
-        if pd.isna(val):
-            return ""
-        return str(val).strip()
-
-    for idx in range(len(edit)):
-        row_changes: set[str] = set()
-        for col in columns:
-            new_val = _norm(edit.at[idx, col])
-            old_val = _norm(orig.at[idx, col]) if idx < len(orig) else ""
-            if new_val != old_val:
-                if new_val or old_val:
-                    row_changes.add(col)
-        if row_changes:
-            changes[idx] = row_changes
-    return changes
-
-
-# ─────────────────────── AI Processing Helpers ───────────────────────
-
-def _extract_carrier_tokens(raw: str) -> list[str]:
-    parts = []
-    if not raw:
-        return parts
-    normalized = raw.replace("&", " and ")
-    for token in re.split(r",| and |\band\b", normalized, flags=re.I):
-        name = token.strip()
-        if name:
-            parts.append(name)
-    return parts
 
 
 def _parse_primary_carrier(text: str):
@@ -299,169 +1373,13 @@ def _parse_premium_hints(text: str) -> list[float]:
     return premiums
 
 
-def _infer_quota_share_from_text(text: str, layers: list) -> None:
-    """Use simple heuristics to populate quota share metadata from the user's description."""
-    if not text or not layers:
-        return
-
-    pattern = re.compile(
-        r"([A-Za-z0-9 /&,'-]+?)\s+(?:are|is|were|being)\s+part of\s+a\s+([0-9.,$\sMKmk]+)\s+quota share(?:[^.]*?each\s+with\s+(?:a\s+)?([0-9.,$\sMKmk]+)\s+limit)?",
-        flags=re.I,
-    )
-    lowered_layers = {str(layer.get("carrier", "")).strip().lower(): layer for layer in layers}
-
-    for match in pattern.finditer(text):
-        carriers_block = match.group(1)
-        total_raw = match.group(2)
-        per_raw = match.group(3) if match.lastindex and match.lastindex >= 3 else None
-
-        total_limit = _parse_amount(total_raw)
-        per_limit = _parse_amount(per_raw) if per_raw else None
-        if not total_limit:
-            continue
-
-        carriers = _extract_carrier_tokens(carriers_block)
-        for name in carriers:
-            layer = lowered_layers.get(name.lower())
-            if not layer:
-                continue
-            layer["quota_share_total_limit"] = total_limit
-            if per_limit and not layer.get("limit"):
-                layer["limit"] = per_limit
-            limit_val = layer.get("limit") or 0
-            if total_limit and limit_val:
-                layer["quota_share_percentage"] = (limit_val / total_limit) * 100
-
-
-def _stack_layers_with_quota(layers: list) -> None:
-    """Assign attachments while respecting quota share groups."""
-    running_attachment = 0.0
-    idx = 0
-    while idx < len(layers):
-        layer = layers[idx]
-        limit_val = layer.get("limit", 0) or 0
-        total_limit = _parse_amount(layer.get("quota_share_total_limit")) if layer.get("quota_share_total_limit") else None
-
-        if idx == 0:
-            layer["attachment"] = running_attachment
-            running_attachment += limit_val
-            idx += 1
-            continue
-
-        if total_limit:
-            group_indices = []
-            j = idx
-            while j < len(layers):
-                candidate = layers[j]
-                candidate_total = _parse_amount(candidate.get("quota_share_total_limit")) if candidate.get("quota_share_total_limit") else None
-                if candidate_total and abs(candidate_total - total_limit) < 1e-6:
-                    group_indices.append(j)
-                    j += 1
-                else:
-                    break
-
-            if not group_indices:
-                layer["attachment"] = running_attachment
-                running_attachment += limit_val
-                idx += 1
-                continue
-
-            for gi in group_indices:
-                glayer = layers[gi]
-                glayer["attachment"] = running_attachment
-                if glayer.get("quota_share_percentage") is None:
-                    share_limit = glayer.get("limit") or 0
-                    if total_limit:
-                        glayer["quota_share_percentage"] = (share_limit / total_limit) * 100 if share_limit else None
-                glayer["quota_share_total_limit"] = total_limit
-
-            running_attachment += total_limit
-            idx = group_indices[-1] + 1
-        else:
-            layer["attachment"] = running_attachment
-            running_attachment += limit_val
-            idx += 1
-
-
-def _recalculate_manual_layers(layers: list, change_map: dict[int, set[str]] | None = None) -> None:
-    """Recompute derived premium/RPM/ILF fields after manual edits."""
-    if not layers:
-        return
-
-    change_map = change_map or {}
-
-    # Get primary layer data for ILF calculations
-    primary = layers[0] if layers else {}
-    primary_limit = primary.get("limit") or 0
-    primary_premium = primary.get("premium")
-    base_rpm = primary.get("rpm")
-
-    if not base_rpm and primary_premium and primary_limit:
-        base_rpm = primary_premium / max(1.0, (primary_limit / 1_000_000.0))
-        primary["rpm"] = base_rpm
-
-    # Process each layer
-    for idx, layer in enumerate(layers):
-        limit_val = layer.get("limit") or 0
-        premium = layer.get("premium")
-        rpm = layer.get("rpm")
-
-        row_changed = change_map.get(idx, set())
-
-        exposure = limit_val / 1_000_000.0 if limit_val else 0
-
-        # If premium changed, recalculate RPM
-        if "premium" in row_changed and premium is not None and exposure:
-            layer["rpm"] = premium / exposure
-        # If RPM changed, recalculate premium
-        elif "rpm" in row_changed and rpm is not None and exposure:
-            layer["premium"] = rpm * exposure
-
-        # Calculate ILF if we have base_rpm
-        if base_rpm and layer.get("rpm"):
-            layer["ilf"] = f"{layer['rpm'] / base_rpm:.2f}"
-
-
-# ─────────────────────── Main Render Function ───────────────────────
-
-def render_tower_panel(sub_id: str, expanded: bool = True):
-    """
-    Render the insurance tower panel.
-
-    Args:
-        sub_id: Submission ID
-        expanded: Whether to expand the tower section by default
-    """
-    # Initialize session state
-    if "tower_layers" not in st.session_state:
-        st.session_state.tower_layers = []
-    if "primary_retention" not in st.session_state:
-        st.session_state.primary_retention = None
-
-    with st.expander("🏗️ Insurance Tower", expanded=expanded):
-        # Clear button only - NL input is handled by unified AI command box
-        if st.button("Clear Tower", key="tower_clear_btn"):
-            st.session_state.tower_layers = []
-            st.session_state.primary_retention = None
-            st.rerun()
-
-        # Tower Table
-        _render_tower_table()
-
-        # Tower Summary
-        _render_tower_summary()
-
-
-def _process_natural_language_input(user_input: str):
-    """Process natural language input with AI."""
+def process_tower_with_ai(user_input: str):
+    """Process natural language input with AI to build/modify tower."""
     try:
         from ai.tower_intel import run_command_with_ai
 
         current_layers = st.session_state.tower_layers
         result = run_command_with_ai(current_layers, user_input, 0.0, None)
-
-        with st.expander("Debug: AI Response", expanded=False):
-            st.json(result)
 
         layers = result.get("layers", [])
         primary = result.get("primary")
@@ -537,125 +1455,21 @@ def _process_natural_language_input(user_input: str):
             layers[0]["retention"] = retention_val
         st.session_state.primary_retention = retention_val
 
-        _infer_quota_share_from_text(user_input, layers)
-
         # Update first layer with primary data
         if primary and layers:
-            layers[0].update({
-                "premium": primary.get("premium"),
-                "rpm": primary.get("rpm"),
-                "ilf": "TBD"
-            })
+            if primary.get("premium"):
+                layers[0]["premium"] = primary.get("premium")
+            if primary.get("rpm"):
+                layers[0]["rpm"] = primary.get("rpm")
+
             if retention_val is not None:
                 layers[0]["retention"] = retention_val
 
-            primary_limit = layers[0].get("limit") or primary.get("limit") or 0
-            primary_premium = primary.get("premium") if primary else None
-            base_rpm = primary.get("rpm") if primary else None
-
-            if not base_rpm and primary_premium and primary_limit:
-                base_rpm = primary_premium / max(1.0, (primary_limit / 1_000_000.0))
-                primary["rpm"] = base_rpm
-            if base_rpm and not layers[0].get("rpm"):
-                layers[0]["rpm"] = base_rpm
-            if primary_premium and not layers[0].get("premium"):
-                layers[0]["premium"] = primary_premium
-
-        _stack_layers_with_quota(layers)
-        _recalculate_manual_layers(layers, {})
+        # Recalculate all derived fields
+        _recalculate_all(layers)
 
         st.session_state.tower_layers = layers
-        st.success("Tower updated successfully!")
+        return {"success": True, "message": f"Tower updated with {len(layers)} layers"}
 
     except Exception as e:
-        st.error(f"Error processing input: {str(e)}")
-        st.exception(e)
-
-
-def _render_tower_table():
-    """Render the editable tower table."""
-    quota_share_detected = _has_quota_share_layer(st.session_state.tower_layers)
-    if "quota_share_manual_enable" not in st.session_state:
-        st.session_state.quota_share_manual_enable = quota_share_detected
-    elif quota_share_detected and not st.session_state.quota_share_manual_enable:
-        st.session_state.quota_share_manual_enable = True
-
-    show_quota_columns = st.checkbox(
-        "Show quota share columns",
-        key="quota_share_manual_enable",
-        help="Quota share captures scenarios like '5M part of 25M excess 50M'."
-    )
-
-    if quota_share_detected:
-        st.caption("Quota share layer detected in the excess tower.")
-
-    df = _layers_to_dataframe(st.session_state.tower_layers)
-    display_columns = ["carrier", "limit"]
-    if show_quota_columns:
-        display_columns.append("quota_share_part_of")
-    display_columns.extend(["attachment", "premium", "rpm", "ilf"])
-    if show_quota_columns:
-        display_columns.append("quota_share_percentage")
-    df_for_editor = df[display_columns] if not df.empty else pd.DataFrame(columns=display_columns)
-
-    # Use dynamic key that changes when a different quote is loaded
-    # This forces the data_editor to re-render with new data
-    loaded_quote_id = st.session_state.get("loaded_tower_id", "new")
-    editor_key = f"tower_editor_{loaded_quote_id}"
-
-    edited_df = st.data_editor(
-        df_for_editor,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "carrier": st.column_config.TextColumn("Carrier", width="medium"),
-            "limit": st.column_config.TextColumn("Limit", width="small"),
-            "attachment": st.column_config.TextColumn(
-                "Attach/Ret",
-                width="small",
-                help="Layer 1: Retention/Deductible. Layer 2+: Attachment point."
-            ),
-            "premium": st.column_config.TextColumn("Premium", width="small"),
-            "rpm": st.column_config.TextColumn("RPM", width="small"),
-            "ilf": st.column_config.TextColumn("ILF", width="small"),
-            "quota_share_part_of": st.column_config.TextColumn(
-                "Part Of",
-                width="small",
-                help="Total shared limit for the quota share layer.",
-            ),
-            "quota_share_percentage": st.column_config.TextColumn(
-                "Quota Share %",
-                width="small",
-                help="Carrier's share of the quota layer (optional).",
-            ),
-        },
-        key=editor_key
-    )
-
-    if not edited_df.equals(df_for_editor):
-        change_map = _detect_table_changes(df_for_editor, edited_df)
-        recalculated_layers = _dataframe_to_layers(edited_df, st.session_state.tower_layers)
-        _recalculate_manual_layers(recalculated_layers, change_map)
-        st.session_state.tower_layers = recalculated_layers
-        st.rerun()
-
-
-def _render_tower_summary():
-    """Render tower summary metrics."""
-    if st.session_state.tower_layers:
-        st.markdown("---")
-        total_limit = sum(layer.get("limit", 0) for layer in st.session_state.tower_layers)
-        total_premium = sum(layer.get("premium", 0) for layer in st.session_state.tower_layers if layer.get("premium"))
-
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Layers", len(st.session_state.tower_layers))
-        with col2:
-            retention_val = st.session_state.get("primary_retention")
-            if retention_val is None and st.session_state.tower_layers:
-                retention_val = st.session_state.tower_layers[0].get("retention")
-            st.metric("Retention", _format_amount(retention_val or 0))
-        with col3:
-            st.metric("Total Limit", _format_amount(total_limit))
-        with col4:
-            st.metric("Total Premium", _format_currency(total_premium))
+        return {"success": False, "error": str(e)}

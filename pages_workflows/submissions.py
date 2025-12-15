@@ -963,28 +963,23 @@ def render():
             # Sync dropdown values to tower layer 1 (for primary quotes)
             _sync_dropdowns_to_tower(sub_id)
 
-            # Coverage Schedule - different panel based on primary vs excess
+            # Panel order depends on primary vs excess
             current_position = get_current_quote_position(sub_id)
             viewing_quote_id = st.session_state.get("viewing_quote_id")
+            tower_layers = st.session_state.get("tower_layers", [])
 
             if current_position == "excess" and viewing_quote_id:
-                # Excess quote: sublimits panel serves as the coverage schedule
-                # (shows dynamic coverages from underlying carrier, not our predefined list)
-                render_sublimits_panel(sub_id, quote_id=viewing_quote_id, expanded=True)
+                # EXCESS: Tower structure first, then coverage schedule
+                render_tower_panel(sub_id, expanded=True)
+                render_sublimits_panel(sub_id, quote_id=viewing_quote_id, expanded=False)
             else:
-                # Primary quote: show standard coverage panel (our predefined coverages)
+                # PRIMARY: Coverage panel first, then tower
                 render_coverages_panel(sub_id, expanded=False)
+                tower_expanded = len(tower_layers) > 1
+                render_tower_panel(sub_id, expanded=tower_expanded)
 
             # Add coverages to config for quote generation
             config["coverages"] = get_coverages_for_quote(sub_id)
-
-            # Tower builder (auto-expand if multi-layer, collapsed for simple primary)
-            tower_layers = st.session_state.get("tower_layers", [])
-            tower_expanded = len(tower_layers) > 1
-            render_tower_panel(sub_id, expanded=tower_expanded)
-
-            # Note: Sublimits panel is rendered above as "Coverage Schedule (Excess)"
-            # for excess quotes, replacing the standard coverage panel
 
             # Endorsements (option-specific - varies by primary/excess/quote)
             render_endorsements_panel(sub_id, expanded=False)
