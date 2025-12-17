@@ -177,6 +177,184 @@ def edit_sublimits_with_ai(current_sublimits: List[Dict[str, Any]], instruction:
     return result
 
 
+# ─────────────────────── Document Parsing ───────────────────────
+
+DOCUMENT_SYSTEM = """You are an expert insurance policy analyst specializing in cyber and technology insurance.
+Extract coverage information from insurance policy documents (quotes, binders, policies, declarations pages).
+
+Common cyber insurance coverages include:
+- Network Security & Privacy Liability
+- Privacy Regulatory Defense & Penalties
+- PCI DSS / Payment Card Liability
+- Media Liability
+- Business Interruption (BI)
+- System Failure / Non-Malicious BI
+- Dependent Business Interruption
+- Cyber Extortion / Ransomware
+- Data Recovery / Restoration
+- Reputational Harm / Crisis Management
+- Technology Errors & Omissions (Tech E&O)
+- Social Engineering / Fraudulent Transfer
+- Invoice Manipulation / Funds Transfer Fraud
+- Telecommunications Fraud
+- Breach Response / Incident Response
+- Cryptojacking
+
+Normalize coverage names to standard industry terms where possible.
+Parse amounts flexibly: "1M" = 1000000, "500K" = 500000, "$250,000" = 250000, etc.
+"""
+
+DOCUMENT_USER_TEMPLATE = """Analyze this insurance policy document and extract all coverage information.
+
+Document text:
+'''
+{document_text}
+'''
+
+{context}
+
+Output strictly as JSON with this schema:
+{{
+  "policy_type": string,  // "cyber", "tech", "cyber_tech", or "unknown"
+  "carrier_name": string | null,  // Name of the insurance carrier if found
+  "policy_form": string | null,  // Policy form name/number if found (e.g., "CyberEdge 3.0")
+  "aggregate_limit": number | null,  // Total policy aggregate if found
+  "retention": number | null,  // Primary retention/deductible if found
+  "sublimits": [
+    {{
+      "coverage": string,  // EXACT coverage name as written in the document
+      "coverage_normalized": [string],  // Array of standardized tags (one coverage can map to multiple)
+      "primary_limit": number,  // Sublimit amount in dollars
+      "notes": string | null  // Any relevant conditions (e.g., "72-hour waiting period")
+    }}
+  ]
+}}
+
+Rules:
+- Extract ALL sublimits mentioned, even partial information
+- "coverage" must be the EXACT name from the document (preserve carrier's terminology)
+- "coverage_normalized" is an ARRAY - one carrier coverage may map to multiple standard tags
+  Example: A "Dependent Business Interruption" coverage that includes both IT and Non-IT providers
+  would have: ["Dependent BI - IT Providers", "Dependent BI - Non-IT Providers"]
+- Standard tags to use:
+  * Network Security Liability
+  * Privacy Liability
+  * Privacy Regulatory Defense
+  * Privacy Regulatory Penalties
+  * PCI DSS Assessment
+  * Media Liability
+  * Business Interruption
+  * System Failure (Non-Malicious BI)
+  * Dependent BI - IT Providers
+  * Dependent BI - Non-IT Providers
+  * Cyber Extortion / Ransomware
+  * Data Recovery / Restoration
+  * Reputational Harm
+  * Crisis Management / PR
+  * Technology E&O
+  * Social Engineering
+  * Invoice Manipulation
+  * Funds Transfer Fraud
+  * Telecommunications Fraud
+  * Breach Response / Notification
+  * Forensics
+  * Credit Monitoring
+  * Cryptojacking
+  * Betterment
+  * Bricking
+  * Other
+- Parse all amounts to raw dollar values (e.g., "1M" -> 1000000, "$500K" -> 500000)
+- If a coverage has "full limits" or "aggregate", use the aggregate_limit value
+- If a sublimit is per-occurrence vs aggregate, note in the notes field
+- Include waiting periods, coinsurance, or other conditions in notes
+- Order sublimits by limit amount descending
+"""
+
+
+def parse_coverages_from_document(document_text: str, context: str = "") -> dict:
+    """
+    Parse insurance document text into structured coverage data.
+
+    This is designed for primary carrier quotes, binders, or policy documents
+    to extract coverage information for populating the excess coverage schedule.
+
+    Args:
+        document_text: Raw text extracted from PDF/DOCX
+        context: Optional context (e.g., expected policy type, known aggregate)
+
+    Returns:
+        Dict with:
+        - policy_type: "cyber" | "tech" | "cyber_tech" | "unknown"
+        - carrier_name: str | None
+        - aggregate_limit: float | None
+        - retention: float | None
+        - sublimits: List of {coverage, primary_limit, notes}
+    """
+    client = _client()
+
+    context_str = f"Additional context: {context}" if context else ""
+
+    messages = [
+        {"role": "system", "content": DOCUMENT_SYSTEM},
+        {"role": "user", "content": DOCUMENT_USER_TEMPLATE.format(
+            document_text=document_text[:20000],  # Limit input size
+            context=context_str
+        )},
+    ]
+
+    rsp = client.chat.completions.create(
+        model=_MODEL,
+        messages=messages,
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+
+    content = rsp.choices[0].message.content or "{}"
+    data = json.loads(content)
+
+    # Normalize and validate the response
+    result = {
+        "policy_type": data.get("policy_type", "unknown"),
+        "carrier_name": data.get("carrier_name"),
+        "policy_form": data.get("policy_form"),
+        "aggregate_limit": _parse_amount(data.get("aggregate_limit")),
+        "retention": _parse_amount(data.get("retention")),
+        "sublimits": [],
+    }
+
+    # Process sublimits
+    for sub in data.get("sublimits", []):
+        coverage = str(sub.get("coverage", "")).strip()
+        primary_limit = _parse_amount(sub.get("primary_limit", 0))
+        notes = sub.get("notes")
+
+        # Handle coverage_normalized as array (may come as string or list)
+        raw_normalized = sub.get("coverage_normalized", [])
+        if isinstance(raw_normalized, str):
+            coverage_normalized = [raw_normalized] if raw_normalized else []
+        elif isinstance(raw_normalized, list):
+            coverage_normalized = [str(t).strip() for t in raw_normalized if t]
+        else:
+            coverage_normalized = []
+
+        # Default to coverage name if no tags provided
+        if not coverage_normalized and coverage:
+            coverage_normalized = [coverage]
+
+        if coverage and primary_limit > 0:
+            result["sublimits"].append({
+                "coverage": coverage,  # Original carrier language
+                "coverage_normalized": coverage_normalized,  # Array of standardized tags
+                "primary_limit": primary_limit,
+                "notes": notes,
+            })
+
+    # Sort by limit descending
+    result["sublimits"].sort(key=lambda x: x["primary_limit"], reverse=True)
+
+    return result
+
+
 def _parse_amount(val: Any) -> float:
     """Parse dollar and K/M-suffixed numbers into float dollars."""
     if val is None:

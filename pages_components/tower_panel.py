@@ -256,18 +256,49 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
             else:
                 underlying_layers.append((idx, layer))
 
-        # ─────────────────────────────────────────────────────
-        # OUR LAYER (CMAI) - Always at top
-        # ─────────────────────────────────────────────────────
-        st.markdown("##### Our Layer (CMAI)")
+        # Get quote_id for unique widget keys
+        viewing_quote_id = st.session_state.get("viewing_quote_id", "")
 
         # Calculate our attachment from underlying layers
         underlying_total = sum(layer.get("limit", 0) for _, layer in underlying_layers)
 
-        col_limit, col_attach, col_premium = st.columns(3)
+        # ─────────────────────────────────────────────────────
+        # HEADER BAR - Toggle and Add button
+        # ─────────────────────────────────────────────────────
+        col_toggle, col_add = st.columns([1, 3])
+        with col_toggle:
+            view_mode = st.toggle("Card", key=f"tower_card_view_{viewing_quote_id}", help="Switch to card view for mobile")
+        with col_add:
+            if st.button("+ Add Underlying Layer", key=f"add_underlying_btn_{viewing_quote_id}", use_container_width=True):
+                _add_underlying_layer(sub_id)
+
+        # ─────────────────────────────────────────────────────
+        # OUR LAYER (CMAI) - Always at top, aligned with underlying table
+        # ─────────────────────────────────────────────────────
+        # Column headers row with "Our Layer" as the first column header
+        hdr_carrier, hdr_limit, hdr_attach, hdr_premium, hdr_rpm, hdr_ilf, hdr_spacer = st.columns([2, 1, 1, 1.2, 0.8, 0.6, 0.4])
+        hdr_carrier.markdown("##### Our Layer")
+        hdr_limit.caption("Limit")
+        hdr_attach.caption("Ret/Attach")
+        hdr_premium.caption("Premium")
+        hdr_rpm.caption("RPM")
+        hdr_ilf.caption("ILF")
+
+        # Get current values for calculations
+        current_cmai_limit = cmai_layer.get("limit", 5_000_000) if cmai_layer else 5_000_000
+        current_cmai_premium = cmai_layer.get("premium") if cmai_layer else None
+
+        # Calculate CMAI RPM and ILF (ILF relative to top underlying layer)
+        cmai_rpm = None
+        cmai_ilf = None
+
+        # Row aligned with underlying table: Carrier | Limit | Attach | Premium | RPM | ILF | (spacer for delete col)
+        col_carrier, col_limit, col_attach, col_premium, col_rpm, col_ilf, col_spacer = st.columns([2, 1, 1, 1.2, 0.8, 0.6, 0.4])
+
+        with col_carrier:
+            st.markdown("**CMAI**")
 
         with col_limit:
-            # Our limit dropdown
             limit_options = [
                 ("$1M", 1_000_000),
                 ("$2M", 2_000_000),
@@ -277,53 +308,89 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
             ]
             limit_labels = [opt[0] for opt in limit_options]
             limit_values = {opt[0]: opt[1] for opt in limit_options}
-
-            current_cmai_limit = cmai_layer.get("limit", 5_000_000) if cmai_layer else 5_000_000
             default_idx = next(
                 (i for i, opt in enumerate(limit_options) if opt[1] == current_cmai_limit),
                 3  # Default to $5M
             )
-
             selected_limit_label = st.selectbox(
-                "Our Limit",
+                "Limit",
                 options=limit_labels,
                 index=default_idx,
-                key="cmai_limit_select"
+                key=f"cmai_limit_select_{viewing_quote_id}",
+                label_visibility="collapsed"
             )
             new_cmai_limit = limit_values[selected_limit_label]
 
         with col_attach:
-            # Auto-calculated attachment (read-only display)
-            st.metric(
-                "Our Attachment",
-                f"${underlying_total / 1_000_000:.0f}M" if underlying_total >= 1_000_000 else f"${underlying_total / 1_000:,.0f}K" if underlying_total >= 1_000 else "$0",
-                help="Auto-calculated from underlying limits"
-            )
+            attach_display = f"xs ${underlying_total / 1_000_000:.0f}M" if underlying_total >= 1_000_000 else f"xs ${underlying_total / 1_000:,.0f}K" if underlying_total >= 1_000 else "xs $0"
+            st.markdown(f"**{attach_display}**")
 
         with col_premium:
-            # Our premium input
-            current_cmai_premium = cmai_layer.get("premium") if cmai_layer else None
             premium_display = f"${current_cmai_premium / 1_000:.0f}K" if current_cmai_premium and current_cmai_premium >= 1_000 else ""
             new_premium_str = st.text_input(
-                "Our Premium",
+                "Premium",
                 value=premium_display,
-                key="cmai_premium_input",
-                placeholder="e.g., $75K"
+                key=f"cmai_premium_input_{viewing_quote_id}",
+                placeholder="$",
+                label_visibility="collapsed"
             )
             new_cmai_premium = _parse_amount(new_premium_str) if new_premium_str else None
 
+        # Calculate RPM and ILF
+        if new_cmai_premium and new_cmai_limit:
+            cmai_rpm = new_cmai_premium / (new_cmai_limit / 1_000_000)
+            if underlying_layers:
+                top_underlying_idx = max(idx for idx, _ in underlying_layers)
+                top_layer = next((layer for idx, layer in underlying_layers if idx == top_underlying_idx), None)
+                if top_layer:
+                    top_premium = top_layer.get("premium")
+                    top_limit = top_layer.get("limit")
+                    if top_premium and top_limit:
+                        top_rpm = top_premium / (top_limit / 1_000_000)
+                        if top_rpm > 0:
+                            cmai_ilf = cmai_rpm / top_rpm
+
+        with col_rpm:
+            rpm_display = f"${cmai_rpm/1000:.1f}K" if cmai_rpm and cmai_rpm >= 1000 else f"${cmai_rpm:,.0f}" if cmai_rpm else "—"
+            st.markdown(f"**{rpm_display}**")
+
+        with col_ilf:
+            ilf_display = f"{cmai_ilf:.2f}" if cmai_ilf else "—"
+            st.markdown(f"**{ilf_display}**")
+
         # Update CMAI layer if values changed
+        # Use a separate session state key to track saved limit (avoids issues with tower_layers being reset)
+        saved_limit_key = f"_saved_cmai_limit_{viewing_quote_id}"
+        saved_premium_key = f"_saved_cmai_premium_{viewing_quote_id}"
+
+        # Initialize saved values from current layer if not set
+        if saved_limit_key not in st.session_state and cmai_layer:
+            st.session_state[saved_limit_key] = cmai_layer.get("limit")
+        if saved_premium_key not in st.session_state and cmai_layer:
+            st.session_state[saved_premium_key] = cmai_layer.get("premium")
+
+        last_saved_limit = st.session_state.get(saved_limit_key)
+        last_saved_premium = st.session_state.get(saved_premium_key)
+
         cmai_changed = False
+        limit_changed = False
         if cmai_layer:
-            if new_cmai_limit != cmai_layer.get("limit"):
+            # Compare against separately tracked saved values (not tower_layers which may be stale)
+            if last_saved_limit != new_cmai_limit:
                 cmai_layer["limit"] = new_cmai_limit
                 cmai_layer["attachment"] = underlying_total
+                st.session_state[saved_limit_key] = new_cmai_limit
                 cmai_changed = True
-            if new_cmai_premium != cmai_layer.get("premium"):
+                limit_changed = True
+            if new_cmai_premium != last_saved_premium:
                 cmai_layer["premium"] = new_cmai_premium
+                st.session_state[saved_premium_key] = new_cmai_premium
                 cmai_changed = True
             if cmai_changed:
+                _recalculate_all(st.session_state.tower_layers)
                 _save_tower_changes(sub_id)
+                # Rerun to refresh display (quote name for limit, RPM/ILF for premium)
+                st.rerun()
         elif not cmai_layer and layers:
             # Create CMAI layer if missing
             new_cmai = {
@@ -338,61 +405,36 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
         # ─────────────────────────────────────────────────────
         # UNDERLYING PROGRAM
         # ─────────────────────────────────────────────────────
-        col_title, col_toggle = st.columns([3, 1])
-        with col_title:
-            st.markdown("##### Underlying Program")
-        with col_toggle:
-            # View toggle: Table vs Card
-            view_mode = st.toggle("Card", key="tower_card_view", help="Switch to card view for mobile")
-
-        # Add button at top (new layers go at top of tower)
-        if st.button("+ Add Underlying Layer", key="add_underlying_btn", use_container_width=True):
-            _add_underlying_layer(sub_id)
+        st.markdown("##### Underlying Program")
 
         if not underlying_layers:
             st.caption("No underlying layers defined yet.")
 
-        # Build RPM map for ILF calculations (ILF = this layer RPM / layer below RPM)
-        layer_rpms = {}
-        for idx, layer in underlying_layers:
-            layer_premium = layer.get("premium")
-            layer_limit = layer.get("limit")
-            if layer_premium and layer_limit:
-                layer_rpms[idx] = layer_premium / (layer_limit / 1_000_000)
+        # Create a dict for quick layer lookup by index (for ILF calculations)
+        layers_by_idx = {idx: layer for idx, layer in underlying_layers}
 
         if view_mode:
             # Card view - compact clickable cards
             st.caption("Tap a card to edit")
             for idx, layer in reversed(underlying_layers):
-                # Get RPM of layer below for ILF calculation
-                below_rpm = layer_rpms.get(idx - 1) if idx > 0 else None
-                _render_underlying_layer_card(sub_id, idx, layer, is_primary=(idx == 0), below_rpm=below_rpm)
+                _render_underlying_layer_card(sub_id, idx, layer, is_primary=(idx == 0), layers_by_idx=layers_by_idx)
         else:
-            # Table view - desktop
-            if underlying_layers:
-                # Column headers
-                hdr_carrier, hdr_limit, hdr_attach, hdr_premium, hdr_rpm, hdr_ilf, hdr_del = st.columns([2, 1, 1, 1.2, 0.8, 0.6, 0.4])
-                hdr_carrier.caption("Carrier")
-                hdr_limit.caption("Limit")
-                hdr_attach.caption("Ret/Attach")
-                hdr_premium.caption("Premium")
-                hdr_rpm.caption("RPM")
-                hdr_ilf.caption("ILF")
-
-            # Render underlying layers (bottom to top visually = primary at bottom)
+            # Table view - desktop (headers are above "Our Layer" section)
             for idx, layer in reversed(underlying_layers):
-                # Get RPM of layer below for ILF calculation
-                below_rpm = layer_rpms.get(idx - 1) if idx > 0 else None
-                _render_underlying_layer_row(sub_id, idx, layer, is_primary=(idx == 0), below_rpm=below_rpm)
+                _render_underlying_layer_row(sub_id, idx, layer, is_primary=(idx == 0), layers_by_idx=layers_by_idx)
 
 
-def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, below_rpm: float = None):
+def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, layers_by_idx: dict = None):
     """Render a single underlying layer as an inline editable row."""
     carrier = layer.get("carrier", "")
     limit = layer.get("limit", 0)
     attachment = layer.get("attachment", 0)
     retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
     premium = layer.get("premium")
+    layers_by_idx = layers_by_idx or {}
+
+    # Get quote_id for unique widget keys
+    quote_id = st.session_state.get("viewing_quote_id", "")
 
     # Column structure: Carrier | Limit | Ret/Attach | Premium | RPM | ILF | Delete
     col_carrier, col_limit, col_ret_attach, col_premium, col_rpm, col_ilf, col_delete = st.columns([2, 1, 1, 1.2, 0.8, 0.6, 0.4])
@@ -401,7 +443,7 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
         new_carrier = st.text_input(
             "Carrier",
             value=carrier,
-            key=f"underlying_carrier_{layer_idx}",
+            key=f"underlying_carrier_{quote_id}_{layer_idx}",
             label_visibility="collapsed",
             placeholder="Carrier name"
         )
@@ -416,7 +458,7 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
             "Limit",
             options=limit_options,
             index=limit_options.index(current_label) if current_label in limit_options else 3,
-            key=f"underlying_limit_{layer_idx}",
+            key=f"underlying_limit_{quote_id}_{layer_idx}",
             label_visibility="collapsed"
         )
         new_limit = limit_map[new_limit_label]
@@ -433,27 +475,21 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
                 "Retention",
                 options=ret_options,
                 index=ret_options.index(current_ret_label) if current_ret_label in ret_options else 1,
-                key=f"underlying_ret_{layer_idx}",
+                key=f"underlying_ret_{quote_id}_{layer_idx}",
                 label_visibility="collapsed"
             )
             new_retention = ret_map[new_ret_label]
         else:
-            # Show attachment point (auto-calculated)
+            # Show attachment point (auto-calculated) - use markdown to avoid widget state caching
             attach_display = f"xs ${attachment / 1_000_000:.0f}M" if attachment >= 1_000_000 else f"xs ${attachment / 1_000:.0f}K" if attachment >= 1_000 else "xs $0"
-            st.text_input(
-                "Attachment",
-                value=attach_display,
-                key=f"underlying_attach_{layer_idx}",
-                label_visibility="collapsed",
-                disabled=True
-            )
+            st.markdown(f"**{attach_display}**")
 
     with col_premium:
         premium_display = f"${premium / 1_000:.0f}K" if premium and premium >= 1_000 else ""
         new_premium_str = st.text_input(
             "Premium",
             value=premium_display,
-            key=f"underlying_premium_{layer_idx}",
+            key=f"underlying_premium_{quote_id}_{layer_idx}",
             label_visibility="collapsed",
             placeholder="$"
         )
@@ -464,35 +500,32 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
     calc_limit = new_limit if new_limit else limit
     rpm = None
     ilf = None
+    below_rpm = None
     if calc_premium and calc_limit:
         rpm = calc_premium / (calc_limit / 1_000_000)
-        if below_rpm and below_rpm > 0:
-            ilf = rpm / below_rpm
+        # Calculate ILF relative to layer below (look up dynamically for fresh values)
+        if layer_idx > 0:
+            below_layer = layers_by_idx.get(layer_idx - 1)
+            if below_layer:
+                below_premium = below_layer.get("premium")
+                below_limit = below_layer.get("limit")
+                if below_premium and below_limit:
+                    below_rpm = below_premium / (below_limit / 1_000_000)
+                    if below_rpm > 0:
+                        ilf = rpm / below_rpm
 
     with col_rpm:
-        # RPM display (calculated, read-only)
+        # RPM display (calculated, read-only) - no key so value updates on each render
         rpm_display = f"${rpm/1000:.1f}K" if rpm and rpm >= 1000 else f"${rpm:,.0f}" if rpm else "—"
-        st.text_input(
-            "RPM",
-            value=rpm_display,
-            key=f"underlying_rpm_{layer_idx}",
-            label_visibility="collapsed",
-            disabled=True
-        )
+        st.markdown(f"**{rpm_display}**")
 
     with col_ilf:
-        # ILF display (calculated, read-only)
+        # ILF display (calculated, read-only) - no key so value updates on each render
         ilf_display = f"{ilf:.2f}" if ilf else "1.00" if is_primary and rpm else "—"
-        st.text_input(
-            "ILF",
-            value=ilf_display,
-            key=f"underlying_ilf_{layer_idx}",
-            label_visibility="collapsed",
-            disabled=True
-        )
+        st.markdown(f"**{ilf_display}**")
 
     with col_delete:
-        if st.button("×", key=f"delete_underlying_{layer_idx}", help="Remove layer"):
+        if st.button("×", key=f"delete_underlying_{quote_id}_{layer_idx}", help="Remove layer"):
             st.session_state.tower_layers.pop(layer_idx)
             _recalculate_all(st.session_state.tower_layers)
             _save_tower_changes(sub_id)
@@ -519,23 +552,37 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
     if changed:
         _recalculate_all(st.session_state.tower_layers)
         _save_tower_changes(sub_id)
+        # Rerun to refresh RPM/ILF calculations across all layers
+        st.rerun()
 
 
-def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, below_rpm: float = None):
+def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, layers_by_idx: dict = None):
     """Render a single underlying layer as a compact clickable card."""
     carrier = layer.get("carrier", "") or "Unnamed"
     limit = layer.get("limit", 0)
     attachment = layer.get("attachment", 0)
     retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
     premium = layer.get("premium")
+    layers_by_idx = layers_by_idx or {}
+
+    # Get quote_id for unique widget keys
+    quote_id = st.session_state.get("viewing_quote_id", "")
 
     # Calculate RPM and ILF (ILF = this layer RPM / layer below RPM)
     rpm = None
     ilf = None
     if premium and limit:
         rpm = premium / (limit / 1_000_000)
-        if below_rpm and below_rpm > 0:
-            ilf = rpm / below_rpm
+        # Calculate ILF relative to layer below (look up dynamically for fresh values)
+        if layer_idx > 0:
+            below_layer = layers_by_idx.get(layer_idx - 1)
+            if below_layer:
+                below_premium = below_layer.get("premium")
+                below_limit = below_layer.get("limit")
+                if below_premium and below_limit:
+                    below_rpm = below_premium / (below_limit / 1_000_000)
+                    if below_rpm > 0:
+                        ilf = rpm / below_rpm
 
     # Format display values (no $ to avoid LaTeX issues)
     if limit >= 1_000_000:
@@ -580,23 +627,25 @@ def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_p
     line3 = f"RPM: {rpm_str} · ILF: {ilf_str}"
 
     # Clickable card button
-    card_key = f"underlying_card_{layer_idx}"
+    card_key = f"underlying_card_{quote_id}_{layer_idx}"
     if st.button(
         f"{line1}\n\n{line2}\n\n{line3}",
         key=card_key,
         use_container_width=True,
         help="Tap to edit"
     ):
-        st.session_state[f"editing_underlying_{layer_idx}"] = True
+        st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = True
         st.rerun()
 
     # Show edit dialog if this card is being edited
-    if st.session_state.get(f"editing_underlying_{layer_idx}"):
+    if st.session_state.get(f"editing_underlying_{quote_id}_{layer_idx}"):
         _render_underlying_edit_dialog(sub_id, layer_idx, layer, is_primary)
 
 
 def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_primary: bool):
     """Render edit dialog for an underlying layer."""
+    # Get quote_id for unique widget keys
+    quote_id = st.session_state.get("viewing_quote_id", "")
 
     @st.dialog(f"Edit Layer", width="small")
     def show_edit():
@@ -606,7 +655,7 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
         retention = layer.get("retention") or st.session_state.get("primary_retention", 25_000)
         premium = layer.get("premium")
 
-        new_carrier = st.text_input("Carrier", value=carrier, key=f"edit_carrier_{layer_idx}")
+        new_carrier = st.text_input("Carrier", value=carrier, key=f"edit_carrier_{quote_id}_{layer_idx}")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -618,7 +667,7 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
                 "Limit",
                 options=limit_options,
                 index=limit_options.index(current_label) if current_label in limit_options else 3,
-                key=f"edit_limit_{layer_idx}"
+                key=f"edit_limit_{quote_id}_{layer_idx}"
             )
             new_limit = limit_map[new_limit_label]
 
@@ -631,7 +680,7 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
                     "Retention",
                     options=ret_options,
                     index=ret_options.index(current_ret_label) if current_ret_label in ret_options else 1,
-                    key=f"edit_ret_{layer_idx}"
+                    key=f"edit_ret_{quote_id}_{layer_idx}"
                 )
                 new_retention = ret_map[new_ret_label]
             else:
@@ -640,7 +689,7 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
                 new_retention = None
 
         premium_display = f"${premium // 1_000}K" if premium and premium >= 1_000 else ""
-        new_premium_str = st.text_input("Premium", value=premium_display, key=f"edit_premium_{layer_idx}", placeholder="$")
+        new_premium_str = st.text_input("Premium", value=premium_display, key=f"edit_premium_{quote_id}_{layer_idx}", placeholder="$")
         new_premium = _parse_amount(new_premium_str) if new_premium_str else None
 
         st.markdown("---")
@@ -648,7 +697,7 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
         col_save, col_delete, col_cancel = st.columns(3)
 
         with col_save:
-            if st.button("Save", type="primary", use_container_width=True):
+            if st.button("Save", type="primary", use_container_width=True, key=f"save_layer_{quote_id}_{layer_idx}"):
                 layer["carrier"] = new_carrier
                 layer["limit"] = new_limit
                 layer["premium"] = new_premium
@@ -657,20 +706,20 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
                     st.session_state.primary_retention = new_retention
                 _recalculate_all(st.session_state.tower_layers)
                 _save_tower_changes(sub_id)
-                st.session_state[f"editing_underlying_{layer_idx}"] = False
+                st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = False
                 st.rerun()
 
         with col_delete:
-            if st.button("Delete", use_container_width=True):
+            if st.button("Delete", use_container_width=True, key=f"del_layer_{quote_id}_{layer_idx}"):
                 st.session_state.tower_layers.pop(layer_idx)
                 _recalculate_all(st.session_state.tower_layers)
                 _save_tower_changes(sub_id)
-                st.session_state[f"editing_underlying_{layer_idx}"] = False
+                st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = False
                 st.rerun()
 
         with col_cancel:
-            if st.button("Cancel", use_container_width=True):
-                st.session_state[f"editing_underlying_{layer_idx}"] = False
+            if st.button("Cancel", use_container_width=True, key=f"cancel_layer_{quote_id}_{layer_idx}"):
+                st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = False
                 st.rerun()
 
     show_edit()
@@ -767,8 +816,12 @@ def _save_tower_changes(sub_id: str):
         pass  # Silent fail - will retry on next save
 
 
-def _generate_excess_quote_name(our_limit: int, our_attachment: int) -> str:
+def _generate_excess_quote_name(our_limit: float, our_attachment: float) -> str:
     """Generate quote name for excess quotes: '$XM xs $YM' format."""
+    # Convert to int to avoid decimal formatting (65.0M -> 65M)
+    our_limit = int(our_limit or 0)
+    our_attachment = int(our_attachment or 0)
+
     limit_str = f"${our_limit // 1_000_000}M" if our_limit >= 1_000_000 else f"${our_limit // 1_000}K"
     attach_str = f"${our_attachment // 1_000_000}M" if our_attachment >= 1_000_000 else f"${our_attachment // 1_000}K" if our_attachment >= 1_000 else "$0"
     return f"{limit_str} xs {attach_str}"

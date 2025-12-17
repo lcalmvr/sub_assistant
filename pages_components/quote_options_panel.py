@@ -549,7 +549,9 @@ def _view_quote(quote_id: str):
             # Clear old widget keys so selectboxes pick up new values
             keys_to_clear = [k for k in list(st.session_state.keys())
                            if k.startswith(f"quote_sublimit_{sub_id}_")
-                           or k.startswith(f"quote_agg_{sub_id}_")]
+                           or k.startswith(f"quote_agg_{sub_id}_")
+                           or k.startswith("_saved_cmai_limit_")
+                           or k.startswith("_saved_cmai_premium_")]
             for k in keys_to_clear:
                 del st.session_state[k]
 
