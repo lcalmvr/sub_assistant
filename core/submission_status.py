@@ -8,14 +8,50 @@ db = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(db)
 get_conn = db.get_conn
 
-SubmissionStatus = Literal["pending_decision", "quoted", "declined"]
+# Import status history for audit trail
+from core.status_history import record_status_change
+
+SubmissionStatus = Literal[
+    "renewal_expected",      # Placeholder for upcoming renewal
+    "renewal_not_received",  # Renewal never arrived
+    "received",
+    "pending_info",
+    "quoted",
+    "declined"
+]
 SubmissionOutcome = Literal["pending", "bound", "lost", "declined", "waiting_for_response"]
 
+# Status display labels for UI
+STATUS_LABELS = {
+    "renewal_expected": "Renewal Expected",
+    "renewal_not_received": "Renewal Not Received",
+    "received": "Received",
+    "pending_info": "Pending Info",
+    "quoted": "Quoted",
+    "declined": "Declined"
+}
+
+# Valid status transitions (what status can follow what)
+VALID_STATUS_TRANSITIONS = {
+    "renewal_expected": ["received", "renewal_not_received"],  # Awaiting broker
+    "renewal_not_received": [],  # Terminal state
+    "received": ["pending_info", "quoted", "declined"],
+    "pending_info": ["received", "quoted", "declined"],
+    "quoted": ["declined"],  # Can still decline after quoting
+    "declined": []  # Terminal state
+}
+
 VALID_STATUS_OUTCOMES = {
-    "pending_decision": ["pending"],
+    "renewal_expected": ["pending"],       # Awaiting broker submission
+    "renewal_not_received": ["lost"],      # Never received = lost
+    "received": ["pending"],
+    "pending_info": ["pending"],
     "quoted": ["bound", "lost", "waiting_for_response"],
     "declined": ["declined"]
 }
+
+# Statuses to exclude from total submission counts in reporting
+EXCLUDED_FROM_COUNTS = ["renewal_expected"]
 
 def get_submission_status(submission_id: str) -> dict:
     """Get current status and outcome for a submission."""
@@ -38,48 +74,59 @@ def get_submission_status(submission_id: str) -> dict:
         }
 
 def update_submission_status(
-    submission_id: str, 
+    submission_id: str,
     status: SubmissionStatus,
     outcome: Optional[SubmissionOutcome] = None,
-    reason: Optional[str] = None
+    reason: Optional[str] = None,
+    changed_by: str = "system",
+    notes: Optional[str] = None
 ) -> bool:
     """
     Update submission status and outcome.
-    
+
     Args:
         submission_id: UUID of the submission
         status: New primary status
         outcome: New outcome (optional, will be set based on status if not provided)
         reason: Required for 'lost' and 'declined' outcomes
-        
+        changed_by: User or system making the change (for audit trail)
+        notes: Optional notes about the change (for audit trail)
+
     Returns:
         True if update successful
-        
+
     Raises:
         ValueError: If status/outcome combination is invalid
     """
-    
+
+    # Get current status for history logging
+    current = get_submission_status(submission_id)
+    old_status = current.get("submission_status")
+    old_outcome = current.get("submission_outcome")
+
     # Set default outcome if not provided
     if outcome is None:
-        if status == "pending_decision":
+        if status in ["received", "pending_info", "renewal_expected"]:
             outcome = "pending"
         elif status == "declined":
             outcome = "declined"
+        elif status == "renewal_not_received":
+            outcome = "lost"
         else:  # quoted
             raise ValueError("Outcome must be specified for 'quoted' status")
-    
+
     # Validate status/outcome combination
     if outcome not in VALID_STATUS_OUTCOMES.get(status, []):
         valid_outcomes = VALID_STATUS_OUTCOMES.get(status, [])
         raise ValueError(f"Invalid outcome '{outcome}' for status '{status}'. Valid outcomes: {valid_outcomes}")
-    
+
     # Validate reason requirement
     if outcome in ["lost", "declined"] and not reason:
         raise ValueError(f"Reason is required for outcome '{outcome}'")
-    
+
     with get_conn() as conn:
         result = conn.execute(text("""
-            UPDATE submissions 
+            UPDATE submissions
             SET submission_status = :status,
                 submission_outcome = :outcome,
                 outcome_reason = :reason,
@@ -89,13 +136,26 @@ def update_submission_status(
         """), {
             "submission_id": submission_id,
             "status": status,
-            "outcome": outcome, 
+            "outcome": outcome,
             "reason": reason,
             "updated_at": datetime.utcnow()
         })
-        
+
         conn.commit()
-        return result.rowcount > 0
+
+        if result.rowcount > 0:
+            # Record the status change in history
+            record_status_change(
+                submission_id=submission_id,
+                old_status=old_status,
+                new_status=status,
+                old_outcome=old_outcome,
+                new_outcome=outcome,
+                changed_by=changed_by,
+                notes=notes
+            )
+            return True
+        return False
 
 def get_available_outcomes(status: SubmissionStatus) -> list[SubmissionOutcome]:
     """Get valid outcomes for a given status."""

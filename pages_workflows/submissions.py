@@ -47,6 +47,9 @@ parse_controls_from_summary = pipeline.parse_controls_from_summary
 from pages_components.rating_panel_v2 import render_rating_panel
 from pages_components.similar_submissions_panel import render_similar_submissions_panel
 from pages_components.submission_status_panel import render_submission_status_panel
+from pages_components.account_matching_panel import render_account_matching_panel
+from pages_components.account_history_panel import render_account_history_compact
+from pages_components.renewal_panel import render_renewal_panel
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -521,6 +524,65 @@ def _to_vector_literal(vec):
         return "NULL"
     return f"[{','.join(map(str, vec))}]"
 
+
+def _render_policy_period_section(sub_id: str):
+    """Render policy period fields (effective/expiration dates)."""
+    from datetime import date, timedelta
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT effective_date, expiration_date, renewal_type
+            FROM submissions
+            WHERE id = %s
+            """,
+            (sub_id,),
+        )
+        row = cur.fetchone()
+
+    effective_date = row[0] if row else None
+    expiration_date = row[1] if row else None
+    renewal_type = row[2] if row else "new_business"
+
+    with st.expander("📅 Policy Period", expanded=True):
+        col1, col2, col3 = st.columns([1, 1, 1])
+
+        with col1:
+            new_effective = st.date_input(
+                "Effective Date",
+                value=effective_date,
+                key=f"effective_date_{sub_id}"
+            )
+
+        with col2:
+            new_expiration = st.date_input(
+                "Expiration Date",
+                value=expiration_date,
+                key=f"expiration_date_{sub_id}"
+            )
+
+        with col3:
+            renewal_display = "Renewal" if renewal_type == "renewal" else "New Business"
+            st.text_input("Type", value=renewal_display, disabled=True, key=f"renewal_type_display_{sub_id}")
+
+        # Save if dates changed
+        dates_changed = (new_effective != effective_date) or (new_expiration != expiration_date)
+        if dates_changed:
+            if st.button("Save Policy Dates", key=f"save_policy_dates_{sub_id}"):
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE submissions
+                        SET effective_date = %s, expiration_date = %s, updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (new_effective, new_expiration, sub_id),
+                    )
+                st.success("Policy dates saved")
+                st.rerun()
+
+
 # ─────────────────────── UI starts ──────────────────────────
 def render():
     """Main render function for the submissions page"""
@@ -550,6 +612,13 @@ def render():
         label_map = {f"{r.applicant_name} – {str(r.id)[:8]}": r.id for r in sub_df.itertuples()}
         # Restore previous selection if available
         id_to_label = {str(v): k for k, v in label_map.items()}
+
+        # Check for query param (for links from account history)
+        query_sub_id = st.query_params.get("selected_submission_id")
+        if query_sub_id:
+            st.session_state.selected_submission_id = query_sub_id
+            st.query_params.clear()  # Clear to avoid stale params
+
         current_sub_id = st.session_state.get("selected_submission_id")
         current_label = id_to_label.get(current_sub_id) if current_sub_id else None
         options = list(label_map.keys()) or ["—"]
@@ -644,7 +713,7 @@ def render():
         st.subheader(label_selected)
 
         # ------------------- TABS -------------------
-        tab_details, tab_rating, tab_quote = st.tabs(["📋 Details", "📊 Rating", "💰 Quote"])
+        tab_details, tab_uw, tab_rating, tab_quote = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote"])
 
         # Define quote_helpers up front for use in Quote tab
         quote_helpers = {
@@ -1068,6 +1137,8 @@ def render():
                     "naics_secondary_title",
                     "industry_tags",
                     "annual_revenue",
+                    "applicant_name",
+                    "website",
                 ]
                 opt_cols = [c for c in [
                     "broker_email",
@@ -1097,6 +1168,8 @@ def render():
                     naics_sec_title,
                     industry_tags,
                     annual_revenue,
+                    applicant_name,
+                    website,
                     *opt_values,
                 ) = row
                 # Initialize optionals
@@ -1123,6 +1196,15 @@ def render():
 
             # ------------------- Submission Status --------------------
             render_submission_status_panel(sub_id)
+
+            # ------------------- Policy Period --------------------
+            _render_policy_period_section(sub_id)
+
+            # ------------------- Account Matching --------------------
+            render_account_matching_panel(sub_id, applicant_name, website)
+
+            # ------------------- Renewal Info --------------------
+            render_renewal_panel(sub_id)
 
             # ------------------- Broker Assignment --------------------
             with st.expander("🤝 Broker Assignment", expanded=True):
@@ -1253,6 +1335,35 @@ def render():
 
                 else:
                     st.warning("Broker directory tables (brkr_*) not found. Please set up the broker directory in the database.")
+
+        # =================== UW TAB ===================
+        with tab_uw:
+            # Pull submission data for UW tab (same query as Details tab)
+            conn = get_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT business_summary, cyber_exposures, nist_controls_summary,
+                           bullet_point_summary, ops_embedding, controls_embedding,
+                           naics_primary_code, naics_primary_title,
+                           naics_secondary_code, naics_secondary_title,
+                           industry_tags, annual_revenue, applicant_name
+                    FROM submissions WHERE id = %s
+                    """,
+                    (sub_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    (biz_sum, exp_sum, ctrl_sum, bullet_sum, ops_vec, ctrl_vec,
+                     naics_code, naics_title, naics_sec_code, naics_sec_title,
+                     industry_tags, annual_revenue, applicant_name) = row
+                else:
+                    biz_sum = exp_sum = ctrl_sum = bullet_sum = None
+                    ops_vec = ctrl_vec = None
+                    naics_code = naics_title = naics_sec_code = naics_sec_title = None
+                    industry_tags = None
+                    annual_revenue = None
+                    applicant_name = None
 
             # ------------------- Business Summary --------------------
             with st.expander("📊 Business Summary", expanded=True):
