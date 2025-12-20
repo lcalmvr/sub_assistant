@@ -19,22 +19,27 @@ from core.document_library import get_entries_for_package, get_library_entries, 
 
 
 def _get_quote_endorsements(quote_option_id: str) -> List[str]:
-    """Get endorsement names from the quote option's quote_json."""
-    from sqlalchemy import text
-    from core.db import get_conn
+    """Get endorsement names from the quote option in insurance_towers."""
+    from pages_components.tower_db import get_conn
+    import json
 
-    with get_conn() as conn:
-        result = conn.execute(text("""
-            SELECT quote_json->'endorsements' as endorsements
-            FROM quotes
-            WHERE id = :quote_id
-        """), {"quote_id": quote_option_id})
+    try:
+        with get_conn().cursor() as cur:
+            cur.execute(
+                "SELECT endorsements FROM insurance_towers WHERE id = %s",
+                (quote_option_id,)
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                endorsements = row[0]
+                # Handle both string (JSON) and list formats
+                if isinstance(endorsements, str):
+                    endorsements = json.loads(endorsements)
+                if isinstance(endorsements, list):
+                    return endorsements
+    except Exception:
+        pass
 
-        row = result.fetchone()
-        if row and row[0]:
-            endorsements = row[0]
-            if isinstance(endorsements, list):
-                return endorsements
     return []
 
 

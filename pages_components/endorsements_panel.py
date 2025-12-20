@@ -1,156 +1,146 @@
 """
 Endorsements Panel Component
-Option-specific endorsements management.
+Option-specific endorsements management using the document library.
 """
 from __future__ import annotations
 
 import streamlit as st
+from typing import List
+
+from pages_components.endorsement_selector import (
+    render_endorsement_selector,
+    initialize_from_existing,
+    get_endorsement_names_for_quote,
+    get_required_endorsements,
+    get_auto_endorsements,
+)
 
 
-# Stock endorsements
-STOCK_ENDORSEMENTS = [
-    "War and Terrorism Exclusion",
-    "Nuclear Risks Exclusion",
-    "Communicable Disease Exclusion",
-    "Cyber and Data Exclusion",
-    "Professional Services Exclusion",
-    "Contractual Liability Limitation",
-    "Prior Acts Coverage Extension",
-    "Extended Reporting Period",
-    "Innocent Party Coverage",
-    "Regulatory Defense Coverage",
-]
-
-# Default endorsements (always included)
-DEFAULT_ENDORSEMENTS = ["OFAC", "Service of Suit"]
-
-
-def render_endorsements_panel(sub_id: str, expanded: bool = False):
+def render_endorsements_panel(sub_id: str, expanded: bool = False, position: str = None):
     """
     Render option-specific endorsements panel.
 
-    Endorsements are stored per quote option since they can vary
-    (e.g., follow-form vs modified terms for different options).
+    Uses the endorsement selector component which provides:
+    - Required endorsements (always included, locked)
+    - Auto-added endorsements (based on quote rules)
+    - Manual selection with search and category filters
+
+    Args:
+        sub_id: Submission ID
+        expanded: Whether expander is initially expanded
+        position: Quote position ('primary' or 'excess'), defaults to current quote position
     """
+    # Determine position from session state if not provided
+    if position is None:
+        position = st.session_state.get(f"quote_position_{sub_id}", "primary")
+
+    # Get current quote data from session state for rule-based endorsements
+    quote_data = _get_quote_data_for_rules(sub_id)
+
+    # Initialize from existing quote endorsements if loading a saved option
+    viewing_quote_id = st.session_state.get("viewing_quote_id")
+
+    # Track if we've initialized for this quote to avoid re-init on every render
+    init_key = f"endorsements_initialized_{viewing_quote_id}"
+    if viewing_quote_id and init_key not in st.session_state:
+        existing_endorsements = _get_existing_endorsements(viewing_quote_id)
+        if existing_endorsements:
+            initialize_from_existing(sub_id, existing_endorsements, position=position)
+        st.session_state[init_key] = True
+
+    # Always save endorsements when we have a quote option (ensures required endorsements are saved)
+    if viewing_quote_id:
+        _save_endorsements(sub_id, viewing_quote_id, position)
+
     with st.expander("📄 Endorsements", expanded=expanded):
-        # Session keys - option-specific (tied to current quote option)
-        session_key = f"endorsements_{sub_id}"
-        id_counter_key = f"endorsements_id_counter_{sub_id}"
+        # Define on_change callback to auto-save endorsements
+        def on_endorsement_change():
+            if viewing_quote_id:
+                _save_endorsements(sub_id, viewing_quote_id, position)
 
-        # Initialize if needed
-        if session_key not in st.session_state:
-            st.session_state[session_key] = []
-            for i, default in enumerate(DEFAULT_ENDORSEMENTS):
-                st.session_state[session_key].append({
-                    'id': i,
-                    'text': default,
-                    'is_default': True
-                })
+        # Render the endorsement selector
+        selected_endorsements = render_endorsement_selector(
+            submission_id=sub_id,
+            quote_data=quote_data,
+            position=position,
+            on_change=on_endorsement_change
+        )
 
-        if id_counter_key not in st.session_state:
-            st.session_state[id_counter_key] = len(st.session_state[session_key])
+        # Store count for display elsewhere
+        st.session_state[f"endorsement_count_{sub_id}"] = len(selected_endorsements)
 
-        # Ensure defaults are present
-        existing_texts = [item['text'] for item in st.session_state[session_key]]
-        for default in DEFAULT_ENDORSEMENTS:
-            if default not in existing_texts:
-                st.session_state[session_key].insert(0, {
-                    'id': st.session_state[id_counter_key],
-                    'text': default,
-                    'is_default': True
-                })
-                st.session_state[id_counter_key] += 1
 
-        # Get current items
-        current_items = {item['text'] for item in st.session_state[session_key]}
-        available_stock = [e for e in STOCK_ENDORSEMENTS if e not in current_items]
+def _get_quote_data_for_rules(sub_id: str) -> dict:
+    """
+    Get quote data from session state for rule-based endorsement logic.
+    Returns minimal dict needed for endorsement rules.
+    """
+    quote_data = {}
 
-        # Quick add from stock
-        if available_stock:
-            selected_stock = st.multiselect(
-                "Add endorsements:",
-                available_stock,
-                key=f"stock_endorse_{sub_id}",
-                help="Select from common endorsements"
+    # Get sublimits for dropdown detection
+    sublimits = st.session_state.get(f"sublimits_{sub_id}", [])
+    if sublimits:
+        quote_data["sublimits"] = sublimits
+
+    # Get follow_form status for excess quotes
+    follow_form = st.session_state.get(f"follow_form_{sub_id}", True)
+    quote_data["follow_form"] = follow_form
+
+    # Get limit and retention
+    quote_data["limit"] = st.session_state.get(f"selected_limit_{sub_id}", 2_000_000)
+    quote_data["retention"] = st.session_state.get(f"selected_retention_{sub_id}", 25_000)
+
+    return quote_data
+
+
+def _get_existing_endorsements(quote_id: str) -> List[str]:
+    """Get endorsement names from an existing quote option in insurance_towers."""
+    from pages_components.tower_db import get_conn
+    import json
+
+    try:
+        with get_conn().cursor() as cur:
+            cur.execute(
+                "SELECT endorsements FROM insurance_towers WHERE id = %s",
+                (quote_id,)
             )
+            row = cur.fetchone()
+            if row and row[0]:
+                endorsements = row[0]
+                # Handle both string (JSON) and list formats
+                if isinstance(endorsements, str):
+                    endorsements = json.loads(endorsements)
+                if isinstance(endorsements, list):
+                    return endorsements
+    except Exception:
+        pass
 
-            for item in selected_stock:
-                if item not in current_items:
-                    st.session_state[session_key].append({
-                        'id': st.session_state[id_counter_key],
-                        'text': item,
-                        'is_default': False
-                    })
-                    st.session_state[id_counter_key] += 1
-                    st.rerun()
-
-        # Custom input
-        col_text, col_add = st.columns([4, 1])
-        clear_key = f"clear_endorse_{sub_id}"
-        if clear_key not in st.session_state:
-            st.session_state[clear_key] = 0
-
-        with col_text:
-            custom = st.text_input(
-                "Custom endorsement:",
-                key=f"custom_endorse_{sub_id}_{st.session_state[clear_key]}",
-                placeholder="Enter custom endorsement...",
-                label_visibility="collapsed"
-            )
-        with col_add:
-            if st.button("Add", key=f"add_endorse_{sub_id}"):
-                if custom.strip() and custom.strip() not in current_items:
-                    st.session_state[session_key].append({
-                        'id': st.session_state[id_counter_key],
-                        'text': custom.strip(),
-                        'is_default': False
-                    })
-                    st.session_state[id_counter_key] += 1
-                    st.session_state[clear_key] += 1
-                    st.rerun()
-
-        # Display current endorsements
-        if st.session_state[session_key]:
-            st.markdown("**Current Endorsements:**")
-
-            for item in st.session_state[session_key]:
-                item_id = item['id']
-                item_text = item['text']
-                is_default = item.get('is_default', False)
-
-                col_text, col_action = st.columns([6, 1])
-
-                with col_text:
-                    if is_default:
-                        st.markdown(f"🔒 **{item_text}** *(required)*")
-                    else:
-                        edited = st.text_input(
-                            "",
-                            value=item_text,
-                            key=f"edit_endorse_{item_id}_{sub_id}",
-                            label_visibility="collapsed"
-                        )
-                        if edited != item_text:
-                            for j, e in enumerate(st.session_state[session_key]):
-                                if e['id'] == item_id:
-                                    st.session_state[session_key][j]['text'] = edited
-                                    break
-
-                with col_action:
-                    if is_default:
-                        st.write("")  # Placeholder
-                    else:
-                        if st.button("🗑️", key=f"rm_endorse_{item_id}_{sub_id}"):
-                            st.session_state[session_key] = [
-                                e for e in st.session_state[session_key]
-                                if e['id'] != item_id
-                            ]
-                            st.rerun()
+    return []
 
 
-def get_endorsements_list(sub_id: str) -> list[str]:
-    """Get current endorsements as a simple list of strings."""
-    session_key = f"endorsements_{sub_id}"
-    if session_key in st.session_state:
-        return [item['text'] for item in st.session_state[session_key]]
-    return DEFAULT_ENDORSEMENTS.copy()
+def _save_endorsements(sub_id: str, quote_id: str, position: str):
+    """Save endorsements to the quote in insurance_towers."""
+    from pages_components.tower_db import update_quote_field
+
+    try:
+        # Get current endorsements as list of names
+        quote_data = _get_quote_data_for_rules(sub_id)
+        endorsements = get_endorsement_names_for_quote(sub_id, quote_data, position=position)
+
+        # Save to database
+        update_quote_field(quote_id, "endorsements", endorsements)
+    except Exception:
+        pass  # Silent fail - will retry on next save
+
+
+def get_endorsements_list(sub_id: str, position: str = "primary") -> List[str]:
+    """
+    Get current endorsements as a simple list of strings for quote generation.
+
+    This includes:
+    - Required endorsements (always)
+    - Auto-added endorsements (based on rules)
+    - Manually selected endorsements
+    """
+    quote_data = _get_quote_data_for_rules(sub_id)
+    return get_endorsement_names_for_quote(sub_id, quote_data, position=position)

@@ -116,7 +116,8 @@ def _generate_quote(
             )
 
             # Get endorsements and subjectivities
-            endorsements = get_endorsements_list(sub_id)
+            position = st.session_state.get(f"quote_position_{sub_id}", "primary")
+            endorsements = get_endorsements_list(sub_id, position=position)
             subjectivities = get_subjectivities_list(sub_id)
 
             # Build quote data
