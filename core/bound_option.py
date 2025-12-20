@@ -264,3 +264,113 @@ def has_bound_option(submission_id: str) -> bool:
         """), {"submission_id": submission_id})
 
         return result.fetchone() is not None
+
+
+def copy_bound_option_to_renewal_with_endorsements(
+    from_submission_id: str,
+    to_submission_id: str,
+    copy_as_bound: bool = False,
+    created_by: str = "system"
+) -> Optional[str]:
+    """
+    Copy the bound option from a prior submission to a renewal, applying relevant endorsements.
+
+    This enhanced version:
+    1. Gets effective policy state (base + issued endorsements)
+    2. Checks if policy is cancelled (returns None if cancelled)
+    3. Creates renewal tower with endorsement-modified premium
+    4. Records which endorsements were applied in data_sources
+
+    Args:
+        from_submission_id: UUID of the prior submission with bound option
+        to_submission_id: UUID of the renewal submission
+        copy_as_bound: If True, also mark the new option as bound
+        created_by: User/system creating the copy
+
+    Returns:
+        UUID of the newly created tower, or None if no bound option exists or policy is cancelled
+    """
+    from core.endorsement_management import (
+        get_effective_policy_state,
+        get_endorsements_for_renewal,
+    )
+
+    # Get the bound option from prior submission
+    bound_option = get_bound_option(from_submission_id)
+    if not bound_option:
+        return None
+
+    # Get effective policy state after endorsements
+    state = get_effective_policy_state(from_submission_id)
+
+    # Don't carry cancelled policies
+    if state.get("is_cancelled", False):
+        return None
+
+    # Get endorsements that carry to renewal
+    carryover_endorsements = get_endorsements_for_renewal(from_submission_id)
+    carryover_descriptions = [e["description"] for e in carryover_endorsements]
+
+    with get_conn() as conn:
+        # Create new tower on renewal submission with effective premium
+        result = conn.execute(text("""
+            INSERT INTO insurance_towers (
+                submission_id, quote_name, tower_json, primary_retention,
+                sublimits, coverages, endorsements, policy_form, position,
+                technical_premium, risk_adjusted_premium, sold_premium,
+                is_bound, bound_at, bound_by, created_by
+            ) VALUES (
+                :submission_id, :quote_name, :tower_json, :primary_retention,
+                :sublimits, :coverages, :endorsements, :policy_form, :position,
+                :technical_premium, :risk_adjusted_premium, :sold_premium,
+                :is_bound, :bound_at, :bound_by, :created_by
+            )
+            RETURNING id
+        """), {
+            "submission_id": to_submission_id,
+            "quote_name": f"{bound_option['quote_name']} (from prior)",
+            "tower_json": bound_option["tower_json"],
+            "primary_retention": bound_option["primary_retention"],
+            "sublimits": bound_option["sublimits"],
+            "coverages": bound_option["coverages"],
+            "endorsements": bound_option["endorsements"],
+            "policy_form": bound_option["policy_form"],
+            "position": bound_option["position"],
+            "technical_premium": bound_option["technical_premium"],
+            "risk_adjusted_premium": bound_option["risk_adjusted_premium"],
+            # Use effective premium (base + adjustments) for renewal starting point
+            "sold_premium": state["effective_premium"],
+            "is_bound": copy_as_bound,
+            "bound_at": datetime.utcnow() if copy_as_bound else None,
+            "bound_by": created_by if copy_as_bound else None,
+            "created_by": created_by
+        })
+
+        new_tower_id = result.fetchone()[0]
+        conn.commit()
+
+        # Update data_sources on the renewal submission to track carryover
+        sources = {
+            "tower_json": "carried_over",
+            "coverages": "carried_over",
+            "sublimits": "carried_over",
+            "endorsements": "carried_over",
+            "primary_retention": "carried_over",
+            "effective_premium": "carried_over_with_endorsements",
+        }
+
+        # Add endorsement carryover info if any
+        if carryover_descriptions:
+            sources["carryover_endorsements"] = carryover_descriptions
+
+        conn.execute(text("""
+            UPDATE submissions
+            SET data_sources = COALESCE(data_sources, '{}'::jsonb) || :sources
+            WHERE id = :submission_id
+        """), {
+            "submission_id": to_submission_id,
+            "sources": sources
+        })
+        conn.commit()
+
+        return str(new_tower_id)

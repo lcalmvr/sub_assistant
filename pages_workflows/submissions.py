@@ -50,6 +50,7 @@ from pages_components.submission_status_panel import render_submission_status_pa
 from pages_components.account_matching_panel import render_account_matching_panel
 from pages_components.account_history_panel import render_account_history_compact
 from pages_components.renewal_panel import render_renewal_panel
+from pages_components.endorsements_history_panel import render_endorsements_history_panel
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -1206,6 +1207,9 @@ def render():
             # ------------------- Renewal Info --------------------
             render_renewal_panel(sub_id)
 
+            # ------------------- Midterm Endorsements --------------------
+            render_endorsements_history_panel(sub_id)
+
             # ------------------- Broker Assignment --------------------
             with st.expander("🤝 Broker Assignment", expanded=True):
                 # Prevent browser autofill from showing address-book suggestions
@@ -1410,26 +1414,56 @@ def render():
                     st.markdown(biz_sum or "No business summary available")
         
                 st.divider()
-        
-                # Annual Revenue and Industry Classification
-                all_lines = []
-        
-                # Add revenue line
-                if annual_revenue:
-                    all_lines.append(f"**Annual Revenue:** ${annual_revenue:,.0f}")
-                else:
-                    all_lines.append("**Annual Revenue:** Not specified")
-            
-                # Add industry lines
+
+                # Annual Revenue - Editable
+                rev_col1, rev_col2 = st.columns([4, 1])
+                with rev_col1:
+                    if annual_revenue:
+                        st.markdown(f"**Annual Revenue:** ${annual_revenue:,.0f}")
+                    else:
+                        st.markdown("**Annual Revenue:** Not specified")
+                with rev_col2:
+                    if st.button("✏️", key=f"edit_rev_{sub_id}", help="Edit Revenue"):
+                        st.session_state[f"editing_rev_{sub_id}"] = True
+
+                if st.session_state.get(f"editing_rev_{sub_id}", False):
+                    edited_rev = st.number_input(
+                        "Annual Revenue ($)",
+                        value=int(annual_revenue) if annual_revenue else 0,
+                        min_value=0,
+                        step=100000,
+                        format="%d",
+                        key=f"rev_edit_{sub_id}"
+                    )
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("💾 Save", key=f"save_rev_{sub_id}"):
+                            conn = get_conn()
+                            with conn.cursor() as cur:
+                                cur.execute(
+                                    "UPDATE submissions SET annual_revenue = %s WHERE id = %s",
+                                    (edited_rev if edited_rev > 0 else None, sub_id)
+                                )
+                                conn.commit()
+                            st.session_state[f"editing_rev_{sub_id}"] = False
+                            st.success("Revenue saved!")
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ Cancel", key=f"cancel_rev_{sub_id}"):
+                            st.session_state[f"editing_rev_{sub_id}"] = False
+                            st.rerun()
+
+                # Industry Classification
+                industry_lines = []
                 if naics_code and naics_title:
-                    all_lines.append(f"**Primary:** {naics_code} - {naics_title}")
+                    industry_lines.append(f"**Primary:** {naics_code} - {naics_title}")
                 if naics_sec_code and naics_sec_title:
-                    all_lines.append(f"**Secondary:** {naics_sec_code} - {naics_sec_title}")
+                    industry_lines.append(f"**Secondary:** {naics_sec_code} - {naics_sec_title}")
                 if industry_tags:
-                    all_lines.append(f"**Industry Tags:** {', '.join(industry_tags)}")
-        
-                if all_lines:
-                    st.markdown("  \n".join(all_lines))
+                    industry_lines.append(f"**Industry Tags:** {', '.join(industry_tags)}")
+
+                if industry_lines:
+                    st.markdown("  \n".join(industry_lines))
     
             # ------------------- Exposure Summary --------------------
             with st.expander("⚠️ Exposure Summary", expanded=False):

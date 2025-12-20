@@ -155,7 +155,7 @@ def _render_retention_metrics():
                         col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
                         with col1:
-                            st.markdown(f"{icon} [{applicant}](?submission_id={sub_id})")
+                            st.markdown(f"{icon} [{applicant}](/submissions?selected_submission_id={sub_id})")
                         with col2:
                             st.caption(f"Prior: ${prior:,.0f}")
                         with col3:

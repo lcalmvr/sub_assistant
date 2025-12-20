@@ -17,6 +17,7 @@ from core.renewal_management import (
     set_policy_dates,
 )
 from core.bound_option import get_bound_option, has_bound_option
+from core.endorsement_management import get_endorsements_for_renewal
 
 
 def render_renewal_panel(submission_id: str):
@@ -149,7 +150,7 @@ def _render_renewal_chain(chain: list, current_submission_id: str):
             st.markdown(f"**{icon} {effective_str}** — {status} ({outcome}) ← *Current*")
         else:
             # Create link to prior submission
-            st.markdown(f"{icon} [{effective_str}](?submission_id={sub_id}) — {status} ({outcome})")
+            st.markdown(f"{icon} [{effective_str}](?selected_submission_id={sub_id}) — {status} ({outcome})")
 
 
 def _render_prior_year_info(submission_id: str, chain: list):
@@ -193,6 +194,20 @@ def _render_prior_year_info(submission_id: str, chain: list):
         st.metric("Prior Retention", retention_display)
     with col3:
         st.metric("Prior Premium", premium_display)
+
+    # Show endorsements carrying forward from prior year
+    try:
+        carryover = get_endorsements_for_renewal(prior_submission_id)
+        if carryover:
+            st.markdown("**Endorsements Carrying Forward**")
+            for e in carryover:
+                eff_date = e.get("effective_date")
+                eff_str = eff_date.strftime("%m/%d/%y") if eff_date else ""
+                premium = e.get("premium_change", 0)
+                premium_str = f" (+${premium:,.0f})" if premium > 0 else f" (-${abs(premium):,.0f})" if premium < 0 else ""
+                st.caption(f"- {e['description']}{premium_str} ({eff_str})")
+    except Exception:
+        pass  # Gracefully handle if endorsement table doesn't exist yet
 
 
 def _render_renewal_expected_actions(submission_id: str):
@@ -243,7 +258,7 @@ def _render_create_renewal_section(submission_id: str):
     if existing_renewal:
         renewal_id = str(existing_renewal[0])
         renewal_status = existing_renewal[1].replace("_", " ").title()
-        st.info(f"Renewal already created: [{renewal_status}](?submission_id={renewal_id})")
+        st.info(f"Renewal already created: [{renewal_status}](?selected_submission_id={renewal_id})")
         return
 
     # Check if this submission has a bound option
@@ -313,7 +328,7 @@ def render_upcoming_renewals_report():
             col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
             with col1:
-                st.markdown(f"{urgency} [{display_name}](?submission_id={renewal['id']})")
+                st.markdown(f"{urgency} [{display_name}](/submissions?selected_submission_id={renewal['id']})")
             with col2:
                 st.caption(f"Expires: {exp_str}")
             with col3:
@@ -353,7 +368,7 @@ def render_renewals_not_received_report():
             col1, col2, col3 = st.columns([3, 1, 2])
 
             with col1:
-                st.markdown(f"❌ [{display_name}](?submission_id={renewal['id']})")
+                st.markdown(f"❌ [{display_name}](/submissions?selected_submission_id={renewal['id']})")
             with col2:
                 st.caption(f"Expected: {eff_str}")
             with col3:

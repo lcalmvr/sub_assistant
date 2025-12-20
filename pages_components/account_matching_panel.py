@@ -61,23 +61,25 @@ def _render_linked_account(submission_id: str, account: dict):
         # Get submission history for this account
         submissions = account_mgmt.get_account_submissions(account["id"])
 
-        if len(submissions) > 1:
+        if submissions:
             st.divider()
             st.markdown(f"**Account History:** {len(submissions)} submission(s)")
 
             # Build compact list with clickable links
             history_lines = []
             for sub in submissions:
-                if sub["id"] == submission_id:
-                    continue  # Skip current submission
+                is_current = sub["id"] == submission_id
 
                 date_str = sub["date_received"].strftime("%m/%d/%Y") if sub.get("date_received") else "N/A"
                 status = (sub.get("submission_status") or "unknown").replace("_", " ").title()
                 outcome = (sub.get("submission_outcome") or "").replace("_", " ").title()
-                sub_id_short = str(sub["id"])[:8]
 
                 status_text = status + (f" ({outcome})" if outcome else "")
-                history_lines.append(f"- [{date_str}](?selected_submission_id={sub['id']}): {status_text}")
+
+                if is_current:
+                    history_lines.append(f"- **{date_str}: {status_text}** ← current")
+                else:
+                    history_lines.append(f"- [{date_str}](?selected_submission_id={sub['id']}): {status_text}")
 
             # Render as single markdown block for compact spacing
             if history_lines:

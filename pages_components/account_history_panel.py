@@ -187,7 +187,7 @@ def render_account_history_compact(account_id: str, current_submission_id: Optio
 
     Args:
         account_id: UUID of the account
-        current_submission_id: Optional - the current submission to exclude/highlight
+        current_submission_id: Optional - the current submission to highlight
     """
     if not account_id:
         return
@@ -198,16 +198,16 @@ def render_account_history_compact(account_id: str, current_submission_id: Optio
 
     submissions = account_mgmt.get_account_submissions(account_id)
 
-    # Filter out current submission
-    other_submissions = [s for s in submissions if s["id"] != current_submission_id]
-
-    if not other_submissions:
-        st.caption("No prior submissions for this account")
+    if not submissions:
+        st.caption("No submissions for this account")
         return
 
-    st.markdown(f"**Prior Submissions ({len(other_submissions)})**")
+    st.markdown(f"**Account Submissions ({len(submissions)})**")
 
-    for sub in other_submissions[:5]:  # Show max 5
+    for sub in submissions[:6]:  # Show max 6
+        sub_id = sub.get("id")
+        is_current = sub_id == current_submission_id
+
         date_received = sub.get("date_received")
         if isinstance(date_received, datetime):
             date_str = date_received.strftime("%m/%d/%y")
@@ -220,10 +220,13 @@ def render_account_history_compact(account_id: str, current_submission_id: Optio
         emoji = _get_status_emoji(status, outcome)
         status_text = outcome.replace("_", " ").title() if outcome else status.replace("_", " ").title()
 
-        st.caption(f"{emoji} {date_str} - {status_text}")
+        if is_current:
+            st.markdown(f"{emoji} **{date_str} - {status_text}** ← *current*")
+        else:
+            st.caption(f"{emoji} [{date_str}](?selected_submission_id={sub_id}) - {status_text}")
 
-    if len(other_submissions) > 5:
-        st.caption(f"... and {len(other_submissions) - 5} more")
+    if len(submissions) > 6:
+        st.caption(f"... and {len(submissions) - 6} more")
 
 
 def render_account_summary_card(account_id: str):
