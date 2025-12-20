@@ -6,7 +6,7 @@ Supports package generation with endorsements and other library documents.
 """
 
 import streamlit as st
-from typing import Optional
+from typing import Optional, List
 
 from core.document_generator import (
     generate_document,
@@ -15,7 +15,83 @@ from core.document_generator import (
 )
 from core.bound_option import has_bound_option
 from core.package_generator import generate_package
-from core.document_library import get_entries_for_package, DOCUMENT_TYPES as LIB_DOC_TYPES
+from core.document_library import get_entries_for_package, get_library_entries, DOCUMENT_TYPES as LIB_DOC_TYPES
+
+
+def _get_quote_endorsements(quote_option_id: str) -> List[str]:
+    """Get endorsement names from the quote option's quote_json."""
+    from sqlalchemy import text
+    from core.db import get_conn
+
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            SELECT quote_json->'endorsements' as endorsements
+            FROM quotes
+            WHERE id = :quote_id
+        """), {"quote_id": quote_option_id})
+
+        row = result.fetchone()
+        if row and row[0]:
+            endorsements = row[0]
+            if isinstance(endorsements, list):
+                return endorsements
+    return []
+
+
+def _match_endorsements_to_library(endorsement_names: List[str], position: str) -> List[dict]:
+    """
+    Match quote endorsement names to library documents.
+    Returns library entries that match the endorsement names.
+    """
+    if not endorsement_names:
+        return []
+
+    # Get all endorsements from library
+    library_endorsements = get_library_entries(
+        document_type="endorsement",
+        position=position,
+        status="active"
+    )
+
+    matched = []
+    matched_names = set()
+
+    # Try to match by title or code (case-insensitive partial match)
+    for name in endorsement_names:
+        name_lower = name.lower().strip()
+
+        for lib_doc in library_endorsements:
+            if lib_doc['id'] in [m['id'] for m in matched]:
+                continue  # Already matched
+
+            title_lower = lib_doc.get('title', '').lower()
+            code_lower = lib_doc.get('code', '').lower()
+
+            # Check for matches
+            if (name_lower in title_lower or
+                title_lower in name_lower or
+                name_lower in code_lower or
+                # Common variations
+                name_lower.replace(' ', '') in title_lower.replace(' ', '') or
+                _normalize_endorsement_name(name_lower) == _normalize_endorsement_name(title_lower)):
+                matched.append(lib_doc)
+                matched_names.add(name)
+                break
+
+    return matched
+
+
+def _normalize_endorsement_name(name: str) -> str:
+    """Normalize endorsement name for matching."""
+    # Remove common prefixes/suffixes and normalize
+    name = name.lower().strip()
+    for prefix in ['endorsement -', 'endorsement:', 'end-', 'exc-']:
+        if name.startswith(prefix):
+            name = name[len(prefix):].strip()
+    for suffix in ['endorsement', 'exclusion', 'coverage']:
+        if name.endswith(suffix):
+            name = name[:-len(suffix)].strip()
+    return name.replace(' ', '').replace('-', '').replace('_', '')
 
 
 def render_document_actions(
@@ -46,12 +122,16 @@ def render_document_actions(
     # Check if this is a bound option
     is_bound = has_bound_option(submission_id)
 
+    # Get quote's endorsements and match to library
+    quote_endorsement_names = _get_quote_endorsements(quote_option_id)
+    matched_endorsements = _match_endorsements_to_library(quote_endorsement_names, position)
+
     # Package options expander
     with st.expander("Package Options", expanded=False):
         package_type = st.radio(
             "Include in package:",
             options=["quote_only", "full_package"],
-            format_func=lambda x: "Quote Only" if x == "quote_only" else "Full Package (Quote + Endorsements)",
+            format_func=lambda x: "Quote Only" if x == "quote_only" else "Full Package",
             horizontal=True,
             key=f"pkg_type_{quote_option_id}"
         )
@@ -59,35 +139,46 @@ def render_document_actions(
         selected_documents = []
 
         if package_type == "full_package":
-            # Get available library documents
-            all_docs = get_entries_for_package(position=position)
+            # Show endorsements from the quote (informational)
+            if quote_endorsement_names:
+                st.markdown("**Endorsements** (from quote):")
+                for name in quote_endorsement_names:
+                    st.caption(f"• {name}")
 
-            if all_docs:
-                # Group by type
-                docs_by_type = {}
-                for doc in all_docs:
-                    dtype = doc.get("document_type", "other")
-                    if dtype not in docs_by_type:
-                        docs_by_type[dtype] = []
-                    docs_by_type[dtype].append(doc)
-
-                # Show checkboxes for each type
-                for dtype, label in LIB_DOC_TYPES.items():
-                    docs = docs_by_type.get(dtype, [])
-                    if docs:
-                        st.markdown(f"**{label}:**")
-                        for doc in docs:
-                            # Default select endorsements and claims sheets
-                            default = dtype in ("endorsement", "claims_sheet")
-                            if st.checkbox(
-                                f"{doc['code']} - {doc['title']}",
-                                value=default,
-                                key=f"pkg_doc_{doc['id']}_{quote_option_id}"
-                            ):
-                                selected_documents.append(doc["id"])
+                if matched_endorsements:
+                    st.caption(f"_{len(matched_endorsements)} matched to library for rich formatting_")
+                    # Add matched endorsements to selection
+                    selected_documents.extend([e['id'] for e in matched_endorsements])
             else:
-                st.info("No library documents available. Add documents in the Document Library.")
-                package_type = "quote_only"
+                st.caption("_No endorsements on this quote_")
+
+            st.markdown("---")
+
+            # Additional documents (claims sheets, marketing)
+            st.markdown("**Additional Documents:**")
+
+            additional_docs = get_entries_for_package(
+                position=position,
+                document_types=["claims_sheet", "marketing"]
+            )
+
+            if additional_docs:
+                for doc in additional_docs:
+                    dtype = doc.get("document_type", "")
+                    type_label = LIB_DOC_TYPES.get(dtype, dtype)
+
+                    # Default: include claims sheets, not marketing
+                    default = dtype == "claims_sheet"
+
+                    if st.checkbox(
+                        f"{doc['code']} - {doc['title']}",
+                        value=default,
+                        key=f"pkg_doc_{doc['id']}_{quote_option_id}",
+                        help=type_label
+                    ):
+                        selected_documents.append(doc["id"])
+            else:
+                st.caption("_No additional documents available_")
 
     # Generate buttons
     col1, col2, col3 = st.columns([1, 1, 2])
