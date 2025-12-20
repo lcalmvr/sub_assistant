@@ -3,7 +3,7 @@ Endorsement Selector Component
 
 Smart endorsement selection UI with:
 - Required endorsements (always included)
-- Rule-based auto-added endorsements
+- Rule-based auto-added endorsements (from database rules)
 - Manual selection with multiselect and category filters
 - LOB filtering (defaults to cyber/tech)
 """
@@ -11,7 +11,7 @@ Smart endorsement selection UI with:
 import streamlit as st
 from typing import List, Dict, Optional, Callable
 
-from core.document_library import get_library_entries
+from core.document_library import get_library_entries, get_auto_attach_endorsements
 
 
 # Required endorsements - always included on every quote
@@ -69,41 +69,17 @@ def get_auto_endorsements(quote_data: dict, position: str = "primary") -> List[d
     """
     Get endorsements that should be auto-added based on quote data.
 
-    Rules:
-    - If quote has drop-down sublimits -> add Drop Down endorsement
-    - If excess and non-follow -> add appropriate endorsement
-    - Add more rules as needed
+    Uses database-driven auto_attach_rules for flexible rule configuration.
+    Rules are defined per-endorsement in the document_library table.
+
+    Supported conditions (defined in document_library.py):
+    - has_sublimits: Attach when quote has sublimits
+    - follow_form: Attach based on follow_form status
+    - limit_above/limit_below: Attach based on limit thresholds
+    - retention_above: Attach based on retention thresholds
+    - always: Always attach
     """
-    auto = []
-    all_endorsements = get_library_entries(
-        document_type="endorsement",
-        status="active"
-    )
-
-    # Create lookup by code
-    by_code = {e.get("code"): e for e in all_endorsements}
-
-    # Rule: Drop-down sublimits
-    # Any sublimit (coverage below aggregate) means drop-down coverage could apply
-    sublimits = quote_data.get("sublimits", [])
-    has_sublimits = bool(sublimits) and len(sublimits) > 0
-
-    if has_sublimits and "END-DROP-001" in by_code:
-        auto.append({
-            **by_code["END-DROP-001"],
-            "auto_reason": "Dropdown sublimits detected"
-        })
-
-    # Rule: Excess follow form
-    if position == "excess":
-        follow_form = quote_data.get("follow_form", True)
-        if follow_form and "EXC-001" in by_code:
-            auto.append({
-                **by_code["EXC-001"],
-                "auto_reason": "Excess follow form"
-            })
-
-    return auto
+    return get_auto_attach_endorsements(quote_data, position)
 
 
 def get_available_endorsements(

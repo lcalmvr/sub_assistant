@@ -51,9 +51,16 @@ from supabase import create_client
 SB = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 
-def process_endorsement_fill_ins(content: str, context: dict) -> str:
+def process_endorsement_fill_ins(
+    content: str,
+    context: dict,
+    fill_in_mappings: dict = None
+) -> str:
     """
     Process fill-in variables in endorsement content.
+
+    Uses database-driven fill_in_mappings when available, with fallback
+    to standard variable replacements.
 
     Supported variables:
     - {{insured_name}} - Insured/applicant name
@@ -61,11 +68,14 @@ def process_endorsement_fill_ins(content: str, context: dict) -> str:
     - {{expiration_date}} - Policy expiration date
     - {{policy_number}} - Quote/policy number
     - {{aggregate_limit}} - Policy aggregate limit
+    - {{retention}} - Retention amount
     - {{sublimits_schedule}} - Table of dropdown sublimits
 
     Args:
         content: Endorsement HTML content with {{variable}} placeholders
         context: Document context dict with quote/policy data
+        fill_in_mappings: Optional dict mapping variables to context fields
+                         (from document_library.fill_in_mappings)
 
     Returns:
         Content with variables replaced
@@ -73,20 +83,41 @@ def process_endorsement_fill_ins(content: str, context: dict) -> str:
     if not content:
         return content
 
-    # Simple variable replacements
-    replacements = {
-        "{{insured_name}}": context.get("insured_name", ""),
-        "{{effective_date}}": str(context.get("effective_date", "")),
-        "{{expiration_date}}": str(context.get("expiration_date", "")),
-        "{{policy_number}}": context.get("quote_number", ""),
-        "{{aggregate_limit}}": format_limit(context.get("aggregate_limit", 0)),
-        "{{retention}}": format_limit(context.get("retention", 0)),
+    # Standard variable to context field mappings
+    standard_mappings = {
+        "{{insured_name}}": "insured_name",
+        "{{effective_date}}": "effective_date",
+        "{{expiration_date}}": "expiration_date",
+        "{{policy_number}}": "quote_number",
+        "{{aggregate_limit}}": "aggregate_limit",
+        "{{retention}}": "retention",
     }
 
-    for var, value in replacements.items():
-        content = content.replace(var, str(value))
+    # Merge with database-provided mappings (DB mappings take precedence)
+    if fill_in_mappings:
+        standard_mappings.update(fill_in_mappings)
 
-    # Special handling for sublimits_schedule - render as HTML table
+    # Process each mapping
+    for variable, context_field in standard_mappings.items():
+        if variable not in content:
+            continue
+
+        # Special rendering for certain variables
+        if variable == "{{sublimits_schedule}}" or context_field == "sublimits":
+            value = _render_sublimits_schedule(context)
+        elif variable in ("{{aggregate_limit}}", "{{retention}}") or \
+             context_field in ("aggregate_limit", "retention", "limit"):
+            raw_value = context.get(context_field, 0)
+            value = format_limit(raw_value) if raw_value else ""
+        elif variable in ("{{effective_date}}", "{{expiration_date}}") or \
+             context_field in ("effective_date", "expiration_date"):
+            value = str(context.get(context_field, ""))
+        else:
+            value = str(context.get(context_field, ""))
+
+        content = content.replace(variable, value)
+
+    # Handle sublimits_schedule if not already processed via mappings
     if "{{sublimits_schedule}}" in content:
         sublimits_html = _render_sublimits_schedule(context)
         content = content.replace("{{sublimits_schedule}}", sublimits_html)
@@ -310,10 +341,11 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
     title = doc.get("title", "")
     code = doc.get("code", "")
     content = doc.get("content_html", "")
+    fill_in_mappings = doc.get("fill_in_mappings")
 
     # Process fill-in variables for endorsements
     if doc_type == "endorsement" and content:
-        content = process_endorsement_fill_ins(content, context)
+        content = process_endorsement_fill_ins(content, context, fill_in_mappings)
 
     # Add context info for endorsements
     effective_date = context.get("effective_date", "")

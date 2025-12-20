@@ -12,6 +12,8 @@ from core.document_library import (
     DOCUMENT_TYPES,
     POSITION_OPTIONS,
     STATUS_OPTIONS,
+    AUTO_ATTACH_CONDITIONS,
+    FILL_IN_VARIABLES,
     get_library_entries,
     get_library_entry,
     create_library_entry,
@@ -133,6 +135,8 @@ def _render_document_row(entry: dict, tab_key: str = ""):
     position = entry.get("position_label", "")
     status = entry.get("status", "active")
     version = entry.get("version", 1)
+    has_auto_attach = bool(entry.get("auto_attach_rules"))
+    has_fill_ins = bool(entry.get("fill_in_mappings"))
 
     # Build status badge
     status_colors = {
@@ -148,6 +152,10 @@ def _render_document_row(entry: dict, tab_key: str = ""):
         tags.append(position)
     if category:
         tags.append(category)
+    if has_auto_attach:
+        tags.append("auto-attach")
+    if has_fill_ins:
+        tags.append("fill-ins")
     tags.append(f"v{version}")
 
     tags_str = " | ".join(tags)
@@ -302,6 +310,29 @@ def _render_document_form(entry_id: str, doc_type: str = None, tab_key: str = ""
     else:
         status = "draft"
 
+    # Automation Settings (for endorsements)
+    if document_type == "endorsement":
+        st.divider()
+        st.markdown("**Automation Settings**")
+        st.caption("Configure when this endorsement auto-attaches and how placeholders are filled.")
+
+        # Auto-attach rules
+        auto_attach_rules, clear_auto_attach = _render_auto_attach_editor(
+            entry.get("auto_attach_rules"),
+            tab_key
+        )
+
+        # Fill-in mappings
+        fill_in_mappings, clear_fill_in = _render_fill_in_editor(
+            entry.get("fill_in_mappings"),
+            tab_key
+        )
+    else:
+        auto_attach_rules = None
+        fill_in_mappings = None
+        clear_auto_attach = False
+        clear_fill_in = False
+
     st.divider()
 
     # Action buttons
@@ -324,7 +355,9 @@ def _render_document_form(entry_id: str, doc_type: str = None, tab_key: str = ""
                             midterm_only=midterm_only,
                             default_sort_order=default_sort_order,
                             status=status,
-                            created_by="user"
+                            created_by="user",
+                            auto_attach_rules=auto_attach_rules,
+                            fill_in_mappings=fill_in_mappings
                         )
                         st.success("Document created!")
                     else:
@@ -339,7 +372,11 @@ def _render_document_form(entry_id: str, doc_type: str = None, tab_key: str = ""
                             default_sort_order=default_sort_order,
                             status=status,
                             version_notes=version_notes if version_notes else None,
-                            updated_by="user"
+                            updated_by="user",
+                            auto_attach_rules=auto_attach_rules,
+                            fill_in_mappings=fill_in_mappings,
+                            clear_auto_attach=clear_auto_attach,
+                            clear_fill_in_mappings=clear_fill_in
                         )
                         st.success("Document updated!")
 
@@ -417,6 +454,30 @@ def _render_library_preview(entry_id: str, tab_key: str = ""):
             if hasattr(updated, 'strftime'):
                 st.caption(f"Updated: {updated.strftime('%B %d, %Y')}")
 
+    # Show automation settings if present
+    auto_attach = entry.get("auto_attach_rules")
+    fill_ins = entry.get("fill_in_mappings")
+
+    if auto_attach or fill_ins:
+        st.divider()
+        st.markdown("**Automation Settings**")
+
+        if auto_attach:
+            condition = auto_attach.get("condition", "")
+            condition_label = AUTO_ATTACH_CONDITIONS.get(condition, condition)
+            position_constraint = auto_attach.get("position", "any")
+            value = auto_attach.get("value")
+            rule_desc = f"Auto-attach: {condition_label}"
+            if value is not None:
+                rule_desc += f" (value: {value})"
+            if position_constraint and position_constraint != "any":
+                rule_desc += f" [{position_constraint} only]"
+            st.caption(rule_desc)
+
+        if fill_ins:
+            variables = ", ".join(fill_ins.keys())
+            st.caption(f"Fill-ins: {variables}")
+
     # Quick actions
     st.divider()
     col1, col2, col3 = st.columns([1, 1, 4])
@@ -434,6 +495,127 @@ def _render_library_preview(entry_id: str, tab_key: str = ""):
                 archive_library_entry(entry_id, archived_by="user")
                 st.success("Document archived!")
                 st.rerun()
+
+
+def _render_auto_attach_editor(current_rules: dict = None, tab_key: str = "") -> tuple:
+    """
+    Render editor for auto-attach rules.
+
+    Returns:
+        Tuple of (rules_dict or None, clear_flag)
+    """
+    with st.expander("Auto-Attach Rules", expanded=bool(current_rules)):
+        # Enable auto-attach
+        enable_auto = st.checkbox(
+            "Enable auto-attach",
+            value=bool(current_rules),
+            key=f"lib_auto_attach_enable_{tab_key}",
+            help="Automatically add this endorsement when conditions are met"
+        )
+
+        if not enable_auto:
+            return None, bool(current_rules)  # Clear if was set before
+
+        # Condition type
+        current_condition = current_rules.get("condition", "") if current_rules else ""
+        condition = st.selectbox(
+            "Condition",
+            options=list(AUTO_ATTACH_CONDITIONS.keys()),
+            format_func=lambda x: AUTO_ATTACH_CONDITIONS[x],
+            index=list(AUTO_ATTACH_CONDITIONS.keys()).index(current_condition) if current_condition in AUTO_ATTACH_CONDITIONS else 0,
+            key=f"lib_auto_attach_condition_{tab_key}"
+        )
+
+        rules = {"condition": condition}
+
+        # Additional parameters based on condition
+        if condition in ("follow_form",):
+            current_value = current_rules.get("value", True) if current_rules else True
+            value = st.checkbox(
+                "Value (checked = true)",
+                value=current_value,
+                key=f"lib_auto_attach_value_{tab_key}"
+            )
+            rules["value"] = value
+
+        elif condition in ("limit_above", "limit_below", "retention_above"):
+            current_value = current_rules.get("value", 0) if current_rules else 0
+            value = st.number_input(
+                "Threshold ($)",
+                value=current_value,
+                min_value=0,
+                step=100000,
+                key=f"lib_auto_attach_threshold_{tab_key}"
+            )
+            rules["value"] = value
+
+        # Position constraint
+        current_position = current_rules.get("position") if current_rules else None
+        position_opts = [None, "primary", "excess"]
+        position = st.selectbox(
+            "Position Constraint",
+            options=position_opts,
+            format_func=lambda x: "Any" if x is None else x.title(),
+            index=position_opts.index(current_position) if current_position in position_opts else 0,
+            key=f"lib_auto_attach_position_{tab_key}",
+            help="Only attach for this position type"
+        )
+        if position:
+            rules["position"] = position
+
+        return rules, False
+
+
+def _render_fill_in_editor(current_mappings: dict = None, tab_key: str = "") -> tuple:
+    """
+    Render editor for fill-in variable mappings.
+
+    Returns:
+        Tuple of (mappings_dict or None, clear_flag)
+    """
+    with st.expander("Fill-in Mappings", expanded=bool(current_mappings)):
+        st.caption("Map {{placeholders}} in content to document data fields")
+
+        # Enable fill-ins
+        enable_fill = st.checkbox(
+            "Enable fill-in processing",
+            value=bool(current_mappings),
+            key=f"lib_fill_in_enable_{tab_key}",
+            help="Process {{variable}} placeholders in this endorsement"
+        )
+
+        if not enable_fill:
+            return None, bool(current_mappings)  # Clear if was set before
+
+        current_mappings = current_mappings or {}
+
+        # Show available variables
+        st.markdown("**Available Variables:**")
+
+        mappings = {}
+        for variable, description in FILL_IN_VARIABLES.items():
+            # Check if currently mapped
+            is_mapped = variable in current_mappings
+
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                use_var = st.checkbox(
+                    variable,
+                    value=is_mapped,
+                    key=f"lib_fill_in_use_{variable}_{tab_key}"
+                )
+            with col2:
+                st.caption(description)
+
+            if use_var:
+                # Get current mapping or default
+                current_mapping = current_mappings.get(variable, variable.strip("{}"))
+                mappings[variable] = current_mapping
+
+        if mappings:
+            return mappings, False
+        else:
+            return None, True  # Clear if nothing selected
 
 
 def render_document_selector(

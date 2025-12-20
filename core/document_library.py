@@ -49,7 +49,8 @@ def get_library_entries(
     position: str = None,
     status: str = "active",
     search: str = None,
-    include_archived: bool = False
+    include_archived: bool = False,
+    has_auto_attach: bool = None
 ) -> list[dict]:
     """
     Get document library entries with optional filters.
@@ -61,6 +62,7 @@ def get_library_entries(
         status: Filter by status (default: active only)
         search: Search term to filter by code, title, or content
         include_archived: Include archived entries
+        has_auto_attach: Filter to only entries with auto-attach rules
 
     Returns:
         List of library entry dicts
@@ -91,6 +93,11 @@ def get_library_entries(
             conditions.append("position = :position")
             params["position"] = position
 
+    if has_auto_attach is True:
+        conditions.append("auto_attach_rules IS NOT NULL")
+    elif has_auto_attach is False:
+        conditions.append("auto_attach_rules IS NULL")
+
     if search:
         conditions.append("""
             (LOWER(code) LIKE :search
@@ -106,7 +113,8 @@ def get_library_entries(
             SELECT id, code, title, document_type, category,
                    content_html, content_plain, position, midterm_only,
                    version, version_notes, status, default_sort_order,
-                   created_at, updated_at, created_by
+                   created_at, updated_at, created_by,
+                   auto_attach_rules, fill_in_mappings
             FROM document_library
             WHERE {where_clause}
             ORDER BY default_sort_order, code
@@ -122,7 +130,8 @@ def get_library_entry(entry_id: str) -> Optional[dict]:
             SELECT id, code, title, document_type, category,
                    content_html, content_plain, position, midterm_only,
                    version, version_notes, status, default_sort_order,
-                   created_at, updated_at, created_by
+                   created_at, updated_at, created_by,
+                   auto_attach_rules, fill_in_mappings
             FROM document_library
             WHERE id = :entry_id
         """), {"entry_id": entry_id})
@@ -138,7 +147,8 @@ def get_library_entry_by_code(code: str) -> Optional[dict]:
             SELECT id, code, title, document_type, category,
                    content_html, content_plain, position, midterm_only,
                    version, version_notes, status, default_sort_order,
-                   created_at, updated_at, created_by
+                   created_at, updated_at, created_by,
+                   auto_attach_rules, fill_in_mappings
             FROM document_library
             WHERE code = :code
         """), {"code": code})
@@ -157,7 +167,9 @@ def create_library_entry(
     midterm_only: bool = False,
     default_sort_order: int = 100,
     status: str = "draft",
-    created_by: str = "system"
+    created_by: str = "system",
+    auto_attach_rules: dict = None,
+    fill_in_mappings: dict = None
 ) -> str:
     """
     Create a new document library entry.
@@ -173,10 +185,14 @@ def create_library_entry(
         default_sort_order: Order in packages (lower = first)
         status: draft, active, archived
         created_by: User creating the entry
+        auto_attach_rules: JSONB rules for auto-attaching (e.g., {"condition": "has_sublimits"})
+        fill_in_mappings: JSONB mapping of placeholders to context fields
 
     Returns:
         UUID of the new entry
     """
+    import json
+
     # Extract plain text from HTML for search indexing
     content_plain = _html_to_plain_text(content_html) if content_html else None
 
@@ -185,11 +201,13 @@ def create_library_entry(
             INSERT INTO document_library (
                 code, title, document_type, category,
                 content_html, content_plain, position, midterm_only,
-                default_sort_order, status, created_by
+                default_sort_order, status, created_by,
+                auto_attach_rules, fill_in_mappings
             ) VALUES (
                 :code, :title, :document_type, :category,
                 :content_html, :content_plain, :position, :midterm_only,
-                :default_sort_order, :status, :created_by
+                :default_sort_order, :status, :created_by,
+                :auto_attach_rules, :fill_in_mappings
             )
             RETURNING id
         """), {
@@ -204,6 +222,8 @@ def create_library_entry(
             "default_sort_order": default_sort_order,
             "status": status,
             "created_by": created_by,
+            "auto_attach_rules": json.dumps(auto_attach_rules) if auto_attach_rules else None,
+            "fill_in_mappings": json.dumps(fill_in_mappings) if fill_in_mappings else None,
         })
 
         return str(result.fetchone()[0])
@@ -221,7 +241,11 @@ def update_library_entry(
     default_sort_order: int = None,
     status: str = None,
     version_notes: str = None,
-    updated_by: str = None
+    updated_by: str = None,
+    auto_attach_rules: dict = None,
+    fill_in_mappings: dict = None,
+    clear_auto_attach: bool = False,
+    clear_fill_in_mappings: bool = False
 ) -> bool:
     """
     Update a document library entry.
@@ -229,10 +253,14 @@ def update_library_entry(
     Args:
         entry_id: UUID of the entry
         Other args: Fields to update (None = no change)
+        clear_auto_attach: Set to True to remove auto_attach_rules
+        clear_fill_in_mappings: Set to True to remove fill_in_mappings
 
     Returns:
         True if successful
     """
+    import json
+
     updates = []
     params = {"entry_id": entry_id}
 
@@ -272,6 +300,20 @@ def update_library_entry(
     if updated_by is not None:
         updates.append("updated_by = :updated_by")
         params["updated_by"] = updated_by
+
+    # Handle auto_attach_rules
+    if clear_auto_attach:
+        updates.append("auto_attach_rules = NULL")
+    elif auto_attach_rules is not None:
+        updates.append("auto_attach_rules = :auto_attach_rules")
+        params["auto_attach_rules"] = json.dumps(auto_attach_rules)
+
+    # Handle fill_in_mappings
+    if clear_fill_in_mappings:
+        updates.append("fill_in_mappings = NULL")
+    elif fill_in_mappings is not None:
+        updates.append("fill_in_mappings = :fill_in_mappings")
+        params["fill_in_mappings"] = json.dumps(fill_in_mappings)
 
     if not updates:
         return False
@@ -330,7 +372,8 @@ def get_entries_for_package(
             SELECT id, code, title, document_type, category,
                    content_html, content_plain, position, midterm_only,
                    version, version_notes, status, default_sort_order,
-                   created_at, updated_at, created_by
+                   created_at, updated_at, created_by,
+                   auto_attach_rules, fill_in_mappings
             FROM document_library
             WHERE {where_clause}
             ORDER BY document_type, default_sort_order, code
@@ -342,6 +385,126 @@ def get_entries_for_package(
 def get_endorsements_for_package(position: str = None) -> list[dict]:
     """Get active endorsements suitable for package inclusion."""
     return get_entries_for_package(position=position, document_types=["endorsement"])
+
+
+def get_auto_attach_endorsements(quote_data: dict, position: str = "primary") -> list[dict]:
+    """
+    Get endorsements that should auto-attach based on their rules and quote data.
+
+    Args:
+        quote_data: Dictionary with quote information (sublimits, follow_form, etc.)
+        position: Quote position (primary/excess)
+
+    Returns:
+        List of endorsement dicts that should auto-attach, with 'auto_reason' added
+    """
+    # Get all endorsements with auto-attach rules
+    endorsements = get_library_entries(
+        document_type="endorsement",
+        status="active",
+        has_auto_attach=True
+    )
+
+    auto = []
+    for e in endorsements:
+        rules = e.get("auto_attach_rules")
+        if not rules:
+            continue
+
+        # Check position constraint in rules
+        rule_position = rules.get("position")
+        if rule_position and rule_position != position:
+            # Also check if position in entry matches
+            e_position = e.get("position", "either")
+            if e_position != "either" and e_position != position:
+                continue
+
+        # Evaluate the condition
+        condition = rules.get("condition")
+        should_attach, reason = _evaluate_auto_attach_rule(condition, rules, quote_data)
+
+        if should_attach:
+            auto.append({
+                **e,
+                "auto_reason": reason
+            })
+
+    return auto
+
+
+def _evaluate_auto_attach_rule(condition: str, rules: dict, quote_data: dict) -> tuple[bool, str]:
+    """
+    Evaluate a single auto-attach rule condition.
+
+    Args:
+        condition: The condition type (e.g., "has_sublimits", "follow_form")
+        rules: Full rules dict (may contain additional params)
+        quote_data: Quote data to evaluate against
+
+    Returns:
+        Tuple of (should_attach: bool, reason: str)
+    """
+    if condition == "has_sublimits":
+        sublimits = quote_data.get("sublimits", [])
+        if sublimits and len(sublimits) > 0:
+            return True, "Quote has sublimits"
+        return False, ""
+
+    elif condition == "follow_form":
+        expected_value = rules.get("value", True)
+        actual_value = quote_data.get("follow_form", True)
+        if actual_value == expected_value:
+            return True, "Follow form" if expected_value else "Non-follow form"
+        return False, ""
+
+    elif condition == "limit_above":
+        threshold = rules.get("value", 0)
+        limit = quote_data.get("limit", 0)
+        if limit > threshold:
+            return True, f"Limit above ${threshold:,}"
+        return False, ""
+
+    elif condition == "limit_below":
+        threshold = rules.get("value", 0)
+        limit = quote_data.get("limit", 0)
+        if limit < threshold:
+            return True, f"Limit below ${threshold:,}"
+        return False, ""
+
+    elif condition == "retention_above":
+        threshold = rules.get("value", 0)
+        retention = quote_data.get("retention", 0)
+        if retention > threshold:
+            return True, f"Retention above ${threshold:,}"
+        return False, ""
+
+    elif condition == "always":
+        return True, "Always included"
+
+    # Unknown condition
+    return False, ""
+
+
+# Available auto-attach conditions for UI
+AUTO_ATTACH_CONDITIONS = {
+    "has_sublimits": "Quote has sublimits",
+    "follow_form": "Follow form status",
+    "limit_above": "Limit above threshold",
+    "limit_below": "Limit below threshold",
+    "retention_above": "Retention above threshold",
+    "always": "Always attach",
+}
+
+# Available fill-in variables for UI
+FILL_IN_VARIABLES = {
+    "{{insured_name}}": "Insured name",
+    "{{effective_date}}": "Policy effective date",
+    "{{expiration_date}}": "Policy expiration date",
+    "{{policy_number}}": "Policy/quote number",
+    "{{aggregate_limit}}": "Aggregate limit (formatted)",
+    "{{retention}}": "Retention (formatted)",
+    "{{sublimits_schedule}}": "Sublimits schedule table",
+}
 
 
 def get_categories(document_type: str = None) -> list[str]:
@@ -368,6 +531,18 @@ def get_categories(document_type: str = None) -> list[str]:
 
 def _row_to_dict(row) -> dict:
     """Convert database row to dict."""
+    import json
+
+    # Parse JSONB fields
+    auto_attach_rules = row[16] if len(row) > 16 else None
+    fill_in_mappings = row[17] if len(row) > 17 else None
+
+    # Handle string vs dict for JSONB
+    if isinstance(auto_attach_rules, str):
+        auto_attach_rules = json.loads(auto_attach_rules)
+    if isinstance(fill_in_mappings, str):
+        fill_in_mappings = json.loads(fill_in_mappings)
+
     return {
         "id": str(row[0]),
         "code": row[1],
@@ -385,6 +560,8 @@ def _row_to_dict(row) -> dict:
         "created_at": row[13],
         "updated_at": row[14],
         "created_by": row[15],
+        "auto_attach_rules": auto_attach_rules,
+        "fill_in_mappings": fill_in_mappings,
         # Labels for display
         "document_type_label": DOCUMENT_TYPES.get(row[3], row[3]),
         "position_label": POSITION_OPTIONS.get(row[7], row[7]),
