@@ -22,3 +22,4 @@ python-dotenv
 pypdf
 tiktoken
 streamlit-pdf-viewer
+streamlit-quill

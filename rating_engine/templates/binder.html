@@ -1,0 +1,168 @@
+{% extends "_base.html" %}
+{% from "_components/coverage_table.html" import render_coverage_schedule %}
+{% from "_components/signature_block.html" import render_signature_block, render_binding_confirmation, render_binding_conditions, render_policy_issuance_notice %}
+
+{% block title %}Binder - {{ insured_name }}{% endblock %}
+
+{% block content %}
+
+{# Document Header #}
+<div class="document-header">
+    <div class="document-type">Certificate of Insurance / Binder</div>
+    <div class="document-number">{{ document_number }} | {{ generated_at }}</div>
+</div>
+
+{# Binding Confirmation - Prominent Box #}
+{{ render_binding_confirmation(effective_date, expiration_date, premium) }}
+
+{# Insured & Broker Info #}
+<div class="info-grid mb-3">
+    <div class="info-box">
+        <div class="info-label">Named Insured</div>
+        <div class="info-value text-bold">{{ insured_name }}</div>
+        {% if insured_address %}
+        <div class="text-small text-muted mt-1">{{ insured_address }}</div>
+        {% endif %}
+        {% if insured_industry %}
+        <div class="text-small text-muted">Industry: {{ insured_industry }}</div>
+        {% endif %}
+    </div>
+    <div class="info-box">
+        <div class="info-label">Broker</div>
+        <div class="info-value text-bold">{{ broker_name | default('—') }}</div>
+        {% if broker_company %}
+        <div class="text-small text-muted mt-1">{{ broker_company }}</div>
+        {% endif %}
+        {% if broker_email %}
+        <div class="text-small text-muted">{{ broker_email }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{# Policy Details #}
+<div class="section-header">Policy Details</div>
+<div class="info-box">
+    <div class="info-grid info-grid-3">
+        <div class="info-item">
+            <div class="info-label">Policy Type</div>
+            <div class="info-value">
+                {% if position == "excess" %}
+                    Excess Cyber & Tech E&O
+                {% else %}
+                    Cyber & Technology E&O
+                {% endif %}
+            </div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Effective Date</div>
+            <div class="info-value">{{ effective_date }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Expiration Date</div>
+            <div class="info-value">{{ expiration_date }}</div>
+        </div>
+    </div>
+</div>
+
+{# Coverage Summary #}
+<div class="info-box info-box-highlight mt-3">
+    <div class="info-grid info-grid-3">
+        <div class="info-item">
+            <div class="info-label">
+                {% if position == "excess" %}Excess Limit{% else %}Aggregate Limit{% endif %}
+            </div>
+            <div class="info-value info-value-large">${{ "{:,}".format(aggregate_limit) }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">
+                {% if position == "excess" %}Attachment Point{% else %}Retention{% endif %}
+            </div>
+            <div class="info-value info-value-large">${{ "{:,}".format(retention) }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Annual Premium</div>
+            <div class="info-value info-value-large">${{ "{:,}".format(premium | int) }}</div>
+        </div>
+    </div>
+</div>
+
+{# Tower Structure (for excess policies) #}
+{% if position == "excess" and tower %}
+<div class="section-header">Tower Structure</div>
+<table>
+    <thead>
+        <tr>
+            <th>Layer</th>
+            <th>Carrier</th>
+            <th class="text-right">Limit</th>
+            <th class="text-right">Attachment</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for layer in tower | reverse %}
+        {% set is_our_layer = "CMAI" in layer.carrier %}
+        <tr{% if is_our_layer %} style="background: #3182ce; color: white;"{% endif %}>
+            <td style="font-size: 12px;">{{ loop.revindex }}</td>
+            <td style="font-size: 12px;">{{ layer.carrier }}{% if is_our_layer %} <strong>(Bound)</strong>{% endif %}</td>
+            <td class="text-right currency" style="font-size: 12px;">${{ layer.limit | format_limit }}</td>
+            <td class="text-right currency" style="font-size: 12px;">
+                {% if layer.attachment == 0 %}Primary{% else %}${{ layer.attachment | format_limit }}{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{# Coverage Schedule #}
+<div class="section-header">Coverage Schedule</div>
+{% if policy_form %}
+<div class="text-small text-muted mb-2">Policy Form: {{ policy_form | replace('_', ' ') | title }}</div>
+{% endif %}
+
+{{ render_coverage_schedule(aggregate_coverages, sublimit_coverages, retention) }}
+
+{# Endorsements #}
+{% if endorsements %}
+<div class="section-header">Endorsements</div>
+<ul class="list-styled">
+    {% for endorsement in endorsements %}
+    <li>{{ endorsement }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{# Binding Conditions #}
+{% set binding_conditions = [
+    "Receipt of signed application within 10 days",
+    "Payment of premium within 30 days",
+    "No material change in risk prior to policy inception"
+] %}
+{{ render_binding_conditions(binding_conditions) }}
+
+{# Policy Issuance Notice #}
+{{ render_policy_issuance_notice() }}
+
+{# Terms & Conditions #}
+<div class="section-header">Terms & Conditions</div>
+<div class="text-small" style="text-align: justify; line-height: 1.6;">
+This binder confirms that coverage has been bound subject to the terms, conditions, and exclusions of the policy.
+The formal policy document will be issued within 30 days and will supersede this binder.
+All terms and conditions of the policy as issued shall apply from the effective date.
+Claims-made policy form applies; coverage is provided for claims first made during the policy period.
+Defense costs are included within the policy limit unless otherwise stated.
+</div>
+
+{# Signature Block #}
+<div class="section-header">Authorization</div>
+{{ render_signature_block() }}
+
+{# Important Notice #}
+<div class="info-box mt-3" style="background: #e2e8f0; border-color: #a0aec0;">
+    <div class="text-small">
+        <strong>Important:</strong> This binder is evidence of insurance and should be retained until the policy is received.
+        Please review the policy carefully upon receipt and notify us immediately of any discrepancies.
+    </div>
+</div>
+
+{% endblock %}

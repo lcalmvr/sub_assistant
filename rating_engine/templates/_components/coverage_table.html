@@ -1,0 +1,98 @@
+{# Coverage Schedule Table Component #}
+
+{% macro render_coverage_table(coverages, retention, policy_form) %}
+<table>
+    <thead>
+        <tr>
+            <th style="width: 55%;">Coverage</th>
+            <th style="width: 25%;" class="text-right">Limit</th>
+            <th style="width: 20%;" class="text-right">Retention</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for coverage in coverages %}
+        <tr>
+            <td>{{ coverage.name }}</td>
+            <td class="text-right currency">
+                {% if coverage.limit == 'Full' or coverage.limit == 'Aggregate' %}
+                    Full Policy Limit
+                {% elif coverage.limit == 'Excluded' %}
+                    <span class="text-muted">Excluded</span>
+                {% else %}
+                    ${{ "{:,}".format(coverage.limit) }}
+                {% endif %}
+            </td>
+            <td class="text-right currency">
+                {% if coverage.retention %}
+                    ${{ "{:,}".format(coverage.retention) }}
+                {% else %}
+                    ${{ "{:,}".format(retention) }}
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endmacro %}
+
+
+{% macro render_coverage_schedule(aggregate_coverages, sublimit_coverages, retention) %}
+{# Full coverage schedule with aggregate and sublimit sections #}
+
+{% if aggregate_coverages %}
+<h4 class="text-small text-bold mb-1" style="color: var(--navy);">Aggregate Coverages</h4>
+<table>
+    <thead>
+        <tr>
+            <th style="width: 60%;">Coverage</th>
+            <th style="width: 20%;" class="text-right">Limit</th>
+            <th style="width: 20%;" class="text-right">Retention</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for name, limit in aggregate_coverages.items() %}
+        <tr>
+            <td style="font-size: 12px;">{{ name }}</td>
+            <td class="text-right currency">
+                {% if limit == 0 %}
+                    <span class="text-muted">Excluded</span>
+                {% else %}
+                    ${{ "{:,}".format(limit) }}
+                {% endif %}
+            </td>
+            <td class="text-right currency">${{ "{:,}".format(retention) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% if sublimit_coverages %}
+<h4 class="text-small text-bold mb-1 mt-3" style="color: var(--navy);">Sublimit Coverages</h4>
+<table>
+    <thead>
+        <tr>
+            <th style="width: 60%;">Coverage</th>
+            <th style="width: 20%;" class="text-right">Sublimit</th>
+            <th style="width: 20%;" class="text-right">Retention</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for name, limit in sublimit_coverages.items() %}
+        <tr>
+            <td style="font-size: 12px;">{{ name }}</td>
+            <td class="text-right currency">
+                {% if limit == 0 %}
+                    <span class="text-muted">Excluded</span>
+                {% else %}
+                    ${{ "{:,}".format(limit) }}
+                {% endif %}
+            </td>
+            <td class="text-right currency">${{ "{:,}".format(retention) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% endmacro %}

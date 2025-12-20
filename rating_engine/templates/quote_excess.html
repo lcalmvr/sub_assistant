@@ -1,0 +1,234 @@
+{% extends "_base.html" %}
+{% from "_components/coverage_table.html" import render_coverage_schedule %}
+{% from "_components/tower_visual.html" import render_tower_table, render_underlying_summary %}
+
+{% block title %}Excess Quote - {{ insured_name }}{% endblock %}
+
+{% block content %}
+
+{# Document Header #}
+<div class="document-header">
+    <div class="document-type">Excess Cyber & Technology E&O Quote</div>
+    <div class="document-number">{{ quote_number }} | {{ quote_date }}</div>
+</div>
+
+{# Insured & Broker Info #}
+<div class="info-grid mb-3">
+    <div class="info-box">
+        <div class="info-label">Named Insured</div>
+        <div class="info-value text-bold">{{ insured_name }}</div>
+        {% if insured_address %}
+        <div class="text-small text-muted mt-1">{{ insured_address }}</div>
+        {% endif %}
+        {% if insured_industry %}
+        <div class="text-small text-muted">Industry: {{ insured_industry }}</div>
+        {% endif %}
+    </div>
+    <div class="info-box">
+        <div class="info-label">Broker</div>
+        <div class="info-value text-bold">{{ broker_name | default('—') }}</div>
+        {% if broker_company %}
+        <div class="text-small text-muted mt-1">{{ broker_company }}</div>
+        {% endif %}
+        {% if broker_email %}
+        <div class="text-small text-muted">{{ broker_email }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{# Policy Period #}
+<div class="info-box">
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="info-label">Effective Date</div>
+            <div class="info-value">{{ effective_date }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Expiration Date</div>
+            <div class="info-value">{{ expiration_date }}</div>
+        </div>
+    </div>
+</div>
+
+{# Excess Layer Summary - Highlighted Box #}
+<div class="info-box info-box-highlight mt-3">
+    <div class="info-grid info-grid-3">
+        <div class="info-item">
+            <div class="info-label">Excess Limit</div>
+            <div class="info-value info-value-large">${{ "{:,}".format(aggregate_limit | int) }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Attachment Point</div>
+            <div class="info-value info-value-large">${{ "{:,}".format(our_attachment | int) }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Annual Premium</div>
+            <div class="info-value info-value-large">${{ "{:,}".format(premium | int) }}</div>
+        </div>
+    </div>
+</div>
+
+{# Tower Structure #}
+<div class="section-header">Tower Structure</div>
+<p class="text-small text-muted mb-2">
+    This excess policy attaches above underlying coverage. The highlighted layer represents this quote.
+</p>
+
+{# Tower Table #}
+<table>
+    <thead>
+        <tr>
+            <th>Layer</th>
+            <th>Carrier</th>
+            <th class="text-right">Limit</th>
+            <th class="text-right">Attachment</th>
+            <th class="text-right">Premium</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for layer in tower | reverse %}
+        {% set is_our_layer = "CMAI" in layer.carrier %}
+        <tr{% if is_our_layer %} style="background: #3182ce; color: white;"{% endif %}>
+            <td style="font-size: 12px;">{{ loop.revindex }}</td>
+            <td style="font-size: 12px;">
+                {{ layer.carrier }}
+                {% if is_our_layer %}<strong>(This Quote)</strong>{% endif %}
+            </td>
+            <td class="text-right currency" style="font-size: 12px;">${{ layer.limit | format_limit }}</td>
+            <td class="text-right currency" style="font-size: 12px;">
+                {% if layer.attachment == 0 %}
+                    Primary
+                {% else %}
+                    ${{ layer.attachment | format_limit }}
+                {% endif %}
+            </td>
+            <td class="text-right currency" style="font-size: 12px;">
+                {% if layer.premium %}
+                ${{ "{:,}".format(layer.premium | int) }}
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{# Underlying Coverage Requirements #}
+{% set underlying_layers = [] %}
+{% for layer in tower %}
+    {% if "CMAI" not in layer.carrier %}
+        {% set _ = underlying_layers.append(layer) %}
+    {% endif %}
+{% endfor %}
+
+{% if underlying_layers %}
+<div class="section-header">Underlying Coverage Requirements</div>
+<div class="info-box" style="background: #fff3cd; border-color: #ffc107;">
+    <p class="text-small mb-2" style="color: #856404;">
+        <strong>Important:</strong> This excess policy requires the following underlying coverage to be in place:
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Carrier</th>
+                <th class="text-right">Limit</th>
+                <th class="text-right">Attachment</th>
+                <th class="text-center">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for layer in underlying_layers %}
+            <tr>
+                <td style="font-size: 12px;">{{ layer.carrier }}</td>
+                <td class="text-right currency" style="font-size: 12px;">${{ layer.limit | format_limit }}</td>
+                <td class="text-right currency" style="font-size: 12px;">
+                    {% if layer.attachment == 0 %}
+                        Primary
+                    {% else %}
+                        ${{ layer.attachment | format_limit }}
+                    {% endif %}
+                </td>
+                <td class="text-center" style="font-size: 12px;">
+                    <span class="badge badge-draft">Required</span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{# Drop-Down Sublimits (if applicable) #}
+{% if has_dropdown_sublimits and sublimit_coverages %}
+<div class="section-header">Drop-Down Sublimit Schedule</div>
+<div class="info-box" style="background: #e6f3ff; border-color: #3182ce;">
+    <p class="text-small mb-2" style="color: #2c5282;">
+        <strong>Drop-Down Coverage:</strong> This excess policy will drop down to provide coverage for the following sublimits
+        when the underlying policy's sublimits are exhausted, up to the excess policy limit.
+    </p>
+</div>
+<table class="mt-2">
+    <thead>
+        <tr>
+            <th style="width: 60%;">Coverage</th>
+            <th style="width: 20%;" class="text-right">Drop-Down Limit</th>
+            <th style="width: 20%;" class="text-right">Attachment</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for name, data in sublimit_coverages.items() %}
+        <tr>
+            <td style="font-size: 12px;">{{ name }}</td>
+            <td class="text-right currency" style="font-size: 12px;">
+                {% if data.limit == 0 %}
+                    <span class="text-muted">N/A</span>
+                {% else %}
+                    ${{ "{:,}".format(data.limit | int) }}
+                {% endif %}
+            </td>
+            <td class="text-right currency" style="font-size: 12px;">${{ "{:,}".format(data.attachment | int) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{# Endorsements #}
+{% if endorsements %}
+<div class="section-header">Endorsements</div>
+<ul class="list-styled">
+    {% for endorsement in endorsements %}
+    <li>{{ endorsement }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{# Subjectivities #}
+{% if subjectivities %}
+<div class="section-header">Subjectivities</div>
+<div class="info-box" style="background: #fefcbf; border-color: #ecc94b;">
+    <div class="text-small text-bold mb-1" style="color: #744210;">
+        This quote is subject to the following conditions:
+    </div>
+    <ol class="list-numbered">
+        {% for subjectivity in subjectivities %}
+        <li style="color: #744210;">{{ subjectivity }}</li>
+        {% endfor %}
+    </ol>
+</div>
+{% endif %}
+
+{# Excess-Specific Terms #}
+<div class="section-header">Terms & Conditions</div>
+<div class="text-small" style="text-align: justify; line-height: 1.6;">
+{{ terms | default('This excess policy provides coverage in excess of underlying insurance and is subject to the terms, conditions, and exclusions of the underlying policy. Coverage attaches only after exhaustion of underlying limits by payment of claims. This quote is valid for 30 days from the date of issuance. Binding is subject to receipt of copies of underlying policies, premium payment, and underwriter approval. Claims-made policy form applies; coverage is provided for claims first made during the policy period. Defense costs are included within the policy limit unless otherwise stated.') }}
+</div>
+
+{# Quote Validity #}
+<div class="info-box mt-3" style="text-align: center;">
+    <div class="text-bold" style="color: var(--navy);">Quote Validity</div>
+    <div class="text-small text-muted">
+        This quote is valid until <strong>{{ valid_until | default('30 days from issue date') }}</strong>
+    </div>
+</div>
+
+{% endblock %}

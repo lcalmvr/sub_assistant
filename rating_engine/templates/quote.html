@@ -15,7 +15,7 @@
   <table>
     <tr><th>Aggregate Limit</th><td>${{ "{:,}".format(limit) }}</td></tr>
     <tr><th>Retention</th><td>${{ "{:,}".format(retention) }}</td></tr>
-    <tr><th>Total Premium (USD)</th><td>${{ "{:,}".format(premium) }}</td></tr>
+    <tr><th>Total Premium (USD)</th><td>${{ "{:,}".format(premium | int) }}</td></tr>
   </table>
 
   <h2>Coverage Limits</h2>

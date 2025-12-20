@@ -1,0 +1,124 @@
+{# Tower Visualization Component for Excess Quotes #}
+
+{% macro render_tower(tower, our_carrier="CMAI") %}
+{#
+   tower: list of layer dicts with carrier, limit, attachment, premium
+   Renders from top (highest layer) to bottom (primary)
+#}
+<div class="tower-container">
+    {% for layer in tower | reverse %}
+    {% set is_our_layer = our_carrier in layer.carrier %}
+    <div class="tower-layer {% if is_our_layer %}tower-layer-highlight{% endif %}">
+        <div class="tower-layer-info">
+            <div class="tower-layer-carrier">
+                {{ layer.carrier }}
+                {% if is_our_layer %}<span style="font-size: 9px;"> (This Quote)</span>{% endif %}
+            </div>
+            <div class="tower-layer-details">
+                ${{ format_limit(layer.limit) }} xs ${{ format_limit(layer.attachment) }}
+            </div>
+        </div>
+        <div class="tower-layer-premium">
+            {% if layer.premium %}
+            ${{ "{:,}".format(layer.premium | int) }}
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endmacro %}
+
+
+{% macro render_tower_table(tower, our_carrier="CMAI") %}
+{# Table format for tower - alternative to visual #}
+<table>
+    <thead>
+        <tr>
+            <th>Layer</th>
+            <th>Carrier</th>
+            <th class="text-right">Limit</th>
+            <th class="text-right">Attachment</th>
+            <th class="text-right">Premium</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for layer in tower | reverse %}
+        {% set is_our_layer = our_carrier in layer.carrier %}
+        <tr{% if is_our_layer %} style="background: var(--navy); color: white;"{% endif %}>
+            <td>{{ loop.revindex }}</td>
+            <td>
+                {{ layer.carrier }}
+                {% if is_our_layer %}<strong>(This Quote)</strong>{% endif %}
+            </td>
+            <td class="text-right currency">${{ format_limit(layer.limit) }}</td>
+            <td class="text-right currency">
+                {% if layer.attachment == 0 %}
+                    Primary
+                {% else %}
+                    ${{ format_limit(layer.attachment) }}
+                {% endif %}
+            </td>
+            <td class="text-right currency">
+                {% if layer.premium %}
+                ${{ "{:,}".format(layer.premium | int) }}
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endmacro %}
+
+
+{% macro render_underlying_summary(tower, our_carrier="CMAI") %}
+{# Summary of underlying layers for excess quotes #}
+{% set underlying = [] %}
+{% for layer in tower %}
+    {% if our_carrier not in layer.carrier %}
+        {% set _ = underlying.append(layer) %}
+    {% endif %}
+{% endfor %}
+
+{% if underlying %}
+<table>
+    <thead>
+        <tr>
+            <th>Underlying Carrier</th>
+            <th class="text-right">Limit</th>
+            <th class="text-right">Attachment</th>
+            <th class="text-center">Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for layer in underlying %}
+        <tr>
+            <td>{{ layer.carrier }}</td>
+            <td class="text-right currency">${{ format_limit(layer.limit) }}</td>
+            <td class="text-right currency">
+                {% if layer.attachment == 0 %}
+                    Primary
+                {% else %}
+                    ${{ format_limit(layer.attachment) }}
+                {% endif %}
+            </td>
+            <td class="text-center">
+                <span class="badge badge-draft">Required</span>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endmacro %}
+
+
+{# Helper function for formatting limits #}
+{% macro format_limit(value) %}
+{%- if value >= 1000000 and value % 1000000 == 0 -%}
+{{ (value // 1000000) }}M
+{%- elif value >= 1000 and value % 1000 == 0 -%}
+{{ (value // 1000) }}K
+{%- else -%}
+{{ "{:,}".format(value) }}
+{%- endif -%}
+{% endmacro %}

@@ -1010,6 +1010,7 @@ def render():
             from pages_components.coverages_panel import render_coverages_panel, get_coverages_for_quote
             from pages_components.generate_quote_button import render_generate_quote_button
             from pages_components.tower_db import save_tower, list_quotes_for_submission
+            from pages_components.document_actions_panel import render_document_actions
             # Bulk coverage buttons are now embedded in coverage panels
 
             # Auto-load quote data when submission changes
@@ -1054,9 +1055,12 @@ def render():
             # Endorsements (option-specific - varies by primary/excess/quote)
             render_endorsements_panel(sub_id, expanded=False)
 
-            # Generate Quote button (after all option inputs)
+            # Document Actions (Generate Quote/Binder buttons)
             st.divider()
-            render_generate_quote_button(sub_id, get_conn, quote_helpers, config)
+            if viewing_quote_id:
+                render_document_actions(sub_id, viewing_quote_id, position=current_position)
+            else:
+                st.caption("Select or create a quote option above to generate documents.")
 
             # ─────────────────────────────────────────────────────────────
             # SUBMISSION-LEVEL TERMS
@@ -1353,6 +1357,10 @@ def render():
 
                 else:
                     st.warning("Broker directory tables (brkr_*) not found. Please set up the broker directory in the database.")
+
+            # ------------------- Generated Documents --------------------
+            from pages_components.document_history_panel import render_document_history_panel
+            render_document_history_panel(sub_id, expanded=True)
 
             # ------------------- Midterm Endorsements --------------------
             render_endorsements_history_panel(sub_id)

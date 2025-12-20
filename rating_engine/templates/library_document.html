@@ -1,0 +1,172 @@
+{# Library Document Template
+
+Renders a single library document (endorsement, marketing material, etc.)
+within a package. Can be included directly or used with render_library_document macro.
+
+Expected context:
+- title: Document title
+- code: Document code (optional)
+- content_html: Rich text content as HTML
+- document_type: Type of document (endorsement, marketing, etc.)
+- effective_date: Effective date if applicable (optional)
+- policy_number: Policy number if applicable (optional)
+#}
+
+{% macro render_library_document(doc) %}
+{# Render a library document from a dict #}
+<div class="library-document">
+    {# Document Header #}
+    <div class="library-document-header">
+        <div class="library-document-title">{{ doc.title }}</div>
+        {% if doc.code %}
+        <div class="library-document-code">{{ doc.code }}</div>
+        {% endif %}
+    </div>
+
+    {% if doc.document_type == 'endorsement' %}
+    {# Endorsement-specific layout #}
+    <div class="endorsement-meta">
+        {% if effective_date %}
+        <div class="endorsement-meta-item">
+            <span class="endorsement-meta-label">Effective Date:</span>
+            <span class="endorsement-meta-value">{{ effective_date }}</span>
+        </div>
+        {% endif %}
+        {% if policy_number %}
+        <div class="endorsement-meta-item">
+            <span class="endorsement-meta-label">Policy Number:</span>
+            <span class="endorsement-meta-value">{{ policy_number }}</span>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# Document Content #}
+    <div class="library-document-content">
+        {{ doc.content_html | safe }}
+    </div>
+
+    {% if doc.document_type == 'endorsement' %}
+    {# Endorsement footer #}
+    <div class="endorsement-footer">
+        <p class="endorsement-footer-text">
+            This endorsement modifies the policy to which it is attached and is effective
+            on the date indicated above. All other terms and conditions of the policy remain unchanged.
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+
+{# Styles for library documents #}
+<style>
+.library-document {
+    margin-bottom: 30px;
+}
+
+.library-document-header {
+    text-align: center;
+    border-bottom: 2px solid var(--navy);
+    padding-bottom: 15px;
+    margin-bottom: 20px;
+}
+
+.library-document-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--navy);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+}
+
+.library-document-code {
+    font-size: 10px;
+    color: var(--gray-500);
+}
+
+.library-document-content {
+    font-size: 11px;
+    line-height: 1.7;
+    text-align: justify;
+}
+
+.library-document-content h1,
+.library-document-content h2,
+.library-document-content h3 {
+    color: var(--navy);
+    margin-top: 15px;
+    margin-bottom: 10px;
+}
+
+.library-document-content h1 {
+    font-size: 14px;
+    border-bottom: 1px solid var(--gold);
+    padding-bottom: 5px;
+}
+
+.library-document-content h2 {
+    font-size: 12px;
+}
+
+.library-document-content h3 {
+    font-size: 11px;
+}
+
+.library-document-content p {
+    margin-bottom: 10px;
+}
+
+.library-document-content ul,
+.library-document-content ol {
+    margin: 10px 0;
+    padding-left: 25px;
+}
+
+.library-document-content li {
+    margin-bottom: 5px;
+}
+
+.library-document-content blockquote {
+    border-left: 3px solid var(--gold);
+    margin: 10px 0;
+    padding-left: 15px;
+    font-style: italic;
+    color: var(--gray-700);
+}
+
+.endorsement-meta {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin-bottom: 20px;
+    font-size: 10px;
+}
+
+.endorsement-meta-item {
+    display: flex;
+    gap: 5px;
+}
+
+.endorsement-meta-label {
+    color: var(--gray-500);
+}
+
+.endorsement-meta-value {
+    font-weight: 600;
+}
+
+.endorsement-footer {
+    margin-top: 30px;
+    padding-top: 15px;
+    border-top: 1px solid var(--gray-300);
+}
+
+.endorsement-footer-text {
+    font-size: 9px;
+    color: var(--gray-500);
+    font-style: italic;
+    text-align: center;
+}
+</style>

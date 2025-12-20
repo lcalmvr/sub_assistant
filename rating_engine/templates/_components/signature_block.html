@@ -1,0 +1,59 @@
+{# Signature Block Component for Binders #}
+
+{% macro render_signature_block() %}
+<div class="signature-block">
+    <div class="signature-item">
+        <div class="signature-line"></div>
+        <div class="signature-label">Authorized Representative</div>
+    </div>
+    <div class="signature-item">
+        <div class="signature-line"></div>
+        <div class="signature-label">Date</div>
+    </div>
+</div>
+{% endmacro %}
+
+
+{% macro render_binding_confirmation(effective_date, expiration_date, premium) %}
+<div class="info-box info-box-highlight" style="text-align: center; margin: 25px 0;">
+    <div style="font-size: 14px; font-weight: 700; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;">
+        Binding Confirmation
+    </div>
+    <div style="font-size: 12px; line-height: 1.6;">
+        This confirms that coverage is bound effective<br>
+        <strong style="font-size: 14px;">{{ effective_date }}</strong><br>
+        through<br>
+        <strong style="font-size: 14px;">{{ expiration_date }}</strong><br>
+        at an annual premium of<br>
+        <strong style="font-size: 18px;">${{ "{:,}".format(premium | int) }}</strong>
+    </div>
+</div>
+{% endmacro %}
+
+
+{% macro render_binding_conditions(conditions) %}
+{% if conditions %}
+<div class="section-header">Binding Conditions</div>
+<div class="info-box">
+    <p class="text-small mb-2">Coverage is bound subject to the following conditions being met within 30 days:</p>
+    <ol class="list-numbered">
+        {% for condition in conditions %}
+        <li>{{ condition }}</li>
+        {% endfor %}
+    </ol>
+</div>
+{% endif %}
+{% endmacro %}
+
+
+{% macro render_policy_issuance_notice() %}
+<div class="info-box" style="background: #fefcbf; border-color: #ecc94b;">
+    <div class="text-bold mb-1" style="color: #744210;">Policy Issuance</div>
+    <div class="text-small" style="color: #744210;">
+        The formal policy document will be issued within 30 days of binding.
+        This binder serves as evidence of coverage until the policy is received.
+        Please review the policy carefully upon receipt and notify us immediately
+        of any discrepancies.
+    </div>
+</div>
+{% endmacro %}

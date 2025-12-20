@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}Policy Document{% endblock %}</title>
+    <style>
+        /* ========================================
+           Base Styles for Insurance Documents
+           WeasyPrint-compatible CSS
+           ======================================== */
+
+        @page {
+            size: letter;
+            margin: 20mm 20mm 25mm 20mm;
+
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 9px;
+                color: #666;
+            }
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            font-size: 11px;
+            line-height: 1.5;
+            color: #1a1a1a;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* ========================================
+           Color Palette
+           ======================================== */
+        :root {
+            --navy: #1a365d;
+            --navy-light: #2c5282;
+            --gold: #b7791f;
+            --gold-light: #d69e2e;
+            --gray-100: #f7fafc;
+            --gray-200: #edf2f7;
+            --gray-300: #e2e8f0;
+            --gray-500: #718096;
+            --gray-700: #4a5568;
+            --green: #276749;
+            --red: #c53030;
+        }
+
+        /* ========================================
+           Letterhead
+           ======================================== */
+        .letterhead {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding-bottom: 15px;
+            border-bottom: 3px solid var(--navy);
+            margin-bottom: 20px;
+        }
+
+        .letterhead-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .letterhead-logo-icon {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--navy), var(--navy-light));
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .letterhead-company {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .letterhead-company-name {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--navy);
+            letter-spacing: -0.5px;
+        }
+
+        .letterhead-company-tagline {
+            font-size: 10px;
+            color: var(--gray-500);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .letterhead-contact {
+            text-align: right;
+            font-size: 9px;
+            color: var(--gray-700);
+            line-height: 1.6;
+        }
+
+        /* ========================================
+           Document Header
+           ======================================== */
+        .document-header {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .document-type {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--navy);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 5px;
+        }
+
+        .document-number {
+            font-size: 11px;
+            color: var(--gray-500);
+        }
+
+        /* ========================================
+           Section Headers
+           ======================================== */
+        .section-header {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--navy);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 2px solid var(--gold);
+            padding-bottom: 5px;
+            margin: 20px 0 12px 0;
+        }
+
+        /* ========================================
+           Info Boxes
+           ======================================== */
+        .info-box {
+            background: var(--gray-100);
+            border: 1px solid var(--gray-300);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .info-box-highlight {
+            background: linear-gradient(135deg, var(--navy), var(--navy-light));
+            color: white;
+            border: none;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .info-grid-3 {
+            grid-template-columns: 1fr 1fr 1fr;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-label {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--gray-500);
+            margin-bottom: 2px;
+        }
+
+        .info-box-highlight .info-label {
+            color: rgba(255,255,255,0.7);
+        }
+
+        .info-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--gray-700);
+        }
+
+        .info-box-highlight .info-value {
+            color: white;
+        }
+
+        .info-value-large {
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        /* ========================================
+           Tables
+           ======================================== */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 10px;
+        }
+
+        th {
+            background: var(--navy);
+            color: white;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 9px;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        tr:nth-child(even) {
+            background: var(--gray-100);
+        }
+
+        tr:hover {
+            background: var(--gray-200);
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .currency {
+            font-family: "SF Mono", "Monaco", "Consolas", monospace;
+            font-weight: 600;
+        }
+
+        /* ========================================
+           Tower Visualization
+           ======================================== */
+        .tower-container {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            margin: 15px 0;
+        }
+
+        .tower-layer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            border-radius: 4px;
+            border: 1px solid var(--gray-300);
+            background: var(--gray-100);
+        }
+
+        .tower-layer-highlight {
+            background: linear-gradient(135deg, var(--navy), var(--navy-light));
+            color: white;
+            border: 2px solid var(--gold);
+        }
+
+        .tower-layer-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tower-layer-carrier {
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        .tower-layer-details {
+            font-size: 9px;
+            color: var(--gray-500);
+        }
+
+        .tower-layer-highlight .tower-layer-details {
+            color: rgba(255,255,255,0.7);
+        }
+
+        .tower-layer-premium {
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        /* ========================================
+           Lists
+           ======================================== */
+        .list-styled {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        .list-styled li {
+            margin-bottom: 6px;
+            position: relative;
+        }
+
+        .list-styled li::marker {
+            color: var(--gold);
+        }
+
+        .list-numbered {
+            counter-reset: item;
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .list-numbered li {
+            counter-increment: item;
+            padding-left: 30px;
+            margin-bottom: 8px;
+        }
+
+        .list-numbered li::before {
+            content: counter(item) ".";
+            position: absolute;
+            left: 0;
+            font-weight: 700;
+            color: var(--navy);
+        }
+
+        /* ========================================
+           Signature Block
+           ======================================== */
+        .signature-block {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 40px;
+            padding-top: 20px;
+        }
+
+        .signature-item {
+            width: 45%;
+        }
+
+        .signature-line {
+            border-bottom: 1px solid var(--gray-700);
+            height: 30px;
+            margin-bottom: 5px;
+        }
+
+        .signature-label {
+            font-size: 9px;
+            color: var(--gray-500);
+        }
+
+        /* ========================================
+           Footer
+           ======================================== */
+        .document-footer {
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid var(--gray-300);
+            font-size: 8px;
+            color: var(--gray-500);
+            text-align: center;
+        }
+
+        .document-footer-id {
+            margin-bottom: 5px;
+        }
+
+        .document-footer-disclaimer {
+            line-height: 1.4;
+        }
+
+        /* ========================================
+           Status Badges
+           ======================================== */
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-draft {
+            background: var(--gray-200);
+            color: var(--gray-700);
+        }
+
+        .badge-issued {
+            background: #c6f6d5;
+            color: var(--green);
+        }
+
+        .badge-void {
+            background: #fed7d7;
+            color: var(--red);
+        }
+
+        /* ========================================
+           Utility Classes
+           ======================================== */
+        .mt-1 { margin-top: 5px; }
+        .mt-2 { margin-top: 10px; }
+        .mt-3 { margin-top: 15px; }
+        .mt-4 { margin-top: 20px; }
+        .mb-1 { margin-bottom: 5px; }
+        .mb-2 { margin-bottom: 10px; }
+        .mb-3 { margin-bottom: 15px; }
+        .mb-4 { margin-bottom: 20px; }
+
+        .text-small { font-size: 9px; }
+        .text-muted { color: var(--gray-500); }
+        .text-bold { font-weight: 700; }
+
+        .page-break { page-break-after: always; }
+    </style>
+</head>
+<body>
+    {% block letterhead %}
+    <div class="letterhead">
+        <div class="letterhead-logo">
+            <div class="letterhead-logo-icon">C</div>
+            <div class="letterhead-company">
+                <div class="letterhead-company-name">CMAI Insurance</div>
+                <div class="letterhead-company-tagline">Cyber & Technology Coverage</div>
+            </div>
+        </div>
+        <div class="letterhead-contact">
+            123 Insurance Plaza, Suite 500<br>
+            New York, NY 10001<br>
+            Tel: (212) 555-0100<br>
+            underwriting@cmai-insurance.com
+        </div>
+    </div>
+    {% endblock %}
+
+    {% block content %}{% endblock %}
+
+    {% block footer %}
+    <div class="document-footer">
+        <div class="document-footer-id">
+            Document ID: {{ document_id | default('—') }} | Generated: {{ generated_at | default('—') }}
+        </div>
+        <div class="document-footer-disclaimer">
+            This document is for informational purposes only and does not constitute a contract of insurance.
+            Coverage is subject to the terms, conditions, and exclusions of the policy as issued.
+        </div>
+    </div>
+    {% endblock %}
+</body>
+</html>

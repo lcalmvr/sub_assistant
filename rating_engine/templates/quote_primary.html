@@ -1,0 +1,117 @@
+{% extends "_base.html" %}
+{% from "_components/coverage_table.html" import render_coverage_schedule %}
+
+{% block title %}Quote - {{ insured_name }}{% endblock %}
+
+{% block content %}
+
+{# Document Header #}
+<div class="document-header">
+    <div class="document-type">Cyber & Technology E&O Quote</div>
+    <div class="document-number">{{ quote_number }} | {{ quote_date }}</div>
+</div>
+
+{# Insured & Broker Info #}
+<div class="info-grid mb-3">
+    <div class="info-box">
+        <div class="info-label">Named Insured</div>
+        <div class="info-value text-bold">{{ insured_name }}</div>
+        {% if insured_address %}
+        <div class="text-small text-muted mt-1">{{ insured_address }}</div>
+        {% endif %}
+        {% if insured_industry %}
+        <div class="text-small text-muted">Industry: {{ insured_industry }}</div>
+        {% endif %}
+    </div>
+    <div class="info-box">
+        <div class="info-label">Broker</div>
+        <div class="info-value text-bold">{{ broker_name | default('—') }}</div>
+        {% if broker_company %}
+        <div class="text-small text-muted mt-1">{{ broker_company }}</div>
+        {% endif %}
+        {% if broker_email %}
+        <div class="text-small text-muted">{{ broker_email }}</div>
+        {% endif %}
+    </div>
+</div>
+
+{# Policy Period #}
+<div class="info-box">
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="info-label">Effective Date</div>
+            <div class="info-value">{{ effective_date }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Expiration Date</div>
+            <div class="info-value">{{ expiration_date }}</div>
+        </div>
+    </div>
+</div>
+
+{# Premium Summary - Highlighted Box #}
+<div class="info-box info-box-highlight mt-3">
+    <div class="info-grid info-grid-3">
+        <div class="info-item">
+            <div class="info-label">Aggregate Limit</div>
+            <div class="info-value info-value-large">${{ "{:,}".format(aggregate_limit) }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Retention</div>
+            <div class="info-value info-value-large">${{ "{:,}".format(retention) }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Annual Premium</div>
+            <div class="info-value info-value-large">${{ "{:,}".format(premium | int) }}</div>
+        </div>
+    </div>
+</div>
+
+{# Coverage Schedule #}
+<div class="section-header">Coverage Schedule</div>
+{% if policy_form %}
+<div class="text-small text-muted mb-2">Policy Form: {{ policy_form | replace('_', ' ') | title }}</div>
+{% endif %}
+
+{{ render_coverage_schedule(aggregate_coverages, sublimit_coverages, retention) }}
+
+{# Endorsements #}
+{% if endorsements %}
+<div class="section-header">Endorsements</div>
+<ul class="list-styled">
+    {% for endorsement in endorsements %}
+    <li>{{ endorsement }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{# Subjectivities #}
+{% if subjectivities %}
+<div class="section-header">Subjectivities</div>
+<div class="info-box" style="background: #fefcbf; border-color: #ecc94b;">
+    <div class="text-small text-bold mb-1" style="color: #744210;">
+        This quote is subject to the following conditions:
+    </div>
+    <ol class="list-numbered">
+        {% for subjectivity in subjectivities %}
+        <li style="color: #744210;">{{ subjectivity }}</li>
+        {% endfor %}
+    </ol>
+</div>
+{% endif %}
+
+{# Terms & Conditions #}
+<div class="section-header">Terms & Conditions</div>
+<div class="text-small" style="text-align: justify; line-height: 1.6;">
+{{ terms | default('Coverage is subject to the terms, conditions, and exclusions of the policy. This quote is valid for 30 days from the date of issuance. Binding is subject to receipt of completed application, premium payment, and underwriter approval. Claims-made policy form applies; coverage is provided for claims first made during the policy period. Defense costs are included within the policy limit unless otherwise stated.') }}
+</div>
+
+{# Quote Validity #}
+<div class="info-box mt-3" style="text-align: center;">
+    <div class="text-bold" style="color: var(--navy);">Quote Validity</div>
+    <div class="text-small text-muted">
+        This quote is valid until <strong>{{ valid_until | default('30 days from issue date') }}</strong>
+    </div>
+</div>
+
+{% endblock %}
