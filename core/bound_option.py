@@ -24,6 +24,7 @@ def bind_option(tower_id: str, bound_by: str = "system") -> bool:
 
     Automatically unbinds any other bound option for the same submission.
     Uses database constraint to ensure only one bound option per submission.
+    Also initializes broker history tracking for BOR changes.
 
     Args:
         tower_id: UUID of the insurance_tower to bind
@@ -33,9 +34,12 @@ def bind_option(tower_id: str, bound_by: str = "system") -> bool:
         True if successful
     """
     with get_conn() as conn:
-        # First, get the submission_id for this tower
+        # First, get the submission_id and broker_id for this tower
         result = conn.execute(text("""
-            SELECT submission_id FROM insurance_towers WHERE id = :tower_id
+            SELECT t.submission_id, s.broker_id
+            FROM insurance_towers t
+            JOIN submissions s ON t.submission_id = s.id
+            WHERE t.id = :tower_id
         """), {"tower_id": tower_id})
 
         row = result.fetchone()
@@ -43,6 +47,7 @@ def bind_option(tower_id: str, bound_by: str = "system") -> bool:
             raise ValueError(f"Tower {tower_id} not found")
 
         submission_id = row[0]
+        broker_id = row[1]
 
         # Unbind any currently bound option for this submission
         conn.execute(text("""
@@ -65,6 +70,16 @@ def bind_option(tower_id: str, bound_by: str = "system") -> bool:
         })
 
         conn.commit()
+
+        # Initialize broker history tracking
+        if broker_id:
+            from core.bor_management import initialize_broker_history
+            initialize_broker_history(
+                submission_id=str(submission_id),
+                broker_id=str(broker_id),
+                created_by=bound_by
+            )
+
         return result.rowcount > 0
 
 

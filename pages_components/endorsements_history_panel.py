@@ -118,8 +118,13 @@ def _render_endorsement_row(e: dict):
     description = e["description"]
     premium_change = e.get("premium_change", 0)
     type_label = e.get("type_label", e["endorsement_type"])
+    endorsement_type = e["endorsement_type"]
     carries = e.get("carries_to_renewal", False)
     formal_title = e.get("formal_title")
+    change_details = e.get("change_details", {})
+    notes = e.get("notes")
+    created_at = e.get("created_at")
+    issued_at = e.get("issued_at")
 
     # Status badge
     if status == "draft":
@@ -132,8 +137,10 @@ def _render_endorsement_row(e: dict):
         status_badge = "VOID"
         status_color = "red"
 
-    # Premium display
-    if premium_change > 0:
+    # Premium display - skip for BOR
+    if endorsement_type == "bor_change":
+        premium_str = ""
+    elif premium_change > 0:
         premium_str = f"+${premium_change:,.0f}"
     elif premium_change < 0:
         premium_str = f"-${abs(premium_change):,.0f}"
@@ -141,7 +148,7 @@ def _render_endorsement_row(e: dict):
         premium_str = "$0"
 
     # Build row
-    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([3, 1, 0.7, 0.7, 0.7])
 
     with col1:
         carryover_indicator = " (carries)" if carries else ""
@@ -155,9 +162,19 @@ def _render_endorsement_row(e: dict):
         st.caption(f"Effective: {eff_str} | Status: :{status_color}[{status_badge}]")
 
     with col2:
-        st.markdown(f"**{premium_str}**")
+        if premium_str:
+            st.markdown(f"**{premium_str}**")
 
     with col3:
+        # View/details toggle
+        if st.button("View", key=f"view_{endorsement_id}"):
+            if st.session_state.get(f"show_details_{endorsement_id}"):
+                st.session_state.pop(f"show_details_{endorsement_id}", None)
+            else:
+                st.session_state[f"show_details_{endorsement_id}"] = True
+            st.rerun()
+
+    with col4:
         if status == "draft":
             if st.button("Issue", key=f"issue_{endorsement_id}", type="primary"):
                 try:
@@ -167,10 +184,17 @@ def _render_endorsement_row(e: dict):
                 except Exception as ex:
                     st.error(f"Error: {ex}")
 
-    with col4:
+    with col5:
         if status in ("draft", "issued"):
             if st.button("Void", key=f"void_{endorsement_id}"):
                 st.session_state[f"confirm_void_{endorsement_id}"] = True
+
+    # Details expansion
+    if st.session_state.get(f"show_details_{endorsement_id}"):
+        with st.container():
+            st.markdown("---")
+            _render_endorsement_details(e, endorsement_type, change_details, notes, created_at, issued_at)
+            st.markdown("---")
 
     # Void confirmation
     if st.session_state.get(f"confirm_void_{endorsement_id}"):
@@ -193,6 +217,61 @@ def _render_endorsement_row(e: dict):
                 if st.button("Cancel", key=f"cancel_void_{endorsement_id}"):
                     st.session_state.pop(f"confirm_void_{endorsement_id}", None)
                     st.rerun()
+
+
+def _render_endorsement_details(e: dict, endorsement_type: str, change_details: dict, notes: str, created_at, issued_at):
+    """Render expanded details for an endorsement."""
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if endorsement_type == "bor_change":
+            st.markdown("**Broker Change Details**")
+            prev_broker = change_details.get("previous_broker_name", "N/A")
+            new_broker = change_details.get("new_broker_name", "N/A")
+            prev_contact = change_details.get("previous_contact_name", "")
+            new_contact = change_details.get("new_contact_name", "")
+            bor_date = change_details.get("bor_letter_received_date", "")
+            reason = change_details.get("change_reason", "")
+
+            st.write(f"**Previous Broker:** {prev_broker}" + (f" ({prev_contact})" if prev_contact else ""))
+            st.write(f"**New Broker:** {new_broker}" + (f" ({new_contact})" if new_contact else ""))
+            if bor_date:
+                st.write(f"**BOR Letter Received:** {bor_date}")
+            if reason:
+                st.write(f"**Reason:** {reason}")
+
+        elif endorsement_type == "extension":
+            st.markdown("**Extension Details**")
+            orig_exp = change_details.get("original_expiration_date", "N/A")
+            new_exp = change_details.get("new_expiration_date", "N/A")
+            st.write(f"**Original Expiration:** {orig_exp}")
+            st.write(f"**New Expiration:** {new_exp}")
+
+        elif endorsement_type == "name_change":
+            st.markdown("**Name Change Details**")
+            old_name = change_details.get("old_name", "N/A")
+            new_name = change_details.get("new_name", "N/A")
+            st.write(f"**Old Name:** {old_name}")
+            st.write(f"**New Name:** {new_name}")
+
+        elif endorsement_type == "cancellation":
+            st.markdown("**Cancellation Details**")
+            reason = change_details.get("cancellation_reason", "N/A")
+            st.write(f"**Reason:** {reason.replace('_', ' ').title()}")
+
+        elif change_details:
+            st.markdown("**Details**")
+            for k, v in change_details.items():
+                st.write(f"**{k.replace('_', ' ').title()}:** {v}")
+
+    with col2:
+        st.markdown("**Audit Trail**")
+        if created_at:
+            st.write(f"**Created:** {created_at.strftime('%m/%d/%Y %H:%M') if hasattr(created_at, 'strftime') else created_at}")
+        if issued_at:
+            st.write(f"**Issued:** {issued_at.strftime('%m/%d/%Y %H:%M') if hasattr(issued_at, 'strftime') else issued_at}")
+        if notes:
+            st.write(f"**Notes:** {notes}")
 
 
 def _render_new_endorsement_form(submission_id: str, bound: dict):
@@ -249,8 +328,13 @@ def _render_new_endorsement_form(submission_id: str, bound: dict):
     _render_type_specific_fields(endorsement_type, change_details, submission_id)
 
     # Description - optional for self-explanatory types or when template selected
+    # BOR uses Change Reason field instead of Description, so skip entirely
     self_explanatory_types = {"extension", "cancellation", "reinstatement", "erp"}
-    if endorsement_type in self_explanatory_types or catalog_id:
+    no_description_types = {"bor_change"}  # These types don't need description at all
+
+    if endorsement_type in no_description_types:
+        description = ""  # BOR uses change_reason from type-specific fields
+    elif endorsement_type in self_explanatory_types or catalog_id:
         description = st.text_input(
             "Description (optional)",
             placeholder="Auto-generated if left blank",
@@ -263,104 +347,107 @@ def _render_new_endorsement_form(submission_id: str, bound: dict):
             key=f"new_end_desc_{submission_id}"
         )
 
-    # Premium section
-    st.markdown("**Premium Adjustment**")
-
+    # Premium section - not applicable for BOR endorsements
+    no_premium_types = {"bor_change"}
     base_premium = float(bound.get("sold_premium") or 0)
     days_rem = None
     premium_change = 0.0
+    premium_method = "manual"  # Default
 
-    col1, col2 = st.columns(2)
+    if endorsement_type not in no_premium_types:
+        st.markdown("**Premium Adjustment**")
 
-    with col1:
-        premium_method = st.selectbox(
-            "Method",
-            options=list(PREMIUM_METHODS.keys()),
-            format_func=lambda x: PREMIUM_METHODS[x],
-            key=f"new_end_method_{submission_id}"
-        )
-
-    with col2:
-        if premium_method == "pro_rata":
-            # For extensions, calculate based on extension period
-            if endorsement_type == "extension" and change_details.get("new_expiration_date"):
-                from datetime import datetime as dt
-                new_exp_str = change_details.get("new_expiration_date")
-                new_exp_date = dt.strptime(new_exp_str, "%Y-%m-%d").date() if isinstance(new_exp_str, str) else new_exp_str
-                if exp_date and new_exp_date:
-                    extension_days = (new_exp_date - exp_date).days
-                    st.caption(f"Extension period: {extension_days} days")
-                    days_rem = extension_days
-                else:
-                    days_rem = 0
-            else:
-                # Calculate days remaining in current term
-                if effective_date and exp_date:
-                    days_rem = calculate_days_remaining(eff_date, exp_date, effective_date)
-                else:
-                    days_rem = 0
-                st.caption(f"Days remaining: {days_rem}")
-
-        elif premium_method == "flat":
-            st.caption("Enter flat premium amount")
-        else:
-            st.caption("Enter premium manually")
-
-    # Premium input based on method
-    if premium_method == "pro_rata":
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
 
         with col1:
-            annual_rate = st.number_input(
-                "Annual Premium Rate",
-                value=base_premium,
-                step=1000.0,
-                help="Annual premium to pro-rate from",
-                key=f"new_end_annual_{submission_id}"
+            premium_method = st.selectbox(
+                "Method",
+                options=list(PREMIUM_METHODS.keys()),
+                format_func=lambda x: PREMIUM_METHODS[x],
+                key=f"new_end_method_{submission_id}"
             )
 
         with col2:
-            if days_rem and days_rem > 0:
-                premium_change = calculate_pro_rata_premium(annual_rate, days_rem)
+            if premium_method == "pro_rata":
+                # For extensions, calculate based on extension period
+                if endorsement_type == "extension" and change_details.get("new_expiration_date"):
+                    from datetime import datetime as dt
+                    new_exp_str = change_details.get("new_expiration_date")
+                    new_exp_date = dt.strptime(new_exp_str, "%Y-%m-%d").date() if isinstance(new_exp_str, str) else new_exp_str
+                    if exp_date and new_exp_date:
+                        extension_days = (new_exp_date - exp_date).days
+                        st.caption(f"Extension period: {extension_days} days")
+                        days_rem = extension_days
+                    else:
+                        days_rem = 0
+                else:
+                    # Calculate days remaining in current term
+                    if effective_date and exp_date:
+                        days_rem = calculate_days_remaining(eff_date, exp_date, effective_date)
+                    else:
+                        days_rem = 0
+                    st.caption(f"Days remaining: {days_rem}")
+
+            elif premium_method == "flat":
+                st.caption("Enter flat premium amount")
             else:
-                premium_change = 0.0
+                st.caption("Enter premium manually")
 
+        # Premium input based on method
+        if premium_method == "pro_rata":
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                annual_rate = st.number_input(
+                    "Annual Premium Rate",
+                    value=base_premium,
+                    step=1000.0,
+                    help="Annual premium to pro-rate from",
+                    key=f"new_end_annual_{submission_id}"
+                )
+
+            with col2:
+                if days_rem and days_rem > 0:
+                    premium_change = calculate_pro_rata_premium(annual_rate, days_rem)
+                else:
+                    premium_change = 0.0
+
+            with col3:
+                st.empty()
+
+            # Show calculation preview
+            if days_rem and days_rem > 0:
+                calc_str = f"${annual_rate:,.0f} x ({days_rem} / 365) = **${premium_change:,.2f}**"
+                st.info(f"Pro-rata calculation: {calc_str}")
+
+        elif premium_method == "flat":
+            premium_change = st.number_input(
+                "Flat Premium",
+                value=0.0,
+                step=100.0,
+                key=f"new_end_flat_{submission_id}"
+            )
+
+        else:  # manual
+            premium_change = st.number_input(
+                "Premium Change",
+                value=0.0,
+                step=100.0,
+                help="Positive for additional premium, negative for return premium",
+                key=f"new_end_premium_{submission_id}"
+            )
+
+        # Premium summary box
+        st.divider()
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Current Premium", f"${base_premium:,.0f}")
+        with col2:
+            change_label = f"+${premium_change:,.0f}" if premium_change >= 0 else f"-${abs(premium_change):,.0f}"
+            st.metric("This Endorsement", change_label)
         with col3:
-            st.empty()
-
-        # Show calculation preview
-        if days_rem and days_rem > 0:
-            calc_str = f"${annual_rate:,.0f} x ({days_rem} / 365) = **${premium_change:,.2f}**"
-            st.info(f"Pro-rata calculation: {calc_str}")
-
-    elif premium_method == "flat":
-        premium_change = st.number_input(
-            "Flat Premium",
-            value=0.0,
-            step=100.0,
-            key=f"new_end_flat_{submission_id}"
-        )
-
-    else:  # manual
-        premium_change = st.number_input(
-            "Premium Change",
-            value=0.0,
-            step=100.0,
-            help="Positive for additional premium, negative for return premium",
-            key=f"new_end_premium_{submission_id}"
-        )
-
-    # Premium summary box
-    st.divider()
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Current Premium", f"${base_premium:,.0f}")
-    with col2:
-        change_label = f"+${premium_change:,.0f}" if premium_change >= 0 else f"-${abs(premium_change):,.0f}"
-        st.metric("This Endorsement", change_label)
-    with col3:
-        new_effective = base_premium + premium_change
-        st.metric("New Effective", f"${new_effective:,.0f}")
+            new_effective = base_premium + premium_change
+            st.metric("New Effective", f"${new_effective:,.0f}")
 
     # Carryover option
     default_carries = ENDORSEMENT_TYPES[endorsement_type]["carries_to_renewal"]
@@ -448,6 +535,13 @@ def _generate_auto_description(endorsement_type: str, change_details: dict) -> s
             return f"{erp_type} ERP - {erp_months} months"
         return "Extended Reporting Period"
 
+    elif endorsement_type == "bor_change":
+        prev_broker = change_details.get("previous_broker_name", "")
+        new_broker = change_details.get("new_broker_name", "")
+        if prev_broker and new_broker:
+            return f"Broker of Record changed from {prev_broker} to {new_broker}"
+        return "Broker of Record Change"
+
     return ""
 
 
@@ -528,3 +622,92 @@ def _render_type_specific_fields(endorsement_type: str, change_details: dict, su
         )
         change_details["new_expiration_date"] = new_exp.isoformat() if new_exp else None
         change_details["original_expiration_date"] = exp_date.isoformat() if exp_date else None
+
+    elif endorsement_type == "bor_change":
+        _render_bor_change_fields(change_details, submission_id)
+
+
+def _render_bor_change_fields(change_details: dict, submission_id: str):
+    """Render Broker of Record change form fields."""
+    from core.bor_management import (
+        get_current_broker,
+        get_brokers_list,
+        get_broker_contacts,
+    )
+
+    # Get current broker info
+    current_broker = get_current_broker(submission_id)
+
+    if current_broker:
+        st.info(f"**Current Broker:** {current_broker.get('broker_name', 'Unknown')}"
+                + (f" ({current_broker.get('contact_name', '')})" if current_broker.get('contact_name') else ""))
+        change_details["previous_broker_id"] = current_broker.get("broker_id")
+        change_details["previous_broker_name"] = current_broker.get("broker_name")
+        change_details["previous_contact_id"] = current_broker.get("broker_contact_id")
+        change_details["previous_contact_name"] = current_broker.get("contact_name")
+    else:
+        st.warning("No current broker assigned to this submission")
+
+    # New broker selection
+    brokers = get_brokers_list()
+
+    if not brokers:
+        st.warning("No brokers found in the system. Please add brokers first.")
+        return
+
+    broker_options = {b["id"]: b["company_name"] for b in brokers}
+
+    new_broker_id = st.selectbox(
+        "New Broker",
+        options=list(broker_options.keys()),
+        format_func=lambda x: broker_options.get(x, ""),
+        key=f"bor_new_broker_{submission_id}"
+    )
+
+    if new_broker_id:
+        change_details["new_broker_id"] = new_broker_id
+        change_details["new_broker_name"] = broker_options.get(new_broker_id)
+
+        # Contact selection for new broker
+        contacts = get_broker_contacts(new_broker_id)
+
+        if contacts:
+            contact_options = {c["id"]: f"{c['full_name']} ({c['email']})" for c in contacts}
+            contact_options[""] = "(No specific contact)"
+
+            new_contact_id = st.selectbox(
+                "New Broker Contact",
+                options=list(contact_options.keys()),
+                format_func=lambda x: contact_options.get(x, ""),
+                key=f"bor_new_contact_{submission_id}"
+            )
+
+            if new_contact_id:
+                change_details["new_contact_id"] = new_contact_id
+                # Find contact name
+                for c in contacts:
+                    if c["id"] == new_contact_id:
+                        change_details["new_contact_name"] = c["full_name"]
+                        break
+
+    # BOR letter received date
+    bor_letter_date = st.date_input(
+        "BOR Letter Received Date (optional)",
+        value=None,
+        key=f"bor_letter_date_{submission_id}"
+    )
+    if bor_letter_date:
+        change_details["bor_letter_received_date"] = bor_letter_date.isoformat()
+
+    # Change reason
+    change_reason = st.text_input(
+        "Change Reason (optional)",
+        placeholder="e.g., Insured requested broker change",
+        key=f"bor_reason_{submission_id}"
+    )
+    if change_reason:
+        change_details["change_reason"] = change_reason
+
+    # Warning if no BOR letter
+    if not bor_letter_date:
+        st.caption("Note: No BOR letter date provided. You can still create the endorsement.")

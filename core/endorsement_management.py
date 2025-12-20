@@ -37,6 +37,7 @@ ENDORSEMENT_TYPES = {
     "address_change": {"label": "Address Change", "carries_to_renewal": True},
     "erp": {"label": "Extended Reporting Period", "carries_to_renewal": False},
     "extension": {"label": "Policy Extension", "carries_to_renewal": False},
+    "bor_change": {"label": "Broker of Record Change", "carries_to_renewal": True},
     "other": {"label": "Other", "carries_to_renewal": True},
 }
 
@@ -207,12 +208,33 @@ def issue_endorsement(endorsement_id: str, issued_by: str = "system") -> bool:
                     "new_expiration": new_expiration,
                 })
 
+        # Apply BOR change effects - update broker history and submission
+        if endorsement_type == "bor_change":
+            from core.bor_management import process_bor_issuance
+            # Get effective_date from the endorsement
+            eff_result = conn.execute(text("""
+                SELECT effective_date FROM policy_endorsements WHERE id = :endorsement_id
+            """), {"endorsement_id": endorsement_id})
+            eff_row = eff_result.fetchone()
+            effective_date = eff_row[0] if eff_row else None
+
+            if effective_date:
+                process_bor_issuance(
+                    endorsement_id=endorsement_id,
+                    submission_id=submission_id,
+                    change_details=change_details,
+                    effective_date=effective_date,
+                    issued_by=issued_by
+                )
+
         return True
 
 
 def void_endorsement(endorsement_id: str, reason: str, voided_by: str = "system") -> bool:
     """
     Void an endorsement (draft or issued).
+
+    For BOR endorsements that were issued, also reverts the broker change.
 
     Args:
         endorsement_id: UUID of the endorsement
@@ -223,6 +245,22 @@ def void_endorsement(endorsement_id: str, reason: str, voided_by: str = "system"
         True if successful
     """
     with get_conn() as conn:
+        # First get endorsement details to check if we need to revert BOR
+        result = conn.execute(text("""
+            SELECT submission_id, endorsement_type, status
+            FROM policy_endorsements
+            WHERE id = :endorsement_id AND status != 'void'
+        """), {"endorsement_id": endorsement_id})
+
+        row = result.fetchone()
+        if not row:
+            return False
+
+        submission_id = row[0]
+        endorsement_type = row[1]
+        current_status = row[2]
+
+        # Void the endorsement
         result = conn.execute(text("""
             UPDATE policy_endorsements
             SET status = 'void',
@@ -238,7 +276,15 @@ def void_endorsement(endorsement_id: str, reason: str, voided_by: str = "system"
             "void_reason": reason,
         })
 
-        return result.rowcount > 0
+        if result.rowcount == 0:
+            return False
+
+        # Revert BOR change if this was an issued BOR endorsement
+        if endorsement_type == "bor_change" and current_status == "issued":
+            from core.bor_management import revert_bor_change
+            revert_bor_change(endorsement_id, submission_id)
+
+        return True
 
 
 def get_endorsement(endorsement_id: str) -> Optional[dict]:

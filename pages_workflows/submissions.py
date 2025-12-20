@@ -714,7 +714,7 @@ def render():
         st.subheader(label_selected)
 
         # ------------------- TABS -------------------
-        tab_details, tab_uw, tab_rating, tab_quote = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote"])
+        tab_details, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"])
 
         # Define quote_helpers up front for use in Quote tab
         quote_helpers = {
@@ -1207,8 +1207,9 @@ def render():
             # ------------------- Renewal Info --------------------
             render_renewal_panel(sub_id)
 
-            # ------------------- Midterm Endorsements --------------------
-            render_endorsements_history_panel(sub_id)
+        # =================== POLICY TAB ===================
+        with tab_policy:
+            st.markdown("##### Policy Management")
 
             # ------------------- Broker Assignment --------------------
             with st.expander("🤝 Broker Assignment", expanded=True):
@@ -1248,6 +1249,19 @@ def render():
                         )
                         rows = cur.fetchall()
 
+                    # Get current broker assignment for this submission
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT broker_email, broker_employment_id
+                            FROM submissions WHERE id = %s
+                            """,
+                            (sub_id,)
+                        )
+                        broker_row = cur.fetchone()
+                        broker_email = broker_row[0] if broker_row else None
+                        broker_employment_id = broker_row[1] if broker_row else None
+
                     def _fmt_addr(l1,l2,city,state,pc):
                         parts = [l1]
                         if l2:
@@ -1284,11 +1298,11 @@ def render():
                         options=options,
                         format_func=lambda x: ("— Select —" if x == "" else emp_map.get(x,{}).get("label", x)),
                         index=(options.index(default_emp) if default_emp in options else 0),
-                        key=f"broker_emp_select_{sub_id}"
+                        key=f"broker_emp_select_policy_{sub_id}"
                     )
                     _harden_selectbox_no_autofill("Broker Employment")
 
-                    if st.button("Save Broker", key=f"save_broker_emp_{sub_id}"):
+                    if st.button("Save Broker", key=f"save_broker_emp_policy_{sub_id}"):
                         try:
                             if not sel_emp:
                                 st.error("Please select a broker employment record.")
@@ -1324,7 +1338,7 @@ def render():
                                 set_clauses.append("broker_person_id = %(bper)s")
                                 params["bper"] = chosen_person
 
-        
+
                             if set_clauses:
                                 with conn.cursor() as cur:
                                     cur.execute(
@@ -1339,6 +1353,9 @@ def render():
 
                 else:
                     st.warning("Broker directory tables (brkr_*) not found. Please set up the broker directory in the database.")
+
+            # ------------------- Midterm Endorsements --------------------
+            render_endorsements_history_panel(sub_id)
 
         # =================== UW TAB ===================
         with tab_uw:
