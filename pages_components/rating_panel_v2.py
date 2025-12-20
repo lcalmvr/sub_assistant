@@ -336,169 +336,26 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_help
         
         # Endorsements section
         with st.expander("📄 Endorsements", expanded=False):
-                
-                # Stock endorsements list
-                stock_endorsements = [
-                    "War and Terrorism Exclusion",
-                    "Nuclear Risks Exclusion",
-                    "Communicable Disease Exclusion",
-                    "Cyber and Data Exclusion",
-                    "Professional Services Exclusion",
-                    "Contractual Liability Limitation",
-                    "Prior Acts Coverage Extension",
-                    "Extended Reporting Period",
-                    "Innocent Party Coverage",
-                    "Regulatory Defense Coverage"
-                ]
-                
-                # Default endorsements (automatically added)
-                default_endorsements = ["OFAC", "Service of Suite"]
-                
-                # Initialize session state for endorsements
-                endorse_session_key = f"endorsements_{sub_id}"
-                endorse_id_counter_key = f"endorsements_id_counter_{sub_id}"
-                
-                if endorse_session_key not in st.session_state:
-                    # Initialize with default endorsements as ID-based objects
-                    st.session_state[endorse_session_key] = []
-                    for i, default_endorse in enumerate(default_endorsements):
-                        st.session_state[endorse_session_key].append({
-                            'id': i,
-                            'text': default_endorse,
-                            'is_default': True
-                        })
-                
-                # Migration: convert old format to new format if needed
-                if st.session_state[endorse_session_key] and isinstance(st.session_state[endorse_session_key][0], str):
-                    old_items = st.session_state[endorse_session_key].copy()
-                    st.session_state[endorse_session_key] = []
-                    for i, item in enumerate(old_items):
-                        is_default = item in default_endorsements
-                        st.session_state[endorse_session_key].append({
-                            'id': i, 
-                            'text': item,
-                            'is_default': is_default
-                        })
-                
-                if endorse_id_counter_key not in st.session_state:
-                    st.session_state[endorse_id_counter_key] = len(st.session_state[endorse_session_key])
-                
-                # Ensure default endorsements are always present
-                existing_texts = [item['text'] for item in st.session_state[endorse_session_key]]
-                for default_endorse in default_endorsements:
-                    if default_endorse not in existing_texts:
-                        st.session_state[endorse_session_key].insert(0, {
-                            'id': st.session_state[endorse_id_counter_key],
-                            'text': default_endorse,
-                            'is_default': True
-                        })
-                        st.session_state[endorse_id_counter_key] += 1
-                
-                # Get current items in the main list (excluding defaults)
-                current_endorse_items = {endorse_data['text'] for endorse_data in st.session_state[endorse_session_key]}
-                
-                # Filter out items that are already in the main list from multiselect options
-                available_stock_endorse = [item for item in stock_endorsements if item not in current_endorse_items]
-                
-                # Multiselect for stock endorsements - only show available items
-                selected_stock_endorse = st.multiselect(
-                    "Select additional endorsements:",
-                    available_stock_endorse,
-                    key=f"stock_endorse_{sub_id}",
-                    help="Choose from pre-defined endorsements"
-                )
-                
-                # Add selected stock items to main list
-                for item in selected_stock_endorse:
-                    if item not in current_endorse_items:
-                        st.session_state[endorse_session_key].append({
-                            'id': st.session_state[endorse_id_counter_key],
-                            'text': item,
-                            'is_default': False
-                        })
-                        st.session_state[endorse_id_counter_key] += 1
-                        st.rerun()
-                
-                # Text input for custom endorsement
-                st.markdown("**Add custom endorsement:**")
-                col_text_endorse, col_add_endorse = st.columns([3, 1])
-                
-                # Use a counter to reset the input field
-                clear_counter_endorse_key = f"clear_counter_endorse_{sub_id}"
-                if clear_counter_endorse_key not in st.session_state:
-                    st.session_state[clear_counter_endorse_key] = 0
-                
-                with col_text_endorse:
-                    custom_endorse = st.text_input(
-                        "",
-                        key=f"custom_endorse_input_{sub_id}_{st.session_state[clear_counter_endorse_key]}",
-                        placeholder="Enter custom endorsement...",
-                        label_visibility="collapsed"
-                    )
-                with col_add_endorse:
-                    if st.button("Add", key=f"add_endorse_{sub_id}"):
-                        if custom_endorse.strip() and not any(endorse_data['text'] == custom_endorse.strip() for endorse_data in st.session_state[endorse_session_key]):
-                            st.session_state[endorse_session_key].append({
-                                'id': st.session_state[endorse_id_counter_key],
-                                'text': custom_endorse.strip(),
-                                'is_default': False
-                            })
-                            st.session_state[endorse_id_counter_key] += 1
-                            st.session_state[clear_counter_endorse_key] += 1  # This will create a new input field
-                            st.rerun()
-                
-                # Display current endorsements with edit/remove options
-                if st.session_state[endorse_session_key]:
-                    st.markdown("**Current Endorsements:**")
-                    
-                    # Create a copy of the list to iterate over
-                    endorse_list = st.session_state[endorse_session_key].copy()
-                    
-                    for i, endorse_data in enumerate(endorse_list):
-                        endorse_id_val = endorse_data['id']
-                        endorse_text = endorse_data['text']
-                        is_default = endorse_data.get('is_default', False)
-                        
-                        if is_default:
-                            # Default endorsements shown with lock icon
-                            col_text_endorse, col_remove_endorse = st.columns([7, 1])
-                            with col_text_endorse:
-                                st.markdown(f"🔒 **{endorse_text}** *(required)*")
-                            with col_remove_endorse:
-                                st.write("🔒")  # Lock icon for required endorsements
-                        else:
-                            # Editable endorsements
-                            col_text_endorse, col_remove_endorse = st.columns([7, 1])
-                            
-                            with col_text_endorse:
-                                # Show as single-line editable text input with unique ID-based key
-                                edited_endorse = st.text_input(
-                                    "",
-                                    value=endorse_text,
-                                    key=f"edit_endorse_{endorse_id_val}_{sub_id}",
-                                    help="Edit text and changes will be saved automatically",
-                                    label_visibility="collapsed"
-                                )
-                                # Update if changed immediately in session state
-                                if edited_endorse != endorse_text:
-                                    # Find the actual item in session state and update it
-                                    for j, item in enumerate(st.session_state[endorse_session_key]):
-                                        if item['id'] == endorse_id_val:
-                                            st.session_state[endorse_session_key][j]['text'] = edited_endorse
-                                            break
-                            
-                            with col_remove_endorse:
-                                # Use a callback approach to handle deletion
-                                remove_endorse_key = f"remove_endorse_{endorse_id_val}_{sub_id}"
-                                if st.button("🗑️", key=remove_endorse_key, help="Remove this endorsement"):
-                                    # Immediately remove from session state
-                                    st.session_state[endorse_session_key] = [
-                                        item for item in st.session_state[endorse_session_key] 
-                                        if item['id'] != endorse_id_val
-                                    ]
-                                    st.rerun()
-                else:
-                    st.caption("No endorsements added yet")
+            from pages_components.endorsement_selector import (
+                render_endorsement_selector,
+                initialize_from_existing,
+                get_endorsement_names_for_quote,
+            )
+
+            # Initialize from existing quote endorsements if loading
+            existing_endorsements = quote_data.get("endorsements", [])
+            if existing_endorsements:
+                initialize_from_existing(sub_id, existing_endorsements, position="primary")
+
+            # Render the endorsement selector
+            selected_endorsements = render_endorsement_selector(
+                submission_id=sub_id,
+                quote_data=quote_data,
+                position="primary"
+            )
+
+            # Store count for display
+            st.session_state[f"endorsement_count_{sub_id}"] = len(selected_endorsements)
         
         # Quote generation section
         _render_quote_generation(sub_id, quote_data, sub_data, get_conn_func, quote_helpers)
@@ -948,14 +805,13 @@ def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get
                         else:
                             subjectivities_text = subj_data  # backward compatibility
                 
-                endorsements_text = []
-                if f"endorsements_{sub_id}" in st.session_state:
-                    endorse_data = st.session_state[f"endorsements_{sub_id}"]
-                    if endorse_data:
-                        if isinstance(endorse_data[0], dict):
-                            endorsements_text = [item['text'] for item in endorse_data]
-                        else:
-                            endorsements_text = endorse_data  # backward compatibility
+                # Get endorsements from the new selector
+                from pages_components.endorsement_selector import get_endorsement_names_for_quote
+                endorsements_text = get_endorsement_names_for_quote(
+                    sub_id,
+                    quote_data,
+                    position="primary"
+                )
                 
                 # Enhanced quote data with complete submission information
                 enhanced_quote_data = {
