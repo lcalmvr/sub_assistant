@@ -84,15 +84,11 @@ def get_auto_endorsements(quote_data: dict, position: str = "primary") -> List[d
     by_code = {e.get("code"): e for e in all_endorsements}
 
     # Rule: Drop-down sublimits
+    # Any sublimit (coverage below aggregate) means drop-down coverage could apply
     sublimits = quote_data.get("sublimits", [])
-    has_dropdown = False
-    if isinstance(sublimits, list):
-        for sl in sublimits:
-            if isinstance(sl, dict) and sl.get("dropdown"):
-                has_dropdown = True
-                break
+    has_sublimits = bool(sublimits) and len(sublimits) > 0
 
-    if has_dropdown and "END-DROP-001" in by_code:
+    if has_sublimits and "END-DROP-001" in by_code:
         auto.append({
             **by_code["END-DROP-001"],
             "auto_reason": "Dropdown sublimits detected"

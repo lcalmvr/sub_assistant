@@ -3,9 +3,18 @@ Package Generator Module
 
 Generates combined document packages (quote + endorsements + other materials)
 as a single PDF. Stores manifests for regeneration.
+
+Supports endorsement fill-ins using {{variable}} syntax:
+- {{insured_name}} - Insured/applicant name
+- {{effective_date}} - Policy effective date
+- {{expiration_date}} - Policy expiration date
+- {{policy_number}} - Policy/quote number
+- {{aggregate_limit}} - Policy aggregate limit
+- {{sublimits_schedule}} - Table of dropdown sublimits
 """
 
 import os
+import re
 import uuid
 import json
 from datetime import datetime
@@ -40,6 +49,99 @@ get_conn = db.get_conn
 # Supabase client
 from supabase import create_client
 SB = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+
+
+def process_endorsement_fill_ins(content: str, context: dict) -> str:
+    """
+    Process fill-in variables in endorsement content.
+
+    Supported variables:
+    - {{insured_name}} - Insured/applicant name
+    - {{effective_date}} - Policy effective date
+    - {{expiration_date}} - Policy expiration date
+    - {{policy_number}} - Quote/policy number
+    - {{aggregate_limit}} - Policy aggregate limit
+    - {{sublimits_schedule}} - Table of dropdown sublimits
+
+    Args:
+        content: Endorsement HTML content with {{variable}} placeholders
+        context: Document context dict with quote/policy data
+
+    Returns:
+        Content with variables replaced
+    """
+    if not content:
+        return content
+
+    # Simple variable replacements
+    replacements = {
+        "{{insured_name}}": context.get("insured_name", ""),
+        "{{effective_date}}": str(context.get("effective_date", "")),
+        "{{expiration_date}}": str(context.get("expiration_date", "")),
+        "{{policy_number}}": context.get("quote_number", ""),
+        "{{aggregate_limit}}": format_limit(context.get("aggregate_limit", 0)),
+        "{{retention}}": format_limit(context.get("retention", 0)),
+    }
+
+    for var, value in replacements.items():
+        content = content.replace(var, str(value))
+
+    # Special handling for sublimits_schedule - render as HTML table
+    if "{{sublimits_schedule}}" in content:
+        sublimits_html = _render_sublimits_schedule(context)
+        content = content.replace("{{sublimits_schedule}}", sublimits_html)
+
+    return content
+
+
+def _render_sublimits_schedule(context: dict) -> str:
+    """
+    Render sublimits as an HTML table for endorsement fill-in.
+
+    Uses sublimit_coverages from context which contains:
+    {coverage_name: {"limit": X, "attachment": Y}}
+    """
+    sublimits = context.get("sublimit_coverages", {})
+
+    if not sublimits:
+        return "<p><em>No sublimits applicable.</em></p>"
+
+    rows = []
+    for coverage, data in sublimits.items():
+        if isinstance(data, dict):
+            limit = data.get("limit", 0)
+            attachment = data.get("attachment", 0)
+            rows.append(f"""
+                <tr>
+                    <td>{coverage}</td>
+                    <td style="text-align: right;">{format_limit(limit)}</td>
+                    <td style="text-align: right;">{format_limit(attachment)}</td>
+                </tr>
+            """)
+        else:
+            # Simple limit value
+            rows.append(f"""
+                <tr>
+                    <td>{coverage}</td>
+                    <td style="text-align: right;">{format_limit(data)}</td>
+                    <td style="text-align: right;">—</td>
+                </tr>
+            """)
+
+    return f"""
+    <table class="sublimits-schedule" style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <thead>
+            <tr style="background-color: #f8f9fa; border-bottom: 2px solid #1a365d;">
+                <th style="text-align: left; padding: 8px;">Coverage</th>
+                <th style="text-align: right; padding: 8px;">Sublimit</th>
+                <th style="text-align: right; padding: 8px;">Drop-Down Attachment</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
+    """
 
 
 def generate_package(
@@ -208,6 +310,10 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
     title = doc.get("title", "")
     code = doc.get("code", "")
     content = doc.get("content_html", "")
+
+    # Process fill-in variables for endorsements
+    if doc_type == "endorsement" and content:
+        content = process_endorsement_fill_ins(content, context)
 
     # Add context info for endorsements
     effective_date = context.get("effective_date", "")

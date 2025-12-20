@@ -30,9 +30,10 @@ def render_endorsements_panel(sub_id: str, expanded: bool = False, position: str
         expanded: Whether expander is initially expanded
         position: Quote position ('primary' or 'excess'), defaults to current quote position
     """
-    # Determine position from session state if not provided
+    # Determine position from current quote if not provided
     if position is None:
-        position = st.session_state.get(f"quote_position_{sub_id}", "primary")
+        from pages_components.quote_options_panel import get_current_quote_position
+        position = get_current_quote_position(sub_id)
 
     # Get current quote data from session state for rule-based endorsements
     quote_data = _get_quote_data_for_rules(sub_id)
@@ -75,10 +76,27 @@ def _get_quote_data_for_rules(sub_id: str) -> dict:
     Get quote data from session state for rule-based endorsement logic.
     Returns minimal dict needed for endorsement rules.
     """
+    from pages_components.tower_db import get_quote_by_id
+
     quote_data = {}
 
     # Get sublimits for dropdown detection
-    sublimits = st.session_state.get(f"sublimits_{sub_id}", [])
+    # Try session state first, then fall back to database
+    viewing_quote_id = st.session_state.get("viewing_quote_id")
+    sublimits = []
+
+    if viewing_quote_id:
+        # Check session state first
+        sublimits = st.session_state.get(f"quote_sublimits_{viewing_quote_id}", [])
+
+        # If not in session state, load from database
+        if not sublimits:
+            quote = get_quote_by_id(viewing_quote_id)
+            if quote:
+                sublimits = quote.get("sublimits") or []
+    else:
+        sublimits = st.session_state.get("sublimits", [])
+
     if sublimits:
         quote_data["sublimits"] = sublimits
 
