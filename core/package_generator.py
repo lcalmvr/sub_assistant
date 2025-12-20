@@ -682,3 +682,335 @@ def regenerate_package(policy_document_id: str, created_by: str = "user") -> dic
         selected_documents=selected_documents,
         created_by=created_by
     )
+
+
+# =============================================================================
+# Mid-Term Endorsement Document Generation
+# =============================================================================
+
+def generate_midterm_endorsement_document(
+    endorsement_id: str,
+    created_by: str = "system"
+) -> dict:
+    """
+    Generate a document for a mid-term policy endorsement.
+
+    Uses the endorsement rule processing engine to:
+    1. Find the appropriate template from document_library (by endorsement_type)
+    2. Build context from policy data + endorsement change_details
+    3. Process fill-in variables
+    4. Generate and upload PDF
+
+    Args:
+        endorsement_id: UUID of the policy_endorsement record
+        created_by: User generating the document
+
+    Returns:
+        dict with document_url, endorsement_number, etc.
+    """
+    from core.endorsement_management import get_endorsement
+    from core.document_library import get_library_entries, get_auto_attach_endorsements
+
+    # Get endorsement details
+    endorsement = get_endorsement(endorsement_id)
+    if not endorsement:
+        raise ValueError(f"Endorsement not found: {endorsement_id}")
+
+    submission_id = endorsement["submission_id"]
+    endorsement_type = endorsement["endorsement_type"]
+    change_details = endorsement.get("change_details", {})
+
+    # Build context for fill-ins
+    context = _build_midterm_context(submission_id, endorsement)
+
+    # Find matching template from document_library
+    # First try auto-attach rules
+    template = _find_endorsement_template(endorsement_type, context)
+
+    if not template:
+        raise ValueError(f"No template found for endorsement type: {endorsement_type}")
+
+    # Process fill-ins
+    content_html = template.get("content_html", "")
+    fill_in_mappings = template.get("fill_in_mappings")
+
+    if content_html:
+        content_html = process_endorsement_fill_ins(content_html, context, fill_in_mappings)
+
+    # Render the document HTML
+    html_content = _render_midterm_endorsement_html(
+        endorsement=endorsement,
+        template=template,
+        content_html=content_html,
+        context=context
+    )
+
+    # Generate PDF and upload
+    pdf_url = _render_and_upload_endorsement(html_content, endorsement)
+
+    return {
+        "endorsement_id": endorsement_id,
+        "endorsement_number": endorsement.get("endorsement_number"),
+        "pdf_url": pdf_url,
+        "template_code": template.get("code"),
+        "template_title": template.get("title"),
+        "created_at": datetime.now().isoformat(),
+        "created_by": created_by,
+    }
+
+
+def _build_midterm_context(submission_id: str, endorsement: dict) -> dict:
+    """
+    Build context dict for mid-term endorsement fill-ins.
+
+    Combines:
+    - Policy/submission data
+    - Endorsement metadata
+    - Endorsement change_details
+    """
+    # Get base policy context
+    context = {}
+
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            SELECT
+                s.applicant_name,
+                s.effective_date,
+                s.expiration_date,
+                t.quote_name
+            FROM submissions s
+            LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = TRUE
+            WHERE s.id = :submission_id
+        """), {"submission_id": submission_id})
+
+        row = result.fetchone()
+        if row:
+            context["insured_name"] = row[0]
+            context["effective_date"] = str(row[1]) if row[1] else ""
+            context["expiration_date"] = str(row[2]) if row[2] else ""
+            context["policy_number"] = row[3] or ""
+
+    # Add endorsement metadata
+    context["endorsement_number"] = endorsement.get("endorsement_number")
+    context["endorsement_effective_date"] = str(endorsement.get("effective_date", ""))
+    context["endorsement_type"] = endorsement.get("endorsement_type")
+
+    # Merge in change_details (e.g., previous_broker_name, new_broker_name)
+    change_details = endorsement.get("change_details", {})
+    if isinstance(change_details, str):
+        change_details = json.loads(change_details)
+
+    context.update(change_details)
+
+    return context
+
+
+def _find_endorsement_template(endorsement_type: str, context: dict) -> Optional[dict]:
+    """
+    Find the document_library template for an endorsement type.
+
+    Uses auto-attach rules with 'endorsement_type' condition.
+    """
+    from core.document_library import get_auto_attach_endorsements
+
+    # Use auto-attach with endorsement_type in context
+    context_with_type = {**context, "endorsement_type": endorsement_type}
+    auto_templates = get_auto_attach_endorsements(context_with_type, position="either")
+
+    if auto_templates:
+        return auto_templates[0]
+
+    # Fallback: search by code pattern
+    # e.g., endorsement_type='bor_change' -> look for 'BOR-*'
+    type_code_prefixes = {
+        "bor_change": "BOR-",
+        "cancellation": "CAN-",
+        "reinstatement": "RST-",
+        "name_change": "NAM-",
+        "address_change": "ADR-",
+        "erp": "ERP-",
+        "extension": "EXT-",
+        "coverage_change": "COV-",
+    }
+
+    prefix = type_code_prefixes.get(endorsement_type)
+    if prefix:
+        from core.document_library import get_library_entries
+        templates = get_library_entries(
+            document_type="endorsement",
+            status="active",
+            search=prefix
+        )
+        if templates:
+            return templates[0]
+
+    return None
+
+
+def _render_midterm_endorsement_html(
+    endorsement: dict,
+    template: dict,
+    content_html: str,
+    context: dict
+) -> str:
+    """
+    Render the full HTML for a mid-term endorsement document.
+    """
+    title = template.get("title", "Policy Endorsement")
+    code = template.get("code", "")
+    endorsement_number = endorsement.get("endorsement_number", "")
+    effective_date = context.get("endorsement_effective_date", "")
+    policy_number = context.get("policy_number", "")
+    insured_name = context.get("insured_name", "")
+
+    return f'''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+    <style>
+        @page {{
+            size: letter;
+            margin: 0.75in;
+        }}
+        body {{
+            font-family: 'Georgia', serif;
+            font-size: 11px;
+            line-height: 1.6;
+            color: #1a1a1a;
+        }}
+        .endorsement-header {{
+            text-align: center;
+            border-bottom: 2px solid #1a365d;
+            padding-bottom: 20px;
+            margin-bottom: 25px;
+        }}
+        .endorsement-title {{
+            font-size: 18px;
+            font-weight: bold;
+            color: #1a365d;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }}
+        .endorsement-code {{
+            font-size: 10px;
+            color: #718096;
+        }}
+        .endorsement-meta {{
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }}
+        .meta-item {{
+            text-align: center;
+        }}
+        .meta-label {{
+            font-size: 9px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+        .meta-value {{
+            font-size: 12px;
+            font-weight: bold;
+            color: #1a365d;
+        }}
+        .endorsement-content {{
+            text-align: justify;
+        }}
+        .endorsement-content h2 {{
+            color: #1a365d;
+            font-size: 14px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }}
+        .endorsement-content h3 {{
+            color: #1a365d;
+            font-size: 12px;
+            margin-top: 15px;
+            margin-bottom: 8px;
+        }}
+        .endorsement-content table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }}
+        .endorsement-content td, .endorsement-content th {{
+            padding: 10px;
+            border: 1px solid #ddd;
+        }}
+        .endorsement-footer {{
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+            font-size: 9px;
+            color: #718096;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="endorsement-header">
+        <div class="endorsement-title">{title}</div>
+        <div class="endorsement-code">{code}</div>
+    </div>
+
+    <div class="endorsement-meta">
+        <div class="meta-item">
+            <div class="meta-label">Policy Number</div>
+            <div class="meta-value">{policy_number}</div>
+        </div>
+        <div class="meta-item">
+            <div class="meta-label">Endorsement Number</div>
+            <div class="meta-value">{endorsement_number}</div>
+        </div>
+        <div class="meta-item">
+            <div class="meta-label">Effective Date</div>
+            <div class="meta-value">{effective_date}</div>
+        </div>
+        <div class="meta-item">
+            <div class="meta-label">Named Insured</div>
+            <div class="meta-value">{insured_name}</div>
+        </div>
+    </div>
+
+    <div class="endorsement-content">
+        {content_html}
+    </div>
+
+    <div class="endorsement-footer">
+        <p>This endorsement forms a part of the policy to which it is attached and is subject to all terms, conditions, and exclusions of such policy except as specifically modified herein.</p>
+    </div>
+</body>
+</html>'''
+
+
+def _render_and_upload_endorsement(html_content: str, endorsement: dict) -> str:
+    """Render HTML to PDF and upload to Supabase."""
+    with NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        HTML(string=html_content).write_pdf(tmp.name)
+        pdf_path = Path(tmp.name)
+
+    try:
+        bucket = "quotes"  # or create a dedicated 'endorsements' bucket
+        endorsement_number = endorsement.get("endorsement_number", "0")
+        key = f"endorsements/{endorsement['submission_id']}/endorsement_{endorsement_number}_{uuid.uuid4()}.pdf"
+
+        with pdf_path.open("rb") as f:
+            SB.storage.from_(bucket).upload(
+                key,
+                f,
+                {"content-type": "application/pdf"}
+            )
+
+        base_url = os.getenv("SUPABASE_URL")
+        pdf_url = f"{base_url}/storage/v1/object/public/{bucket}/{key}"
+
+        return pdf_url
+
+    finally:
+        pdf_path.unlink(missing_ok=True)

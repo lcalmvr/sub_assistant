@@ -145,6 +145,103 @@ def create_endorsement(
         return str(result.fetchone()[0])
 
 
+def update_endorsement(
+    endorsement_id: str,
+    effective_date: date = None,
+    description: str = None,
+    change_details: dict = None,
+    premium_method: str = None,
+    premium_change: float = None,
+    notes: str = None,
+    formal_title: str = None,
+    updated_by: str = "system"
+) -> bool:
+    """
+    Update a draft endorsement.
+
+    Only draft endorsements can be updated. Once issued, endorsements are immutable.
+
+    Args:
+        endorsement_id: UUID of the endorsement
+        effective_date: New effective date (optional)
+        description: New description (optional)
+        change_details: Updated change details dict (optional)
+        premium_method: New premium method (optional)
+        premium_change: New premium change amount (optional)
+        notes: Updated notes (optional)
+        formal_title: Updated formal title (optional)
+        updated_by: User making the update
+
+    Returns:
+        True if successful, False if endorsement not found or not draft
+    """
+    updates = []
+    params = {"endorsement_id": endorsement_id}
+
+    if effective_date is not None:
+        updates.append("effective_date = :effective_date")
+        params["effective_date"] = effective_date
+
+    if description is not None:
+        updates.append("description = :description")
+        params["description"] = description
+
+    if change_details is not None:
+        updates.append("change_details = :change_details")
+        params["change_details"] = json.dumps(change_details)
+
+    if premium_method is not None:
+        updates.append("premium_method = :premium_method")
+        params["premium_method"] = premium_method
+
+    if premium_change is not None:
+        updates.append("premium_change = :premium_change")
+        params["premium_change"] = premium_change
+
+    if notes is not None:
+        updates.append("notes = :notes")
+        params["notes"] = notes
+
+    if formal_title is not None:
+        updates.append("formal_title = :formal_title")
+        params["formal_title"] = formal_title
+
+    if not updates:
+        return False
+
+    with get_conn() as conn:
+        result = conn.execute(text(f"""
+            UPDATE policy_endorsements
+            SET {", ".join(updates)}
+            WHERE id = :endorsement_id
+            AND status = 'draft'
+        """), params)
+
+        return result.rowcount > 0
+
+
+def delete_draft_endorsement(endorsement_id: str) -> bool:
+    """
+    Delete a draft endorsement.
+
+    Only draft endorsements can be deleted. Issued endorsements must be voided.
+
+    Args:
+        endorsement_id: UUID of the endorsement
+
+    Returns:
+        True if deleted, False if not found or not draft
+    """
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            DELETE FROM policy_endorsements
+            WHERE id = :endorsement_id
+            AND status = 'draft'
+        """), {"endorsement_id": endorsement_id})
+
+        return result.rowcount > 0
+
+
 def issue_endorsement(endorsement_id: str, issued_by: str = "system") -> bool:
     """
     Issue a draft endorsement, making it effective.
@@ -296,7 +393,7 @@ def get_endorsement(endorsement_id: str) -> Optional[dict]:
                    description, change_details, premium_method, premium_change,
                    original_annual_premium, days_remaining, carries_to_renewal,
                    created_by, issued_by, voided_by, void_reason, notes,
-                   catalog_id, formal_title
+                   catalog_id, formal_title, document_url
             FROM policy_endorsements
             WHERE id = :endorsement_id
         """), {"endorsement_id": endorsement_id})
@@ -327,7 +424,7 @@ def get_endorsements(submission_id: str, include_voided: bool = False) -> list[d
                        description, change_details, premium_method, premium_change,
                        original_annual_premium, days_remaining, carries_to_renewal,
                        created_by, issued_by, voided_by, void_reason, notes,
-                       catalog_id, formal_title
+                       catalog_id, formal_title, document_url
                 FROM policy_endorsements
                 WHERE submission_id = :submission_id
                 ORDER BY endorsement_number
@@ -339,7 +436,7 @@ def get_endorsements(submission_id: str, include_voided: bool = False) -> list[d
                        description, change_details, premium_method, premium_change,
                        original_annual_premium, days_remaining, carries_to_renewal,
                        created_by, issued_by, voided_by, void_reason, notes,
-                       catalog_id, formal_title
+                       catalog_id, formal_title, document_url
                 FROM policy_endorsements
                 WHERE submission_id = :submission_id
                 AND status != 'void'
@@ -358,7 +455,7 @@ def get_issued_endorsements(submission_id: str) -> list[dict]:
                    description, change_details, premium_method, premium_change,
                    original_annual_premium, days_remaining, carries_to_renewal,
                    created_by, issued_by, voided_by, void_reason, notes,
-                   catalog_id, formal_title
+                   catalog_id, formal_title, document_url
             FROM policy_endorsements
             WHERE submission_id = :submission_id
             AND status = 'issued'
@@ -387,7 +484,7 @@ def get_endorsements_for_renewal(submission_id: str) -> list[dict]:
                    description, change_details, premium_method, premium_change,
                    original_annual_premium, days_remaining, carries_to_renewal,
                    created_by, issued_by, voided_by, void_reason, notes,
-                   catalog_id, formal_title
+                   catalog_id, formal_title, document_url
             FROM policy_endorsements
             WHERE submission_id = :submission_id
             AND status = 'issued'
@@ -553,6 +650,20 @@ def calculate_days_remaining(effective_date: date, expiration_date: date, as_of:
     return (expiration_date - as_of).days
 
 
+def save_endorsement_document_url(endorsement_id: str, document_url: str) -> bool:
+    """Save the generated document URL to an endorsement."""
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            UPDATE policy_endorsements
+            SET document_url = :document_url
+            WHERE id = :endorsement_id
+        """), {
+            "endorsement_id": endorsement_id,
+            "document_url": document_url,
+        })
+        return result.rowcount > 0
+
+
 def _row_to_dict(row) -> dict:
     """Convert database row to endorsement dict."""
     return {
@@ -580,5 +691,6 @@ def _row_to_dict(row) -> dict:
         "notes": row[21],
         "catalog_id": str(row[22]) if len(row) > 22 and row[22] else None,
         "formal_title": row[23] if len(row) > 23 else None,
+        "document_url": row[24] if len(row) > 24 else None,
         "type_label": ENDORSEMENT_TYPES.get(row[4], {}).get("label", row[4]),
     }

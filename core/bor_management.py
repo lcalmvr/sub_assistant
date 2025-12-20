@@ -127,16 +127,34 @@ def process_bor_issuance(
         return False
 
     with get_conn() as conn:
-        # Close current broker history record
-        conn.execute(text("""
-            UPDATE broker_of_record_history
-            SET end_date = :effective_date
+        # Get current broker record to validate dates
+        result = conn.execute(text("""
+            SELECT id, effective_date FROM broker_of_record_history
             WHERE submission_id = :submission_id
             AND end_date IS NULL
-        """), {
-            "submission_id": submission_id,
-            "effective_date": effective_date,
-        })
+        """), {"submission_id": submission_id})
+
+        current_record = result.fetchone()
+
+        if current_record:
+            current_effective = current_record[1]
+
+            # Validate: BOR effective date must be >= current broker's effective date
+            if effective_date < current_effective:
+                raise ValueError(
+                    f"BOR effective date ({effective_date}) cannot be before "
+                    f"current broker's effective date ({current_effective})"
+                )
+
+            # Close current broker history record
+            conn.execute(text("""
+                UPDATE broker_of_record_history
+                SET end_date = :effective_date
+                WHERE id = :record_id
+            """), {
+                "record_id": current_record[0],
+                "effective_date": effective_date,
+            })
 
         # Create new broker history record
         conn.execute(text("""

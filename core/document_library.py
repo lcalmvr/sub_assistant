@@ -481,6 +481,14 @@ def _evaluate_auto_attach_rule(condition: str, rules: dict, quote_data: dict) ->
     elif condition == "always":
         return True, "Always included"
 
+    elif condition == "endorsement_type":
+        # For mid-term endorsements: match by endorsement type
+        expected_type = rules.get("value")
+        actual_type = quote_data.get("endorsement_type")
+        if expected_type and actual_type == expected_type:
+            return True, f"Endorsement type: {expected_type}"
+        return False, ""
+
     # Unknown condition
     return False, ""
 
@@ -493,10 +501,13 @@ AUTO_ATTACH_CONDITIONS = {
     "limit_below": "Limit below threshold",
     "retention_above": "Retention above threshold",
     "always": "Always attach",
+    # Mid-term endorsement conditions
+    "endorsement_type": "Mid-term endorsement type matches",
 }
 
 # Available fill-in variables for UI
 FILL_IN_VARIABLES = {
+    # Policy/quote data
     "{{insured_name}}": "Insured name",
     "{{effective_date}}": "Policy effective date",
     "{{expiration_date}}": "Policy expiration date",
@@ -504,6 +515,14 @@ FILL_IN_VARIABLES = {
     "{{aggregate_limit}}": "Aggregate limit (formatted)",
     "{{retention}}": "Retention (formatted)",
     "{{sublimits_schedule}}": "Sublimits schedule table",
+    # Mid-term endorsement data (from change_details)
+    "{{endorsement_effective_date}}": "Endorsement effective date",
+    "{{endorsement_number}}": "Endorsement number",
+    "{{previous_broker}}": "Previous broker name (BOR)",
+    "{{new_broker}}": "New broker name (BOR)",
+    "{{previous_contact}}": "Previous contact name (BOR)",
+    "{{new_contact}}": "New contact name (BOR)",
+    "{{change_reason}}": "Reason for change",
 }
 
 

@@ -13,13 +13,17 @@ from core.endorsement_management import (
     ENDORSEMENT_TYPES,
     PREMIUM_METHODS,
     create_endorsement,
+    update_endorsement,
+    delete_draft_endorsement,
     issue_endorsement,
     void_endorsement,
     get_endorsements,
+    get_endorsement,
     get_effective_policy_state,
     get_policy_dates,
     calculate_days_remaining,
     calculate_pro_rata_premium,
+    save_endorsement_document_url,
 )
 from core.endorsement_catalog import get_entries_for_type
 
@@ -147,8 +151,12 @@ def _render_endorsement_row(e: dict):
     else:
         premium_str = "$0"
 
-    # Build row
-    col1, col2, col3, col4, col5 = st.columns([3, 1, 0.7, 0.7, 0.7])
+    # Build row - more columns for draft actions
+    if status == "draft":
+        col1, col2, col3, col4, col5, col6, col7 = st.columns([3, 1, 0.6, 0.6, 0.6, 0.6, 0.6])
+    else:
+        col1, col2, col3, col4, col5 = st.columns([3, 1, 0.7, 0.7, 0.7])
+        col6 = col7 = None
 
     with col1:
         carryover_indicator = " (carries)" if carries else ""
@@ -179,15 +187,55 @@ def _render_endorsement_row(e: dict):
             if st.button("Issue", key=f"issue_{endorsement_id}", type="primary"):
                 try:
                     issue_endorsement(endorsement_id, issued_by="user")
-                    st.success("Endorsement issued")
+                    # Generate the endorsement document
+                    try:
+                        from core.package_generator import generate_midterm_endorsement_document
+                        doc_result = generate_midterm_endorsement_document(endorsement_id, created_by="user")
+                        pdf_url = doc_result.get("pdf_url")
+                        # Save to database
+                        if pdf_url:
+                            save_endorsement_document_url(endorsement_id, pdf_url)
+                        st.success(f"Endorsement issued and document generated")
+                    except Exception as doc_ex:
+                        st.warning(f"Endorsement issued but document generation failed: {doc_ex}")
                     st.rerun()
                 except Exception as ex:
                     st.error(f"Error: {ex}")
+        elif status == "issued":
+            # Check for existing document URL (from database first, then session)
+            pdf_url = e.get("document_url") or st.session_state.get(f"endorsement_pdf_{endorsement_id}")
+            if pdf_url:
+                if st.button("PDF", key=f"view_pdf_{endorsement_id}"):
+                    st.session_state[f"show_pdf_{endorsement_id}"] = pdf_url
+            else:
+                if st.button("Gen Doc", key=f"gen_doc_{endorsement_id}"):
+                    try:
+                        from core.package_generator import generate_midterm_endorsement_document
+                        doc_result = generate_midterm_endorsement_document(endorsement_id, created_by="user")
+                        pdf_url = doc_result.get("pdf_url")
+                        # Save to database
+                        if pdf_url:
+                            save_endorsement_document_url(endorsement_id, pdf_url)
+                        st.success("Document generated")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Error generating document: {ex}")
 
     with col5:
         if status in ("draft", "issued"):
             if st.button("Void", key=f"void_{endorsement_id}"):
                 st.session_state[f"confirm_void_{endorsement_id}"] = True
+
+    # Edit and Delete buttons for drafts only
+    if status == "draft" and col6:
+        with col6:
+            if st.button("Edit", key=f"edit_{endorsement_id}"):
+                st.session_state[f"editing_endorsement_{endorsement_id}"] = True
+                st.rerun()
+
+        with col7:
+            if st.button("Del", key=f"delete_{endorsement_id}"):
+                st.session_state[f"confirm_delete_{endorsement_id}"] = True
 
     # Details expansion
     if st.session_state.get(f"show_details_{endorsement_id}"):
@@ -217,6 +265,130 @@ def _render_endorsement_row(e: dict):
                 if st.button("Cancel", key=f"cancel_void_{endorsement_id}"):
                     st.session_state.pop(f"confirm_void_{endorsement_id}", None)
                     st.rerun()
+
+    # Delete confirmation (for drafts)
+    if st.session_state.get(f"confirm_delete_{endorsement_id}"):
+        with st.container():
+            st.warning("Are you sure you want to delete this draft endorsement?")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("Confirm Delete", key=f"confirm_delete_btn_{endorsement_id}", type="primary"):
+                    try:
+                        delete_draft_endorsement(endorsement_id)
+                        st.session_state.pop(f"confirm_delete_{endorsement_id}", None)
+                        st.success("Endorsement deleted")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Error: {ex}")
+            with col_b:
+                if st.button("Cancel", key=f"cancel_delete_{endorsement_id}"):
+                    st.session_state.pop(f"confirm_delete_{endorsement_id}", None)
+                    st.rerun()
+
+    # Edit form (for drafts)
+    if st.session_state.get(f"editing_endorsement_{endorsement_id}"):
+        _render_edit_endorsement_form(e)
+
+    # PDF display
+    pdf_url = st.session_state.get(f"show_pdf_{endorsement_id}")
+    if pdf_url:
+        with st.container():
+            st.markdown("---")
+            st.markdown(f"**Endorsement Document:** [Open PDF]({pdf_url})")
+            if st.button("Close", key=f"close_pdf_{endorsement_id}"):
+                st.session_state.pop(f"show_pdf_{endorsement_id}", None)
+                st.rerun()
+            st.markdown("---")
+
+
+def _render_edit_endorsement_form(e: dict):
+    """Render inline edit form for a draft endorsement."""
+    endorsement_id = e["id"]
+    endorsement_type = e["endorsement_type"]
+
+    with st.container():
+        st.markdown("---")
+        st.markdown("**Edit Endorsement**")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            new_effective_date = st.date_input(
+                "Effective Date",
+                value=e.get("effective_date") or date.today(),
+                key=f"edit_eff_date_{endorsement_id}"
+            )
+
+        with col2:
+            new_description = st.text_input(
+                "Description",
+                value=e.get("description", ""),
+                key=f"edit_desc_{endorsement_id}"
+            )
+
+        new_notes = st.text_area(
+            "Notes",
+            value=e.get("notes") or "",
+            key=f"edit_notes_{endorsement_id}"
+        )
+
+        # For BOR, also allow editing change_details
+        new_change_details = None
+        if endorsement_type == "bor_change":
+            st.markdown("**BOR Details**")
+            change_details = e.get("change_details", {})
+
+            col1, col2 = st.columns(2)
+            with col1:
+                prev_broker = st.text_input(
+                    "Previous Broker",
+                    value=change_details.get("previous_broker_name", ""),
+                    key=f"edit_prev_broker_{endorsement_id}"
+                )
+            with col2:
+                new_broker = st.text_input(
+                    "New Broker",
+                    value=change_details.get("new_broker_name", ""),
+                    key=f"edit_new_broker_{endorsement_id}"
+                )
+
+            change_reason = st.text_input(
+                "Change Reason",
+                value=change_details.get("change_reason", ""),
+                key=f"edit_change_reason_{endorsement_id}"
+            )
+
+            new_change_details = {
+                **change_details,
+                "previous_broker_name": prev_broker,
+                "new_broker_name": new_broker,
+                "change_reason": change_reason,
+            }
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Save Changes", key=f"save_edit_{endorsement_id}", type="primary"):
+                try:
+                    update_endorsement(
+                        endorsement_id=endorsement_id,
+                        effective_date=new_effective_date,
+                        description=new_description if new_description else None,
+                        change_details=new_change_details,
+                        notes=new_notes if new_notes else None,
+                        updated_by="user"
+                    )
+                    st.session_state.pop(f"editing_endorsement_{endorsement_id}", None)
+                    st.success("Endorsement updated")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Error: {ex}")
+
+        with col_b:
+            if st.button("Cancel", key=f"cancel_edit_{endorsement_id}"):
+                st.session_state.pop(f"editing_endorsement_{endorsement_id}", None)
+                st.rerun()
+
+        st.markdown("---")
 
 
 def _render_endorsement_details(e: dict, endorsement_type: str, change_details: dict, notes: str, created_at, issued_at):
