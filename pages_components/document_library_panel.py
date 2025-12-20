@@ -34,16 +34,17 @@ def render_document_library_panel():
     # Tabs for document types
     tabs = st.tabs(["Endorsements", "Marketing", "Claims Sheets", "Specimen Forms", "All"])
     tab_types = ["endorsement", "marketing", "claims_sheet", "specimen", None]
+    tab_keys = ["endorsement", "marketing", "claims_sheet", "specimen", "all"]
 
-    for tab, doc_type in zip(tabs, tab_types):
+    for tab, doc_type, tab_key in zip(tabs, tab_types, tab_keys):
         with tab:
-            _render_document_list(doc_type)
+            _render_document_list(doc_type, tab_key)
 
 
-def _render_document_list(document_type: str = None):
+def _render_document_list(document_type: str = None, tab_key: str = None):
     """Render the document list for a specific type."""
     type_label = DOCUMENT_TYPES.get(document_type, "All Documents")
-    type_key = document_type or "all"
+    type_key = tab_key or document_type or "all"
 
     # Search bar
     search_query = st.text_input(
@@ -117,12 +118,12 @@ def _render_document_list(document_type: str = None):
         st.markdown(f"**{len(entries)} documents**")
 
         for entry in entries:
-            _render_document_row(entry)
+            _render_document_row(entry, type_key)
     else:
         st.info("No documents found matching filters.")
 
 
-def _render_document_row(entry: dict):
+def _render_document_row(entry: dict, tab_key: str = ""):
     """Render a single document library entry."""
     entry_id = entry["id"]
     code = entry["code"]
@@ -166,13 +167,13 @@ def _render_document_row(entry: dict):
         st.markdown(f":{status_color}[{status.upper()}]")
 
     with col4:
-        if st.button("Preview", key=f"preview_lib_{entry_id}"):
+        if st.button("Preview", key=f"preview_lib_{tab_key}_{entry_id}"):
             st.session_state["previewing_library_doc"] = entry_id
             st.session_state.pop("editing_library_doc", None)
             st.rerun()
 
     with col5:
-        if st.button("Edit", key=f"edit_lib_{entry_id}"):
+        if st.button("Edit", key=f"edit_lib_{tab_key}_{entry_id}"):
             st.session_state["editing_library_doc"] = {
                 "id": entry_id,
                 "type": entry.get("document_type")

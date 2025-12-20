@@ -28,7 +28,7 @@ st.info("""
 - 🏢 **Brokers** - Broker and company management
 - 📊 **Stats** - Submission statistics and analytics
 - 📋 **Coverage Catalog** - Manage carrier coverage mappings
-- 📝 **Endorsement Catalog** - Manage endorsement templates
+- 📚 **Document Library** - Manage endorsements, marketing materials, and claims sheets
 
 Use the sidebar to navigate between pages.
 """)
@@ -62,6 +62,6 @@ with col4:
 col5, col6, col7, col8 = st.columns(4)
 
 with col5:
-    st.markdown("### 📝 Endorsements")
-    if st.button("Endorsement Catalog", use_container_width=True):
-        st.switch_page("pages/endorsement_catalog.py")
+    st.markdown("### 📚 Documents")
+    if st.button("Document Library", use_container_width=True):
+        st.switch_page("pages/document_library.py")
