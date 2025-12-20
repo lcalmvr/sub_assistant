@@ -104,13 +104,13 @@ def _render_document_list(document_type: str = None, tab_key: str = None):
     # Show add/edit form if active
     editing = st.session_state.get("editing_library_doc")
     if editing and (editing.get("type") == document_type or document_type is None):
-        _render_document_form(editing.get("id"), editing.get("type"))
+        _render_document_form(editing.get("id"), editing.get("type"), type_key)
         st.divider()
 
     # Show preview if active
     previewing = st.session_state.get("previewing_library_doc")
     if previewing:
-        _render_library_preview(previewing)
+        _render_library_preview(previewing, type_key)
         st.divider()
 
     # Display entries
@@ -182,7 +182,7 @@ def _render_document_row(entry: dict, tab_key: str = ""):
             st.rerun()
 
 
-def _render_document_form(entry_id: str, doc_type: str = None):
+def _render_document_form(entry_id: str, doc_type: str = None, tab_key: str = ""):
     """Render form for adding or editing a document."""
     is_new = entry_id == "new"
 
@@ -202,7 +202,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
             value=entry.get("code", ""),
             placeholder="e.g., END-WAR-001",
             help="Unique identifier for this document",
-            key="lib_form_code"
+            key=f"lib_form_code_{tab_key}"
         )
 
     with col2:
@@ -211,7 +211,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
                 "Document Type *",
                 options=list(DOCUMENT_TYPES.keys()),
                 format_func=lambda x: DOCUMENT_TYPES[x],
-                key="lib_form_type"
+                key=f"lib_form_type_{tab_key}"
             )
         else:
             document_type = entry.get("document_type", doc_type)
@@ -219,7 +219,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
                 "Document Type",
                 value=DOCUMENT_TYPES.get(document_type, document_type),
                 disabled=True,
-                key="lib_form_type_display"
+                key=f"lib_form_type_display_{tab_key}"
             )
 
     with col3:
@@ -228,7 +228,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
             options=list(POSITION_OPTIONS.keys()),
             format_func=lambda x: POSITION_OPTIONS[x],
             index=list(POSITION_OPTIONS.keys()).index(entry.get("position", "either")),
-            key="lib_form_position"
+            key=f"lib_form_position_{tab_key}"
         )
 
     title = st.text_input(
@@ -236,7 +236,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
         value=entry.get("title", ""),
         placeholder="e.g., War & Terrorism Exclusion Endorsement",
         help="Formal title for printed documents",
-        key="lib_form_title"
+        key=f"lib_form_title_{tab_key}"
     )
 
     col1, col2, col3 = st.columns(3)
@@ -247,7 +247,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
             value=entry.get("category", ""),
             placeholder="e.g., exclusion, extension",
             help="Sub-category for filtering",
-            key="lib_form_category"
+            key=f"lib_form_category_{tab_key}"
         )
 
     with col2:
@@ -257,7 +257,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
             min_value=0,
             max_value=999,
             help="Lower numbers appear first in packages",
-            key="lib_form_sort"
+            key=f"lib_form_sort_{tab_key}"
         )
 
     with col3:
@@ -265,7 +265,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
             "Midterm Only",
             value=entry.get("midterm_only", False),
             help="Only applicable mid-term (not at bind)",
-            key="lib_form_midterm"
+            key=f"lib_form_midterm_{tab_key}"
         )
 
     # Content editor
@@ -274,7 +274,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
 
     content_html = render_rich_text_editor(
         initial_content=entry.get("content_html", ""),
-        key="lib_form_content",
+        key=f"lib_form_content_{tab_key}",
         toolbar="default"
     )
 
@@ -283,7 +283,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
         version_notes = st.text_input(
             "Version Notes",
             placeholder="Describe what changed in this version...",
-            key="lib_form_version_notes"
+            key=f"lib_form_version_notes_{tab_key}"
         )
         current_version = entry.get("version", 1)
         st.caption(f"Current version: {current_version}")
@@ -297,7 +297,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
             options=list(STATUS_OPTIONS.keys()),
             format_func=lambda x: STATUS_OPTIONS[x],
             index=list(STATUS_OPTIONS.keys()).index(entry.get("status", "draft")),
-            key="lib_form_status"
+            key=f"lib_form_status_{tab_key}"
         )
     else:
         status = "draft"
@@ -308,7 +308,7 @@ def _render_document_form(entry_id: str, doc_type: str = None):
     col1, col2, col3 = st.columns([1, 1, 4])
 
     with col1:
-        if st.button("Save", type="primary", key="lib_form_save"):
+        if st.button("Save", type="primary", key=f"lib_form_save_{tab_key}"):
             if not code or not title:
                 st.error("Code and Title are required")
             else:
@@ -350,12 +350,12 @@ def _render_document_form(entry_id: str, doc_type: str = None):
                     st.error(f"Error: {ex}")
 
     with col2:
-        if st.button("Cancel", key="lib_form_cancel"):
+        if st.button("Cancel", key=f"lib_form_cancel_{tab_key}"):
             st.session_state.pop("editing_library_doc", None)
             st.rerun()
 
 
-def _render_library_preview(entry_id: str):
+def _render_library_preview(entry_id: str, tab_key: str = ""):
     """Render a preview of how the document will appear."""
     entry = get_library_entry(entry_id)
     if not entry:
@@ -365,7 +365,7 @@ def _render_library_preview(entry_id: str):
     st.markdown("### Document Preview")
 
     # Close button
-    if st.button("Close Preview", key="close_lib_preview"):
+    if st.button("Close Preview", key=f"close_lib_preview_{tab_key}"):
         st.session_state.pop("previewing_library_doc", None)
         st.rerun()
 
@@ -423,14 +423,14 @@ def _render_library_preview(entry_id: str):
 
     with col1:
         if entry.get("status") == "draft":
-            if st.button("Activate", key="activate_lib_doc"):
+            if st.button("Activate", key=f"activate_lib_doc_{tab_key}"):
                 activate_library_entry(entry_id, activated_by="user")
                 st.success("Document activated!")
                 st.rerun()
 
     with col2:
         if entry.get("status") != "archived":
-            if st.button("Archive", key="archive_lib_doc"):
+            if st.button("Archive", key=f"archive_lib_doc_{tab_key}"):
                 archive_library_entry(entry_id, archived_by="user")
                 st.success("Document archived!")
                 st.rerun()
