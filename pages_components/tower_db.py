@@ -85,6 +85,7 @@ def _row_to_quote(row) -> dict:
         "submission_id": str(row[14]) if len(row) > 14 and row[14] else None,
         "policy_form": row[15] if len(row) > 15 else "cyber",
         "coverages": _parse_json_field(row[16]) if len(row) > 16 else None,
+        "is_bound": bool(row[17]) if len(row) > 17 and row[17] is not None else False,
     }
 
 
@@ -166,7 +167,7 @@ def get_tower_for_submission(submission_id: str) -> Optional[dict]:
             SELECT id, tower_json, primary_retention, sublimits,
                    quote_name, quoted_premium, quote_notes, created_at, updated_at,
                    technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
-                   submission_id, policy_form, coverages
+                   submission_id, policy_form, coverages, is_bound
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY updated_at DESC
@@ -186,7 +187,7 @@ def get_quote_by_id(quote_id: str) -> Optional[dict]:
             SELECT id, tower_json, primary_retention, sublimits,
                    quote_name, quoted_premium, quote_notes, created_at, updated_at,
                    technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
-                   submission_id, policy_form, coverages
+                   submission_id, policy_form, coverages, is_bound
             FROM insurance_towers
             WHERE id = %s
             """,
@@ -204,7 +205,7 @@ def list_quotes_for_submission(submission_id: str) -> list[dict]:
             SELECT id, tower_json, primary_retention, sublimits,
                    quote_name, quoted_premium, quote_notes, created_at, updated_at,
                    technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
-                   submission_id, policy_form, coverages
+                   submission_id, policy_form, coverages, is_bound
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY quote_name, created_at

@@ -17,6 +17,7 @@ from pages_components.tower_db import (
     save_tower,
     get_conn,
 )
+from core.bound_option import bind_option, unbind_option, get_bound_option, has_bound_option
 
 # Import shared premium calculator - single source of truth for premium calculations
 from rating_engine.premium_calculator import calculate_premium_for_submission
@@ -74,28 +75,55 @@ def render_quote_options_panel(sub_id: str):
         st.caption("No saved options yet. Use the buttons above to create your first quote option.")
         return
 
-    # Build dropdown options
+    # Build dropdown options with bound indicator
     # Quote name already includes date in format: "$1M x $25K - 12.17.25"
     quote_options = {}
+    bound_quote_id = None
     for quote in all_quotes:
         quote_id = quote["id"]
         quote_name = quote.get("quote_name", "Unnamed Option")
+        is_bound = quote.get("is_bound", False)
+
+        if is_bound:
+            bound_quote_id = quote_id
+            label = f"✓ {quote_name} (BOUND)"
+        else:
+            label = quote_name
 
         quote_options[quote_id] = {
-            "label": quote_name,
+            "label": label,
             "name": quote_name,
+            "is_bound": is_bound,
         }
 
     # Currently viewing quote
     viewing_quote_id = st.session_state.get("viewing_quote_id")
 
-    # Layout: Dropdown | Clone | Delete
-    col_select, col_clone, col_delete = st.columns([4, 1, 1])
+    # Determine default selection:
+    # 1. If already viewing a quote, keep that
+    # 2. Else if there's a bound option, select that
+    # 3. Else select the most recently created option
+    if not viewing_quote_id or viewing_quote_id not in quote_options:
+        if bound_quote_id:
+            # Auto-select bound option
+            default_quote_id = bound_quote_id
+        else:
+            # Find most recently created option
+            most_recent = max(all_quotes, key=lambda q: q.get("created_at") or "")
+            default_quote_id = most_recent["id"]
+
+        # Auto-load the default option
+        if default_quote_id:
+            _view_quote(default_quote_id)
+            viewing_quote_id = default_quote_id
+
+    # Layout: Dropdown | Bind | Clone | Delete
+    col_select, col_bind, col_clone, col_delete = st.columns([4, 1, 1, 1])
 
     with col_select:
-        # Build options list with IDs
-        option_ids = [""] + list(quote_options.keys())
-        option_labels = ["— Select saved option —"] + [quote_options[qid]["label"] for qid in quote_options.keys()]
+        # Build options list with IDs (no empty placeholder needed now)
+        option_ids = list(quote_options.keys())
+        option_labels = [quote_options[qid]["label"] for qid in quote_options.keys()]
 
         # Find current index
         default_idx = 0
@@ -113,6 +141,30 @@ def render_quote_options_panel(sub_id: str):
         # Auto-load when selection changes
         if selected_id and selected_id != viewing_quote_id:
             _view_quote(selected_id)
+
+    with col_bind:
+        st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
+        bind_disabled = not viewing_quote_id
+
+        # Check if currently viewing option is bound
+        is_currently_bound = False
+        if viewing_quote_id and viewing_quote_id in quote_options:
+            is_currently_bound = quote_options[viewing_quote_id]["is_bound"]
+
+        if is_currently_bound:
+            # Show unbind button
+            if st.button("Unbind", key="unbind_selected_btn", use_container_width=True, disabled=bind_disabled):
+                if viewing_quote_id:
+                    unbind_option(viewing_quote_id)
+                    st.success("Option unbound")
+                    st.rerun()
+        else:
+            # Show bind button
+            if st.button("Bind", key="bind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
+                if viewing_quote_id:
+                    bind_option(viewing_quote_id, bound_by="user")
+                    st.success("Option bound!")
+                    st.rerun()
 
     with col_clone:
         st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown

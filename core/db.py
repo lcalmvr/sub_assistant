@@ -21,7 +21,13 @@ engine: Engine = create_engine(
 
 @contextmanager
 def get_conn():
-    with engine.connect() as conn:
+    """Get a database connection with proper transaction support.
+
+    Uses engine.begin() which auto-commits on successful exit
+    and rolls back on exception. Explicit conn.commit() calls
+    in code are no longer needed but won't cause errors.
+    """
+    with engine.begin() as conn:
         yield conn
 
 def fetch_df(sql: str, params: dict | None = None, limit: int | None = None):
