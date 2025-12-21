@@ -185,62 +185,33 @@ def render_document_actions(
             else:
                 st.caption("_No additional documents available_")
 
-    # Generate buttons
-    col1, col2, col3 = st.columns([1, 1, 2])
-
-    with col1:
-        btn_label = f"Generate {doc_label}" if package_type == "quote_only" else f"Generate Package"
-        if st.button(btn_label, key=f"gen_quote_{quote_option_id}", type="primary"):
-            try:
-                with st.spinner("Generating document..."):
-                    if package_type == "full_package" and selected_documents:
-                        result = generate_package(
-                            submission_id=submission_id,
-                            quote_option_id=quote_option_id,
-                            doc_type=doc_type,
-                            package_type=package_type,
-                            selected_documents=selected_documents,
-                            created_by="user"
-                        )
-                    else:
-                        result = generate_document(
-                            submission_id=submission_id,
-                            quote_option_id=quote_option_id,
-                            doc_type=doc_type,
-                            created_by="user"
-                        )
-                st.success(f"Generated: {result['document_number']}")
-                if result.get("manifest"):
-                    st.caption(f"Included {len(result['manifest'])} documents")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error generating document: {e}")
-
-    with col2:
-        # Only show binder button if the quote is bound
-        if is_bound:
-            if st.button("Generate Binder", key=f"gen_binder_{quote_option_id}"):
-                try:
-                    with st.spinner("Generating binder..."):
-                        result = generate_document(
-                            submission_id=submission_id,
-                            quote_option_id=quote_option_id,
-                            doc_type="binder",
-                            created_by="user"
-                        )
-                    st.success(f"Generated: {result['document_number']}")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error generating binder: {e}")
-        else:
-            st.button("Generate Binder", key=f"gen_binder_{quote_option_id}", disabled=True,
-                     help="Bind the quote first to generate a binder")
-
-    # Show existing documents
-    if existing_docs:
-        st.markdown("**Generated Documents:**")
-        for doc in existing_docs:
-            _render_document_link(doc)
+    # Generate Quote button only (binder generates on bind, shows on Policy tab)
+    btn_label = f"Generate {doc_label}" if package_type == "quote_only" else f"Generate Package"
+    if st.button(btn_label, key=f"gen_quote_{quote_option_id}", type="primary"):
+        try:
+            with st.spinner("Generating document..."):
+                if package_type == "full_package" and selected_documents:
+                    result = generate_package(
+                        submission_id=submission_id,
+                        quote_option_id=quote_option_id,
+                        doc_type=doc_type,
+                        package_type=package_type,
+                        selected_documents=selected_documents,
+                        created_by="user"
+                    )
+                else:
+                    result = generate_document(
+                        submission_id=submission_id,
+                        quote_option_id=quote_option_id,
+                        doc_type=doc_type,
+                        created_by="user"
+                    )
+            st.success(f"Generated: {result['document_number']}")
+            if result.get("manifest"):
+                st.caption(f"Included {len(result['manifest'])} documents")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error generating document: {e}")
 
 
 def _render_document_link(doc: dict):

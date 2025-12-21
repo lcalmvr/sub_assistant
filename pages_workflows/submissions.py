@@ -1073,48 +1073,40 @@ def render():
             render_subjectivities_panel(sub_id, expanded=False)
 
             # ─────────────────────────────────────────────────────────────
-            # GENERATED QUOTES (Quote History)
+            # QUOTE DOCUMENTS (one per option)
             # ─────────────────────────────────────────────────────────────
             st.divider()
-            st.markdown("##### Generated Quotes")
+            st.markdown("##### Quote Documents")
 
-            saved_quotes = _get_quotes_for_submission(sub_id)
+            # Get all quote documents for this submission (not binders)
+            from core.document_generator import get_documents
+            all_docs = get_documents(sub_id)
+            quote_docs = [
+                d for d in all_docs
+                if d.get("document_type") in ("quote_primary", "quote_excess")
+                and d.get("status") != "void"
+            ]
 
-            if not saved_quotes:
-                st.caption("No quotes generated yet. Configure options above and click Generate Quote.")
+            if not quote_docs:
+                st.caption("No quotes generated yet. Select an option above and click Generate Quote.")
             else:
-                for idx, quote_data in enumerate(saved_quotes, 1):
-                    quote_json = quote_data["quote_json"]
-                    col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+                for doc in quote_docs:
+                    doc_type = doc.get("type_label", "Quote")
+                    doc_number = doc.get("document_number", "")
+                    pdf_url = doc.get("pdf_url", "")
+                    display_name = doc.get("display_name") or doc.get("quote_name") or ""
+                    created_at = doc.get("created_at")
+                    date_str = created_at.strftime("%m/%d/%y") if created_at and hasattr(created_at, 'strftime') else ""
 
+                    col1, col2 = st.columns([5, 1])
                     with col1:
-                        limit = quote_json.get("limit", 0)
-                        retention = quote_json.get("retention", 0)
-                        st.markdown(f"**#{idx}** · ${limit:,} / ${retention:,}")
-
+                        label = f"{display_name}: {doc_number}" if display_name else f"{doc_type}: {doc_number}"
+                        if pdf_url:
+                            st.markdown(f"[{label}]({pdf_url})")
+                        else:
+                            st.text(label)
                     with col2:
-                        premium = quote_json.get("premium", 0)
-                        st.caption(f"Premium: ${premium:,}")
-
-                    with col3:
-                        created_at = quote_data["created_at"]
-                        if created_at:
-                            st.caption(created_at.strftime("%b %d %I:%M%p"))
-
-                    with col4:
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            if st.button("📄", key=f"qt_pdf_{quote_data['id']}", help="View PDF"):
-                                st.markdown(f"[Open PDF]({quote_data['pdf_url']})")
-                        with c2:
-                            if st.button("📝", key=f"qt_load_{quote_data['id']}", help="Load"):
-                                st.session_state["loaded_quote_id"] = quote_data["id"]
-                                st.session_state["loaded_quote_data"] = quote_json
-                                st.rerun()
-                        with c3:
-                            if st.button("🗑️", key=f"qt_del_{quote_data['id']}", help="Delete"):
-                                _delete_quote_row(quote_data["id"])
-                                st.rerun()
+                        st.caption(date_str)
 
         with tab_details:
             # ------------------- pull AI originals -------------------

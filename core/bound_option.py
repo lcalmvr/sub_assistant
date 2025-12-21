@@ -80,6 +80,18 @@ def bind_option(tower_id: str, bound_by: str = "system") -> bool:
                 created_by=bound_by
             )
 
+        # Auto-generate binder on bind
+        try:
+            from core.document_generator import generate_document
+            generate_document(
+                submission_id=str(submission_id),
+                quote_option_id=tower_id,
+                doc_type="binder",
+                created_by=bound_by
+            )
+        except Exception:
+            pass  # Don't fail bind if binder generation fails
+
         return result.rowcount > 0
 
 

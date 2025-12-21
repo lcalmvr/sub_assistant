@@ -135,6 +135,9 @@ def generate_document(
     """
     Generate a policy document (quote or binder).
 
+    For quote documents, voids any previous quote for the same option
+    (one quote per option - latest prevails).
+
     Args:
         submission_id: UUID of the submission
         quote_option_id: UUID of the quote option (insurance_towers)
@@ -148,6 +151,10 @@ def generate_document(
         raise ValueError(f"Invalid document type: {doc_type}")
 
     doc_config = DOCUMENT_TYPES[doc_type]
+
+    # For quote documents, void any previous quote for this option (one quote per option)
+    if doc_type in ("quote_primary", "quote_excess"):
+        _void_previous_quotes_for_option(quote_option_id, doc_type)
 
     # Gather context data
     context = get_document_context(submission_id, quote_option_id)
@@ -497,6 +504,36 @@ def get_documents_for_quote(quote_option_id: str) -> list[dict]:
             }
             for row in result.fetchall()
         ]
+
+
+def _void_previous_quotes_for_option(quote_option_id: str, doc_type: str) -> int:
+    """
+    Void any previous quote documents for this option.
+
+    Ensures one quote per option - when generating a new quote,
+    previous quotes for the same option are voided.
+
+    Args:
+        quote_option_id: UUID of the quote option
+        doc_type: Document type (quote_primary or quote_excess)
+
+    Returns:
+        Number of documents voided
+    """
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            UPDATE policy_documents
+            SET status = 'void',
+                voided_at = now(),
+                void_reason = 'Superseded by new quote'
+            WHERE quote_option_id = :quote_option_id
+            AND document_type = :doc_type
+            AND status != 'void'
+        """), {
+            "quote_option_id": quote_option_id,
+            "doc_type": doc_type
+        })
+        return result.rowcount
 
 
 def void_document(document_id: str, reason: str, voided_by: str) -> bool:
