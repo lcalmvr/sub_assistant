@@ -44,23 +44,31 @@ def _render_linked_account(submission_id: str, account: dict):
     """Render display for a submission already linked to an account."""
 
     with st.expander(f"🏢 Account: {account['name']}", expanded=False):
-        # Account info
-        col1, col2 = st.columns(2)
+        # Edit mode toggle
+        edit_key = f"editing_account_{account['id']}"
+        is_editing = st.session_state.get(edit_key, False)
 
-        with col1:
-            st.markdown(f"**Name:** {account['name']}")
-            if account.get("website"):
-                st.markdown(f"**Website:** {account['website']}")
-            # Address display
-            address_display = account_mgmt.format_account_address(account)
-            if address_display:
-                st.markdown(f"**Address:** {address_display}")
+        if not is_editing:
+            # Display mode
+            col1, col2, col3 = st.columns([2, 2, 1])
 
-        with col2:
-            if account.get("industry"):
-                st.markdown(f"**Industry:** {account['industry']}")
-            if account.get("naics_title"):
-                st.markdown(f"**NAICS:** {account['naics_title']}")
+            with col1:
+                st.markdown(f"**Name:** {account['name']}")
+                st.markdown(f"**Website:** {account.get('website') or '—'}")
+                address_display = account_mgmt.format_account_address(account)
+                st.markdown(f"**Address:** {address_display or '—'}")
+
+            with col2:
+                st.markdown(f"**Industry:** {account.get('industry') or '—'}")
+                st.markdown(f"**NAICS:** {account.get('naics_title') or '—'}")
+
+            with col3:
+                if st.button("✏️ Edit", key=f"edit_acct_{submission_id}"):
+                    st.session_state[edit_key] = True
+                    st.rerun()
+        else:
+            # Edit mode
+            _render_account_edit_form(submission_id, account, edit_key)
 
         # Get submission history for this account
         submissions = account_mgmt.get_account_submissions(account["id"])
@@ -94,6 +102,61 @@ def _render_linked_account(submission_id: str, account: dict):
         if st.button("Unlink from Account", key=f"unlink_account_{submission_id}"):
             account_mgmt.unlink_submission_from_account(submission_id)
             st.success("Unlinked from account")
+            st.rerun()
+
+
+def _render_account_edit_form(submission_id: str, account: dict, edit_key: str):
+    """Render inline edit form for account details."""
+    account_id = account["id"]
+
+    # Get current address
+    current_address = account_mgmt.get_account_address_dict(account)
+
+    st.markdown("**Edit Account**")
+
+    # Name and Website
+    col1, col2 = st.columns(2)
+    with col1:
+        edit_name = st.text_input("Name", value=account.get("name", ""), key=f"edit_name_{account_id}")
+        edit_website = st.text_input("Website", value=account.get("website", "") or "", key=f"edit_website_{account_id}")
+    with col2:
+        edit_industry = st.text_input("Industry", value=account.get("industry", "") or "", key=f"edit_industry_{account_id}")
+
+    # Address fields
+    st.markdown("**Address**")
+    addr_col1, addr_col2 = st.columns(2)
+    with addr_col1:
+        edit_street = st.text_input("Street", value=current_address.get("street", ""), key=f"edit_street_{account_id}")
+        edit_city = st.text_input("City", value=current_address.get("city", ""), key=f"edit_city_{account_id}")
+    with addr_col2:
+        edit_state = st.text_input("State", value=current_address.get("state", ""), max_chars=2, key=f"edit_state_{account_id}")
+        edit_zip = st.text_input("ZIP", value=current_address.get("zip", ""), key=f"edit_zip_{account_id}")
+
+    # Save / Cancel buttons
+    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 4])
+    with btn_col1:
+        if st.button("💾 Save", key=f"save_acct_{submission_id}"):
+            # Update account
+            account_mgmt.update_account(
+                account_id=account_id,
+                name=edit_name.strip() if edit_name.strip() else None,
+                website=edit_website.strip() if edit_website.strip() else None,
+                industry=edit_industry.strip() if edit_industry.strip() else None,
+            )
+            # Update address
+            account_mgmt.update_account_address(
+                account_id=account_id,
+                street=edit_street.strip() if edit_street.strip() else None,
+                city=edit_city.strip() if edit_city.strip() else None,
+                state=edit_state.strip().upper() if edit_state.strip() else None,
+                zip_code=edit_zip.strip() if edit_zip.strip() else None,
+            )
+            st.session_state[edit_key] = False
+            st.success("Account updated!")
+            st.rerun()
+    with btn_col2:
+        if st.button("Cancel", key=f"cancel_acct_{submission_id}"):
+            st.session_state[edit_key] = False
             st.rerun()
 
 
