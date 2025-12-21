@@ -1214,130 +1214,97 @@ def render():
 
         # =================== POLICY TAB ===================
         with tab_policy:
-            st.markdown("##### Policy Management")
-
-            # Load all policy tab data in ONE database call (replaces 11+ queries)
+            # Load all policy tab data in ONE database call
             policy_data = load_policy_tab_data(sub_id)
+            bound_option = policy_data.get("bound_option")
+            effective_state = policy_data.get("effective_state", {})
+            submission_info = policy_data.get("submission", {})
 
-            # ------------------- Broker Assignment (display-only, edit on demand) --------------------
-            broker_employments = policy_data.get("broker_employments", [])
-            submission_data = policy_data.get("submission", {})
-            broker_email = submission_data.get("broker_email")
-            broker_employment_id = submission_data.get("broker_employment_id")
-
-            if broker_employments:
-                def _fmt_addr(l1, l2, city, state, pc):
-                    parts = [l1]
-                    if l2:
-                        parts.append(l2)
-                    city_state = ", ".join([p for p in [city, state] if p])
-                    tail = " ".join([p for p in [city_state, pc] if p]).strip()
-                    if tail:
-                        parts.append(tail)
-                    return ", ".join([p for p in parts if p]) or "—"
-
-                # Build broker lookup
-                emp_map = {}
-                for emp in broker_employments:
-                    eid = emp["employment_id"]
-                    fn = emp.get("first_name", "")
-                    ln = emp.get("last_name", "")
-                    org_name = emp.get("org_name", "")
-                    label = f"{fn.strip()} {ln.strip()} — {org_name} — {_fmt_addr(emp['line1'], emp['line2'], emp['city'], emp['state'], emp['postal_code'])}"
-                    emp_map[eid] = {
-                        "label": label,
-                        "email": emp.get("email"),
-                        "person_id": emp.get("person_id"),
-                        "org_id": emp.get("org_id")
-                    }
-
-                # Find current broker
-                current_broker_label = None
-                current_emp_id = None
-                if broker_employment_id and str(broker_employment_id) in emp_map:
-                    current_emp_id = str(broker_employment_id)
-                    current_broker_label = emp_map[current_emp_id]["label"]
-                elif broker_email:
-                    for k, v in emp_map.items():
-                        if (v.get("email") or "").lower() == str(broker_email).lower():
-                            current_emp_id = k
-                            current_broker_label = v["label"]
-                            break
-                    if not current_broker_label:
-                        current_broker_label = broker_email  # Fallback to email if no match
-
-                # Display mode vs Edit mode
-                editing_broker = st.session_state.get(f"editing_broker_{sub_id}", False)
-
-                if not editing_broker:
-                    # Display-only mode
-                    col1, col2 = st.columns([6, 1])
-                    with col1:
-                        if current_broker_label:
-                            st.markdown(f"**Broker:** {current_broker_label}")
-                        else:
-                            st.markdown("**Broker:** *Not assigned*")
-                    with col2:
-                        if st.button("Edit", key=f"edit_broker_{sub_id}"):
-                            st.session_state[f"editing_broker_{sub_id}"] = True
-                            st.rerun()
-                else:
-                    # Edit mode
-                    _disable_autofill()
-                    options = [""] + list(emp_map.keys())
-
-                    sel_emp = st.selectbox(
-                        "Broker",
-                        options=options,
-                        format_func=lambda x: ("— Select —" if x == "" else emp_map.get(x, {}).get("label", x)),
-                        index=(options.index(current_emp_id) if current_emp_id in options else 0),
-                        key=f"broker_emp_select_policy_{sub_id}"
-                    )
-                    _harden_selectbox_no_autofill("Broker")
-
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("Save", key=f"save_broker_emp_policy_{sub_id}", type="primary"):
-                            try:
-                                if not sel_emp:
-                                    st.error("Please select a broker.")
-                                    st.stop()
-                                chosen = emp_map.get(sel_emp) or {}
-
-                                conn = get_conn()
-                                with conn.cursor() as cur:
-                                    cur.execute(
-                                        """
-                                        UPDATE submissions
-                                        SET broker_email = %s, broker_org_id = %s,
-                                            broker_employment_id = %s, broker_person_id = %s
-                                        WHERE id = %s
-                                        """,
-                                        (chosen.get("email"), chosen.get("org_id"), sel_emp, chosen.get("person_id"), sub_id),
-                                    )
-
-                                st.session_state[f"editing_broker_{sub_id}"] = False
-                                st.success("Broker saved.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Error: {e}")
-                    with col2:
-                        if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
-                            st.session_state[f"editing_broker_{sub_id}"] = False
-                            st.rerun()
+            if not bound_option:
+                # No bound policy - show message
+                st.info("No bound policy. Bind a quote option on the Quote tab to manage the policy.")
             else:
-                st.caption("Broker directory not configured.")
+                # ------------------- POLICY SUMMARY --------------------
+                st.markdown("##### Policy Summary")
 
-            # ------------------- Generated Documents --------------------
-            from pages_components.document_history_panel import render_document_history_panel
-            render_document_history_panel(
-                sub_id,
-                expanded=True,
-                preloaded_documents=policy_data.get("documents")
-            )
+                # Status indicator
+                if effective_state.get("is_cancelled"):
+                    status_text = "🔴 Cancelled"
+                elif effective_state.get("has_erp"):
+                    status_text = "🟡 ERP Active"
+                else:
+                    status_text = "🟢 Active"
 
-            # ------------------- Midterm Endorsements --------------------
-            render_endorsements_history_panel(sub_id, preloaded_data=policy_data)
+                # Dates
+                eff_date = submission_info.get("effective_date")
+                exp_date = effective_state.get("effective_expiration") or submission_info.get("expiration_date")
+                eff_str = eff_date.strftime("%m/%d/%Y") if eff_date and hasattr(eff_date, 'strftime') else str(eff_date or "—")
+                exp_str = exp_date.strftime("%m/%d/%Y") if exp_date and hasattr(exp_date, 'strftime') else str(exp_date or "—")
+
+                # Policy details from bound option
+                tower_json = bound_option.get("tower_json") or []
+                if tower_json and len(tower_json) > 0:
+                    primary_layer = tower_json[0]
+                    limit = primary_layer.get("limit", 0)
+                    limit_str = f"${limit:,.0f}" if limit else "—"
+                else:
+                    limit_str = "—"
+
+                retention = bound_option.get("primary_retention", 0)
+                retention_str = f"${retention:,.0f}" if retention else "—"
+                premium = effective_state.get("effective_premium", 0)
+                premium_str = f"${premium:,.0f}"
+                position = (bound_option.get("position") or "primary").title()
+                policy_form = bound_option.get("policy_form") or "—"
+
+                # Display summary in compact format
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**Status:** {status_text}")
+                    st.markdown(f"**Period:** {eff_str} → {exp_str}")
+                    st.markdown(f"**Form:** {policy_form}")
+                with col2:
+                    st.markdown(f"**Limit:** {limit_str} x {retention_str} SIR")
+                    st.markdown(f"**Premium:** {premium_str}")
+                    st.markdown(f"**Position:** {position}")
+
+                st.divider()
+
+                # ------------------- ENDORSEMENTS --------------------
+                render_endorsements_history_panel(sub_id, preloaded_data=policy_data)
+
+                # ------------------- POLICY DOCUMENTS --------------------
+                st.markdown("##### Policy Documents")
+
+                # Filter to only show binders and policy docs (not quotes)
+                all_docs = policy_data.get("documents", [])
+                policy_docs = [d for d in all_docs if d.get("document_type") in ("binder", "policy", "endorsement")]
+
+                if policy_docs:
+                    for doc in policy_docs:
+                        doc_type = doc.get("type_label", doc.get("document_type", "Document"))
+                        doc_number = doc.get("document_number", "")
+                        pdf_url = doc.get("pdf_url", "")
+                        created_at = doc.get("created_at")
+                        date_str = created_at.strftime("%m/%d/%Y") if created_at and hasattr(created_at, 'strftime') else ""
+
+                        col1, col2 = st.columns([5, 1])
+                        with col1:
+                            if pdf_url:
+                                st.markdown(f"[{doc_type}: {doc_number}]({pdf_url})")
+                            else:
+                                st.text(f"{doc_type}: {doc_number}")
+                        with col2:
+                            st.caption(date_str)
+                else:
+                    st.caption("No policy documents generated yet.")
+                    # TODO: Add "Generate Binder" button here
+
+                st.divider()
+
+                # ------------------- RENEWAL --------------------
+                st.markdown("##### Renewal")
+                render_renewal_panel(sub_id)
 
         # =================== UW TAB ===================
         with tab_uw:

@@ -73,39 +73,33 @@ def render_endorsements_history_panel(
         endorsement_catalog = None  # Will fetch on demand
         policy_dates = None  # Will fetch on demand
 
-    # Build expander title
+    # Endorsements section header with count
     endorsement_count = state.get("endorsement_count", 0)
     if endorsement_count > 0:
-        expander_title = f"Endorsements ({endorsement_count})"
+        st.markdown(f"##### Endorsements ({endorsement_count})")
     else:
-        expander_title = "Endorsements"
+        st.markdown("##### Endorsements")
 
-    # Add status indicator
-    if state.get("is_cancelled"):
-        expander_title = f"Endorsements - CANCELLED"
-    elif state.get("has_erp"):
-        expander_title = f"Endorsements - ERP Active"
-    elif state.get("is_extended"):
-        expander_title = f"Endorsements - Extended"
+    # Show premium adjustments only if there are any
+    adjustments = state.get("premium_adjustments", 0)
+    if adjustments != 0:
+        adj_str = f"+${adjustments:,.0f}" if adjustments > 0 else f"-${abs(adjustments):,.0f}"
+        st.caption(f"Premium adjustments from endorsements: {adj_str}")
 
-    with st.expander(expander_title, expanded=False):
-        # Premium summary
-        _render_premium_summary(state)
+    # List existing endorsements
+    if endorsements:
+        _render_endorsement_list(endorsements)
+    else:
+        st.caption("No endorsements yet.")
 
-        st.divider()
-
-        # List existing endorsements
-        if endorsements:
-            _render_endorsement_list(endorsements)
-
-        # New endorsement form - collapsed by default
-        with st.expander("+ New Endorsement", expanded=False):
-            _render_new_endorsement_form(
-                submission_id,
-                bound,
-                endorsement_catalog=endorsement_catalog,
-                policy_dates=policy_dates
-            )
+    # New endorsement form - collapsed by default
+    with st.expander("+ New Endorsement", expanded=False):
+        _render_new_endorsement_form(
+            submission_id,
+            bound,
+            endorsement_catalog=endorsement_catalog,
+            policy_dates=policy_dates
+        )
 
 
 def _render_premium_summary(state: dict):
