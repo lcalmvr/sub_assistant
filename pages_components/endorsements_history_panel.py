@@ -1366,13 +1366,13 @@ def _render_endorsement_dialog_content(
         else:
             description = ""
 
-        # Premium section - skip for BOR
+        # Premium section - skip for BOR and cancellation (handled in type fields)
         premium_change = 0.0
         premium_method = "flat"
         days_rem = None
         annual_premium = 0.0
 
-        if endorsement_type != "bor_change":
+        if endorsement_type not in ("bor_change", "cancellation"):
             st.markdown("**Premium**")
 
             # Calculate days remaining for display
@@ -1440,6 +1440,11 @@ def _render_endorsement_dialog_content(
 
             try:
                 tower_id = bound["id"]
+
+                # For cancellation, use the calculated return premium from the type fields
+                if endorsement_type == "cancellation":
+                    premium_change = st.session_state.get(f"_cancel_premium_{submission_id}", 0.0)
+                    premium_method = change_details.get("return_premium_method", "flat")
 
                 endorsement_id = create_endorsement(
                     submission_id=submission_id,
@@ -1744,8 +1749,11 @@ def _render_cancellation_fields(change_details: dict, submission_id: str):
         )
         change_details["return_premium_method"] = return_method
 
-    # Calculate days remaining from effective date (stored in session state by main form)
-    effective_date = st.session_state.get(f"new_end_date_{submission_id}")
+    # Calculate days remaining from effective date (check both form variants)
+    effective_date = (
+        st.session_state.get(f"new_v2_date_{submission_id}") or
+        st.session_state.get(f"new_end_date_{submission_id}")
+    )
     days_remaining = 0
     if effective_date and exp_date:
         from datetime import date
