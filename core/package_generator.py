@@ -91,6 +91,23 @@ def process_endorsement_fill_ins(
         "{{policy_number}}": "quote_number",
         "{{aggregate_limit}}": "aggregate_limit",
         "{{retention}}": "retention",
+        # Extension endorsement variables
+        "{{original_expiration_date}}": "original_expiration_formatted",
+        "{{new_expiration_date}}": "new_expiration_formatted",
+        "{{premium_change}}": "premium_change",
+        "{{pro_rata_calculation}}": "pro_rata_calculation",
+        # Also support bracket-style placeholders
+        "[Original Date]": "original_expiration_formatted",
+        "[New Date]": "new_expiration_formatted",
+        "[Premium Amount]": "premium_change",
+        # Coverage change endorsement variables
+        "[Coverage Description]": "coverage_description",
+        "[Limit Amount]": "limit_amount",
+        "[Retention Amount]": "retention_amount",
+        "[Date]": "endorsement_effective_date_formatted",
+        "[Amount]": "premium_change",
+        "{{coverage_changes_table}}": "coverage_changes_table",
+        "{{coverage_changes_summary}}": "coverage_changes_summary",
     }
 
     # Merge with database-provided mappings (DB mappings take precedence)
@@ -792,17 +809,192 @@ def _build_midterm_context(submission_id: str, endorsement: dict) -> dict:
 
     # Add endorsement metadata
     context["endorsement_number"] = endorsement.get("endorsement_number")
-    context["endorsement_effective_date"] = str(endorsement.get("effective_date", ""))
+    eff_date = endorsement.get("effective_date")
+    context["endorsement_effective_date"] = str(eff_date) if eff_date else ""
+    # Formatted date for display
+    if eff_date:
+        try:
+            from datetime import datetime as dt
+            if isinstance(eff_date, str):
+                eff_dt = dt.strptime(eff_date, "%Y-%m-%d")
+            else:
+                eff_dt = eff_date
+            context["endorsement_effective_date_formatted"] = eff_dt.strftime("%B %d, %Y")
+        except Exception:
+            context["endorsement_effective_date_formatted"] = str(eff_date)
+    else:
+        context["endorsement_effective_date_formatted"] = ""
     context["endorsement_type"] = endorsement.get("endorsement_type")
 
+    # Add endorsement-specific data
+    premium_change = endorsement.get("premium_change", 0)
+    premium_method = endorsement.get("premium_method", "manual")
+    original_annual_premium = endorsement.get("original_annual_premium")
+    days_remaining = endorsement.get("days_remaining")
+
+    context["premium_change"] = f"${premium_change:,.0f}" if premium_change else "$0"
+    context["premium_change_raw"] = premium_change
+    context["premium_method"] = premium_method
+
     # Merge in change_details (e.g., previous_broker_name, new_broker_name)
-    change_details = endorsement.get("change_details", {})
+    change_details = endorsement.get("change_details", {}) or {}
     if isinstance(change_details, str):
         change_details = json.loads(change_details)
 
     context.update(change_details)
 
+    # For coverage change endorsements, build a summary table
+    if endorsement.get("endorsement_type") == "coverage_change":
+        context["coverage_changes_table"] = _render_coverage_changes_table(change_details)
+        context["coverage_changes_summary"] = _render_coverage_changes_summary(change_details)
+
+    # For extension endorsements, format dates nicely and add premium calculation
+    if endorsement.get("endorsement_type") == "extension":
+        orig_exp = change_details.get("original_expiration_date")
+        new_exp = change_details.get("new_expiration_date")
+
+        # Format dates for display
+        if orig_exp:
+            from datetime import datetime as dt
+            try:
+                if isinstance(orig_exp, str):
+                    orig_dt = dt.strptime(orig_exp, "%Y-%m-%d")
+                    context["original_expiration_formatted"] = orig_dt.strftime("%B %d, %Y")
+                else:
+                    context["original_expiration_formatted"] = orig_exp.strftime("%B %d, %Y")
+            except Exception:
+                context["original_expiration_formatted"] = str(orig_exp)
+
+        if new_exp:
+            from datetime import datetime as dt
+            try:
+                if isinstance(new_exp, str):
+                    new_dt = dt.strptime(new_exp, "%Y-%m-%d")
+                    context["new_expiration_formatted"] = new_dt.strftime("%B %d, %Y")
+                else:
+                    context["new_expiration_formatted"] = new_exp.strftime("%B %d, %Y")
+            except Exception:
+                context["new_expiration_formatted"] = str(new_exp)
+
+        # Add pro-rata calculation details
+        if premium_method == "pro_rata" and days_remaining and original_annual_premium:
+            context["pro_rata_calculation"] = f"${original_annual_premium:,.0f} × {days_remaining}/365"
+        else:
+            context["pro_rata_calculation"] = ""
+
     return context
+
+
+def _render_coverage_changes_table(change_details: dict) -> str:
+    """Render coverage changes as an HTML table for the endorsement PDF."""
+    rows = []
+
+    # Aggregate limit change
+    if "aggregate_limit" in change_details:
+        old_val = change_details["aggregate_limit"].get("old", 0)
+        new_val = change_details["aggregate_limit"].get("new", 0)
+        rows.append(f"""
+            <tr>
+                <td>Aggregate Limit</td>
+                <td style="text-align: right;">{format_limit(old_val)}</td>
+                <td style="text-align: right;">{format_limit(new_val)}</td>
+            </tr>
+        """)
+
+    # Retention change
+    if "retention" in change_details:
+        old_ret = change_details["retention"].get("old", 0)
+        new_ret = change_details["retention"].get("new", 0)
+        rows.append(f"""
+            <tr>
+                <td>Retention</td>
+                <td style="text-align: right;">{format_limit(old_ret)}</td>
+                <td style="text-align: right;">{format_limit(new_ret)}</td>
+            </tr>
+        """)
+
+    # Individual coverage changes
+    agg_changes = change_details.get("aggregate_coverages", {})
+    sub_changes = change_details.get("sublimit_coverages", {})
+
+    # Get coverage labels
+    try:
+        from rating_engine.coverage_config import (
+            get_aggregate_coverage_definitions,
+            get_sublimit_coverage_definitions,
+        )
+        agg_defs = {c["id"]: c["label"] for c in get_aggregate_coverage_definitions()}
+        sub_defs = {c["id"]: c["label"] for c in get_sublimit_coverage_definitions()}
+    except Exception:
+        agg_defs = {}
+        sub_defs = {}
+
+    for cov_id, vals in agg_changes.items():
+        label = agg_defs.get(cov_id, cov_id.replace("_", " ").title())
+        old_val = vals.get("old", 0)
+        new_val = vals.get("new", 0)
+        rows.append(f"""
+            <tr>
+                <td>{label}</td>
+                <td style="text-align: right;">{format_limit(old_val)}</td>
+                <td style="text-align: right;">{format_limit(new_val)}</td>
+            </tr>
+        """)
+
+    for cov_id, vals in sub_changes.items():
+        label = sub_defs.get(cov_id, cov_id.replace("_", " ").title())
+        old_val = vals.get("old", 0)
+        new_val = vals.get("new", 0)
+        rows.append(f"""
+            <tr>
+                <td>{label}</td>
+                <td style="text-align: right;">{format_limit(old_val)}</td>
+                <td style="text-align: right;">{format_limit(new_val)}</td>
+            </tr>
+        """)
+
+    if not rows:
+        return "<p><em>No coverage changes specified.</em></p>"
+
+    return f"""
+    <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <thead>
+            <tr style="background-color: #f8f9fa; border-bottom: 2px solid #1a365d;">
+                <th style="text-align: left; padding: 10px;">Coverage</th>
+                <th style="text-align: right; padding: 10px;">Previous</th>
+                <th style="text-align: right; padding: 10px;">New</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
+    """
+
+
+def _render_coverage_changes_summary(change_details: dict) -> str:
+    """Render a text summary of coverage changes."""
+    parts = []
+
+    if "aggregate_limit" in change_details:
+        old_val = change_details["aggregate_limit"].get("old", 0)
+        new_val = change_details["aggregate_limit"].get("new", 0)
+        if new_val > old_val:
+            parts.append(f"Aggregate limit increased from {format_limit(old_val)} to {format_limit(new_val)}")
+        else:
+            parts.append(f"Aggregate limit reduced from {format_limit(old_val)} to {format_limit(new_val)}")
+
+    if "retention" in change_details:
+        old_ret = change_details["retention"].get("old", 0)
+        new_ret = change_details["retention"].get("new", 0)
+        parts.append(f"Retention changed from {format_limit(old_ret)} to {format_limit(new_ret)}")
+
+    agg_count = len(change_details.get("aggregate_coverages", {}))
+    sub_count = len(change_details.get("sublimit_coverages", {}))
+    if agg_count + sub_count > 0:
+        parts.append(f"{agg_count + sub_count} individual coverage limit(s) modified")
+
+    return "; ".join(parts) if parts else "Coverage changes as shown below"
 
 
 def _find_endorsement_template(endorsement_type: str, context: dict) -> Optional[dict]:

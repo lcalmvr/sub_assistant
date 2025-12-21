@@ -561,6 +561,42 @@ def _generate_document_number(prefix: str) -> str:
     return f"{prefix}-{year}-{random_suffix}"
 
 
+def link_quote_to_policy(quote_option_id: str, submission_id: str) -> bool:
+    """
+    Mark the quote document for this option as the bound quote.
+
+    When a quote option is bound, we mark its quote document so it appears
+    in the Policy Documents list alongside binders and endorsements.
+
+    Args:
+        quote_option_id: UUID of the bound quote option (insurance_towers)
+        submission_id: UUID of the submission
+
+    Returns:
+        True if a document was marked, False otherwise
+    """
+    with get_conn() as conn:
+        # First, clear any previously bound quote for this submission
+        conn.execute(text("""
+            UPDATE policy_documents
+            SET is_bound_quote = FALSE
+            WHERE submission_id = :submission_id
+            AND is_bound_quote = TRUE
+        """), {"submission_id": submission_id})
+
+        # Mark the quote document(s) for this option as bound
+        result = conn.execute(text("""
+            UPDATE policy_documents
+            SET is_bound_quote = TRUE
+            WHERE quote_option_id = :quote_option_id
+            AND document_type IN ('quote_primary', 'quote_excess')
+            AND status != 'void'
+        """), {"quote_option_id": quote_option_id})
+
+        conn.commit()
+        return result.rowcount > 0
+
+
 def _save_document(
     submission_id: str,
     quote_option_id: str,

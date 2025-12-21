@@ -92,6 +92,16 @@ def bind_option(tower_id: str, bound_by: str = "system") -> bool:
         except Exception:
             pass  # Don't fail bind if binder generation fails
 
+        # Link quote document to policy documents list
+        try:
+            from core.document_generator import link_quote_to_policy
+            link_quote_to_policy(
+                quote_option_id=tower_id,
+                submission_id=str(submission_id)
+            )
+        except Exception:
+            pass  # Don't fail bind if quote linking fails
+
         return result.rowcount > 0
 
 
@@ -320,6 +330,7 @@ def copy_bound_option_to_renewal_with_endorsements(
     from core.endorsement_management import (
         get_effective_policy_state,
         get_endorsements_for_renewal,
+        get_current_coverages,
     )
 
     # Get the bound option from prior submission
@@ -329,6 +340,8 @@ def copy_bound_option_to_renewal_with_endorsements(
 
     # Get effective policy state after endorsements
     state = get_effective_policy_state(from_submission_id)
+    # Get effective coverages after coverage change endorsements
+    effective_coverages = get_current_coverages(from_submission_id)
 
     # Don't carry cancelled policies
     if state.get("is_cancelled", False):
@@ -338,8 +351,25 @@ def copy_bound_option_to_renewal_with_endorsements(
     carryover_endorsements = get_endorsements_for_renewal(from_submission_id)
     carryover_descriptions = [e["description"] for e in carryover_endorsements]
 
+    # Use effective coverages if available (includes mid-term changes)
+    renewal_coverages = effective_coverages if effective_coverages else bound_option.get("coverages")
+
+    # Update tower_json with new aggregate limit if it changed
+    import json
+    import copy
+    tower_json = copy.deepcopy(bound_option["tower_json"])
+    if effective_coverages and "aggregate_limit" in effective_coverages:
+        new_limit = effective_coverages["aggregate_limit"]
+        if tower_json and len(tower_json) > 0:
+            tower_json[0]["limit"] = new_limit
+
+    # Use effective retention if it changed (stored in effective_coverages)
+    renewal_retention = bound_option["primary_retention"]
+    if effective_coverages and "retention" in effective_coverages:
+        renewal_retention = effective_coverages["retention"]
+
     with get_conn() as conn:
-        # Create new tower on renewal submission with effective premium
+        # Create new tower on renewal submission with effective values
         result = conn.execute(text("""
             INSERT INTO insurance_towers (
                 submission_id, quote_name, tower_json, primary_retention,
@@ -356,10 +386,10 @@ def copy_bound_option_to_renewal_with_endorsements(
         """), {
             "submission_id": to_submission_id,
             "quote_name": f"{bound_option['quote_name']} (from prior)",
-            "tower_json": bound_option["tower_json"],
-            "primary_retention": bound_option["primary_retention"],
+            "tower_json": json.dumps(tower_json) if isinstance(tower_json, list) else tower_json,
+            "primary_retention": renewal_retention,
             "sublimits": bound_option["sublimits"],
-            "coverages": bound_option["coverages"],
+            "coverages": json.dumps(renewal_coverages) if isinstance(renewal_coverages, dict) else renewal_coverages,
             "endorsements": bound_option["endorsements"],
             "policy_form": bound_option["policy_form"],
             "position": bound_option["position"],

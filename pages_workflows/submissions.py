@@ -585,6 +585,85 @@ def _render_policy_period_section(sub_id: str):
                 st.rerun()
 
 
+def _render_broker_section(sub_id: str):
+    """Render broker assignment section."""
+    from core.bor_management import get_current_broker, get_all_broker_employments
+    from sqlalchemy import text
+
+    # Get current broker assignment
+    current = get_current_broker(sub_id)
+
+    with st.expander("👤 Broker", expanded=True):
+        if current:
+            # Display current broker
+            display = current.get("broker_name", "Unknown")
+            if current.get("contact_name"):
+                display += f" - {current.get('contact_name')}"
+            if current.get("contact_email"):
+                display += f" ({current.get('contact_email')})"
+
+            st.markdown(f"**{display}**")
+
+            # Edit toggle
+            if st.checkbox("Change broker", key=f"change_broker_{sub_id}"):
+                employments = get_all_broker_employments()
+                if employments:
+                    emp_options = {e["id"]: e["display_name"] for e in employments}
+                    new_emp_id = st.selectbox(
+                        "New Broker",
+                        options=list(emp_options.keys()),
+                        format_func=lambda x: emp_options.get(x, ""),
+                        key=f"new_broker_emp_{sub_id}"
+                    )
+
+                    if st.button("Save", key=f"save_broker_{sub_id}", type="primary"):
+                        # Find selected employment
+                        for emp in employments:
+                            if emp["id"] == new_emp_id:
+                                # Update submission broker fields
+                                conn = get_conn()
+                                with conn.cursor() as cur:
+                                    cur.execute("""
+                                        UPDATE submissions
+                                        SET broker_org_id = %s,
+                                            broker_employment_id = %s,
+                                            updated_at = now()
+                                        WHERE id = %s
+                                    """, (emp["org_id"], emp["id"], sub_id))
+                                st.success("Broker updated")
+                                st.rerun()
+                                break
+        else:
+            # No broker assigned - show selector
+            st.caption("No broker assigned")
+            employments = get_all_broker_employments()
+            if employments:
+                emp_options = {e["id"]: e["display_name"] for e in employments}
+                emp_options[""] = "(Select broker)"
+                selected = st.selectbox(
+                    "Assign Broker",
+                    options=list(emp_options.keys()),
+                    format_func=lambda x: emp_options.get(x, ""),
+                    key=f"assign_broker_{sub_id}"
+                )
+
+                if selected and st.button("Assign", key=f"assign_broker_btn_{sub_id}", type="primary"):
+                    for emp in employments:
+                        if emp["id"] == selected:
+                            conn = get_conn()
+                            with conn.cursor() as cur:
+                                cur.execute("""
+                                    UPDATE submissions
+                                    SET broker_org_id = %s,
+                                        broker_employment_id = %s,
+                                        updated_at = now()
+                                    WHERE id = %s
+                                """, (emp["org_id"], emp["id"], sub_id))
+                            st.success("Broker assigned")
+                            st.rerun()
+                            break
+
+
 # ─────────────────────── UI starts ──────────────────────────
 def render():
     """Main render function for the submissions page"""
@@ -1012,15 +1091,19 @@ def render():
             from pages_components.generate_quote_button import render_generate_quote_button
             from pages_components.tower_db import save_tower, list_quotes_for_submission
             from pages_components.document_actions_panel import render_document_actions
+            from core.bound_option import has_bound_option
             # Bulk coverage buttons are now embedded in coverage panels
 
             # Auto-load quote data when submission changes
             auto_load_quote_for_submission(sub_id)
 
+            # Check if policy is bound - if so, Quote tab is read-only
+            is_bound = has_bound_option(sub_id)
+
             # ─────────────────────────────────────────────────────────────
-            # SAVED QUOTE OPTIONS (Read-Only)
+            # SAVED QUOTE OPTIONS (Read-Only when bound)
             # ─────────────────────────────────────────────────────────────
-            render_quote_options_panel(sub_id)
+            render_quote_options_panel(sub_id, readonly=is_bound)
 
             # Get config from session state (set by quote_options_panel when viewing saved option)
             viewing_saved = is_viewing_saved_option()
@@ -1032,45 +1115,47 @@ def render():
                 "risk_adjusted_premium": None,
             }
 
-            # Sync dropdown values to tower layer 1 (for primary quotes)
-            _sync_dropdowns_to_tower(sub_id)
+            # When bound, the card summaries above are sufficient - skip detail panels
+            if not is_bound:
+                # Sync dropdown values to tower layer 1 (for primary quotes)
+                _sync_dropdowns_to_tower(sub_id)
 
-            # Panel order depends on primary vs excess
-            current_position = get_current_quote_position(sub_id)
-            viewing_quote_id = st.session_state.get("viewing_quote_id")
-            tower_layers = st.session_state.get("tower_layers", [])
+                # Panel order depends on primary vs excess
+                current_position = get_current_quote_position(sub_id)
+                viewing_quote_id = st.session_state.get("viewing_quote_id")
+                tower_layers = st.session_state.get("tower_layers", [])
 
-            if current_position == "excess" and viewing_quote_id:
-                # EXCESS: Tower structure first, then coverage schedule
-                render_tower_panel(sub_id, expanded=True)
-                render_sublimits_panel(sub_id, quote_id=viewing_quote_id, expanded=False)
-            else:
-                # PRIMARY: Coverage panel first, then tower
-                render_coverages_panel(sub_id, expanded=False)
-                tower_expanded = len(tower_layers) > 1
-                render_tower_panel(sub_id, expanded=tower_expanded)
+                if current_position == "excess" and viewing_quote_id:
+                    # EXCESS: Tower structure first, then coverage schedule
+                    render_tower_panel(sub_id, expanded=True, readonly=is_bound)
+                    render_sublimits_panel(sub_id, quote_id=viewing_quote_id, expanded=False)
+                else:
+                    # PRIMARY: Coverage panel first, then tower
+                    render_coverages_panel(sub_id, expanded=False, readonly=is_bound)
+                    tower_expanded = len(tower_layers) > 1
+                    render_tower_panel(sub_id, expanded=tower_expanded, readonly=is_bound)
 
-            # Add coverages to config for quote generation
-            config["coverages"] = get_coverages_for_quote(sub_id)
+                # Add coverages to config for quote generation
+                config["coverages"] = get_coverages_for_quote(sub_id)
 
-            # Endorsements (option-specific - varies by primary/excess/quote)
-            render_endorsements_panel(sub_id, expanded=False)
+                # Endorsements (option-specific - varies by primary/excess/quote)
+                render_endorsements_panel(sub_id, expanded=False)
 
-            # Document Actions (Generate Quote/Binder buttons)
-            st.divider()
-            if viewing_quote_id:
-                render_document_actions(sub_id, viewing_quote_id, position=current_position)
-            else:
-                st.caption("Select or create a quote option above to generate documents.")
+                # Document Actions (Generate Quote/Binder buttons)
+                st.divider()
+                if viewing_quote_id:
+                    render_document_actions(sub_id, viewing_quote_id, position=current_position)
+                else:
+                    st.caption("Select or create a quote option above to generate documents.")
 
-            # ─────────────────────────────────────────────────────────────
-            # SUBMISSION-LEVEL TERMS
-            # ─────────────────────────────────────────────────────────────
-            st.divider()
-            st.markdown("##### Submission Terms")
+                # ─────────────────────────────────────────────────────────────
+                # SUBMISSION-LEVEL TERMS
+                # ─────────────────────────────────────────────────────────────
+                st.divider()
+                st.markdown("##### Submission Terms")
 
-            # Subjectivities (submission-level - shared across options)
-            render_subjectivities_panel(sub_id, expanded=False)
+                # Subjectivities (submission-level - shared across options)
+                render_subjectivities_panel(sub_id, expanded=False)
 
             # ─────────────────────────────────────────────────────────────
             # QUOTE DOCUMENTS (one per option)
@@ -1198,6 +1283,9 @@ def render():
             # ------------------- Policy Period --------------------
             _render_policy_period_section(sub_id)
 
+            # ------------------- Broker --------------------
+            _render_broker_section(sub_id)
+
             # ------------------- Account Matching --------------------
             render_account_matching_panel(sub_id, applicant_name, website)
 
@@ -1259,15 +1347,29 @@ def render():
 
                 st.divider()
 
-                # ------------------- ENDORSEMENTS --------------------
-                render_endorsements_history_panel(sub_id, preloaded_data=policy_data)
-
                 # ------------------- POLICY DOCUMENTS --------------------
                 st.markdown("##### Policy Documents")
 
-                # Filter to only show binders and policy docs (not quotes)
+                # Filter to show binders, policy docs, and bound quotes
                 all_docs = policy_data.get("documents", [])
-                policy_docs = [d for d in all_docs if d.get("document_type") in ("binder", "policy", "endorsement")]
+                policy_docs = [
+                    d for d in all_docs
+                    if d.get("document_type") in ("binder", "policy", "endorsement")
+                    or d.get("is_bound_quote", False)  # Include bound quotes
+                ]
+
+                # Sort: Quote first, then Binder, then Endorsements (by date within type)
+                def doc_sort_key(d):
+                    type_order = {
+                        "quote_primary": 0, "quote_excess": 0,
+                        "binder": 1,
+                        "policy": 2,
+                        "endorsement": 3
+                    }
+                    doc_type = d.get("document_type", "")
+                    return (type_order.get(doc_type, 99), d.get("created_at") or "")
+
+                policy_docs.sort(key=doc_sort_key)
 
                 if policy_docs:
                     for doc in policy_docs:
@@ -1285,11 +1387,17 @@ def render():
                                 st.text(f"{doc_type}: {doc_number}")
                         with col2:
                             st.caption(date_str)
+
+                    # Placeholders for future document types
+                    st.caption("Dec Page — coming soon")
+                    st.caption("Policy Form — coming soon")
                 else:
                     st.caption("No policy documents generated yet.")
-                    # TODO: Add "Generate Binder" button here
 
                 st.divider()
+
+                # ------------------- ENDORSEMENTS --------------------
+                render_endorsements_history_panel(sub_id, preloaded_data=policy_data)
 
                 # ------------------- RENEWAL --------------------
                 st.markdown("##### Renewal")

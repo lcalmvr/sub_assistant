@@ -3,6 +3,8 @@ Coverages Panel for Quote Tab
 
 Inherits coverage configuration from Rating tab and applies option-specific limits.
 Shows the full coverage schedule for PDF generation.
+
+Uses the shared coverage_editor component for rendering.
 """
 from __future__ import annotations
 
@@ -20,16 +22,28 @@ from rating_engine.coverage_config import (
 )
 from pages_components.tower_db import update_quote_field
 from pages_components.bulk_coverage_update import render_bulk_coverage_buttons
+from pages_components.coverage_editor import (
+    render_coverage_editor,
+    render_coverage_summary,
+    reset_coverage_editor,
+)
 
 
 def render_coverages_panel(
     sub_id: str,
     expanded: bool = False,
     saved_coverages: Optional[dict] = None,
+    readonly: bool = False,
 ):
     """
     Render the coverages panel for Quote tab.
     Inherits from Rating tab config, applies option-specific limit.
+
+    Args:
+        sub_id: Submission ID
+        expanded: Whether expander starts expanded
+        saved_coverages: Pre-loaded coverages from database (optional)
+        readonly: If True, render in read-only mode (for post-bind)
     """
     # Get the selected limit for this option
     aggregate_limit = st.session_state.get(f"selected_limit_{sub_id}", 1_000_000)
@@ -54,41 +68,44 @@ def render_coverages_panel(
             _clear_coverage_widget_keys(sub_id)
 
         # Sync widget keys with coverages only when viewing a different quote option
-        # This prevents overwriting user edits while still syncing on option switch
         current_quote_id = st.session_state.get("viewing_quote_id")
         last_synced_quote_key = f"last_synced_quote_{sub_id}"
         last_synced_quote = st.session_state.get(last_synced_quote_key)
 
         if current_quote_id != last_synced_quote:
-            # Option changed - sync widget keys to match loaded coverages
-            _sync_widget_keys_with_coverages(sub_id, coverages, aggregate_limit)
+            # Option changed - reset coverage editor to pick up new values
+            reset_coverage_editor(f"quote_{sub_id}")
             st.session_state[last_synced_quote_key] = current_quote_id
 
-        # Header
-        form_label = _get_form_label(coverages.get("policy_form", "cyber"))
-        st.caption(f"Policy Form: {form_label} · Limit: {format_limit_display(aggregate_limit)}")
+        # Determine mode based on readonly flag
+        mode = "readonly" if readonly else "edit"
 
-        # Two-column layout: Edit tabs on left, Summary on right (same as Rating tab)
-        col_edit, col_summary = st.columns([1, 1])
+        # Check if we're editing a saved quote (for save callback)
+        quote_id = st.session_state.get("viewing_quote_id")
 
-        # Process edit column FIRST to update session state
-        with col_edit:
-            tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
+        def on_coverage_change(updated_coverages: dict):
+            """Callback when coverages change - save to session and DB."""
+            st.session_state[session_key] = updated_coverages
+            if quote_id:
+                update_quote_field(quote_id, "coverages", updated_coverages)
 
-            with tab_var:
-                _render_variable_limits_edit(sub_id, coverages, aggregate_limit)
+        # Use the shared coverage editor component
+        updated_coverages = render_coverage_editor(
+            editor_id=f"quote_{sub_id}",
+            current_coverages=coverages,
+            aggregate_limit=aggregate_limit,
+            mode=mode,
+            on_change=on_coverage_change if not readonly else None,
+            show_header=True,
+        )
 
-            with tab_std:
-                _render_standard_limits_edit(sub_id, coverages, aggregate_limit)
+        # Update session state with any changes
+        st.session_state[session_key] = updated_coverages
 
-        # Then render summary using updated values
-        with col_summary:
-            st.markdown("**Summary**")
-            _render_summary(coverages, aggregate_limit)
-
-            # Bulk update buttons
+        # Bulk update buttons (only in edit mode)
+        if not readonly:
             st.markdown("---")
-            render_bulk_coverage_buttons(sub_id, coverages, "this option")
+            render_bulk_coverage_buttons(sub_id, updated_coverages, "this option")
 
 
 def build_coverages_from_rating(sub_id: str, aggregate_limit: int) -> dict:
@@ -204,414 +221,11 @@ def _clear_coverage_widget_keys(sub_id: str):
     """Clear all coverage-related widget keys so selectboxes use fresh values."""
     keys_to_clear = [k for k in list(st.session_state.keys())
                      if k.startswith(f"quote_sublimit_{sub_id}_")
-                     or k.startswith(f"quote_agg_{sub_id}_")]
+                     or k.startswith(f"quote_agg_{sub_id}_")
+                     or k.startswith(f"cov_edit_quote_{sub_id}_")
+                     or k.startswith(f"cov_diff_quote_{sub_id}_")]
     for k in keys_to_clear:
         del st.session_state[k]
-
-
-def _sync_widget_keys_with_coverages(sub_id: str, coverages: dict, aggregate_limit: int):
-    """
-    Sync widget keys with coverages values.
-    Set widget keys to match coverages so selectboxes show correct values.
-    """
-    sub_values = coverages.get("sublimit_coverages", {})
-    agg_values = coverages.get("aggregate_coverages", {})
-
-    # Variable limits options (must match order in _render_variable_limits_edit)
-    var_options = [100_000, 250_000, 500_000, 1_000_000, aggregate_limit // 2, aggregate_limit, 0]
-
-    # Set sublimit widget keys to correct index
-    for cov in get_sublimit_coverage_definitions():
-        cov_id = cov["id"]
-        widget_key = f"quote_sublimit_{sub_id}_{cov_id}"
-        coverage_val = sub_values.get(cov_id, 0)
-
-        # Find correct index for this coverage value
-        if coverage_val in var_options:
-            correct_idx = var_options.index(coverage_val)
-        elif coverage_val == 0:
-            correct_idx = var_options.index(0)
-        else:
-            correct_idx = 0
-
-        # Set widget key to correct index (will be used by selectbox)
-        st.session_state[widget_key] = correct_idx
-
-    # Standard limits options (must match order in _render_standard_limits_edit)
-    std_options = [aggregate_limit, 1_000_000, 0]
-
-    # Set aggregate widget keys to correct index
-    for cov in get_aggregate_coverage_definitions():
-        cov_id = cov["id"]
-        widget_key = f"quote_agg_{sub_id}_{cov_id}"
-        coverage_val = agg_values.get(cov_id, 0)
-
-        # Find correct index for this coverage value
-        if coverage_val in std_options:
-            correct_idx = std_options.index(coverage_val)
-        elif coverage_val == aggregate_limit:
-            correct_idx = 0
-        elif coverage_val == 0:
-            correct_idx = 2
-        else:
-            correct_idx = 0
-
-        # Set widget key to correct index (will be used by selectbox)
-        st.session_state[widget_key] = correct_idx
-
-
-def _get_form_label(form_id: str) -> str:
-    """Get display label for policy form."""
-    forms = get_policy_forms()
-    for f in forms:
-        if f["id"] == form_id:
-            return f["label"]
-    return form_id
-
-
-def _render_summary(coverages: dict, aggregate_limit: int):
-    """Render summary showing only Sub Limit and No Coverage (Full Limits assumed for rest)."""
-    agg_values = coverages.get("aggregate_coverages", {})
-    sub_values = coverages.get("sublimit_coverages", {})
-
-    # Get coverage definitions for labels
-    agg_defs = {c["id"]: c["label"] for c in get_aggregate_coverage_definitions()}
-    sub_defs = {c["id"]: c["label"] for c in get_sublimit_coverage_definitions()}
-
-    # Group coverages - only track sublimits and no coverage
-    sublimits = []
-    no_coverage = []
-
-    # Process aggregate coverages
-    for cov_id, value in agg_values.items():
-        label = agg_defs.get(cov_id, cov_id)
-        if value == 0:
-            no_coverage.append(label)
-        elif value != aggregate_limit:
-            # Not full limit - it's a sublimit
-            sublimits.append((label, value))
-
-    # Process variable/sublimit coverages
-    for cov_id, value in sub_values.items():
-        label = sub_defs.get(cov_id, cov_id)
-        if value == 0:
-            no_coverage.append(label)
-        elif value != aggregate_limit:
-            # Not full limit - it's a sublimit
-            sublimits.append((label, value))
-
-    # Display only Sub Limit and No Coverage (Full Limits assumed for anything not listed)
-    if sublimits:
-        items = "".join([f"<div>{label} - {format_limit_display(value)}</div>" for label, value in sublimits])
-        st.markdown(f"<div><strong>Sub Limit:</strong>{items}</div>", unsafe_allow_html=True)
-
-    if no_coverage:
-        items = "".join([f"<div>{label}</div>" for label in no_coverage])
-        margin = "margin-top: 1em;" if sublimits else ""
-        st.markdown(f"<div style='{margin}'><strong>No Coverage:</strong>{items}</div>", unsafe_allow_html=True)
-
-    if not sublimits and not no_coverage:
-        st.markdown("_All coverages at Full Limits_")
-
-
-def _render_variable_limits_edit(sub_id: str, coverages: dict, aggregate_limit: int):
-    """Render variable/sublimit coverages edit mode with dropdowns."""
-    session_key = f"quote_coverages_{sub_id}"
-    sub_defs = get_sublimit_coverage_definitions()
-    sub_values = coverages.get("sublimit_coverages", {})
-
-    # Check if we're editing a saved quote
-    quote_id = st.session_state.get("viewing_quote_id")
-
-    # Options for dropdown
-    options = [
-        ("$100K", 100_000),
-        ("$250K", 250_000),
-        ("$500K", 500_000),
-        ("$1M", 1_000_000),
-        ("50% Agg", aggregate_limit // 2),
-        ("Aggregate", aggregate_limit),
-        ("None", 0),
-    ]
-    option_labels = [o[0] for o in options]
-    option_values = [o[1] for o in options]
-
-    for cov in sub_defs:
-        cov_id = cov["id"]
-        label = cov["label"]
-        current_val = sub_values.get(cov_id, 0)
-
-        # Find matching option index
-        if current_val in option_values:
-            idx = option_values.index(current_val)
-        elif current_val == 0:
-            idx = option_values.index(0)
-        else:
-            idx = 0
-
-        new_idx = st.selectbox(
-            label,
-            options=range(len(options)),
-            index=idx,
-            format_func=lambda i: option_labels[i],
-            key=f"quote_sublimit_{sub_id}_{cov_id}",
-        )
-
-        new_val = option_values[new_idx]
-
-        # Update if changed
-        if new_val != current_val:
-            coverages["sublimit_coverages"][cov_id] = new_val
-            st.session_state[session_key] = coverages
-            # Save to database if editing a saved quote
-            if quote_id:
-                update_quote_field(quote_id, "coverages", coverages)
-
-
-def _render_standard_limits_edit(sub_id: str, coverages: dict, aggregate_limit: int):
-    """Render standard/aggregate coverages edit mode with dropdowns."""
-    session_key = f"quote_coverages_{sub_id}"
-    agg_defs = get_aggregate_coverage_definitions()
-    agg_values = coverages.get("aggregate_coverages", {})
-
-    # Check if we're editing a saved quote
-    quote_id = st.session_state.get("viewing_quote_id")
-
-    # Options for edit mode
-    options = [
-        ("Full Limits", aggregate_limit),
-        ("$1M", 1_000_000),
-        ("No Coverage", 0),
-    ]
-    option_labels = [o[0] for o in options]
-    option_values = [o[1] for o in options]
-
-    # Build coverage list - Tech E&O first
-    coverage_list = []
-    for cov in agg_defs:
-        if cov["id"] == "tech_eo":
-            coverage_list.insert(0, cov)
-        else:
-            coverage_list.append(cov)
-
-    for cov in coverage_list:
-        cov_id = cov["id"]
-        label = cov["label"]
-        current_val = agg_values.get(cov_id, 0)
-
-        # Find matching option index
-        if current_val in option_values:
-            idx = option_values.index(current_val)
-        elif current_val == aggregate_limit:
-            idx = 0
-        elif current_val == 0:
-            idx = 2
-        else:
-            idx = 0
-
-        new_idx = st.selectbox(
-            label,
-            options=range(len(options)),
-            index=idx,
-            format_func=lambda i: option_labels[i],
-            key=f"quote_agg_{sub_id}_{cov_id}",
-        )
-
-        new_val = option_values[new_idx]
-
-        # Update if changed
-        if new_val != current_val:
-            coverages["aggregate_coverages"][cov_id] = new_val
-            st.session_state[session_key] = coverages
-            # Save to database if editing a saved quote
-            if quote_id:
-                update_quote_field(quote_id, "coverages", coverages)
-
-
-# Keep old functions for backward compatibility but they're no longer used
-def _render_variable_limits(sub_id: str, coverages: dict, aggregate_limit: int):
-    """Render variable/sublimit coverages - list view with edit toggle."""
-    session_key = f"quote_coverages_{sub_id}"
-    sub_defs = get_sublimit_coverage_definitions()
-    sub_values = coverages.get("sublimit_coverages", {})
-    policy_form = coverages.get("policy_form", "cyber")
-
-    # Edit toggle
-    edit_key = f"edit_quote_sub_{sub_id}"
-    if edit_key not in st.session_state:
-        st.session_state[edit_key] = False
-
-    # Options for edit mode
-    options = [
-        ("$100K", 100_000),
-        ("$250K", 250_000),
-        ("$500K", 500_000),
-        ("$1M", 1_000_000),
-        ("50% Agg", aggregate_limit // 2),
-        ("Aggregate", aggregate_limit),
-        ("None", 0),
-    ]
-    option_labels = [o[0] for o in options]
-    option_values = [o[1] for o in options]
-
-    if not st.session_state[edit_key]:
-        # Edit button
-        if st.button("Edit", key=f"edit_quote_sub_btn_{sub_id}"):
-            st.session_state[edit_key] = True
-            st.rerun()
-
-        # List view - display current values as text
-        for cov in sub_defs:
-            cov_id = cov["id"]
-            label = cov["label"]
-            current_val = sub_values.get(cov_id, 0)
-
-            # Format display value
-            if current_val == 0:
-                display = "None"
-            elif current_val == aggregate_limit:
-                display = "Aggregate"
-            elif current_val == aggregate_limit // 2:
-                display = "50% Agg"
-            else:
-                display = format_limit_display(current_val)
-
-            st.markdown(f"{label}: {display}")
-    else:
-        # Done button
-        if st.button("Done", key=f"done_quote_sub_btn_{sub_id}"):
-            st.session_state[edit_key] = False
-            st.rerun()
-
-        # Edit view with dropdowns
-        for cov in sub_defs:
-            cov_id = cov["id"]
-            label = cov["label"]
-            current_val = sub_values.get(cov_id, 0)
-
-            # Find matching option index
-            if current_val in option_values:
-                idx = option_values.index(current_val)
-            elif current_val == 0:
-                idx = option_values.index(0)  # None
-            else:
-                idx = 0
-
-            new_idx = st.selectbox(
-                label,
-                options=range(len(options)),
-                index=idx,
-                format_func=lambda i: option_labels[i],
-                key=f"quote_sublimit_{sub_id}_{cov_id}",
-            )
-
-            new_val = option_values[new_idx]
-
-            # Update if changed
-            if new_val != current_val:
-                coverages["sublimit_coverages"][cov_id] = new_val
-                st.session_state[session_key] = coverages
-
-
-def _render_standard_limits(sub_id: str, coverages: dict, aggregate_limit: int):
-    """Render standard/aggregate coverages - grouped summary view with edit toggle."""
-    session_key = f"quote_coverages_{sub_id}"
-    agg_defs = get_aggregate_coverage_definitions()
-    agg_values = coverages.get("aggregate_coverages", {})
-
-    # Edit toggle
-    edit_key = f"edit_quote_agg_{sub_id}"
-    if edit_key not in st.session_state:
-        st.session_state[edit_key] = False
-
-    # Options for edit mode
-    options = [
-        ("Full Limits", aggregate_limit),
-        ("$1M", 1_000_000),
-        ("No Coverage", 0),
-    ]
-    option_labels = [o[0] for o in options]
-    option_values = [o[1] for o in options]
-
-    # Build coverage list - Tech E&O first
-    coverage_list = []
-    for cov in agg_defs:
-        if cov["id"] == "tech_eo":
-            coverage_list.insert(0, cov)
-        else:
-            coverage_list.append(cov)
-
-    if not st.session_state[edit_key]:
-        # Edit button
-        if st.button("Edit", key=f"edit_quote_btn_{sub_id}"):
-            st.session_state[edit_key] = True
-            st.rerun()
-
-        # Group coverages by value
-        full_limits = []
-        sublimits = []  # coverages with values between 0 and aggregate
-        no_coverage = []
-
-        for cov in coverage_list:
-            cov_id = cov["id"]
-            label = cov["label"]
-            value = agg_values.get(cov_id, 0)
-
-            if value == 0:
-                no_coverage.append(label)
-            elif value == aggregate_limit:
-                full_limits.append(label)
-            else:
-                sublimits.append((label, value))
-
-        # Display grouped summary (combined to remove spacing)
-        if full_limits:
-            items = "  \n".join(full_limits)
-            st.markdown(f"**Full Limits:**  \n{items}")
-
-        if sublimits:
-            items = "  \n".join([f"{label} - {format_limit_display(value)}" for label, value in sublimits])
-            st.markdown(f"**Sub Limit:**  \n{items}")
-
-        if no_coverage:
-            items = "  \n".join(no_coverage)
-            st.markdown(f"**No Coverage:**  \n{items}")
-    else:
-        # Done button
-        if st.button("Done", key=f"done_quote_btn_{sub_id}"):
-            st.session_state[edit_key] = False
-            st.rerun()
-
-        # Edit view
-        for cov in coverage_list:
-            cov_id = cov["id"]
-            label = cov["label"]
-            current_val = agg_values.get(cov_id, 0)
-
-            # Find matching option
-            if current_val in option_values:
-                idx = option_values.index(current_val)
-            elif current_val == aggregate_limit:
-                idx = 0  # Full Limits
-            elif current_val == 0:
-                idx = 2  # No Coverage
-            else:
-                idx = 0
-
-            new_idx = st.selectbox(
-                label,
-                options=range(len(options)),
-                index=idx,
-                format_func=lambda i: option_labels[i],
-                key=f"quote_agg_{sub_id}_{cov_id}",
-            )
-
-            new_val = option_values[new_idx]
-
-            # Update if changed
-            if new_val != current_val:
-                coverages["aggregate_coverages"][cov_id] = new_val
-                st.session_state[session_key] = coverages
 
 
 # ─────────────────────── Export for Quote Generation ───────────────────────

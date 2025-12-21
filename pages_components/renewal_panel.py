@@ -53,6 +53,9 @@ def render_renewal_panel(submission_id: str):
     else:
         expander_title = "🔄 Renewal Info"
 
+    # Check if policy is actually bound (has a bound tower)
+    is_bound = has_bound_option(submission_id)
+
     with st.expander(expander_title, expanded=False):
         # Show renewal chain if exists
         if chain and len(chain) > 1:
@@ -65,8 +68,11 @@ def render_renewal_panel(submission_id: str):
         # Show renewal actions based on status
         if current_status == "renewal_expected":
             _render_renewal_expected_actions(submission_id)
-        elif current_outcome == "bound":
+        elif is_bound or current_outcome == "bound":
             _render_create_renewal_section(submission_id)
+        else:
+            # For unbound submissions, show a message
+            st.caption("Bind the policy to enable renewal management.")
 
 
 def _render_policy_dates_section(submission_id: str):

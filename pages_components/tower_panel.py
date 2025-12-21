@@ -152,7 +152,7 @@ def _recalculate_all(layers: list) -> None:
 
 # ─────────────────────── Main Render Function ───────────────────────
 
-def render_tower_panel(sub_id: str, expanded: bool = True, position: str = None):
+def render_tower_panel(sub_id: str, expanded: bool = True, position: str = None, readonly: bool = False):
     """
     Render the insurance tower panel.
 
@@ -163,6 +163,7 @@ def render_tower_panel(sub_id: str, expanded: bool = True, position: str = None)
         sub_id: Submission ID
         expanded: Whether to expand the tower section by default
         position: "primary" or "excess" - if None, will detect from current quote
+        readonly: If True, render in read-only mode (for post-bind state)
     """
     # Detect position if not provided
     if position is None:
@@ -181,53 +182,59 @@ def render_tower_panel(sub_id: str, expanded: bool = True, position: str = None)
 
     # Use different rendering for excess vs primary
     if position == "excess":
-        _render_excess_tower_panel(sub_id, expanded)
+        _render_excess_tower_panel(sub_id, expanded, readonly=readonly)
     else:
-        _render_primary_tower_panel(sub_id, expanded)
+        _render_primary_tower_panel(sub_id, expanded, readonly=readonly)
 
 
-def _render_primary_tower_panel(sub_id: str, expanded: bool = True):
-    """Render tower panel for primary quotes - simple card-based editing."""
+def _render_primary_tower_panel(sub_id: str, expanded: bool = True, readonly: bool = False):
+    """Render tower panel for primary quotes - simple card-based editing or read-only display."""
     with st.expander("🏗️ Insurance Tower", expanded=expanded):
-        # Action buttons row
-        col_add, col_bulk, col_clear, col_spacer = st.columns([1, 1, 1, 1])
+        if readonly:
+            # Read-only mode: just display the tower structure
+            _render_tower_cards_readonly()
+            _render_tower_summary()
+        else:
+            # Edit mode: full functionality
+            # Action buttons row
+            col_add, col_bulk, col_clear, col_spacer = st.columns([1, 1, 1, 1])
 
-        with col_add:
-            if st.button("+ Add Layer", key="tower_add_layer_btn", use_container_width=True):
-                st.session_state.adding_new_layer = True
-                st.session_state.editing_layer_idx = None
-                st.rerun()
+            with col_add:
+                if st.button("+ Add Layer", key="tower_add_layer_btn", use_container_width=True):
+                    st.session_state.adding_new_layer = True
+                    st.session_state.editing_layer_idx = None
+                    st.rerun()
 
-        with col_bulk:
-            if st.button("Bulk Add", key="tower_bulk_btn", use_container_width=True):
-                st.session_state.show_bulk_add_dialog = True
+            with col_bulk:
+                if st.button("Bulk Add", key="tower_bulk_btn", use_container_width=True):
+                    st.session_state.show_bulk_add_dialog = True
 
-        with col_clear:
-            if st.button("Clear", key="tower_clear_btn", use_container_width=True):
-                st.session_state.tower_layers = []
-                st.session_state.primary_retention = None
-                st.session_state.editing_layer_idx = None
-                st.session_state.adding_new_layer = False
-                st.rerun()
+            with col_clear:
+                if st.button("Clear", key="tower_clear_btn", use_container_width=True):
+                    st.session_state.tower_layers = []
+                    st.session_state.primary_retention = None
+                    st.session_state.editing_layer_idx = None
+                    st.session_state.adding_new_layer = False
+                    st.rerun()
 
-        # Show bulk add dialog if triggered
-        if st.session_state.get("show_bulk_add_dialog"):
-            _render_bulk_add_dialog()
+            # Show bulk add dialog if triggered
+            if st.session_state.get("show_bulk_add_dialog"):
+                _render_bulk_add_dialog()
 
-        # Show layer card if adding or editing
-        if st.session_state.adding_new_layer:
-            _render_new_layer_card()
-        elif st.session_state.editing_layer_idx is not None:
-            _render_edit_layer_card(st.session_state.editing_layer_idx)
+            # Show layer card if adding or editing
+            if st.session_state.adding_new_layer:
+                _render_new_layer_card()
+            elif st.session_state.editing_layer_idx is not None:
+                _render_edit_layer_card(st.session_state.editing_layer_idx)
 
-        # Tower Cards (responsive, click to edit)
-        _render_tower_cards()
+            # Tower Cards (responsive, click to edit)
+            _render_tower_cards()
 
-        # Tower Summary
-        _render_tower_summary()
+            # Tower Summary
+            _render_tower_summary()
 
 
-def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
+def _render_excess_tower_panel(sub_id: str, expanded: bool = True, readonly: bool = False):
     """
     Render structured excess tower panel.
 
@@ -261,6 +268,11 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True):
 
         # Calculate our attachment from underlying layers
         underlying_total = sum(layer.get("limit", 0) for _, layer in underlying_layers)
+
+        if readonly:
+            # Read-only mode: simplified display
+            _render_excess_tower_readonly(cmai_layer, underlying_layers, underlying_total)
+            return
 
         # ─────────────────────────────────────────────────────
         # HEADER BAR - Toggle and Add button
@@ -1386,6 +1398,110 @@ def _render_tower_cards():
                 st.session_state.editing_layer_idx = idx
                 st.session_state.adding_new_layer = False
                 st.rerun()
+
+
+def _render_tower_cards_readonly():
+    """Render tower layers as read-only display cards (no editing)."""
+    layers = st.session_state.tower_layers
+
+    if not layers:
+        st.caption("No layers in tower.")
+        return
+
+    st.markdown("---")
+
+    # Render each layer as a simple display
+    for idx, layer in enumerate(layers):
+        is_primary = idx == 0
+        carrier = layer.get("carrier", "Unknown")
+        limit = layer.get("limit", 0)
+        premium = layer.get("premium")
+        rpm = layer.get("rpm")
+        ilf = layer.get("ilf")
+
+        # Determine attachment or retention display
+        if is_primary:
+            retention = layer.get("retention") or st.session_state.get("primary_retention", 0)
+            attach_ret_text = f"{_format_amount(retention)} ret" if retention else ""
+        else:
+            attachment = layer.get("attachment", 0)
+            attach_ret_text = f"xs {_format_amount(attachment)}" if attachment else ""
+
+        # Build display strings
+        limit_text = f"{_format_amount(limit)} limit" if limit else ""
+        premium_text = f"{_format_currency(premium)}" if premium else "—"
+
+        # Primary line: limit · retention/attachment · premium
+        primary_parts = [p for p in [limit_text, attach_ret_text, premium_text] if p and p != "—"]
+        primary_line = " · ".join(primary_parts) if primary_parts else "No details"
+
+        # Secondary line: RPM · ILF
+        secondary_parts = []
+        if rpm:
+            secondary_parts.append(f"RPM: {_format_currency(rpm)}")
+        if ilf:
+            secondary_parts.append(f"ILF: {ilf}")
+        secondary_line = " · ".join(secondary_parts) if secondary_parts else ""
+
+        # Check if this is CMAI layer for special styling
+        is_cmai = "CMAI" in carrier.upper() if carrier else False
+        badge = " 🔵" if is_cmai else ""
+
+        # Display as markdown (no button/interaction)
+        with st.container():
+            st.markdown(f"**#{idx + 1} · {carrier}{badge}**")
+            st.markdown(f"{primary_line}")
+            if secondary_line:
+                st.caption(secondary_line)
+            st.markdown("---")
+
+
+def _render_excess_tower_readonly(cmai_layer: dict, underlying_layers: list, underlying_total: float):
+    """Render excess tower structure in read-only mode."""
+    # Our Layer (CMAI)
+    st.markdown("##### Our Layer")
+    if cmai_layer:
+        cmai_limit = cmai_layer.get("limit", 0)
+        cmai_premium = cmai_layer.get("premium")
+
+        limit_display = f"${cmai_limit / 1_000_000:.0f}M" if cmai_limit >= 1_000_000 else f"${cmai_limit / 1_000:.0f}K"
+        attach_display = f"xs ${underlying_total / 1_000_000:.0f}M" if underlying_total >= 1_000_000 else f"xs ${underlying_total / 1_000:.0f}K"
+        premium_display = f"${cmai_premium:,.0f}" if cmai_premium else "—"
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Limit", limit_display)
+        with col2:
+            st.metric("Attachment", attach_display)
+        with col3:
+            st.metric("Premium", premium_display)
+    else:
+        st.caption("No CMAI layer defined.")
+
+    st.markdown("---")
+
+    # Underlying Program
+    st.markdown("##### Underlying Program")
+    if not underlying_layers:
+        st.caption("No underlying layers defined.")
+    else:
+        for idx, layer in reversed(underlying_layers):
+            carrier = layer.get("carrier", "Unknown")
+            limit = layer.get("limit", 0)
+            attachment = layer.get("attachment", 0)
+            retention = layer.get("retention")
+            premium = layer.get("premium")
+
+            limit_str = f"${limit / 1_000_000:.0f}M" if limit >= 1_000_000 else f"${limit / 1_000:.0f}K"
+
+            if idx == 0:  # Primary layer
+                attach_str = f"${retention / 1_000:.0f}K ret" if retention else "—"
+            else:
+                attach_str = f"xs ${attachment / 1_000_000:.0f}M" if attachment >= 1_000_000 else f"xs ${attachment / 1_000:.0f}K"
+
+            premium_str = f"${premium:,.0f}" if premium else "—"
+
+            st.markdown(f"**{carrier}**: {limit_str} {attach_str} · {premium_str}")
 
 
 def _render_tower_summary():

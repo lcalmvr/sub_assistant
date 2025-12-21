@@ -601,6 +601,50 @@ def get_broker_contacts(broker_id: str) -> list[dict]:
         ]
 
 
+def get_all_broker_employments() -> list[dict]:
+    """
+    Get all broker employments as a flat list for dropdown selection.
+
+    Returns list of dicts with employment details including org name,
+    suitable for a single searchable dropdown.
+
+    Returns:
+        List of dicts with id, display_name, org_id, org_name, person_name, email
+    """
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            SELECT
+                e.employment_id,
+                o.org_id,
+                o.name as org_name,
+                p.first_name,
+                p.last_name,
+                e.email
+            FROM brkr_employments e
+            JOIN brkr_organizations o ON e.org_id = o.org_id
+            JOIN brkr_people p ON e.person_id = p.person_id
+            WHERE e.active = TRUE
+            ORDER BY o.name, p.last_name, p.first_name
+        """))
+
+        results = []
+        for row in result.fetchall():
+            emp_id, org_id, org_name, first, last, email = row
+            person_name = f"{first} {last}"
+            display = f"{org_name} - {person_name}"
+            if email:
+                display += f" ({email})"
+            results.append({
+                "id": str(emp_id),
+                "org_id": str(org_id),
+                "org_name": org_name,
+                "person_name": person_name,
+                "email": email,
+                "display_name": display,
+            })
+        return results
+
+
 def build_bor_change_details(
     previous_broker_id: str,
     previous_broker_name: str,

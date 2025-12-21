@@ -189,7 +189,8 @@ def load_policy_tab_data(submission_id: str) -> dict:
                 pd.id, pd.document_type, pd.document_number, pd.pdf_url,
                 pd.version, pd.status, pd.created_by, pd.created_at,
                 pd.document_json->>'display_name' as display_name,
-                pd.document_json->>'quote_name' as quote_name
+                pd.document_json->>'quote_name' as quote_name,
+                COALESCE(pd.is_bound_quote, FALSE) as is_bound_quote
             FROM policy_documents pd
             WHERE pd.submission_id = :submission_id
             ORDER BY pd.created_at DESC
@@ -208,6 +209,7 @@ def load_policy_tab_data(submission_id: str) -> dict:
                 "created_at": drow[7],
                 "display_name": drow[8] or "",
                 "quote_name": drow[9],
+                "is_bound_quote": drow[10],
                 "type_label": DOCUMENT_TYPES.get(drow[1], {}).get("label", drow[1]),
             })
 
