@@ -678,8 +678,8 @@ def _render_new_endorsement_form(
             key=f"new_end_desc_{submission_id}"
         )
 
-    # Premium section - not applicable for BOR endorsements
-    no_premium_types = {"bor_change"}
+    # Premium section - not applicable for BOR or cancellation (handled in type-specific fields)
+    no_premium_types = {"bor_change", "cancellation"}
     base_premium = float(bound.get("sold_premium") or 0)
     days_rem = None
     premium_change = 0.0
@@ -813,6 +813,11 @@ def _render_new_endorsement_form(
 
         try:
             tower_id = bound["id"]
+
+            # For cancellation, use the calculated return premium from the type fields
+            if endorsement_type == "cancellation":
+                premium_change = st.session_state.get(f"_cancel_premium_{submission_id}", 0.0)
+                premium_method = change_details.get("return_premium_method", "flat")
 
             endorsement_id = create_endorsement(
                 submission_id=submission_id,
@@ -1660,43 +1665,56 @@ def _render_erp_fields(change_details: dict, submission_id: str):
 
 
 def _render_cancellation_fields(change_details: dict, submission_id: str):
-    """Render cancellation endorsement form fields."""
-    from datetime import timedelta
+    """Render cancellation endorsement form fields with integrated premium calculation."""
+    from core.bound_option import get_bound_option
 
-    st.markdown("**Cancellation Details**")
+    # Get bound policy data for premium calculation
+    bound = get_bound_option(submission_id) or {}
+    annual_premium = float(bound.get("sold_premium") or 0)
+
+    # Get policy dates for pro-rata calculation
+    from sqlalchemy import text
+    from core.db import get_conn
+    exp_date = None
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            SELECT expiration_date FROM submissions WHERE id = :sid
+        """), {"sid": submission_id})
+        row = result.fetchone()
+        if row:
+            exp_date = row[0]
 
     # Reason dropdown
     reason_options = [
-        ("insured_request", "Insured Request", 0),
-        ("non_payment", "Non-Payment", 10),
-        ("underwriting", "Underwriting", 30),
-        ("other", "Other", 0),
+        ("insured_request", "Insured Request"),
+        ("non_payment", "Non-Payment"),
+        ("underwriting", "Underwriting"),
+        ("other", "Other"),
     ]
-    reason_keys = [r[0] for r in reason_options]
-    reason_labels = {r[0]: r[1] for r in reason_options}
-    notice_days = {r[0]: r[2] for r in reason_options}
 
-    reason = st.selectbox(
-        "Cancellation Reason *",
-        options=reason_keys,
-        format_func=lambda x: reason_labels[x],
-        key=f"cancel_reason_{submission_id}"
-    )
-    change_details["cancellation_reason"] = reason
-
-    # Reason details for specifics
-    if reason in ["underwriting", "other"]:
-        reason_detail = st.text_input(
-            "Reason Details",
-            placeholder="Provide additional details...",
-            key=f"cancel_reason_detail_{submission_id}"
+    col1, col2 = st.columns(2)
+    with col1:
+        reason = st.selectbox(
+            "Reason *",
+            options=[r[0] for r in reason_options],
+            format_func=lambda x: dict(reason_options)[x],
+            key=f"cancel_reason_{submission_id}"
         )
-        change_details["reason_details"] = reason_detail
+        change_details["cancellation_reason"] = reason
 
-    # Outstanding balance for non-payment
+    # Reason details for underwriting/other
+    if reason in ["underwriting", "other"]:
+        with col2:
+            reason_detail = st.text_input(
+                "Details",
+                placeholder="Specify reason...",
+                key=f"cancel_reason_detail_{submission_id}"
+            )
+            change_details["reason_details"] = reason_detail
+
+    # Outstanding balance for non-payment (inline)
     if reason == "non_payment":
-        col1, col2 = st.columns(2)
-        with col1:
+        with col2:
             outstanding = st.number_input(
                 "Outstanding Balance",
                 value=0.0,
@@ -1705,69 +1723,85 @@ def _render_cancellation_fields(change_details: dict, submission_id: str):
                 key=f"cancel_outstanding_{submission_id}"
             )
             change_details["outstanding_balance"] = outstanding
-        with col2:
-            last_payment = st.date_input(
-                "Last Payment Date (optional)",
-                value=None,
-                key=f"cancel_last_payment_{submission_id}"
-            )
-            if last_payment:
-                change_details["last_payment_date"] = last_payment.isoformat()
 
-    # Notice section
-    st.markdown("**Notice**")
-    required_notice = notice_days.get(reason, 0)
-    if required_notice > 0:
-        st.caption(f"Required notice period: {required_notice} days")
+    # Return premium section
+    st.markdown("---")
+    st.markdown("**Return Premium**")
+
+    return_method_options = [
+        ("pro_rata", "Pro-Rata"),
+        ("short_rate", "Short-Rate"),
+        ("flat", "Flat/Override"),
+    ]
 
     col1, col2 = st.columns(2)
     with col1:
-        notice_sent = st.date_input(
-            "Notice Sent Date (optional)",
-            value=None,
-            key=f"cancel_notice_sent_{submission_id}"
+        return_method = st.selectbox(
+            "Calculation Method",
+            options=[r[0] for r in return_method_options],
+            format_func=lambda x: dict(return_method_options)[x],
+            key=f"cancel_return_method_{submission_id}"
         )
-        if notice_sent:
-            change_details["notice_sent_date"] = notice_sent.isoformat()
-            # Calculate earliest effective date
-            earliest_effective = notice_sent + timedelta(days=required_notice)
-            change_details["earliest_effective_date"] = earliest_effective.isoformat()
-            if required_notice > 0:
-                st.caption(f"Earliest effective: {earliest_effective.strftime('%m/%d/%Y')}")
+        change_details["return_premium_method"] = return_method
 
-    # Return premium method
-    st.markdown("**Return Premium Calculation**")
-    return_method_options = [
-        ("pro_rata", "Pro-Rata (days remaining ÷ 365)"),
-        ("short_rate", "Short-Rate (pro-rata minus penalty)"),
-        ("flat", "Flat Amount"),
-    ]
-    return_method_keys = [r[0] for r in return_method_options]
-    return_method_labels = {r[0]: r[1] for r in return_method_options}
+    # Calculate days remaining from effective date (stored in session state by main form)
+    effective_date = st.session_state.get(f"new_end_date_{submission_id}")
+    days_remaining = 0
+    if effective_date and exp_date:
+        from datetime import date
+        if isinstance(effective_date, date) and isinstance(exp_date, date):
+            days_remaining = (exp_date - effective_date).days
+            if days_remaining < 0:
+                days_remaining = 0
 
-    return_method = st.selectbox(
-        "Return Method",
-        options=return_method_keys,
-        format_func=lambda x: return_method_labels[x],
-        key=f"cancel_return_method_{submission_id}"
-    )
-    change_details["return_premium_method"] = return_method
+    # Calculate return premium based on method
+    return_premium = 0.0
+    penalty_pct = 0.0
 
-    # Short-rate penalty percentage
-    if return_method == "short_rate":
-        penalty_pct = st.number_input(
-            "Penalty Percentage",
-            value=10.0,
-            min_value=0.0,
-            max_value=50.0,
-            step=5.0,
-            help="Percentage deducted from pro-rata return (e.g., 10% penalty)",
-            key=f"cancel_penalty_pct_{submission_id}"
-        )
-        change_details["short_rate_penalty_pct"] = penalty_pct
+    if return_method == "pro_rata":
+        if days_remaining > 0 and annual_premium > 0:
+            return_premium = (days_remaining / 365) * annual_premium
+        with col2:
+            st.caption(f"Days remaining: {days_remaining}")
+            st.caption(f"Annual premium: ${annual_premium:,.0f}")
 
-    st.info("**Note:** Premium return amount is entered in the Premium section below. "
-            "The cancellation effective date will become the new policy expiration date.")
+    elif return_method == "short_rate":
+        with col2:
+            penalty_pct = st.number_input(
+                "Penalty %",
+                value=10.0,
+                min_value=0.0,
+                max_value=50.0,
+                step=5.0,
+                key=f"cancel_penalty_pct_{submission_id}"
+            )
+            change_details["short_rate_penalty_pct"] = penalty_pct
+        if days_remaining > 0 and annual_premium > 0:
+            pro_rata = (days_remaining / 365) * annual_premium
+            return_premium = pro_rata * (1 - penalty_pct / 100)
+
+    elif return_method == "flat":
+        with col2:
+            return_premium = st.number_input(
+                "Return Amount",
+                value=0.0,
+                min_value=0.0,
+                step=100.0,
+                key=f"cancel_flat_return_{submission_id}"
+            )
+
+    # Show calculated return premium
+    if return_method in ["pro_rata", "short_rate"] and return_premium > 0:
+        if return_method == "short_rate":
+            st.success(f"**Return Premium: ${return_premium:,.0f}** (pro-rata ${(days_remaining/365)*annual_premium:,.0f} minus {penalty_pct:.0f}% penalty)")
+        else:
+            st.success(f"**Return Premium: ${return_premium:,.0f}** ({days_remaining} days ÷ 365 × ${annual_premium:,.0f})")
+    elif return_method == "flat" and return_premium > 0:
+        st.success(f"**Return Premium: ${return_premium:,.0f}**")
+
+    # Store return premium as negative for the endorsement
+    change_details["calculated_return_premium"] = -return_premium
+    st.session_state[f"_cancel_premium_{submission_id}"] = -return_premium
 
 
 def _render_address_change_fields(change_details: dict, submission_id: str, key_prefix: str = ""):
