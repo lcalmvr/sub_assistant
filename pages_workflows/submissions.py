@@ -1219,88 +1219,114 @@ def render():
             # Load all policy tab data in ONE database call (replaces 11+ queries)
             policy_data = load_policy_tab_data(sub_id)
 
-            # ------------------- Broker Assignment --------------------
-            with st.expander("🤝 Broker Assignment", expanded=True):
-                _disable_autofill()
+            # ------------------- Broker Assignment (display-only, edit on demand) --------------------
+            broker_employments = policy_data.get("broker_employments", [])
+            submission_data = policy_data.get("submission", {})
+            broker_email = submission_data.get("broker_email")
+            broker_employment_id = submission_data.get("broker_employment_id")
 
-                broker_employments = policy_data.get("broker_employments", [])
-                submission_data = policy_data.get("submission", {})
-                broker_email = submission_data.get("broker_email")
-                broker_employment_id = submission_data.get("broker_employment_id")
+            if broker_employments:
+                def _fmt_addr(l1, l2, city, state, pc):
+                    parts = [l1]
+                    if l2:
+                        parts.append(l2)
+                    city_state = ", ".join([p for p in [city, state] if p])
+                    tail = " ".join([p for p in [city_state, pc] if p]).strip()
+                    if tail:
+                        parts.append(tail)
+                    return ", ".join([p for p in parts if p]) or "—"
 
-                if broker_employments:
-                    def _fmt_addr(l1, l2, city, state, pc):
-                        parts = [l1]
-                        if l2:
-                            parts.append(l2)
-                        city_state = ", ".join([p for p in [city, state] if p])
-                        tail = " ".join([p for p in [city_state, pc] if p]).strip()
-                        if tail:
-                            parts.append(tail)
-                        return ", ".join([p for p in parts if p]) or "—"
+                # Build broker lookup
+                emp_map = {}
+                for emp in broker_employments:
+                    eid = emp["employment_id"]
+                    fn = emp.get("first_name", "")
+                    ln = emp.get("last_name", "")
+                    org_name = emp.get("org_name", "")
+                    label = f"{fn.strip()} {ln.strip()} — {org_name} — {_fmt_addr(emp['line1'], emp['line2'], emp['city'], emp['state'], emp['postal_code'])}"
+                    emp_map[eid] = {
+                        "label": label,
+                        "email": emp.get("email"),
+                        "person_id": emp.get("person_id"),
+                        "org_id": emp.get("org_id")
+                    }
 
-                    emp_map = {}
-                    for emp in broker_employments:
-                        eid = emp["employment_id"]
-                        fn = emp.get("first_name", "")
-                        ln = emp.get("last_name", "")
-                        org_name = emp.get("org_name", "")
-                        label = f"{fn.strip()} {ln.strip()} — {org_name} — {_fmt_addr(emp['line1'], emp['line2'], emp['city'], emp['state'], emp['postal_code'])}"
-                        emp_map[eid] = {
-                            "label": label,
-                            "email": emp.get("email"),
-                            "person_id": emp.get("person_id"),
-                            "org_id": emp.get("org_id")
-                        }
+                # Find current broker
+                current_broker_label = None
+                current_emp_id = None
+                if broker_employment_id and str(broker_employment_id) in emp_map:
+                    current_emp_id = str(broker_employment_id)
+                    current_broker_label = emp_map[current_emp_id]["label"]
+                elif broker_email:
+                    for k, v in emp_map.items():
+                        if (v.get("email") or "").lower() == str(broker_email).lower():
+                            current_emp_id = k
+                            current_broker_label = v["label"]
+                            break
+                    if not current_broker_label:
+                        current_broker_label = broker_email  # Fallback to email if no match
 
+                # Display mode vs Edit mode
+                editing_broker = st.session_state.get(f"editing_broker_{sub_id}", False)
+
+                if not editing_broker:
+                    # Display-only mode
+                    col1, col2 = st.columns([6, 1])
+                    with col1:
+                        if current_broker_label:
+                            st.markdown(f"**Broker:** {current_broker_label}")
+                        else:
+                            st.markdown("**Broker:** *Not assigned*")
+                    with col2:
+                        if st.button("Edit", key=f"edit_broker_{sub_id}"):
+                            st.session_state[f"editing_broker_{sub_id}"] = True
+                            st.rerun()
+                else:
+                    # Edit mode
+                    _disable_autofill()
                     options = [""] + list(emp_map.keys())
-                    default_emp = None
-                    if broker_employment_id and str(broker_employment_id) in emp_map:
-                        default_emp = str(broker_employment_id)
-                    elif broker_email:
-                        for k, v in emp_map.items():
-                            if (v.get("email") or "").lower() == str(broker_email).lower():
-                                default_emp = k
-                                break
 
                     sel_emp = st.selectbox(
-                        "Broker Employment",
+                        "Broker",
                         options=options,
                         format_func=lambda x: ("— Select —" if x == "" else emp_map.get(x, {}).get("label", x)),
-                        index=(options.index(default_emp) if default_emp in options else 0),
+                        index=(options.index(current_emp_id) if current_emp_id in options else 0),
                         key=f"broker_emp_select_policy_{sub_id}"
                     )
-                    _harden_selectbox_no_autofill("Broker Employment")
+                    _harden_selectbox_no_autofill("Broker")
 
-                    if st.button("Save Broker", key=f"save_broker_emp_policy_{sub_id}"):
-                        try:
-                            if not sel_emp:
-                                st.error("Please select a broker employment record.")
-                                st.stop()
-                            chosen = emp_map.get(sel_emp) or {}
-                            chosen_email = chosen.get("email")
-                            chosen_org = chosen.get("org_id")
-                            chosen_person = chosen.get("person_id")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Save", key=f"save_broker_emp_policy_{sub_id}", type="primary"):
+                            try:
+                                if not sel_emp:
+                                    st.error("Please select a broker.")
+                                    st.stop()
+                                chosen = emp_map.get(sel_emp) or {}
 
-                            # Update broker assignment
-                            conn = get_conn()
-                            with conn.cursor() as cur:
-                                cur.execute(
-                                    """
-                                    UPDATE submissions
-                                    SET broker_email = %s, broker_org_id = %s,
-                                        broker_employment_id = %s, broker_person_id = %s
-                                    WHERE id = %s
-                                    """,
-                                    (chosen_email, chosen_org, sel_emp, chosen_person, sub_id),
-                                )
+                                conn = get_conn()
+                                with conn.cursor() as cur:
+                                    cur.execute(
+                                        """
+                                        UPDATE submissions
+                                        SET broker_email = %s, broker_org_id = %s,
+                                            broker_employment_id = %s, broker_person_id = %s
+                                        WHERE id = %s
+                                        """,
+                                        (chosen.get("email"), chosen.get("org_id"), sel_emp, chosen.get("person_id"), sub_id),
+                                    )
 
-                            st.success("Broker assignment saved.")
+                                st.session_state[f"editing_broker_{sub_id}"] = False
+                                st.success("Broker saved.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                    with col2:
+                        if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
+                            st.session_state[f"editing_broker_{sub_id}"] = False
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"Error saving broker: {e}")
-                else:
-                    st.warning("Broker directory tables (brkr_*) not found. Please set up the broker directory in the database.")
+            else:
+                st.caption("Broker directory not configured.")
 
             # ------------------- Generated Documents --------------------
             from pages_components.document_history_panel import render_document_history_panel
