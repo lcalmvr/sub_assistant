@@ -1209,9 +1209,6 @@ def render():
             # ------------------- Account Matching --------------------
             render_account_matching_panel(sub_id, applicant_name, website)
 
-            # ------------------- Renewal Info --------------------
-            render_renewal_panel(sub_id)
-
         # =================== POLICY TAB ===================
         with tab_policy:
             # Load all policy tab data in ONE database call
