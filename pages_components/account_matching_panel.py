@@ -51,6 +51,10 @@ def _render_linked_account(submission_id: str, account: dict):
             st.markdown(f"**Name:** {account['name']}")
             if account.get("website"):
                 st.markdown(f"**Website:** {account['website']}")
+            # Address display
+            address_display = account_mgmt.format_account_address(account)
+            if address_display:
+                st.markdown(f"**Address:** {address_display}")
 
         with col2:
             if account.get("industry"):
@@ -132,6 +136,17 @@ def _render_account_matching(submission_id: str, applicant_name: str, website: O
             new_name = st.text_input("Account Name", value=applicant_name)
             new_website = st.text_input("Website", value=website or "")
             new_industry = st.text_input("Industry", value="")
+
+            # Address fields
+            st.markdown("**Address**")
+            addr_col1, addr_col2 = st.columns(2)
+            with addr_col1:
+                new_street = st.text_input("Street", value="")
+                new_city = st.text_input("City", value="")
+            with addr_col2:
+                new_state = st.text_input("State", value="", max_chars=2, placeholder="e.g., CA")
+                new_zip = st.text_input("ZIP", value="", max_chars=10)
+
             new_notes = st.text_area("Notes", value="", placeholder="Optional notes about this account...")
 
             if st.form_submit_button("Create & Link Account", type="primary"):
@@ -145,6 +160,15 @@ def _render_account_matching(submission_id: str, applicant_name: str, website: O
                             industry=new_industry.strip() if new_industry.strip() else None,
                             notes=new_notes.strip() if new_notes.strip() else None
                         )
+                        # Update address if provided
+                        if any([new_street.strip(), new_city.strip(), new_state.strip(), new_zip.strip()]):
+                            account_mgmt.update_account_address(
+                                account_id=account["id"],
+                                street=new_street.strip() if new_street.strip() else None,
+                                city=new_city.strip() if new_city.strip() else None,
+                                state=new_state.strip().upper() if new_state.strip() else None,
+                                zip_code=new_zip.strip() if new_zip.strip() else None,
+                            )
                         account_mgmt.link_submission_to_account(submission_id, account["id"])
                         st.success(f"Created and linked to account: {account['name']}")
                         st.rerun()
