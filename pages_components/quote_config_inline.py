@@ -45,22 +45,15 @@ def render_quote_config_inline(sub_id: str, get_conn_func) -> dict:
 
     Returns dict with selected values for use by other components.
     """
-    # Standard options
-    limit_options = [
-        ("$1M", 1_000_000),
-        ("$2M", 2_000_000),
-        ("$3M", 3_000_000),
-        ("$5M", 5_000_000),
-    ]
+    # Use shared limit/retention options from coverage_config
+    from rating_engine.coverage_config import (
+        get_aggregate_limit_options,
+        get_retention_options,
+        get_limit_index,
+    )
 
-    retention_options = [
-        ("$10K", 10_000),
-        ("$25K", 25_000),
-        ("$50K", 50_000),
-        ("$100K", 100_000),
-        ("$250K", 250_000),
-        ("$500K", 500_000),
-    ]
+    limit_options = get_aggregate_limit_options()
+    retention_options = get_retention_options()
 
     # Check if a quote was just loaded - use its values for dropdowns
     loaded_limit = st.session_state.pop("_loaded_quote_limit", None)
@@ -79,16 +72,12 @@ def render_quote_config_inline(sub_id: str, get_conn_func) -> dict:
     else:
         current_retention = st.session_state.get(f"selected_retention_{sub_id}", 25_000)
 
-    # Find default indices
-    limit_labels = [opt[0] for opt in limit_options]
-    retention_labels = [opt[0] for opt in retention_options]
+    # Find default indices using shared helper
+    limit_labels = [label for _, label in limit_options]
+    retention_labels = [label for _, label in retention_options]
 
-    limit_default_idx = next(
-        (i for i, opt in enumerate(limit_options) if opt[1] == current_limit), 1
-    )
-    retention_default_idx = next(
-        (i for i, opt in enumerate(retention_options) if opt[1] == current_retention), 1
-    )
+    limit_default_idx = get_limit_index(current_limit, limit_options, default=1)
+    retention_default_idx = get_limit_index(current_retention, retention_options, default=1)
 
     # Layout: Limit | Retention | Premium
     col_limit, col_retention, col_premium = st.columns([1, 1, 1])
@@ -100,7 +89,7 @@ def render_quote_config_inline(sub_id: str, get_conn_func) -> dict:
             index=limit_default_idx,
             key=f"inline_limit_{sub_id}"
         )
-        selected_limit = dict(limit_options)[selected_limit_label]
+        selected_limit = dict((label, val) for val, label in limit_options)[selected_limit_label]
         st.session_state[f"selected_limit_{sub_id}"] = selected_limit
 
     with col_retention:
@@ -110,7 +99,7 @@ def render_quote_config_inline(sub_id: str, get_conn_func) -> dict:
             index=retention_default_idx,
             key=f"inline_retention_{sub_id}"
         )
-        selected_retention = dict(retention_options)[selected_retention_label]
+        selected_retention = dict((label, val) for val, label in retention_options)[selected_retention_label]
         st.session_state[f"selected_retention_{sub_id}"] = selected_retention
 
     with col_premium:

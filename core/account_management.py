@@ -93,7 +93,9 @@ def get_account(account_id: str) -> Optional[dict]:
     """
     with get_conn() as conn:
         result = conn.execute(text("""
-            SELECT id, name, normalized_name, website, industry, naics_code, naics_title, notes, created_at, updated_at
+            SELECT id, name, normalized_name, website, industry, naics_code, naics_title, notes,
+                   address_street, address_street2, address_city, address_state, address_zip, address_country,
+                   created_at, updated_at
             FROM accounts
             WHERE id = :account_id
         """), {"account_id": account_id})
@@ -111,8 +113,14 @@ def get_account(account_id: str) -> Optional[dict]:
             "naics_code": row[5],
             "naics_title": row[6],
             "notes": row[7],
-            "created_at": row[8],
-            "updated_at": row[9]
+            "address_street": row[8],
+            "address_street2": row[9],
+            "address_city": row[10],
+            "address_state": row[11],
+            "address_zip": row[12],
+            "address_country": row[13] or "US",
+            "created_at": row[14],
+            "updated_at": row[15]
         }
 
 
@@ -332,7 +340,9 @@ def get_submission_account(submission_id: str) -> Optional[dict]:
     with get_conn() as conn:
         result = conn.execute(text("""
             SELECT a.id, a.name, a.normalized_name, a.website, a.industry,
-                   a.naics_code, a.naics_title, a.notes, a.created_at, a.updated_at
+                   a.naics_code, a.naics_title, a.notes,
+                   a.address_street, a.address_street2, a.address_city, a.address_state, a.address_zip, a.address_country,
+                   a.created_at, a.updated_at
             FROM accounts a
             JOIN submissions s ON s.account_id = a.id
             WHERE s.id = :submission_id
@@ -351,8 +361,14 @@ def get_submission_account(submission_id: str) -> Optional[dict]:
             "naics_code": row[5],
             "naics_title": row[6],
             "notes": row[7],
-            "created_at": row[8],
-            "updated_at": row[9]
+            "address_street": row[8],
+            "address_street2": row[9],
+            "address_city": row[10],
+            "address_state": row[11],
+            "address_zip": row[12],
+            "address_country": row[13] or "US",
+            "created_at": row[14],
+            "updated_at": row[15]
         }
 
 
@@ -468,3 +484,128 @@ def create_account_from_submission(submission_id: str) -> dict:
     link_submission_to_account(submission_id, account["id"])
 
     return account
+
+
+def update_account_address(
+    account_id: str,
+    street: Optional[str] = None,
+    street2: Optional[str] = None,
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    zip_code: Optional[str] = None,
+    country: Optional[str] = None
+) -> bool:
+    """
+    Update account address fields.
+
+    Args:
+        account_id: UUID of the account
+        street: Primary street address
+        street2: Suite/unit (optional)
+        city: City name
+        state: State code (e.g., CA, NY)
+        zip_code: ZIP/postal code
+        country: Country code (defaults to US)
+
+    Returns:
+        True if successful
+    """
+    updates = []
+    params = {"account_id": account_id}
+
+    if street is not None:
+        updates.append("address_street = :street")
+        params["street"] = street
+    if street2 is not None:
+        updates.append("address_street2 = :street2")
+        params["street2"] = street2
+    if city is not None:
+        updates.append("address_city = :city")
+        params["city"] = city
+    if state is not None:
+        updates.append("address_state = :state")
+        params["state"] = state
+    if zip_code is not None:
+        updates.append("address_zip = :zip_code")
+        params["zip_code"] = zip_code
+    if country is not None:
+        updates.append("address_country = :country")
+        params["country"] = country
+
+    if not updates:
+        return False
+
+    with get_conn() as conn:
+        result = conn.execute(text(f"""
+            UPDATE accounts
+            SET {", ".join(updates)}
+            WHERE id = :account_id
+        """), params)
+        conn.commit()
+        return result.rowcount > 0
+
+
+def format_account_address(account: dict) -> str:
+    """
+    Format account address as a single display string.
+
+    Args:
+        account: Account dict with address fields
+
+    Returns:
+        Formatted address string like "123 Main St, Suite 100, Boston, MA 02101"
+    """
+    if not account:
+        return ""
+
+    parts = []
+
+    street = account.get("address_street")
+    if street:
+        parts.append(street)
+
+    street2 = account.get("address_street2")
+    if street2:
+        parts.append(street2)
+
+    city = account.get("address_city", "")
+    state = account.get("address_state", "")
+    zip_code = account.get("address_zip", "")
+
+    city_state_zip = []
+    if city:
+        city_state_zip.append(city)
+    if state:
+        city_state_zip.append(state)
+
+    if city_state_zip:
+        csz = ", ".join(city_state_zip)
+        if zip_code:
+            csz += f" {zip_code}"
+        parts.append(csz)
+    elif zip_code:
+        parts.append(zip_code)
+
+    return ", ".join(parts) if parts else ""
+
+
+def get_account_address_dict(account: dict) -> dict:
+    """
+    Extract address fields from account into a clean dict.
+
+    Args:
+        account: Account dict with address fields
+
+    Returns:
+        Dict with street, street2, city, state, zip keys
+    """
+    if not account:
+        return {}
+
+    return {
+        "street": account.get("address_street", "") or "",
+        "street2": account.get("address_street2", "") or "",
+        "city": account.get("address_city", "") or "",
+        "state": account.get("address_state", "") or "",
+        "zip": account.get("address_zip", "") or "",
+    }

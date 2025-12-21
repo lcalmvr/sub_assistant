@@ -50,6 +50,65 @@ def get_sublimit_options() -> list[int]:
     return config["sublimit_options"]
 
 
+# Standard aggregate limit options for policy-level limits
+AGGREGATE_LIMIT_OPTIONS = [
+    (1_000_000, "$1M"),
+    (2_000_000, "$2M"),
+    (3_000_000, "$3M"),
+    (5_000_000, "$5M"),
+    (10_000_000, "$10M"),
+]
+
+# Standard retention options
+RETENTION_OPTIONS = [
+    (25_000, "$25K"),
+    (50_000, "$50K"),
+    (100_000, "$100K"),
+    (150_000, "$150K"),
+    (250_000, "$250K"),
+    (500_000, "$500K"),
+]
+
+
+def get_aggregate_limit_options() -> list[tuple[int, str]]:
+    """
+    Get standard aggregate limit dropdown options.
+
+    Returns:
+        List of tuples (value, label) e.g., [(1000000, "$1M"), (2000000, "$2M"), ...]
+    """
+    return AGGREGATE_LIMIT_OPTIONS
+
+
+def get_retention_options() -> list[tuple[int, str]]:
+    """
+    Get standard retention dropdown options.
+
+    Returns:
+        List of tuples (value, label) e.g., [(25000, "$25K"), (50000, "$50K"), ...]
+    """
+    return RETENTION_OPTIONS
+
+
+def get_limit_index(value: int, options: list[tuple[int, str]], default: int = 1) -> int:
+    """
+    Find the index of a limit value in an options list.
+
+    Args:
+        value: The limit value to find
+        options: List of (value, label) tuples
+        default: Default index if value not found
+
+    Returns:
+        Index of the matching option, or default if not found
+    """
+    values = [v for v, _ in options]
+    try:
+        return values.index(value)
+    except ValueError:
+        return default
+
+
 def get_aggregate_coverage_definitions() -> list[dict]:
     """
     Get raw aggregate coverage definitions from config.

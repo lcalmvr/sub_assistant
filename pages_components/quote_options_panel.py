@@ -54,22 +54,32 @@ def _parse_currency(val) -> float:
         return None
 
 
-def render_quote_options_panel(sub_id: str):
+def render_quote_options_panel(sub_id: str, readonly: bool = False):
     """
     Render saved quote options as a dropdown selector with action buttons.
 
     Args:
         sub_id: Submission ID
+        readonly: If True, render in read-only mode (for post-bind state)
     """
     if not sub_id:
         st.warning("No submission selected.")
         return
 
+    # Check if policy is bound - if so, force readonly mode
+    bound_option = get_bound_option(sub_id)
+    is_bound = bound_option is not None
+    if is_bound:
+        readonly = True
+
     # Get all saved quote options for this submission
     all_quotes = list_quotes_for_submission(sub_id)
 
-    # Add Primary/Excess option buttons
-    _render_add_option_buttons(sub_id, all_quotes)
+    # Add Primary/Excess option buttons (hidden when readonly)
+    if not readonly:
+        _render_add_option_buttons(sub_id, all_quotes)
+    else:
+        st.info("📋 Policy is bound. Quote options are read-only for reference.")
 
     if not all_quotes:
         st.caption("No saved options yet. Use the buttons above to create your first quote option.")
@@ -117,72 +127,90 @@ def render_quote_options_panel(sub_id: str):
             _view_quote(default_quote_id)
             viewing_quote_id = default_quote_id
 
-    # Layout: Dropdown | Bind | Clone | Delete
-    col_select, col_bind, col_clone, col_delete = st.columns([4, 1, 1, 1])
+    # Layout depends on readonly mode
+    if readonly:
+        # Post-bind: Show card summaries instead of dropdown
+        _render_bound_quote_cards(sub_id, all_quotes, bound_option, viewing_quote_id)
 
-    with col_select:
-        # Build options list with IDs (no empty placeholder needed now)
-        option_ids = list(quote_options.keys())
-        option_labels = [quote_options[qid]["label"] for qid in quote_options.keys()]
+        # Override toggle - only show if user wants to switch options
+        if st.checkbox("Override: View different option", key=f"override_bound_{sub_id}", help="Switch to a different quote option for reference"):
+            st.warning("⚠️ Viewing a different option. The bound option remains unchanged.")
+            selected_id = st.selectbox(
+                "Select option to view",
+                options=list(quote_options.keys()),
+                format_func=lambda x: quote_options[x]["label"] if x in quote_options else x,
+                index=list(quote_options.keys()).index(viewing_quote_id) if viewing_quote_id and viewing_quote_id in quote_options else 0,
+                key="saved_quote_selector_override",
+            )
+            if selected_id and selected_id != viewing_quote_id:
+                _view_quote(selected_id)
+    else:
+        # Full edit mode: Dropdown | Bind | Clone | Delete
+        col_select, col_bind, col_clone, col_delete = st.columns([4, 1, 1, 1])
 
-        # Find current index
-        default_idx = 0
-        if viewing_quote_id and viewing_quote_id in quote_options:
-            default_idx = option_ids.index(viewing_quote_id)
+        with col_select:
+            # Build options list with IDs (no empty placeholder needed now)
+            option_ids = list(quote_options.keys())
+            option_labels = [quote_options[qid]["label"] for qid in quote_options.keys()]
 
-        selected_id = st.selectbox(
-            f"Saved Quote Options ({len(all_quotes)})",
-            options=option_ids,
-            format_func=lambda x: option_labels[option_ids.index(x)] if x in option_ids else x,
-            index=default_idx,
-            key="saved_quote_selector",
-        )
+            # Find current index
+            default_idx = 0
+            if viewing_quote_id and viewing_quote_id in quote_options:
+                default_idx = option_ids.index(viewing_quote_id)
 
-        # Auto-load when selection changes
-        if selected_id and selected_id != viewing_quote_id:
-            _view_quote(selected_id)
+            selected_id = st.selectbox(
+                f"Saved Quote Options ({len(all_quotes)})",
+                options=option_ids,
+                format_func=lambda x: option_labels[option_ids.index(x)] if x in option_ids else x,
+                index=default_idx,
+                key="saved_quote_selector",
+            )
 
-    with col_bind:
-        st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
-        bind_disabled = not viewing_quote_id
+            # Auto-load when selection changes
+            if selected_id and selected_id != viewing_quote_id:
+                _view_quote(selected_id)
 
-        # Check if currently viewing option is bound
-        is_currently_bound = False
-        if viewing_quote_id and viewing_quote_id in quote_options:
-            is_currently_bound = quote_options[viewing_quote_id]["is_bound"]
+        with col_bind:
+            st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
+            bind_disabled = not viewing_quote_id
 
-        if is_currently_bound:
-            # Show unbind button
-            if st.button("Unbind", key="unbind_selected_btn", use_container_width=True, disabled=bind_disabled):
+            # Check if currently viewing option is bound
+            is_currently_bound = False
+            if viewing_quote_id and viewing_quote_id in quote_options:
+                is_currently_bound = quote_options[viewing_quote_id]["is_bound"]
+
+            if is_currently_bound:
+                # Show unbind button
+                if st.button("Unbind", key="unbind_selected_btn", use_container_width=True, disabled=bind_disabled):
+                    if viewing_quote_id:
+                        unbind_option(viewing_quote_id)
+                        st.success("Option unbound")
+                        st.rerun()
+            else:
+                # Show bind button
+                if st.button("Bind", key="bind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
+                    if viewing_quote_id:
+                        bind_option(viewing_quote_id, bound_by="user")
+                        st.success("Option bound!")
+                        st.rerun()
+
+        with col_clone:
+            st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
+            clone_disabled = not viewing_quote_id
+            if st.button("Clone", key="clone_selected_btn", use_container_width=True, disabled=clone_disabled):
                 if viewing_quote_id:
-                    unbind_option(viewing_quote_id)
-                    st.success("Option unbound")
-                    st.rerun()
-        else:
-            # Show bind button
-            if st.button("Bind", key="bind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
+                    _clone_quote_to_draft(viewing_quote_id, sub_id, all_quotes)
+
+        with col_delete:
+            st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
+            delete_disabled = not viewing_quote_id
+            if st.button("Delete", key="delete_selected_btn", use_container_width=True, disabled=delete_disabled):
                 if viewing_quote_id:
-                    bind_option(viewing_quote_id, bound_by="user")
-                    st.success("Option bound!")
-                    st.rerun()
+                    _delete_quote(viewing_quote_id, viewing_quote_id)
 
-    with col_clone:
-        st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
-        clone_disabled = not viewing_quote_id
-        if st.button("Clone", key="clone_selected_btn", use_container_width=True, disabled=clone_disabled):
-            if viewing_quote_id:
-                _clone_quote_to_draft(viewing_quote_id, sub_id, all_quotes)
-
-    with col_delete:
-        st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
-        delete_disabled = not viewing_quote_id
-        if st.button("Delete", key="delete_selected_btn", use_container_width=True, disabled=delete_disabled):
-            if viewing_quote_id:
-                _delete_quote(viewing_quote_id, viewing_quote_id)
-
-    # Show premium summary when viewing a quote
-    if viewing_quote_id:
-        _render_premium_summary(viewing_quote_id)
+    # Show premium summary when viewing a quote (skip when bound - card has the info)
+    if viewing_quote_id and not readonly:
+        _render_premium_summary(viewing_quote_id, readonly=readonly)
 
 
 def _update_quote_limit_retention(quote_id: str, quote_data: dict, new_limit: int, new_retention: int):
@@ -296,7 +324,7 @@ def _save_calculated_premiums(quote_id: str, technical_premium: float, risk_adju
         pass  # Silent fail - premiums will just recalculate on next load
 
 
-def _render_premium_summary(quote_id: str, sub_id: str = None):
+def _render_premium_summary(quote_id: str, sub_id: str = None, readonly: bool = False):
     """
     Render premium summary - handles both primary and excess quotes.
 
@@ -307,6 +335,11 @@ def _render_premium_summary(quote_id: str, sub_id: str = None):
     For EXCESS quotes:
       - Primary Pricing Analysis: Technical/Risk-Adjusted based on primary's limit
       - Market Adj compares primary's actual premium to our model
+
+    Args:
+        quote_id: The quote ID to render
+        sub_id: Optional submission ID
+        readonly: If True, render in read-only mode (for post-bind state)
     """
     quote_data = get_quote_by_id(quote_id)
     if not quote_data:
@@ -323,10 +356,10 @@ def _render_premium_summary(quote_id: str, sub_id: str = None):
     if is_excess:
         _render_excess_premium_summary(quote_id, quote_data, tower_json, current_retention, sub_id)
     else:
-        _render_primary_premium_summary(quote_id, quote_data, tower_json, current_retention, sub_id)
+        _render_primary_premium_summary(quote_id, quote_data, tower_json, current_retention, sub_id, readonly=readonly)
 
 
-def _render_primary_premium_summary(quote_id: str, quote_data: dict, tower_json: list, current_retention: int, sub_id: str):
+def _render_primary_premium_summary(quote_id: str, quote_data: dict, tower_json: list, current_retention: int, sub_id: str, readonly: bool = False):
     """Render premium summary for primary quotes."""
     # Get sold premium from DB
     sold_premium = quote_data.get("sold_premium") or quote_data.get("quoted_premium")
@@ -356,7 +389,7 @@ def _render_primary_premium_summary(quote_id: str, quote_data: dict, tower_json:
         market_adjustment = sold_premium - risk_adjusted_premium
 
     # ROW 1: Limit | Retention | Sold Premium
-    _render_primary_premium_row1(quote_id, quote_data, tower_json, current_limit, current_retention, sold_premium)
+    _render_primary_premium_row1(quote_id, quote_data, tower_json, current_limit, current_retention, sold_premium, readonly=readonly)
 
     # ROW 2: Technical | Risk-Adjusted | Market Adjustment
     col_tech, col_risk, col_mkt = st.columns([1, 1, 1])
@@ -481,64 +514,69 @@ def _render_excess_premium_summary(quote_id: str, quote_data: dict, tower_json: 
             )
 
 
-def _render_primary_premium_row1(quote_id: str, quote_data: dict, tower_json: list, current_limit: int, current_retention: int, sold_premium: float):
-    """Render row 1 for primary quotes - editable limit/retention dropdowns."""
-    # Standard options for dropdowns
-    limit_options = [
-        ("$1M", 1_000_000),
-        ("$2M", 2_000_000),
-        ("$3M", 3_000_000),
-        ("$5M", 5_000_000),
-    ]
-    retention_options = [
-        ("$10K", 10_000),
-        ("$25K", 25_000),
-        ("$50K", 50_000),
-        ("$100K", 100_000),
-        ("$250K", 250_000),
-        ("$500K", 500_000),
-    ]
-
+def _render_primary_premium_row1(quote_id: str, quote_data: dict, tower_json: list, current_limit: int, current_retention: int, sold_premium: float, readonly: bool = False):
+    """Render row 1 for primary quotes - editable limit/retention dropdowns or read-only display."""
     col_limit, col_ret, col_sold = st.columns([1, 1, 1])
 
-    with col_limit:
-        limit_labels = [opt[0] for opt in limit_options]
-        limit_values = {opt[0]: opt[1] for opt in limit_options}
-        limit_default_idx = next(
-            (i for i, opt in enumerate(limit_options) if opt[1] == current_limit), 1
-        )
-        selected_limit_label = st.selectbox(
-            "Limit",
-            options=limit_labels,
-            index=limit_default_idx,
-            key=f"view_limit_{quote_id}",
-        )
-        selected_limit = limit_values[selected_limit_label]
+    if readonly:
+        # Read-only mode: display values as metrics
+        with col_limit:
+            limit_display = f"${current_limit / 1_000_000:.0f}M" if current_limit >= 1_000_000 else f"${current_limit / 1_000:.0f}K"
+            st.metric("Limit", limit_display)
 
-        # Auto-save limit change
-        if selected_limit != current_limit:
-            _update_quote_limit_retention(quote_id, quote_data, selected_limit, current_retention)
+        with col_ret:
+            ret_display = f"${current_retention / 1_000:.0f}K" if current_retention >= 1_000 else f"${current_retention:,.0f}"
+            st.metric("Retention", ret_display)
 
-    with col_ret:
-        retention_labels = [opt[0] for opt in retention_options]
-        retention_values = {opt[0]: opt[1] for opt in retention_options}
-        retention_default_idx = next(
-            (i for i, opt in enumerate(retention_options) if opt[1] == current_retention), 1
+        with col_sold:
+            sold_display = f"${sold_premium:,.0f}" if sold_premium else "—"
+            st.metric("Sold Premium", sold_display)
+    else:
+        # Edit mode: dropdowns and input
+        # Use shared limit/retention options from coverage_config
+        from rating_engine.coverage_config import (
+            get_aggregate_limit_options,
+            get_retention_options,
+            get_limit_index,
         )
-        selected_retention_label = st.selectbox(
-            "Retention",
-            options=retention_labels,
-            index=retention_default_idx,
-            key=f"view_retention_{quote_id}",
-        )
-        selected_retention = retention_values[selected_retention_label]
 
-        # Auto-save retention change
-        if selected_retention != current_retention:
-            _update_quote_limit_retention(quote_id, quote_data, current_limit, selected_retention)
+        limit_options = get_aggregate_limit_options()
+        retention_options = get_retention_options()
 
-    with col_sold:
-        _render_sold_premium_input(quote_id, sold_premium)
+        with col_limit:
+            limit_labels = [label for _, label in limit_options]
+            limit_values = {label: val for val, label in limit_options}
+            limit_default_idx = get_limit_index(current_limit, limit_options, default=1)
+            selected_limit_label = st.selectbox(
+                "Limit",
+                options=limit_labels,
+                index=limit_default_idx,
+                key=f"view_limit_{quote_id}",
+            )
+            selected_limit = limit_values[selected_limit_label]
+
+            # Auto-save limit change
+            if selected_limit != current_limit:
+                _update_quote_limit_retention(quote_id, quote_data, selected_limit, current_retention)
+
+        with col_ret:
+            retention_labels = [label for _, label in retention_options]
+            retention_values = {label: val for val, label in retention_options}
+            retention_default_idx = get_limit_index(current_retention, retention_options, default=1)
+            selected_retention_label = st.selectbox(
+                "Retention",
+                options=retention_labels,
+                index=retention_default_idx,
+                key=f"view_retention_{quote_id}",
+            )
+            selected_retention = retention_values[selected_retention_label]
+
+            # Auto-save retention change
+            if selected_retention != current_retention:
+                _update_quote_limit_retention(quote_id, quote_data, current_limit, selected_retention)
+
+        with col_sold:
+            _render_sold_premium_input(quote_id, sold_premium)
 
 
 def _render_sold_premium_input(quote_id: str, sold_premium: float):
@@ -725,6 +763,107 @@ def clear_draft_state():
     st.session_state.draft_quote_name = None
     st.session_state.viewing_quote_id = None
     st.session_state._viewing_saved_option = False
+
+
+# ─────────────────────── Bound Quote Cards ───────────────────────
+
+def _render_bound_quote_cards(sub_id: str, all_quotes: list, bound_option: dict, viewing_quote_id: str):
+    """
+    Render quote options as clean card summaries when policy is bound.
+
+    Shows:
+    - Bound option prominently with text summary
+    - Other options as simple cards
+    - Coverages and endorsements in expanders
+    """
+    from rating_engine.coverage_config import get_coverage_label
+    from pages_components.tower_db import get_quote_by_id
+
+    bound_option_id = bound_option.get("id") if bound_option else None
+
+    # Get full quote data for bound option
+    bound_quote_data = None
+    other_quotes = []
+
+    for quote in all_quotes:
+        if quote["id"] == bound_option_id:
+            bound_quote_data = quote
+        else:
+            other_quotes.append(quote)
+
+    # Helper to format currency for plain text (no escaping needed)
+    def fmt(val):
+        if val is None:
+            return "—"
+        if val >= 1_000_000:
+            return f"${val / 1_000_000:.0f}M"
+        elif val >= 1_000:
+            return f"${val / 1_000:.0f}K"
+        return f"${val:,.0f}"
+
+    # Helper to sanitize quote names (remove $ that cause LaTeX issues)
+    def safe_name(name):
+        return name.replace("$", "").replace("  ", " ") if name else "Option"
+
+    # Helper to render coverages/endorsements
+    def render_details(coverages, endorsements):
+        agg_cov = coverages.get("aggregate_coverages", {}) if coverages else {}
+        sub_cov = coverages.get("sublimit_coverages", {}) if coverages else {}
+
+        if agg_cov or sub_cov:
+            with st.expander("Coverages"):
+                cov_lines = []
+                for cov_id, val in agg_cov.items():
+                    if val and val > 0:
+                        label = get_coverage_label(cov_id)
+                        cov_lines.append(f"{label}: {fmt(val)}")
+                for cov_id, val in sub_cov.items():
+                    if val and val > 0:
+                        label = get_coverage_label(cov_id)
+                        cov_lines.append(f"{label}: {fmt(val)} (sublimit)")
+                st.text("\n".join(cov_lines) if cov_lines else "No coverages defined")
+
+        if endorsements:
+            with st.expander("Endorsements"):
+                if isinstance(endorsements, list):
+                    st.text("\n".join(endorsements))
+                elif isinstance(endorsements, dict):
+                    st.text("\n".join(endorsements.keys()))
+
+    # Render bound option as prominent card
+    if bound_quote_data:
+        tower_json = bound_option.get("tower_json") or []
+        limit = tower_json[0].get("limit", 0) if tower_json else 0
+        retention = bound_option.get("primary_retention", 0)
+        premium = bound_option.get("sold_premium", 0)
+        position = (bound_option.get("position") or "primary").title()
+        policy_form = bound_option.get("policy_form") or "—"
+        coverages = bound_option.get("coverages") or {}
+        endorsements = bound_option.get("endorsements") or []
+
+        with st.container(border=True):
+            st.text(f"✓ {safe_name(bound_quote_data.get('quote_name'))} — BOUND")
+            st.text(f"{fmt(limit)} limit · {fmt(retention)} retention · {fmt(premium)} premium")
+            st.caption(f"{position} · {policy_form}")
+            render_details(coverages, endorsements)
+
+    # Show other options as cards with details
+    if other_quotes:
+        st.caption(f"{len(other_quotes)} other option(s) quoted:")
+        for quote in other_quotes:
+            quote_id = quote.get("id")
+            quote_name = quote.get("quote_name", "Option")
+            sold_premium = quote.get("sold_premium", 0)
+
+            # Fetch full quote data for coverages/endorsements
+            full_quote = get_quote_by_id(quote_id) if quote_id else {}
+            coverages = full_quote.get("coverages") if full_quote else {}
+            endorsements = full_quote.get("endorsements") if full_quote else []
+
+            with st.container(border=True):
+                st.text(safe_name(quote_name))
+                st.caption(f"{fmt(sold_premium)} premium")
+                render_details(coverages, endorsements)
 
 
 # ─────────────────────── Add Option Buttons ───────────────────────

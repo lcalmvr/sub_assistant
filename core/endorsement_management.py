@@ -305,6 +305,18 @@ def issue_endorsement(endorsement_id: str, issued_by: str = "system") -> bool:
                     "new_expiration": new_expiration,
                 })
 
+                # Also update any pending renewal's effective date
+                # The renewal's inception = the prior policy's expiration
+                conn.execute(text("""
+                    UPDATE submissions
+                    SET effective_date = :new_effective
+                    WHERE prior_submission_id = :submission_id
+                    AND submission_status IN ('renewal_expected', 'open', 'quoted')
+                """), {
+                    "submission_id": submission_id,
+                    "new_effective": new_expiration,
+                })
+
         # Apply BOR change effects - update broker history and submission
         if endorsement_type == "bor_change":
             from core.bor_management import process_bor_issuance
@@ -324,7 +336,151 @@ def issue_endorsement(endorsement_id: str, issued_by: str = "system") -> bool:
                     issued_by=issued_by
                 )
 
+        # Apply address change effects - update account address
+        if endorsement_type == "address_change":
+            _apply_address_change(submission_id, change_details)
+
+        # Apply cancellation effects - update expiration date to cancellation date
+        if endorsement_type == "cancellation":
+            _apply_cancellation(conn, endorsement_id, submission_id)
+
+        # Apply reinstatement effects - undo cancellation
+        if endorsement_type == "reinstatement":
+            _apply_reinstatement(conn, submission_id)
+
+        # Apply name change effects - update applicant_name
+        if endorsement_type == "name_change":
+            _apply_name_change(conn, submission_id, change_details)
+
         return True
+
+
+def _apply_address_change(submission_id: str, change_details: dict):
+    """
+    Apply address change to the account when endorsement is issued.
+
+    Updates the account's address fields with the new address from the endorsement.
+    This ensures the change persists to renewal.
+    """
+    from core.account_management import update_account_address, get_submission_account
+
+    # Get account_id - either from change_details or by looking up
+    account_id = change_details.get("account_id")
+    if not account_id:
+        account = get_submission_account(submission_id)
+        if account:
+            account_id = account.get("id")
+
+    if not account_id:
+        # No account linked - can't persist address change
+        return
+
+    # Get new address from change_details
+    new_address = change_details.get("new_address", {})
+    if not new_address:
+        return
+
+    # Update the account's address
+    update_account_address(
+        account_id=account_id,
+        street=new_address.get("street"),
+        street2=new_address.get("street2"),
+        city=new_address.get("city"),
+        state=new_address.get("state"),
+        zip_code=new_address.get("zip"),
+    )
+
+
+def _apply_cancellation(conn, endorsement_id: str, submission_id: str):
+    """
+    Apply cancellation effects when endorsement is issued.
+
+    - Updates the submission's expiration_date to the cancellation effective date
+    - Stores original expiration in data_sources for reference
+    - Marks the policy as cancelled
+    """
+    # Get the cancellation effective date from the endorsement
+    result = conn.execute(text("""
+        SELECT effective_date FROM policy_endorsements WHERE id = :endorsement_id
+    """), {"endorsement_id": endorsement_id})
+    row = result.fetchone()
+    if not row or not row[0]:
+        return
+
+    cancellation_date = row[0]
+
+    # Update submission: set expiration to cancellation date, mark as cancelled
+    conn.execute(text("""
+        UPDATE submissions
+        SET expiration_date = :cancellation_date,
+            data_sources = COALESCE(data_sources, '{}'::jsonb) ||
+                jsonb_build_object(
+                    'cancelled', true,
+                    'cancellation_date', :cancellation_date_str,
+                    'original_expiration', expiration_date::text
+                )
+        WHERE id = :submission_id
+    """), {
+        "submission_id": submission_id,
+        "cancellation_date": cancellation_date,
+        "cancellation_date_str": cancellation_date.isoformat() if hasattr(cancellation_date, 'isoformat') else str(cancellation_date),
+    })
+
+
+def _apply_reinstatement(conn, submission_id: str):
+    """
+    Apply reinstatement effects - undo a cancellation.
+
+    - Restores original expiration date
+    - Removes cancelled flag from data_sources
+    """
+    # Get the original expiration from data_sources
+    result = conn.execute(text("""
+        SELECT data_sources->>'original_expiration' as original_exp
+        FROM submissions
+        WHERE id = :submission_id
+    """), {"submission_id": submission_id})
+    row = result.fetchone()
+
+    if row and row[0]:
+        original_expiration = row[0]
+        # Restore expiration and remove cancelled flag
+        conn.execute(text("""
+            UPDATE submissions
+            SET expiration_date = :original_expiration::date,
+                data_sources = data_sources - 'cancelled' - 'cancellation_date'
+            WHERE id = :submission_id
+        """), {
+            "submission_id": submission_id,
+            "original_expiration": original_expiration,
+        })
+    else:
+        # No original expiration stored, just remove cancelled flag
+        conn.execute(text("""
+            UPDATE submissions
+            SET data_sources = data_sources - 'cancelled' - 'cancellation_date'
+            WHERE id = :submission_id
+        """), {"submission_id": submission_id})
+
+
+def _apply_name_change(conn, submission_id: str, change_details: dict):
+    """
+    Apply name change effects - update applicant_name.
+
+    Updates the submission's applicant_name to the new name so it carries to renewal.
+    """
+    new_name = change_details.get("new_name")
+    if not new_name:
+        return
+
+    conn.execute(text("""
+        UPDATE submissions
+        SET applicant_name = :new_name
+        WHERE id = :submission_id
+    """), {
+        "submission_id": submission_id,
+        "new_name": new_name,
+    })
 
 
 def void_endorsement(endorsement_id: str, reason: str, voided_by: str = "system") -> bool:
@@ -694,3 +850,171 @@ def _row_to_dict(row) -> dict:
         "document_url": row[24] if len(row) > 24 else None,
         "type_label": ENDORSEMENT_TYPES.get(row[4], {}).get("label", row[4]),
     }
+
+
+# ─────────────────────── Computed Policy State ───────────────────────
+
+
+def get_current_coverages(submission_id: str) -> Optional[dict]:
+    """
+    Compute current coverage state by layering all issued coverage change
+    endorsements on top of the bound option's coverages.
+
+    Returns:
+        dict with structure:
+        {
+            "policy_form": "cyber",
+            "aggregate_limit": 5000000,
+            "aggregate_coverages": {...},
+            "sublimit_coverages": {...},
+            "changes_applied": [
+                {"endorsement_id": "...", "description": "...", "effective_date": "..."}
+            ]
+        }
+        or None if no bound option exists
+    """
+    from core.bound_option import get_bound_option
+    import copy
+
+    # Get bound option coverages as base
+    bound = get_bound_option(submission_id)
+    if not bound:
+        return None
+
+    coverages = copy.deepcopy(bound.get("coverages") or {})
+    if not coverages:
+        # No coverages stored - return empty structure
+        return {
+            "policy_form": "cyber",
+            "aggregate_limit": 0,
+            "aggregate_coverages": {},
+            "sublimit_coverages": {},
+            "changes_applied": [],
+        }
+
+    changes_applied = []
+
+    # Get issued coverage change endorsements, ordered by effective_date
+    endorsements = get_issued_endorsements(submission_id)
+    coverage_endorsements = [
+        e for e in endorsements
+        if e["endorsement_type"] == "coverage_change"
+    ]
+
+    # Apply each change in order
+    for e in coverage_endorsements:
+        change_details = e.get("change_details", {})
+        coverages = apply_coverage_changes(coverages, change_details)
+        changes_applied.append({
+            "endorsement_id": e["id"],
+            "endorsement_number": e["endorsement_number"],
+            "description": e["description"],
+            "effective_date": e["effective_date"],
+        })
+
+    coverages["changes_applied"] = changes_applied
+    return coverages
+
+
+def apply_coverage_changes(base_coverages: dict, changes: dict) -> dict:
+    """
+    Apply coverage changes from an endorsement to a base coverage state.
+
+    Args:
+        base_coverages: Starting coverage state
+        changes: Change details from endorsement, with structure:
+            {
+                "aggregate_limit": {"old": X, "new": Y},
+                "aggregate_coverages": {
+                    "coverage_id": {"old": X, "new": Y},
+                    ...
+                },
+                "sublimit_coverages": {...}
+            }
+
+    Returns:
+        New coverage dict with changes applied
+    """
+    import copy
+    result = copy.deepcopy(base_coverages)
+
+    # Apply aggregate limit change
+    if "aggregate_limit" in changes:
+        change = changes["aggregate_limit"]
+        if isinstance(change, dict) and "new" in change:
+            result["aggregate_limit"] = change["new"]
+        elif isinstance(change, (int, float)):
+            result["aggregate_limit"] = change
+
+    # Apply aggregate coverage changes
+    if "aggregate_coverages" in changes:
+        if "aggregate_coverages" not in result:
+            result["aggregate_coverages"] = {}
+        for cov_id, vals in changes["aggregate_coverages"].items():
+            if isinstance(vals, dict) and "new" in vals:
+                result["aggregate_coverages"][cov_id] = vals["new"]
+            elif isinstance(vals, (int, float)):
+                result["aggregate_coverages"][cov_id] = vals
+
+    # Apply sublimit coverage changes
+    if "sublimit_coverages" in changes:
+        if "sublimit_coverages" not in result:
+            result["sublimit_coverages"] = {}
+        for cov_id, vals in changes["sublimit_coverages"].items():
+            if isinstance(vals, dict) and "new" in vals:
+                result["sublimit_coverages"][cov_id] = vals["new"]
+            elif isinstance(vals, (int, float)):
+                result["sublimit_coverages"][cov_id] = vals
+
+    # Apply retention change (stored as "retention" in change_details)
+    if "retention" in changes:
+        change = changes["retention"]
+        if isinstance(change, dict) and "new" in change:
+            result["retention"] = change["new"]
+        elif isinstance(change, (int, float)):
+            result["retention"] = change
+
+    return result
+
+
+def get_current_retention(submission_id: str) -> Optional[int]:
+    """
+    Get current retention by checking bound option and any retention change endorsements.
+
+    Returns:
+        Current retention amount or None if no bound option
+    """
+    from core.bound_option import get_bound_option
+
+    bound = get_bound_option(submission_id)
+    if not bound:
+        return None
+
+    retention = bound.get("primary_retention", 0)
+
+    # Check for retention changes in endorsements
+    # Modal stores as "retention", legacy might use "primary_retention"
+    endorsements = get_issued_endorsements(submission_id)
+    for e in endorsements:
+        if e["endorsement_type"] == "coverage_change":
+            change_details = e.get("change_details", {})
+            # Check both possible keys
+            for key in ["retention", "primary_retention"]:
+                if key in change_details:
+                    ret_change = change_details[key]
+                    if isinstance(ret_change, dict) and "new" in ret_change:
+                        retention = ret_change["new"]
+                    elif isinstance(ret_change, (int, float)):
+                        retention = ret_change
+                    break
+
+    return retention
+
+
+def format_currency(value: float) -> str:
+    """Format a numeric value as currency string ($X,XXX)."""
+    if value is None:
+        return "$0"
+    if value < 0:
+        return f"-${abs(value):,.0f}"
+    return f"${value:,.0f}"
