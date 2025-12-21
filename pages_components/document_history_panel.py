@@ -3,10 +3,14 @@ Document History Panel
 
 Displays all generated policy documents for a submission with
 download links, status badges, and management actions.
+
+Performance note: This panel can accept pre-loaded documents data
+to avoid a database query. Pass the documents list from policy_tab_data.
 """
 
 import streamlit as st
 from datetime import datetime
+from typing import Optional
 
 from core.document_generator import (
     get_documents,
@@ -15,7 +19,11 @@ from core.document_generator import (
 )
 
 
-def render_document_history_panel(submission_id: str, expanded: bool = True):
+def render_document_history_panel(
+    submission_id: str,
+    expanded: bool = True,
+    preloaded_documents: Optional[list] = None
+):
     """
     Render the document history panel for a submission.
 
@@ -29,12 +37,14 @@ def render_document_history_panel(submission_id: str, expanded: bool = True):
     Args:
         submission_id: UUID of the submission
         expanded: Whether the expander is initially expanded
+        preloaded_documents: Optional pre-loaded documents list (avoids DB query)
     """
     if not submission_id:
         return
 
     with st.expander("Generated Documents", expanded=expanded):
-        documents = get_documents(submission_id)
+        # Use pre-loaded data if available, otherwise fetch
+        documents = preloaded_documents if preloaded_documents is not None else get_documents(submission_id)
 
         if not documents:
             st.caption("No documents generated yet.")

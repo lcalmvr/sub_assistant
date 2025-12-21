@@ -3,6 +3,10 @@ Endorsements History Panel
 
 Displays midterm policy endorsements for bound submissions.
 Provides ability to create, issue, and void endorsements.
+
+Performance note: This panel can accept pre-loaded data via policy_tab_data
+to avoid redundant database queries. When called from Policy tab, pass the
+pre-loaded data dict to eliminate 5+ database round-trips.
 """
 import streamlit as st
 from datetime import date, datetime
@@ -28,7 +32,10 @@ from core.endorsement_management import (
 from core.endorsement_catalog import get_entries_for_type
 
 
-def render_endorsements_history_panel(submission_id: str):
+def render_endorsements_history_panel(
+    submission_id: str,
+    preloaded_data: Optional[dict] = None
+):
     """
     Render the endorsements history panel for a submission.
 
@@ -36,17 +43,35 @@ def render_endorsements_history_panel(submission_id: str):
 
     Args:
         submission_id: UUID of the current submission
+        preloaded_data: Optional pre-loaded data from policy_tab_data.load_policy_tab_data()
+                       If provided, uses this data instead of making database queries.
+                       Expected keys: bound_option, effective_state, endorsements,
+                                     endorsement_catalog, submission
     """
     if not submission_id:
         return
 
-    # Only show for bound policies
-    if not has_bound_option(submission_id):
-        return
-
-    # Get effective state
-    state = get_effective_policy_state(submission_id)
-    bound = get_bound_option(submission_id)
+    # Use pre-loaded data if available, otherwise fetch (backward compatibility)
+    if preloaded_data:
+        if not preloaded_data.get("has_bound_option"):
+            return
+        state = preloaded_data.get("effective_state", {})
+        bound = preloaded_data.get("bound_option")
+        endorsements = preloaded_data.get("endorsements", [])
+        endorsement_catalog = preloaded_data.get("endorsement_catalog", [])
+        policy_dates = (
+            preloaded_data.get("submission", {}).get("effective_date"),
+            preloaded_data.get("submission", {}).get("expiration_date"),
+        )
+    else:
+        # Legacy path - fetch data (slower)
+        if not has_bound_option(submission_id):
+            return
+        state = get_effective_policy_state(submission_id)
+        bound = get_bound_option(submission_id)
+        endorsements = get_endorsements(submission_id, include_voided=False)
+        endorsement_catalog = None  # Will fetch on demand
+        policy_dates = None  # Will fetch on demand
 
     # Build expander title
     endorsement_count = state.get("endorsement_count", 0)
@@ -70,13 +95,17 @@ def render_endorsements_history_panel(submission_id: str):
         st.divider()
 
         # List existing endorsements
-        endorsements = get_endorsements(submission_id, include_voided=False)
         if endorsements:
             _render_endorsement_list(endorsements)
             st.divider()
 
         # New endorsement form
-        _render_new_endorsement_form(submission_id, bound)
+        _render_new_endorsement_form(
+            submission_id,
+            bound,
+            endorsement_catalog=endorsement_catalog,
+            policy_dates=policy_dates
+        )
 
 
 def _render_premium_summary(state: dict):
@@ -446,12 +475,27 @@ def _render_endorsement_details(e: dict, endorsement_type: str, change_details: 
             st.write(f"**Notes:** {notes}")
 
 
-def _render_new_endorsement_form(submission_id: str, bound: dict):
-    """Render form for creating a new endorsement."""
+def _render_new_endorsement_form(
+    submission_id: str,
+    bound: dict,
+    endorsement_catalog: list = None,
+    policy_dates: tuple = None
+):
+    """Render form for creating a new endorsement.
+
+    Args:
+        submission_id: UUID of the submission
+        bound: Bound option dict
+        endorsement_catalog: Optional pre-loaded catalog entries (avoids DB query)
+        policy_dates: Optional tuple of (effective_date, expiration_date) (avoids DB query)
+    """
     st.markdown("**New Endorsement**")
 
-    # Get policy dates for pro-rata calculations
-    eff_date, exp_date = get_policy_dates(submission_id)
+    # Get policy dates for pro-rata calculations (use pre-loaded if available)
+    if policy_dates:
+        eff_date, exp_date = policy_dates
+    else:
+        eff_date, exp_date = get_policy_dates(submission_id)
 
     # Get policy position from bound option
     position = bound.get("position", "primary")
@@ -477,8 +521,15 @@ def _render_new_endorsement_form(submission_id: str, bound: dict):
             key=f"new_end_date_{submission_id}"
         )
 
-    # Template selector from endorsement bank
-    catalog_entries = get_entries_for_type(endorsement_type, position)
+    # Template selector from endorsement bank (use pre-loaded if available)
+    if endorsement_catalog is not None:
+        # Filter pre-loaded catalog by type
+        catalog_entries = [
+            e for e in endorsement_catalog
+            if e.get("endorsement_type") == endorsement_type
+        ]
+    else:
+        catalog_entries = get_entries_for_type(endorsement_type, position)
     selected_template = None
     formal_title = None
     catalog_id = None

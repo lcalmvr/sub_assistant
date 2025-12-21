@@ -51,6 +51,7 @@ from pages_components.account_matching_panel import render_account_matching_pane
 from pages_components.account_history_panel import render_account_history_compact
 from pages_components.renewal_panel import render_renewal_panel
 from pages_components.endorsements_history_panel import render_endorsements_history_panel
+from core.policy_tab_data import load_policy_tab_data
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -1215,58 +1216,20 @@ def render():
         with tab_policy:
             st.markdown("##### Policy Management")
 
+            # Load all policy tab data in ONE database call (replaces 11+ queries)
+            policy_data = load_policy_tab_data(sub_id)
+
             # ------------------- Broker Assignment --------------------
             with st.expander("🤝 Broker Assignment", expanded=True):
-                # Prevent browser autofill from showing address-book suggestions
                 _disable_autofill()
-                # Prefer brokers_alt tables in DB when available; otherwise fallback to fixtures store
-                conn = get_conn()
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT table_name FROM information_schema.tables
-                        WHERE table_schema='public'
-                        """
-                    )
-                    have_alt_db = {r[0] for r in cur.fetchall()}
 
-                use_brkr = {'brkr_organizations','brkr_people','brkr_employments'}.issubset(have_alt_db)
+                broker_employments = policy_data.get("broker_employments", [])
+                submission_data = policy_data.get("submission", {})
+                broker_email = submission_data.get("broker_email")
+                broker_employment_id = submission_data.get("broker_employment_id")
 
-                if use_brkr:
-                    # DB-backed: single employment dropdown (person — org — address)
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            SELECT e.employment_id, e.email, e.person_id, e.org_id,
-                                   p.first_name, p.last_name, org.name as org_name,
-                                   COALESCE(a.line1,'') as line1, COALESCE(a.line2,'') as line2,
-                                   COALESCE(a.city,'') as city, COALESCE(a.state,'') as state,
-                                   COALESCE(a.postal_code,'') as postal_code
-                            FROM brkr_employments e
-                            JOIN brkr_people p ON p.person_id = e.person_id
-                            JOIN brkr_organizations org ON org.org_id = e.org_id
-                            LEFT JOIN brkr_offices off ON off.office_id = e.office_id
-                            LEFT JOIN brkr_org_addresses a ON a.address_id = COALESCE(e.override_address_id, off.default_address_id)
-                            WHERE e.email IS NOT NULL AND e.active = TRUE
-                            ORDER BY lower(p.last_name), lower(p.first_name), lower(org.name)
-                            """
-                        )
-                        rows = cur.fetchall()
-
-                    # Get current broker assignment for this submission
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            SELECT broker_email, broker_employment_id
-                            FROM submissions WHERE id = %s
-                            """,
-                            (sub_id,)
-                        )
-                        broker_row = cur.fetchone()
-                        broker_email = broker_row[0] if broker_row else None
-                        broker_employment_id = broker_row[1] if broker_row else None
-
-                    def _fmt_addr(l1,l2,city,state,pc):
+                if broker_employments:
+                    def _fmt_addr(l1, l2, city, state, pc):
                         parts = [l1]
                         if l2:
                             parts.append(l2)
@@ -1277,22 +1240,25 @@ def render():
                         return ", ".join([p for p in parts if p]) or "—"
 
                     emp_map = {}
-                    for eid, email, pid, oid, fn, ln, org_name, l1,l2,city,state,pc in rows:
-                        label = f"{(fn or '').strip()} {(ln or '').strip()} — {org_name} — {_fmt_addr(l1,l2,city,state,pc)}"
-                        emp_map[str(eid)] = {
+                    for emp in broker_employments:
+                        eid = emp["employment_id"]
+                        fn = emp.get("first_name", "")
+                        ln = emp.get("last_name", "")
+                        org_name = emp.get("org_name", "")
+                        label = f"{fn.strip()} {ln.strip()} — {org_name} — {_fmt_addr(emp['line1'], emp['line2'], emp['city'], emp['state'], emp['postal_code'])}"
+                        emp_map[eid] = {
                             "label": label,
-                            "email": email,
-                            "person_id": str(pid),
-                            "org_id": str(oid)
+                            "email": emp.get("email"),
+                            "person_id": emp.get("person_id"),
+                            "org_id": emp.get("org_id")
                         }
 
                     options = [""] + list(emp_map.keys())
-                    # Default selection by broker_employment_id then by broker_email
                     default_emp = None
                     if broker_employment_id and str(broker_employment_id) in emp_map:
                         default_emp = str(broker_employment_id)
                     elif broker_email:
-                        for k,v in emp_map.items():
+                        for k, v in emp_map.items():
                             if (v.get("email") or "").lower() == str(broker_email).lower():
                                 default_emp = k
                                 break
@@ -1300,7 +1266,7 @@ def render():
                     sel_emp = st.selectbox(
                         "Broker Employment",
                         options=options,
-                        format_func=lambda x: ("— Select —" if x == "" else emp_map.get(x,{}).get("label", x)),
+                        format_func=lambda x: ("— Select —" if x == "" else emp_map.get(x, {}).get("label", x)),
                         index=(options.index(default_emp) if default_emp in options else 0),
                         key=f"broker_emp_select_policy_{sub_id}"
                     )
@@ -1316,54 +1282,36 @@ def render():
                             chosen_org = chosen.get("org_id")
                             chosen_person = chosen.get("person_id")
 
-                            # Determine which columns exist
+                            # Update broker assignment
+                            conn = get_conn()
                             with conn.cursor() as cur:
                                 cur.execute(
                                     """
-                                    SELECT column_name FROM information_schema.columns
-                                    WHERE table_schema='public' AND table_name='submissions'
-                                    AND column_name IN ('broker_email','broker_org_id','broker_employment_id','broker_person_id')
-                                    """
+                                    UPDATE submissions
+                                    SET broker_email = %s, broker_org_id = %s,
+                                        broker_employment_id = %s, broker_person_id = %s
+                                    WHERE id = %s
+                                    """,
+                                    (chosen_email, chosen_org, sel_emp, chosen_person, sub_id),
                                 )
-                                cols = {r[0] for r in cur.fetchall()}
-
-                            set_clauses = []
-                            params = {"sid": sub_id}
-                            if 'broker_email' in cols and chosen_email is not None:
-                                set_clauses.append("broker_email = %(bemail)s")
-                                params["bemail"] = chosen_email
-                            if 'broker_org_id' in cols and chosen_org is not None:
-                                set_clauses.append("broker_org_id = %(borg)s")
-                                params["borg"] = chosen_org
-                            if 'broker_employment_id' in cols:
-                                set_clauses.append("broker_employment_id = %(bemp)s")
-                                params["bemp"] = sel_emp
-                            if 'broker_person_id' in cols and chosen_person is not None:
-                                set_clauses.append("broker_person_id = %(bper)s")
-                                params["bper"] = chosen_person
-
-
-                            if set_clauses:
-                                with conn.cursor() as cur:
-                                    cur.execute(
-                                        f"UPDATE submissions SET {', '.join(set_clauses)} WHERE id = %(sid)s",
-                                        params,
-                                    )
 
                             st.success("Broker assignment saved.")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error saving broker: {e}")
-
                 else:
                     st.warning("Broker directory tables (brkr_*) not found. Please set up the broker directory in the database.")
 
             # ------------------- Generated Documents --------------------
             from pages_components.document_history_panel import render_document_history_panel
-            render_document_history_panel(sub_id, expanded=True)
+            render_document_history_panel(
+                sub_id,
+                expanded=True,
+                preloaded_documents=policy_data.get("documents")
+            )
 
             # ------------------- Midterm Endorsements --------------------
-            render_endorsements_history_panel(sub_id)
+            render_endorsements_history_panel(sub_id, preloaded_data=policy_data)
 
         # =================== UW TAB ===================
         with tab_uw:
