@@ -142,7 +142,20 @@ def create_endorsement(
             "created_by": created_by,
         })
 
-        return str(result.fetchone()[0])
+        endorsement_id = str(result.fetchone()[0])
+
+    # Generate PDF immediately after creation
+    try:
+        from core.package_generator import generate_midterm_endorsement_document
+        doc_result = generate_midterm_endorsement_document(endorsement_id, created_by=created_by)
+        if doc_result and doc_result.get("pdf_url"):
+            save_endorsement_document_url(endorsement_id, doc_result["pdf_url"])
+    except Exception as e:
+        # Log but don't fail - endorsement was created successfully
+        import logging
+        logging.warning(f"Failed to generate PDF for endorsement {endorsement_id}: {e}")
+
+    return endorsement_id
 
 
 def update_endorsement(
@@ -465,14 +478,19 @@ def _apply_reinstatement(conn, submission_id: str):
 
 def _apply_name_change(conn, submission_id: str, change_details: dict):
     """
-    Apply name change effects - update applicant_name.
+    Apply name change effects - update applicant_name and account name.
 
-    Updates the submission's applicant_name to the new name so it carries to renewal.
+    Updates both:
+    - The submission's applicant_name
+    - The linked account's name (so it carries across policy years)
     """
+    from core.account_management import get_submission_account, update_account
+
     new_name = change_details.get("new_name")
     if not new_name:
         return
 
+    # Update submission's applicant_name
     conn.execute(text("""
         UPDATE submissions
         SET applicant_name = :new_name
@@ -481,6 +499,14 @@ def _apply_name_change(conn, submission_id: str, change_details: dict):
         "submission_id": submission_id,
         "new_name": new_name,
     })
+
+    # Also update the linked account's name
+    account = get_submission_account(submission_id)
+    if account:
+        update_account(
+            account_id=account["id"],
+            name=new_name
+        )
 
 
 def void_endorsement(endorsement_id: str, reason: str, voided_by: str = "system") -> bool:

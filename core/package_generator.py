@@ -108,6 +108,21 @@ def process_endorsement_fill_ins(
         "[Amount]": "premium_change",
         "{{coverage_changes_table}}": "coverage_changes_table",
         "{{coverage_changes_summary}}": "coverage_changes_summary",
+        # Address change endorsement variables
+        "[Previous Address]": "old_address_display",
+        "[New Address]": "new_address_display",
+        "{{old_address}}": "old_address_display",
+        "{{new_address}}": "new_address_display",
+        # Name change endorsement variables
+        "[Previous Name]": "old_name",
+        "[New Name]": "new_name",
+        "{{old_name}}": "old_name",
+        "{{new_name}}": "new_name",
+        # BOR change endorsement variables
+        "[Previous Broker]": "previous_broker_name",
+        "[New Broker]": "new_broker_name",
+        "{{previous_broker_name}}": "previous_broker_name",
+        "{{new_broker_name}}": "new_broker_name",
     }
 
     # Merge with database-provided mappings (DB mappings take precedence)
@@ -744,23 +759,34 @@ def generate_midterm_endorsement_document(
     # First try auto-attach rules
     template = _find_endorsement_template(endorsement_type, context)
 
-    if not template:
-        raise ValueError(f"No template found for endorsement type: {endorsement_type}")
+    if template:
+        # Process fill-ins from template
+        content_html = template.get("content_html", "")
+        fill_in_mappings = template.get("fill_in_mappings")
 
-    # Process fill-ins
-    content_html = template.get("content_html", "")
-    fill_in_mappings = template.get("fill_in_mappings")
+        if content_html:
+            content_html = process_endorsement_fill_ins(content_html, context, fill_in_mappings)
 
-    if content_html:
-        content_html = process_endorsement_fill_ins(content_html, context, fill_in_mappings)
-
-    # Render the document HTML
-    html_content = _render_midterm_endorsement_html(
-        endorsement=endorsement,
-        template=template,
-        content_html=content_html,
-        context=context
-    )
+        # Render the document HTML
+        html_content = _render_midterm_endorsement_html(
+            endorsement=endorsement,
+            template=template,
+            content_html=content_html,
+            context=context
+        )
+        template_code = template.get("code")
+        template_title = template.get("title")
+    else:
+        # Use generic fallback template
+        content_html = _generate_generic_endorsement_content(endorsement_type, context)
+        html_content = _render_midterm_endorsement_html(
+            endorsement=endorsement,
+            template={"title": _get_endorsement_type_title(endorsement_type), "code": ""},
+            content_html=content_html,
+            context=context
+        )
+        template_code = None
+        template_title = _get_endorsement_type_title(endorsement_type)
 
     # Generate PDF and upload
     pdf_url = _render_and_upload_endorsement(html_content, endorsement)
@@ -769,11 +795,144 @@ def generate_midterm_endorsement_document(
         "endorsement_id": endorsement_id,
         "endorsement_number": endorsement.get("endorsement_number"),
         "pdf_url": pdf_url,
-        "template_code": template.get("code"),
-        "template_title": template.get("title"),
+        "template_code": template_code,
+        "template_title": template_title,
         "created_at": datetime.now().isoformat(),
         "created_by": created_by,
     }
+
+
+def _get_endorsement_type_title(endorsement_type: str) -> str:
+    """Get display title for an endorsement type."""
+    titles = {
+        "name_change": "Change of Named Insured",
+        "address_change": "Change of Address",
+        "coverage_change": "Coverage Change Endorsement",
+        "cancellation": "Policy Cancellation",
+        "reinstatement": "Policy Reinstatement",
+        "extension": "Policy Extension",
+        "erp": "Extended Reporting Period",
+        "bor_change": "Broker of Record Change",
+        "other": "Policy Endorsement",
+    }
+    return titles.get(endorsement_type, "Policy Endorsement")
+
+
+def _generate_generic_endorsement_content(endorsement_type: str, context: dict) -> str:
+    """
+    Generate generic endorsement content when no specific template exists.
+
+    Creates simple, professional content based on endorsement type and context.
+    """
+    if endorsement_type == "name_change":
+        old_name = context.get("old_name", "")
+        new_name = context.get("new_name", "")
+        return f"""
+        <p>This endorsement amends the policy to which it is attached.</p>
+        <p>Effective as of the date shown above, the Named Insured is changed as follows:</p>
+        <table style="width: 100%; margin: 20px 0;">
+            <tr>
+                <td style="width: 50%; padding: 10px; background: #f5f5f5;"><strong>Previous Named Insured:</strong></td>
+                <td style="padding: 10px;">{old_name or '—'}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; background: #f5f5f5;"><strong>New Named Insured:</strong></td>
+                <td style="padding: 10px;">{new_name or '—'}</td>
+            </tr>
+        </table>
+        <p>All other terms, conditions, and exclusions of the policy remain unchanged.</p>
+        """
+
+    elif endorsement_type == "address_change":
+        old_addr = context.get("old_address_display", "")
+        new_addr = context.get("new_address_display", "")
+        return f"""
+        <p>This endorsement amends the policy to which it is attached.</p>
+        <p>Effective as of the date shown above, the mailing address is changed as follows:</p>
+        <table style="width: 100%; margin: 20px 0;">
+            <tr>
+                <td style="width: 50%; padding: 10px; background: #f5f5f5;"><strong>Previous Address:</strong></td>
+                <td style="padding: 10px;">{old_addr or '—'}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; background: #f5f5f5;"><strong>New Address:</strong></td>
+                <td style="padding: 10px;">{new_addr or '—'}</td>
+            </tr>
+        </table>
+        <p>All other terms, conditions, and exclusions of the policy remain unchanged.</p>
+        """
+
+    elif endorsement_type == "bor_change":
+        prev_broker = context.get("previous_broker_name", "")
+        new_broker = context.get("new_broker_name", "")
+        return f"""
+        <p>This endorsement amends the policy to which it is attached.</p>
+        <p>Effective as of the date shown above, the Broker of Record is changed as follows:</p>
+        <table style="width: 100%; margin: 20px 0;">
+            <tr>
+                <td style="width: 50%; padding: 10px; background: #f5f5f5;"><strong>Previous Broker:</strong></td>
+                <td style="padding: 10px;">{prev_broker or '—'}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; background: #f5f5f5;"><strong>New Broker:</strong></td>
+                <td style="padding: 10px;">{new_broker or '—'}</td>
+            </tr>
+        </table>
+        <p>All other terms, conditions, and exclusions of the policy remain unchanged.</p>
+        """
+
+    elif endorsement_type == "cancellation":
+        reason = context.get("cancellation_reason", "").replace("_", " ").title()
+        cancel_date = context.get("endorsement_effective_date_formatted", "")
+        return f"""
+        <p>This endorsement cancels the policy to which it is attached.</p>
+        <p><strong>Cancellation Effective Date:</strong> {cancel_date}</p>
+        <p><strong>Reason:</strong> {reason or 'At request of insured'}</p>
+        """
+
+    elif endorsement_type == "reinstatement":
+        return """
+        <p>This endorsement reinstates the policy to which it is attached.</p>
+        <p>The policy is hereby reinstated effective as of the date shown above,
+        with all original terms, conditions, limits, and exclusions restored.</p>
+        """
+
+    elif endorsement_type == "extension":
+        orig_exp = context.get("original_expiration_formatted", "")
+        new_exp = context.get("new_expiration_formatted", "")
+        return f"""
+        <p>This endorsement extends the policy period.</p>
+        <table style="width: 100%; margin: 20px 0;">
+            <tr>
+                <td style="width: 50%; padding: 10px; background: #f5f5f5;"><strong>Original Expiration:</strong></td>
+                <td style="padding: 10px;">{orig_exp or '—'}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px; background: #f5f5f5;"><strong>New Expiration:</strong></td>
+                <td style="padding: 10px;">{new_exp or '—'}</td>
+            </tr>
+        </table>
+        <p>All other terms, conditions, and exclusions of the policy remain unchanged.</p>
+        """
+
+    elif endorsement_type == "erp":
+        erp_type = context.get("erp_type", "Basic").title()
+        erp_months = context.get("erp_months", "")
+        return f"""
+        <p>This endorsement provides an Extended Reporting Period (ERP).</p>
+        <p><strong>ERP Type:</strong> {erp_type}</p>
+        <p><strong>Duration:</strong> {erp_months} months from policy expiration/cancellation date</p>
+        <p>The ERP provides coverage for claims made during the extended reporting period
+        for wrongful acts that occurred during the original policy period.</p>
+        """
+
+    # Generic fallback
+    description = context.get("description", "")
+    return f"""
+    <p>This endorsement amends the policy to which it is attached.</p>
+    {f'<p>{description}</p>' if description else ''}
+    <p>All other terms, conditions, and exclusions of the policy remain unchanged.</p>
+    """
 
 
 def _build_midterm_context(submission_id: str, endorsement: dict) -> dict:
@@ -843,6 +1002,15 @@ def _build_midterm_context(submission_id: str, endorsement: dict) -> dict:
 
     context.update(change_details)
 
+    # For address change endorsements, ensure display strings are formatted
+    if endorsement.get("endorsement_type") == "address_change":
+        # Format old address if not already formatted
+        if not context.get("old_address_display") and context.get("old_address"):
+            context["old_address_display"] = _format_address_dict(context["old_address"])
+        # Format new address if not already formatted
+        if not context.get("new_address_display") and context.get("new_address"):
+            context["new_address_display"] = _format_address_dict(context["new_address"])
+
     # For coverage change endorsements, build a summary table
     if endorsement.get("endorsement_type") == "coverage_change":
         context["coverage_changes_table"] = _render_coverage_changes_table(change_details)
@@ -883,6 +1051,49 @@ def _build_midterm_context(submission_id: str, endorsement: dict) -> dict:
             context["pro_rata_calculation"] = ""
 
     return context
+
+
+def _format_address_dict(address: dict) -> str:
+    """Format an address dict into a display string.
+
+    Args:
+        address: Dict with street, street2, city, state, zip keys
+
+    Returns:
+        Formatted address like "123 Main St, Suite 100, Boston, MA 02101"
+    """
+    if not address or not isinstance(address, dict):
+        return ""
+
+    parts = []
+
+    # Street line(s)
+    street = address.get("street", "").strip()
+    street2 = address.get("street2", "").strip()
+    if street:
+        parts.append(street)
+    if street2:
+        parts.append(street2)
+
+    # City, State ZIP
+    city = address.get("city", "").strip()
+    state = address.get("state", "").strip()
+    zip_code = address.get("zip", "").strip()
+
+    city_state_zip = ""
+    if city:
+        city_state_zip = city
+        if state:
+            city_state_zip += f", {state}"
+        if zip_code:
+            city_state_zip += f" {zip_code}"
+    elif state and zip_code:
+        city_state_zip = f"{state} {zip_code}"
+
+    if city_state_zip:
+        parts.append(city_state_zip)
+
+    return ", ".join(parts) if parts else ""
 
 
 def _render_coverage_changes_table(change_details: dict) -> str:

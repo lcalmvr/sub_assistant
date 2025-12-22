@@ -18,6 +18,9 @@ spec = importlib.util.spec_from_file_location(
 account_mgmt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(account_mgmt)
 
+# Import shared address form component
+from pages_components.shared_address_form import render_address_form
+
 
 def render_account_matching_panel(submission_id: str, applicant_name: str, website: Optional[str] = None):
     """
@@ -106,58 +109,64 @@ def _render_linked_account(submission_id: str, account: dict):
 
 
 def _render_account_edit_form(submission_id: str, account: dict, edit_key: str):
-    """Render inline edit form for account details."""
+    """Render inline edit form for account details wrapped in st.form."""
     account_id = account["id"]
 
     # Get current address
     current_address = account_mgmt.get_account_address_dict(account)
 
-    st.markdown("**Edit Account**")
+    # Wrap entire edit form in st.form to prevent reload on every keystroke
+    with st.form(key=f"edit_account_form_{account_id}"):
+        st.markdown("**Edit Account**")
 
-    # Name and Website
-    col1, col2 = st.columns(2)
-    with col1:
-        edit_name = st.text_input("Name", value=account.get("name", ""), key=f"edit_name_{account_id}")
-        edit_website = st.text_input("Website", value=account.get("website", "") or "", key=f"edit_website_{account_id}")
-    with col2:
-        edit_industry = st.text_input("Industry", value=account.get("industry", "") or "", key=f"edit_industry_{account_id}")
+        # Name and Website
+        col1, col2 = st.columns(2)
+        with col1:
+            edit_name = st.text_input("Name", value=account.get("name", ""), key=f"edit_name_{account_id}")
+            edit_website = st.text_input("Website", value=account.get("website", "") or "", key=f"edit_website_{account_id}")
+        with col2:
+            edit_industry = st.text_input("Industry", value=account.get("industry", "") or "", key=f"edit_industry_{account_id}")
 
-    # Address fields
-    st.markdown("**Address**")
-    addr_col1, addr_col2 = st.columns(2)
-    with addr_col1:
-        edit_street = st.text_input("Street", value=current_address.get("street", ""), key=f"edit_street_{account_id}")
-        edit_city = st.text_input("City", value=current_address.get("city", ""), key=f"edit_city_{account_id}")
-    with addr_col2:
-        edit_state = st.text_input("State", value=current_address.get("state", ""), max_chars=2, key=f"edit_state_{account_id}")
-        edit_zip = st.text_input("ZIP", value=current_address.get("zip", ""), key=f"edit_zip_{account_id}")
+        # Use shared address form component
+        address_values = render_address_form(
+            key_prefix=f"edit_addr_{account_id}",
+            default_values=current_address,
+            show_header=True,
+            header_text="Address"
+        )
 
-    # Save / Cancel buttons
-    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 4])
-    with btn_col1:
-        if st.button("💾 Save", key=f"save_acct_{submission_id}"):
-            # Update account
-            account_mgmt.update_account(
-                account_id=account_id,
-                name=edit_name.strip() if edit_name.strip() else None,
-                website=edit_website.strip() if edit_website.strip() else None,
-                industry=edit_industry.strip() if edit_industry.strip() else None,
-            )
-            # Update address
-            account_mgmt.update_account_address(
-                account_id=account_id,
-                street=edit_street.strip() if edit_street.strip() else None,
-                city=edit_city.strip() if edit_city.strip() else None,
-                state=edit_state.strip().upper() if edit_state.strip() else None,
-                zip_code=edit_zip.strip() if edit_zip.strip() else None,
-            )
-            st.session_state[edit_key] = False
-            st.success("Account updated!")
-            st.rerun()
-    with btn_col2:
-        if st.button("Cancel", key=f"cancel_acct_{submission_id}"):
-            st.session_state[edit_key] = False
-            st.rerun()
+        # Form submit buttons
+        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 4])
+        with btn_col1:
+            submitted = st.form_submit_button("💾 Save", type="primary")
+        with btn_col2:
+            cancelled = st.form_submit_button("Cancel")
+
+    # Handle form submission outside the form context
+    if submitted:
+        # Update account
+        account_mgmt.update_account(
+            account_id=account_id,
+            name=edit_name.strip() if edit_name.strip() else None,
+            website=edit_website.strip() if edit_website.strip() else None,
+            industry=edit_industry.strip() if edit_industry.strip() else None,
+        )
+        # Update address using shared form values
+        account_mgmt.update_account_address(
+            account_id=account_id,
+            street=address_values["street"].strip() if address_values["street"].strip() else None,
+            street2=address_values["street2"].strip() if address_values["street2"].strip() else None,
+            city=address_values["city"].strip() if address_values["city"].strip() else None,
+            state=address_values["state"].strip().upper() if address_values["state"].strip() else None,
+            zip_code=address_values["zip"].strip() if address_values["zip"].strip() else None,
+        )
+        st.session_state[edit_key] = False
+        st.success("Account updated!")
+        st.rerun()
+
+    if cancelled:
+        st.session_state[edit_key] = False
+        st.rerun()
 
 
 def _render_account_matching(submission_id: str, applicant_name: str, website: Optional[str]):
@@ -200,15 +209,12 @@ def _render_account_matching(submission_id: str, applicant_name: str, website: O
             new_website = st.text_input("Website", value=website or "")
             new_industry = st.text_input("Industry", value="")
 
-            # Address fields
-            st.markdown("**Address**")
-            addr_col1, addr_col2 = st.columns(2)
-            with addr_col1:
-                new_street = st.text_input("Street", value="")
-                new_city = st.text_input("City", value="")
-            with addr_col2:
-                new_state = st.text_input("State", value="", max_chars=2, placeholder="e.g., CA")
-                new_zip = st.text_input("ZIP", value="", max_chars=10)
+            # Use shared address form component
+            address_values = render_address_form(
+                key_prefix=f"new_acct_addr_{submission_id}",
+                show_header=True,
+                header_text="Address"
+            )
 
             new_notes = st.text_area("Notes", value="", placeholder="Optional notes about this account...")
 
@@ -223,14 +229,21 @@ def _render_account_matching(submission_id: str, applicant_name: str, website: O
                             industry=new_industry.strip() if new_industry.strip() else None,
                             notes=new_notes.strip() if new_notes.strip() else None
                         )
-                        # Update address if provided
-                        if any([new_street.strip(), new_city.strip(), new_state.strip(), new_zip.strip()]):
+                        # Update address if provided (using shared form values)
+                        if any([
+                            address_values["street"].strip(),
+                            address_values["street2"].strip(),
+                            address_values["city"].strip(),
+                            address_values["state"].strip(),
+                            address_values["zip"].strip()
+                        ]):
                             account_mgmt.update_account_address(
                                 account_id=account["id"],
-                                street=new_street.strip() if new_street.strip() else None,
-                                city=new_city.strip() if new_city.strip() else None,
-                                state=new_state.strip().upper() if new_state.strip() else None,
-                                zip_code=new_zip.strip() if new_zip.strip() else None,
+                                street=address_values["street"].strip() if address_values["street"].strip() else None,
+                                street2=address_values["street2"].strip() if address_values["street2"].strip() else None,
+                                city=address_values["city"].strip() if address_values["city"].strip() else None,
+                                state=address_values["state"].strip().upper() if address_values["state"].strip() else None,
+                                zip_code=address_values["zip"].strip() if address_values["zip"].strip() else None,
                             )
                         account_mgmt.link_submission_to_account(submission_id, account["id"])
                         st.success(f"Created and linked to account: {account['name']}")

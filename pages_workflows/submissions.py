@@ -1323,27 +1323,40 @@ def render():
                 if tower_json and len(tower_json) > 0:
                     primary_layer = tower_json[0]
                     limit = primary_layer.get("limit", 0)
-                    limit_str = f"${limit:,.0f}" if limit else "—"
+                    limit_str = f"\\${limit:,.0f}" if limit else "—"
                 else:
                     limit_str = "—"
 
                 retention = bound_option.get("primary_retention", 0)
-                retention_str = f"${retention:,.0f}" if retention else "—"
+                retention_str = f"\\${retention:,.0f}" if retention else "—"
                 premium = effective_state.get("effective_premium", 0)
-                premium_str = f"${premium:,.0f}"
+                premium_str = f"\\${premium:,.0f}"
                 position = (bound_option.get("position") or "primary").title()
                 policy_form = bound_option.get("policy_form") or "—"
 
                 # Display summary in compact format
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown(f"**Status:** {status_text}")
-                    st.markdown(f"**Period:** {eff_str} → {exp_str}")
-                    st.markdown(f"**Form:** {policy_form}")
+                    st.markdown(f"**Status:** {status_text}  \n**Period:** {eff_str} → {exp_str}  \n**Terms:** {limit_str} / {retention_str} SIR  \n**Premium:** {premium_str}  \n**Form:** {policy_form.title()}")
                 with col2:
-                    st.markdown(f"**Limit:** {limit_str} x {retention_str} SIR")
-                    st.markdown(f"**Premium:** {premium_str}")
-                    st.markdown(f"**Position:** {position}")
+                    if st.button("Unbind Policy", key=f"unbind_{sub_id}"):
+                        st.session_state[f"confirm_unbind_{sub_id}"] = True
+
+                if st.session_state.get(f"confirm_unbind_{sub_id}"):
+                    st.warning("This will remove the bound status and delete associated binder documents. Endorsements will also be removed.")
+                    c1, c2, _ = st.columns([1, 1, 4])
+                    with c1:
+                        if st.button("Confirm Unbind", key=f"confirm_unbind_btn_{sub_id}", type="primary"):
+                            from core.bound_option import unbind_option
+                            tower_id = bound_option.get("id")
+                            if tower_id:
+                                unbind_option(tower_id)
+                                st.session_state.pop(f"confirm_unbind_{sub_id}", None)
+                                st.rerun()
+                    with c2:
+                        if st.button("Cancel", key=f"cancel_unbind_{sub_id}"):
+                            st.session_state.pop(f"confirm_unbind_{sub_id}", None)
+                            st.rerun()
 
                 st.divider()
 
@@ -1372,6 +1385,9 @@ def render():
                 policy_docs.sort(key=doc_sort_key)
 
                 if policy_docs:
+                    import pandas as pd
+
+                    doc_rows = []
                     for doc in policy_docs:
                         doc_type = doc.get("type_label", doc.get("document_type", "Document"))
                         doc_number = doc.get("document_number", "")
@@ -1379,18 +1395,28 @@ def render():
                         created_at = doc.get("created_at")
                         date_str = created_at.strftime("%m/%d/%Y") if created_at and hasattr(created_at, 'strftime') else ""
 
-                        col1, col2 = st.columns([5, 1])
-                        with col1:
-                            if pdf_url:
-                                st.markdown(f"[{doc_type}: {doc_number}]({pdf_url})")
-                            else:
-                                st.text(f"{doc_type}: {doc_number}")
-                        with col2:
-                            st.caption(date_str)
+                        doc_rows.append({
+                            "Document": f"{doc_type}: {doc_number}",
+                            "Date": date_str,
+                            "PDF": pdf_url or "",
+                        })
 
-                    # Placeholders for future document types
-                    st.caption("Dec Page — coming soon")
-                    st.caption("Policy Form — coming soon")
+                    # Placeholders
+                    doc_rows.append({"Document": "Dec Page — coming soon", "Date": "", "PDF": ""})
+                    doc_rows.append({"Document": "Policy Form — coming soon", "Date": "", "PDF": ""})
+
+                    df = pd.DataFrame(doc_rows)
+                    st.dataframe(
+                        df,
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "Document": st.column_config.TextColumn(width="large"),
+                            "Date": st.column_config.TextColumn(width="small"),
+                            "PDF": st.column_config.LinkColumn(display_text="PDF", width="small"),
+                        },
+                        height=(len(doc_rows) * 35) + 38,
+                    )
                 else:
                     st.caption("No policy documents generated yet.")
 

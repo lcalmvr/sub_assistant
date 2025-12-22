@@ -30,6 +30,7 @@ from core.endorsement_management import (
     save_endorsement_document_url,
 )
 from core.endorsement_catalog import get_entries_for_type
+from pages_components.shared_address_form import render_address_form, format_address
 
 
 def render_endorsements_history_panel(
@@ -69,19 +70,17 @@ def render_endorsements_history_panel(
             return
         state = get_effective_policy_state(submission_id)
         bound = get_bound_option(submission_id)
-        endorsements = get_endorsements(submission_id, include_voided=False)
+        endorsements = get_endorsements(submission_id, include_voided=True)
         endorsement_catalog = None  # Will fetch on demand
         policy_dates = None  # Will fetch on demand
 
     # Mid-term Endorsements header with New button
     endorsement_count = state.get("endorsement_count", 0)
-    header = f"##### Mid-term Endorsements ({endorsement_count})" if endorsement_count else "##### Mid-term Endorsements"
 
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown(header)
+        st.markdown(f"##### Mid-term Endorsements ({endorsement_count})" if endorsement_count else "##### Mid-term Endorsements")
     with col2:
-        # New endorsement button triggers dialog
         _render_new_endorsement_form_v2(
             submission_id,
             bound,
@@ -89,12 +88,8 @@ def render_endorsements_history_panel(
             policy_dates=policy_dates
         )
 
-    # List existing endorsements - simple view with details
-    if endorsements:
-        for e in endorsements:
-            _render_endorsement_row_v2(e, bound, endorsement_catalog, policy_dates)
-    else:
-        st.caption("No mid-term endorsements.")
+    # Render endorsements list
+    _render_endorsements_list_compact(endorsements, bound, endorsement_catalog, policy_dates)
 
     # Edit dialog - rendered at panel level (not inside row loop)
     _render_edit_endorsement_dialog()
@@ -149,12 +144,14 @@ def _render_endorsement_row(e: dict):
     if status == "draft":
         status_icon = ":orange_circle:"
     elif status == "issued":
-        status_icon = ":green_circle:"
+        status_icon = ":white_check_mark:"
+    elif status == "void":
+        status_icon = ":no_entry_sign:"
     else:
         status_icon = ":red_circle:"
 
-    # Premium display
-    if endorsement_type == "bor_change":
+    # Premium display (not for voided)
+    if status == "void" or endorsement_type == "bor_change":
         premium_str = ""
     elif premium_change > 0:
         premium_str = f"+${premium_change:,.0f}"
@@ -172,8 +169,13 @@ def _render_endorsement_row(e: dict):
     col1, col2, col3 = st.columns([4, 1, 1.5])
 
     with col1:
-        st.markdown(f"{status_icon} **#{number}** {title}")
-        st.caption(f"{eff_str}")
+        if status == "void":
+            st.markdown(f"{status_icon} ~~**#{number}** {title}~~ **VOID**")
+            void_reason = e.get("void_reason", "")
+            st.caption(f"{eff_str} | Voided{': ' + void_reason if void_reason else ''}")
+        else:
+            st.markdown(f"{status_icon} **#{number}** {title}")
+            st.caption(f"{eff_str}")
 
     with col2:
         if premium_str:
@@ -181,18 +183,14 @@ def _render_endorsement_row(e: dict):
 
     with col3:
         if status == "draft":
+            # Show PDF link if available (generated on creation)
+            pdf_url = e.get("document_url")
+            if pdf_url:
+                st.markdown(f"[PDF]({pdf_url})")
+            # Issue button just locks it in
             if st.button("Issue", key=f"issue_{endorsement_id}", type="primary", use_container_width=True):
                 try:
                     issue_endorsement(endorsement_id, issued_by="user")
-                    try:
-                        from core.package_generator import generate_midterm_endorsement_document
-                        doc_result = generate_midterm_endorsement_document(endorsement_id, created_by="user")
-                        pdf_url = doc_result.get("pdf_url")
-                        if pdf_url:
-                            save_endorsement_document_url(endorsement_id, pdf_url)
-                        st.success("Issued")
-                    except Exception:
-                        pass  # Document generation is optional
                     st.rerun()
                 except Exception as ex:
                     st.error(f"Error: {ex}")
@@ -200,47 +198,46 @@ def _render_endorsement_row(e: dict):
             pdf_url = e.get("document_url")
             if pdf_url:
                 st.markdown(f"[PDF]({pdf_url})")
-            else:
-                st.caption("Issued")
 
-    # Expandable actions for drafts (Edit/Delete) - only show if user clicks
+    # Draft actions - Edit and Delete buttons
     if status == "draft":
-        with st.expander("Options", expanded=False):
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                if st.button("Edit", key=f"edit_{endorsement_id}"):
-                    st.session_state[f"editing_endorsement_{endorsement_id}"] = True
-                    st.rerun()
-            with col_b:
-                if st.button("Delete", key=f"delete_{endorsement_id}"):
-                    try:
-                        delete_draft_endorsement(endorsement_id)
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(f"Error: {ex}")
-            with col_c:
-                if st.button("Void", key=f"void_{endorsement_id}"):
-                    st.session_state[f"confirm_void_{endorsement_id}"] = True
-
-    # Void confirmation (inline, simple)
-    if st.session_state.get(f"confirm_void_{endorsement_id}"):
-        reason = st.text_input("Void reason", key=f"void_reason_{endorsement_id}")
-        col_a, col_b = st.columns(2)
+        col_a, col_b, _ = st.columns([1, 1, 3])
         with col_a:
-            if st.button("Confirm", key=f"confirm_void_btn_{endorsement_id}", type="primary"):
-                if reason:
-                    try:
-                        void_endorsement(endorsement_id, reason, voided_by="user")
-                        st.session_state.pop(f"confirm_void_{endorsement_id}", None)
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(f"Error: {ex}")
-                else:
-                    st.warning("Enter a reason")
-        with col_b:
-            if st.button("Cancel", key=f"cancel_void_{endorsement_id}"):
-                st.session_state.pop(f"confirm_void_{endorsement_id}", None)
+            if st.button("Edit", key=f"edit_{endorsement_id}"):
+                st.session_state[f"editing_endorsement_{endorsement_id}"] = True
                 st.rerun()
+        with col_b:
+            if st.button("Delete", key=f"delete_{endorsement_id}"):
+                try:
+                    delete_draft_endorsement(endorsement_id)
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Error: {ex}")
+
+    # Issued actions - Void button
+    if status == "issued":
+        if st.button("Void", key=f"void_{endorsement_id}"):
+            st.session_state[f"confirm_void_{endorsement_id}"] = True
+
+        # Void confirmation
+        if st.session_state.get(f"confirm_void_{endorsement_id}"):
+            reason = st.text_input("Reason for voiding", key=f"void_reason_{endorsement_id}")
+            col_a, col_b, _ = st.columns([1, 1, 3])
+            with col_a:
+                if st.button("Confirm Void", key=f"confirm_void_btn_{endorsement_id}", type="primary"):
+                    if reason:
+                        try:
+                            void_endorsement(endorsement_id, reason, voided_by="user")
+                            st.session_state.pop(f"confirm_void_{endorsement_id}", None)
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"Error: {ex}")
+                    else:
+                        st.warning("Enter a reason")
+            with col_b:
+                if st.button("Cancel", key=f"cancel_void_{endorsement_id}"):
+                    st.session_state.pop(f"confirm_void_{endorsement_id}", None)
+                    st.rerun()
 
     # Edit form (for drafts)
     if st.session_state.get(f"editing_endorsement_{endorsement_id}"):
@@ -387,6 +384,24 @@ def _render_edit_dialog_content(e: dict, bound: dict = None, endorsement_catalog
         )
         new_change_details["cancellation_reason"] = reason
 
+    elif endorsement_type == "address_change":
+        st.markdown("**Address Change**")
+        # Show current/previous address as info only
+        old_address = change_details.get("old_address", {})
+        old_display = change_details.get("old_address_display") or format_address(old_address)
+        if old_display:
+            st.info(f"**Previous Address:** {old_display}")
+        # Only allow editing new address
+        st.caption("New Address")
+        new_address = render_address_form(
+            key_prefix=f"edit_dlg_addr_new_{endorsement_id}",
+            default_values=change_details.get("new_address", {}),
+        )
+        new_change_details["old_address"] = old_address  # Keep existing
+        new_change_details["new_address"] = new_address
+        new_change_details["old_address_display"] = old_display
+        new_change_details["new_address_display"] = format_address(new_address)
+
     # Premium section (for non-BOR types)
     premium_change = e.get("premium_change", 0) or 0
     premium_method = e.get("premium_method", "manual")
@@ -443,10 +458,10 @@ def _render_edit_dialog_content(e: dict, bound: dict = None, endorsement_catalog
         height=80
     )
 
-    # Save and Cancel buttons
-    col1, col2 = st.columns(2)
+    # Action buttons: Save, Issue, Delete, Cancel
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        if st.button("Save Changes", type="primary", key=f"edit_dlg_save_{endorsement_id}"):
+        if st.button("Save", type="primary", key=f"edit_dlg_save_{endorsement_id}"):
             try:
                 update_endorsement(
                     endorsement_id=endorsement_id,
@@ -454,17 +469,42 @@ def _render_edit_dialog_content(e: dict, bound: dict = None, endorsement_catalog
                     change_details=new_change_details,
                     premium_method=premium_method,
                     premium_change=premium_change,
-                    days_remaining=days_rem if premium_method == "pro_rata" else None,
                     notes=new_notes if new_notes else None,
                     updated_by="user"
                 )
-                # Clear edit state
                 st.session_state.pop("_edit_endorsement_data", None)
-                st.success("Updated!")
+                st.success("Saved!")
                 st.rerun()
             except Exception as ex:
                 st.error(f"Error: {ex}")
     with col2:
+        if st.button("Issue", key=f"edit_dlg_issue_{endorsement_id}"):
+            try:
+                # Save first, then issue
+                update_endorsement(
+                    endorsement_id=endorsement_id,
+                    effective_date=new_effective_date,
+                    change_details=new_change_details,
+                    premium_method=premium_method,
+                    premium_change=premium_change,
+                    notes=new_notes if new_notes else None,
+                    updated_by="user"
+                )
+                issue_endorsement(endorsement_id, issued_by="user")
+                st.session_state.pop("_edit_endorsement_data", None)
+                st.success("Issued!")
+                st.rerun()
+            except Exception as ex:
+                st.error(f"Error: {ex}")
+    with col3:
+        if st.button("Delete", key=f"edit_dlg_delete_{endorsement_id}"):
+            try:
+                delete_draft_endorsement(endorsement_id)
+                st.session_state.pop("_edit_endorsement_data", None)
+                st.rerun()
+            except Exception as ex:
+                st.error(f"Error: {ex}")
+    with col4:
         if st.button("Cancel", key=f"edit_dlg_cancel_{endorsement_id}"):
             st.session_state.pop("_edit_endorsement_data", None)
             st.rerun()
@@ -660,7 +700,7 @@ def _render_new_endorsement_form(
 
     # Description - optional for self-explanatory types or when template selected
     # BOR uses Change Reason field instead of Description, so skip entirely
-    self_explanatory_types = {"extension", "cancellation", "reinstatement", "erp"}
+    self_explanatory_types = {"extension", "cancellation", "reinstatement", "erp", "name_change", "address_change", "coverage_change"}
     no_description_types = {"bor_change"}  # These types don't need description at all
 
     if endorsement_type in no_description_types:
@@ -890,6 +930,15 @@ def _generate_auto_description(endorsement_type: str, change_details: dict) -> s
             return f"Address changed to {new_addr}"
         return "Address change"
 
+    elif endorsement_type == "name_change":
+        old_name = change_details.get("old_name", "")
+        new_name = change_details.get("new_name", "")
+        if old_name and new_name:
+            return f"Named insured changed from {old_name} to {new_name}"
+        elif new_name:
+            return f"Named insured changed to {new_name}"
+        return "Named insured change"
+
     return ""
 
 
@@ -1111,154 +1160,140 @@ def _render_bor_change_fields(change_details: dict, submission_id: str):
         st.caption("Note: No BOR letter date provided. You can still create the endorsement.")
 
 
-def _render_endorsement_row_v2(e: dict, bound: dict = None, endorsement_catalog: list = None, policy_dates: tuple = None):
-    """Render a single endorsement row - v2 simplified with calculation details."""
-    endorsement_id = e["id"]
-    number = e["endorsement_number"]
-    status = e["status"]
-    eff_date = e["effective_date"]
-    eff_str = eff_date.strftime("%m/%d/%Y") if eff_date else ""
-    description = e["description"]
-    premium_change = e.get("premium_change", 0)
-    endorsement_type = e["endorsement_type"]
-    formal_title = e.get("formal_title")
-    change_details = e.get("change_details", {}) or {}
-    premium_method = e.get("premium_method", "manual")
-    original_annual_premium = e.get("original_annual_premium")
-    days_remaining = e.get("days_remaining")
+def _render_endorsements_list_compact(endorsements: list, bound: dict = None, endorsement_catalog: list = None, policy_dates: tuple = None):
+    """Render endorsements using st.dataframe with single action dropdown."""
+    import pandas as pd
 
-    # Status styling
-    if status == "draft":
-        status_badge = "🟠"
-    elif status == "issued":
-        status_badge = "✅"
-    else:  # void
-        status_badge = "❌"
+    if not endorsements:
+        st.caption("No mid-term endorsements.")
+        return
 
-    # Build title
-    title = formal_title if formal_title else description
-    if len(title) > 60:
-        title = title[:57] + "..."
+    # Reset action selector if edit dialog is open (prevents infinite loop)
+    if st.session_state.get("_edit_endorsement_data"):
+        st.session_state["_endorsement_action"] = "Select action..."
 
-    # Premium display
-    if endorsement_type == "bor_change":
-        premium_str = ""
-    elif premium_change > 0:
-        premium_str = f"+${premium_change:,.0f}"
-    elif premium_change < 0:
-        premium_str = f"-${abs(premium_change):,.0f}"
-    else:
-        premium_str = ""
+    drafts = [e for e in endorsements if e["status"] == "draft"]
+    issued = [e for e in endorsements if e["status"] == "issued"]
 
-    # Main row: Status + Info | Premium | Action
-    col1, col2, col3 = st.columns([5, 1.5, 1])
+    # Build dataframe
+    rows = []
+    for e in endorsements:
+        number = e["endorsement_number"]
+        status = e["status"]
+        eff_date = e["effective_date"]
+        eff_str = eff_date.strftime("%m/%d/%Y") if eff_date else ""
+        premium_change = e.get("premium_change", 0)
+        endorsement_type = e["endorsement_type"]
+        formal_title = e.get("formal_title")
+        description = e["description"]
+        pdf_url = e.get("document_url")
 
-    with col1:
-        st.markdown(f"{status_badge} **#{number}** {title}")
+        icon = {"draft": "🟠", "issued": "✅", "void": "🚫"}.get(status, "❌")
 
-    with col2:
-        if premium_str:
-            st.markdown(f"**{premium_str}**")
+        title = formal_title if formal_title else description
+        if len(title) > 45:
+            title = title[:42] + "..."
 
-    with col3:
-        if status == "draft":
-            if st.button("Issue", key=f"issue_{endorsement_id}", type="primary", use_container_width=True):
+        if status == "void" or endorsement_type == "bor_change":
+            premium_str = ""
+        elif premium_change > 0:
+            premium_str = f"+${premium_change:,.0f}"
+        elif premium_change < 0:
+            premium_str = f"-${abs(premium_change):,.0f}"
+        else:
+            premium_str = ""
+
+        rows.append({
+            " ": icon,
+            "Endorsement": f"#{number} {title}",
+            "Date": eff_str,
+            "Premium": premium_str,
+            "PDF": pdf_url or "",
+        })
+
+    df = pd.DataFrame(rows)
+
+    st.dataframe(
+        df,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            " ": st.column_config.TextColumn(width="small"),
+            "Endorsement": st.column_config.TextColumn(width="large"),
+            "Date": st.column_config.TextColumn(width="small"),
+            "Premium": st.column_config.TextColumn(width="small"),
+            "PDF": st.column_config.LinkColumn(display_text="PDF", width="small"),
+        },
+        height=(len(rows) * 35) + 38,
+    )
+
+    # Single action dropdown - drafts first (descending), then issued (descending)
+    action_options = ["Select action..."]
+    action_map = {}
+
+    # Drafts first, sorted descending by number - two entries each (Issue, Edit/Delete)
+    for e in sorted(drafts, key=lambda x: x["endorsement_number"], reverse=True):
+        num = e["endorsement_number"]
+        title = e.get("formal_title") or e["description"]
+        if len(title) > 25:
+            title = title[:22] + "..."
+
+        issue_label = f"#{num} {title} - Issue"
+        edit_label = f"#{num} {title} - Edit/Delete"
+        action_options.append(issue_label)
+        action_options.append(edit_label)
+        action_map[issue_label] = ("issue", e)
+        action_map[edit_label] = ("edit", e)
+
+    # Issued next, sorted descending by number
+    for e in sorted(issued, key=lambda x: x["endorsement_number"], reverse=True):
+        num = e["endorsement_number"]
+        title = e.get("formal_title") or e["description"]
+        if len(title) > 25:
+            title = title[:22] + "..."
+        label = f"#{num} {title} - Void"
+        action_options.append(label)
+        action_map[label] = ("void", e)
+
+    if len(action_options) > 1:
+        selected = st.selectbox("Actions", action_options, key="_endorsement_action", label_visibility="collapsed")
+
+        if selected and selected != "Select action..." and selected in action_map:
+            action, e = action_map[selected]
+            eid = e["id"]
+
+            if action == "issue":
+                # Direct issue
                 try:
-                    issue_endorsement(endorsement_id, issued_by="user")
-                    # Generate document
-                    try:
-                        from core.package_generator import generate_midterm_endorsement_document
-                        doc_result = generate_midterm_endorsement_document(endorsement_id, created_by="user")
-                        pdf_url = doc_result.get("pdf_url")
-                        if pdf_url:
-                            save_endorsement_document_url(endorsement_id, pdf_url)
-                    except Exception:
-                        pass
+                    issue_endorsement(eid, issued_by="user")
                     st.rerun()
                 except Exception as ex:
-                    st.error(f"Error: {ex}")
-        elif status == "issued":
-            pdf_url = e.get("document_url")
-            if pdf_url:
-                st.markdown(f"[PDF]({pdf_url})")
+                    st.error(str(ex))
 
-    # Details line with date and calculation info
-    details_parts = [f"Eff: {eff_str}"]
+            elif action == "edit":
+                # Open edit dialog
+                keys_to_clear = [k for k in st.session_state.keys() if k.startswith("edit_dlg_")]
+                for k in keys_to_clear:
+                    del st.session_state[k]
+                st.session_state["_edit_endorsement_data"] = {
+                    "endorsement": e,
+                    "bound": bound,
+                    "endorsement_catalog": endorsement_catalog,
+                    "policy_dates": policy_dates
+                }
+                st.rerun()  # Reset at top of function prevents infinite loop
 
-    # Show calculation details for issued endorsements with pro-rata
-    if status == "issued" and premium_method == "pro_rata" and original_annual_premium and days_remaining:
-        calc_detail = f"Pro-rata: ${original_annual_premium:,.0f} × {days_remaining} days"
-        details_parts.append(calc_detail)
-
-    # Show type-specific details
-    if endorsement_type == "extension":
-        new_exp = change_details.get("new_expiration_date")
-        if new_exp:
-            details_parts.append(f"New exp: {new_exp}")
-    elif endorsement_type == "name_change":
-        old_name = change_details.get("old_name", "")
-        new_name = change_details.get("new_name", "")
-        if old_name and new_name:
-            details_parts.append(f"{old_name} → {new_name}")
-    elif endorsement_type == "bor_change":
-        prev = change_details.get("previous_broker_name", "")
-        new_b = change_details.get("new_broker_name", "")
-        if prev and new_b:
-            details_parts.append(f"{prev} → {new_b}")
-
-    st.caption(" | ".join(details_parts))
-
-    # Draft actions in expander
-    if status == "draft":
-        with st.expander("Options", expanded=False):
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                # Edit button - triggers dialog via session state
-                if st.button("Edit", key=f"edit_v2_{endorsement_id}"):
-                    # Clear any stale edit dialog keys
-                    keys_to_clear = [k for k in st.session_state.keys() if k.startswith("edit_dlg_")]
-                    for k in keys_to_clear:
-                        del st.session_state[k]
-                    # Set the endorsement to edit
-                    st.session_state["_edit_endorsement_data"] = {
-                        "endorsement": e,
-                        "bound": bound,
-                        "endorsement_catalog": endorsement_catalog,
-                        "policy_dates": policy_dates
-                    }
-                    st.rerun()
-            with col_b:
-                if st.button("Delete", key=f"delete_v2_{endorsement_id}"):
-                    try:
-                        delete_draft_endorsement(endorsement_id)
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(f"Error: {ex}")
-            with col_c:
-                if st.button("Void", key=f"void_v2_{endorsement_id}"):
-                    st.session_state[f"confirm_void_{endorsement_id}"] = True
-
-        # Void confirmation
-        if st.session_state.get(f"confirm_void_{endorsement_id}"):
-            reason = st.text_input("Void reason", key=f"void_reason_v2_{endorsement_id}")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Confirm Void", key=f"confirm_void_btn_v2_{endorsement_id}", type="primary"):
+            elif action == "void":
+                # Clear any edit state
+                st.session_state.pop("_edit_endorsement_data", None)
+                # Void flow inline
+                reason = st.text_input("Void reason", key=f"void_reason_{eid}", label_visibility="collapsed", placeholder="Enter reason...")
+                if st.button("Confirm Void", key=f"void_{eid}", type="primary"):
                     if reason:
-                        try:
-                            void_endorsement(endorsement_id, reason, voided_by="user")
-                            st.session_state.pop(f"confirm_void_{endorsement_id}", None)
-                            st.rerun()
-                        except Exception as ex:
-                            st.error(f"Error: {ex}")
+                        void_endorsement(eid, reason, voided_by="user")
+                        st.rerun()
                     else:
-                        st.warning("Enter a reason")
-            with c2:
-                if st.button("Cancel", key=f"cancel_void_v2_{endorsement_id}"):
-                    st.session_state.pop(f"confirm_void_{endorsement_id}", None)
-                    st.rerun()
-
-    st.markdown("---")
+                        st.warning("Enter reason")
 
 
 def _render_new_endorsement_form_v2(
@@ -1356,7 +1391,7 @@ def _render_endorsement_dialog_content(
                 catalog_id = selected["id"]
 
         # Description - only if not self-explanatory
-        self_explanatory = {"extension", "cancellation", "reinstatement", "erp", "bor_change", "coverage_change", "address_change"}
+        self_explanatory = {"extension", "cancellation", "reinstatement", "erp", "bor_change", "coverage_change", "address_change", "name_change"}
         if endorsement_type not in self_explanatory and not catalog_id:
             description = st.text_input(
                 "Description",
@@ -1813,7 +1848,7 @@ def _render_cancellation_fields(change_details: dict, submission_id: str):
 
 
 def _render_address_change_fields(change_details: dict, submission_id: str, key_prefix: str = ""):
-    """Render address change form fields."""
+    """Render address change form fields using shared component."""
     from core.account_management import (
         get_submission_account,
         get_account_address_dict,
@@ -1821,15 +1856,6 @@ def _render_address_change_fields(change_details: dict, submission_id: str, key_
     )
 
     st.markdown("**Address Change**")
-
-    # US states for dropdown
-    US_STATES = [
-        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-        "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-        "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-        "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-        "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC"
-    ]
 
     # Get current address from account
     account = get_submission_account(submission_id)
@@ -1845,109 +1871,30 @@ def _render_address_change_fields(change_details: dict, submission_id: str, key_
         st.caption("No address on file. Enter current address below.")
         default_old = {}
 
-    # Old Address section
+    # Old Address section using shared component
     st.caption("Previous Address")
-    col1, col2 = st.columns(2)
-    with col1:
-        old_street = st.text_input(
-            "Street Address",
-            value=default_old.get("street", ""),
-            placeholder="123 Main St",
-            key=f"{key_prefix}addr_old_street_{submission_id}"
-        )
-    with col2:
-        old_street2 = st.text_input(
-            "Suite/Unit (optional)",
-            value=default_old.get("street2", ""),
-            placeholder="Suite 100",
-            key=f"{key_prefix}addr_old_street2_{submission_id}"
-        )
+    old_address = render_address_form(
+        key_prefix=f"{key_prefix}addr_old_{submission_id}",
+        default_values=default_old,
+    )
 
-    col3, col4, col5 = st.columns([2, 1, 1])
-    with col3:
-        old_city = st.text_input(
-            "City",
-            value=default_old.get("city", ""),
-            key=f"{key_prefix}addr_old_city_{submission_id}"
-        )
-    with col4:
-        # Find the index of the default state
-        default_state = default_old.get("state", "")
-        state_options = [""] + US_STATES
-        default_state_idx = state_options.index(default_state) if default_state in state_options else 0
-        old_state = st.selectbox(
-            "State",
-            options=state_options,
-            index=default_state_idx,
-            key=f"{key_prefix}addr_old_state_{submission_id}"
-        )
-    with col5:
-        old_zip = st.text_input(
-            "ZIP Code",
-            value=default_old.get("zip", ""),
-            key=f"{key_prefix}addr_old_zip_{submission_id}"
-        )
-
-    # New Address section
+    # New Address section using shared component
     st.caption("New Address")
-    col1, col2 = st.columns(2)
-    with col1:
-        new_street = st.text_input(
-            "Street Address",
-            placeholder="456 Oak Ave",
-            key=f"{key_prefix}addr_new_street_{submission_id}"
-        )
-    with col2:
-        new_street2 = st.text_input(
-            "Suite/Unit (optional)",
-            placeholder="Floor 2",
-            key=f"{key_prefix}addr_new_street2_{submission_id}"
-        )
-
-    col3, col4, col5 = st.columns([2, 1, 1])
-    with col3:
-        new_city = st.text_input(
-            "City",
-            key=f"{key_prefix}addr_new_city_{submission_id}"
-        )
-    with col4:
-        new_state = st.selectbox(
-            "State",
-            options=state_options,
-            index=0,
-            key=f"{key_prefix}addr_new_state_{submission_id}"
-        )
-    with col5:
-        new_zip = st.text_input(
-            "ZIP Code",
-            key=f"{key_prefix}addr_new_zip_{submission_id}"
-        )
+    new_address = render_address_form(
+        key_prefix=f"{key_prefix}addr_new_{submission_id}",
+    )
 
     # Store account_id so we can update account when endorsement is issued
     if account:
         change_details["account_id"] = account.get("id")
 
     # Store in change_details
-    change_details["old_address"] = {
-        "street": old_street,
-        "street2": old_street2,
-        "city": old_city,
-        "state": old_state,
-        "zip": old_zip,
-    }
-    change_details["new_address"] = {
-        "street": new_street,
-        "street2": new_street2,
-        "city": new_city,
-        "state": new_state,
-        "zip": new_zip,
-    }
+    change_details["old_address"] = old_address
+    change_details["new_address"] = new_address
 
-    # Formatted display strings for PDF/description
-    old_parts = [p for p in [old_street, old_street2, f"{old_city}, {old_state} {old_zip}".strip(", ")] if p]
-    new_parts = [p for p in [new_street, new_street2, f"{new_city}, {new_state} {new_zip}".strip(", ")] if p]
-    change_details["old_address_display"] = ", ".join(old_parts) if old_parts else ""
-    change_details["new_address_display"] = ", ".join(new_parts) if new_parts else ""
+    # Formatted display strings for PDF/description using shared format function
+    change_details["old_address_display"] = format_address(old_address)
+    change_details["new_address_display"] = format_address(new_address)
 
 
 def _render_bor_fields_v2(change_details: dict, submission_id: str):
