@@ -46,8 +46,8 @@ parse_controls_from_summary = pipeline.parse_controls_from_summary
 # Import modular components
 from pages_components.rating_panel_v2 import render_rating_panel
 from pages_components.similar_submissions_panel import render_similar_submissions_panel
-from pages_components.submission_status_panel import render_submission_status_panel
-from pages_components.account_matching_panel import render_account_matching_panel
+from pages_components.details_panel import render_details_panel
+from pages_components.status_header import render_status_header
 from pages_components.account_history_panel import render_account_history_compact
 from pages_components.renewal_panel import render_renewal_panel
 from pages_components.endorsements_history_panel import render_endorsements_history_panel
@@ -528,146 +528,147 @@ def _to_vector_literal(vec):
 
 
 def _render_policy_period_section(sub_id: str):
-    """Render policy period fields (effective/expiration dates)."""
-    from datetime import date, timedelta
+    """Render policy period with smart expiration."""
+    from datetime import date
+    from dateutil.relativedelta import relativedelta
 
     conn = get_conn()
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT effective_date, expiration_date, renewal_type
-            FROM submissions
-            WHERE id = %s
-            """,
-            (sub_id,),
-        )
+        cur.execute("SELECT effective_date, expiration_date FROM submissions WHERE id = %s", (sub_id,))
         row = cur.fetchone()
 
     effective_date = row[0] if row else None
     expiration_date = row[1] if row else None
-    renewal_type = row[2] if row else "new_business"
 
-    with st.expander("📅 Policy Period", expanded=True):
-        col1, col2, col3 = st.columns([1, 1, 1])
+    edit_key = f"editing_period_{sub_id}"
+    is_editing = st.session_state.get(edit_key, False)
 
-        with col1:
-            new_effective = st.date_input(
-                "Effective Date",
-                value=effective_date,
-                key=f"effective_date_{sub_id}"
-            )
+    if not is_editing:
+        # Display mode
+        col_display, col_btn = st.columns([6, 1])
 
-        with col2:
-            new_expiration = st.date_input(
-                "Expiration Date",
-                value=expiration_date,
-                key=f"expiration_date_{sub_id}"
-            )
+        with col_display:
+            if effective_date:
+                eff_str = effective_date.strftime("%m/%d/%Y")
+                if expiration_date:
+                    exp_str = expiration_date.strftime("%m/%d/%Y")
+                else:
+                    exp_str = (effective_date + relativedelta(years=1)).strftime("%m/%d/%Y")
+                st.markdown(f"**Period:** {eff_str} → {exp_str}")
+            else:
+                st.markdown("**Period:** TBD (12 months)")
 
-        with col3:
-            renewal_display = "Renewal" if renewal_type == "renewal" else "New Business"
-            st.text_input("Type", value=renewal_display, disabled=True, key=f"renewal_type_display_{sub_id}")
+        with col_btn:
+            if st.button("Edit", key=f"edit_period_btn_{sub_id}", type="secondary"):
+                st.session_state[edit_key] = True
+                st.rerun()
+    else:
+        # Edit mode
+        new_effective = st.date_input("Effective Date", value=effective_date, key=f"eff_{sub_id}")
 
-        # Save if dates changed
-        dates_changed = (new_effective != effective_date) or (new_expiration != expiration_date)
-        if dates_changed:
-            if st.button("Save Policy Dates", key=f"save_policy_dates_{sub_id}"):
+        # Check if custom expiration
+        has_custom = False
+        if effective_date and expiration_date:
+            expected = effective_date + relativedelta(years=1)
+            has_custom = (expiration_date != expected)
+
+        use_custom = st.checkbox("Custom expiration", value=has_custom, key=f"cust_{sub_id}")
+
+        if use_custom:
+            calc_exp = new_effective + relativedelta(years=1) if new_effective else None
+            new_expiration = st.date_input("Expiration Date", value=expiration_date or calc_exp, key=f"exp_{sub_id}")
+        else:
+            if new_effective:
+                new_expiration = new_effective + relativedelta(years=1)
+                st.caption(f"Expiration: {new_expiration.strftime('%m/%d/%Y')} (auto)")
+            else:
+                new_expiration = None
+
+        c1, c2, c3 = st.columns([1, 1, 4])
+        with c1:
+            if st.button("Save", key=f"save_period_{sub_id}", type="primary"):
                 with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE submissions
-                        SET effective_date = %s, expiration_date = %s, updated_at = now()
-                        WHERE id = %s
-                        """,
-                        (new_effective, new_expiration, sub_id),
-                    )
-                st.success("Policy dates saved")
+                    cur.execute("UPDATE submissions SET effective_date = %s, expiration_date = %s, updated_at = now() WHERE id = %s", (new_effective, new_expiration, sub_id))
+                st.session_state[edit_key] = False
+                st.rerun()
+        with c2:
+            if st.button("Cancel", key=f"cancel_period_{sub_id}"):
+                st.session_state[edit_key] = False
                 st.rerun()
 
 
 def _render_broker_section(sub_id: str):
-    """Render broker assignment section."""
+    """Render broker section."""
     from core.bor_management import get_current_broker, get_all_broker_employments
-    from sqlalchemy import text
 
-    # Get current broker assignment
     current = get_current_broker(sub_id)
+    edit_key = f"editing_broker_{sub_id}"
+    is_editing = st.session_state.get(edit_key, False)
 
-    with st.expander("👤 Broker", expanded=True):
-        if current:
-            # Display current broker
-            display = current.get("broker_name", "Unknown")
-            if current.get("contact_name"):
-                display += f" - {current.get('contact_name')}"
-            if current.get("contact_email"):
-                display += f" ({current.get('contact_email')})"
+    if not is_editing:
+        # Display mode
+        col_display, col_btn = st.columns([6, 1])
 
-            st.markdown(f"**{display}**")
+        with col_display:
+            if current:
+                display = current.get("broker_name", "Unknown")
+                if current.get("contact_name"):
+                    display += f" - {current.get('contact_name')}"
+                if current.get("contact_email"):
+                    display += f" ({current.get('contact_email')})"
+                st.markdown(f"**Broker:** {display}")
+            else:
+                st.markdown("**Broker:** Not assigned")
 
-            # Edit toggle
-            if st.checkbox("Change broker", key=f"change_broker_{sub_id}"):
-                employments = get_all_broker_employments()
-                if employments:
-                    emp_options = {e["id"]: e["display_name"] for e in employments}
-                    new_emp_id = st.selectbox(
-                        "New Broker",
-                        options=list(emp_options.keys()),
-                        format_func=lambda x: emp_options.get(x, ""),
-                        key=f"new_broker_emp_{sub_id}"
-                    )
+        with col_btn:
+            btn_label = "Change" if current else "Assign"
+            if st.button(btn_label, key=f"edit_broker_btn_{sub_id}", type="secondary"):
+                st.session_state[edit_key] = True
+                st.rerun()
+    else:
+        # Edit mode
+        employments = get_all_broker_employments()
+        if employments:
+            emp_options = {e["id"]: e["display_name"] for e in employments}
 
-                    if st.button("Save", key=f"save_broker_{sub_id}", type="primary"):
-                        # Find selected employment
-                        for emp in employments:
-                            if emp["id"] == new_emp_id:
-                                # Update submission broker fields
-                                conn = get_conn()
-                                with conn.cursor() as cur:
-                                    cur.execute("""
-                                        UPDATE submissions
-                                        SET broker_org_id = %s,
-                                            broker_employment_id = %s,
-                                            updated_at = now()
-                                        WHERE id = %s
-                                    """, (emp["org_id"], emp["id"], sub_id))
-                                st.success("Broker updated")
-                                st.rerun()
-                                break
-        else:
-            # No broker assigned - show selector
-            st.caption("No broker assigned")
-            employments = get_all_broker_employments()
-            if employments:
-                emp_options = {e["id"]: e["display_name"] for e in employments}
-                emp_options[""] = "(Select broker)"
-                selected = st.selectbox(
-                    "Assign Broker",
-                    options=list(emp_options.keys()),
-                    format_func=lambda x: emp_options.get(x, ""),
-                    key=f"assign_broker_{sub_id}"
-                )
+            selected_emp_id = st.selectbox(
+                "Select Broker",
+                options=list(emp_options.keys()),
+                format_func=lambda x: emp_options.get(x, ""),
+                key=f"broker_select_{sub_id}"
+            )
 
-                if selected and st.button("Assign", key=f"assign_broker_btn_{sub_id}", type="primary"):
+            c1, c2, c3 = st.columns([1, 1, 4])
+            with c1:
+                if st.button("Save", key=f"save_broker_{sub_id}", type="primary"):
                     for emp in employments:
-                        if emp["id"] == selected:
+                        if emp["id"] == selected_emp_id:
                             conn = get_conn()
                             with conn.cursor() as cur:
                                 cur.execute("""
                                     UPDATE submissions
-                                    SET broker_org_id = %s,
-                                        broker_employment_id = %s,
-                                        updated_at = now()
+                                    SET broker_org_id = %s, broker_employment_id = %s, updated_at = now()
                                     WHERE id = %s
                                 """, (emp["org_id"], emp["id"], sub_id))
-                            st.success("Broker assigned")
+                            st.session_state[edit_key] = False
                             st.rerun()
                             break
+            with c2:
+                if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
+                    st.session_state[edit_key] = False
+                    st.rerun()
+        else:
+            st.caption("No brokers available")
+            if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
+                st.session_state[edit_key] = False
+                st.rerun()
 
 
 # ─────────────────────── UI starts ──────────────────────────
 def render():
     """Main render function for the submissions page"""
     import pandas as pd
+
     st.title("📂 AI-Processed Submissions")
 
     # Search and submission selection in same row
@@ -792,6 +793,9 @@ def render():
     if sub_id:
         st.divider()
         st.subheader(label_selected)
+
+        # ------------------- STATUS HEADER -------------------
+        render_status_header(sub_id, get_conn=get_conn)
 
         # ------------------- TABS -------------------
         tab_details, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"])
@@ -1277,17 +1281,8 @@ def render():
             # ------------------- pull latest edits -------------------
             latest_edits = latest_edits_map(sub_id)
 
-            # ------------------- Submission Status --------------------
-            render_submission_status_panel(sub_id)
-
-            # ------------------- Policy Period --------------------
-            _render_policy_period_section(sub_id)
-
-            # ------------------- Broker --------------------
-            _render_broker_section(sub_id)
-
-            # ------------------- Account Matching --------------------
-            render_account_matching_panel(sub_id, applicant_name, website)
+            # ------------------- Unified Details Panel --------------------
+            render_details_panel(sub_id, applicant_name, website, get_conn=get_conn)
 
         # =================== POLICY TAB ===================
         with tab_policy:

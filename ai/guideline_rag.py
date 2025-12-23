@@ -6,11 +6,8 @@ from supabase import create_client
 from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import SupabaseVectorStore
-try:
-    from langchain.chains import ConversationalRetrievalChain
-except ImportError:
-    from langchain.chains.conversational_retrieval.base import ConversationalRetrievalChain
-from langchain.prompts import PromptTemplate
+from langchain_classic.chains import ConversationalRetrievalChain
+from langchain_core.prompts import PromptTemplate
 
 from pathlib import Path
 from dotenv import load_dotenv          # ⬅️ add this
@@ -248,8 +245,8 @@ def get_chat_response(question: str, submission_id: str = None, chat_history: li
         from langchain_community.tools.tavily_search import TavilySearchResults
     except ImportError:
         from langchain_community.tools import TavilySearchResults
-    from langchain.agents import create_openai_tools_agent, AgentExecutor
-    from langchain.prompts import ChatPromptTemplate
+    from langchain_classic.agents import create_openai_tools_agent, AgentExecutor
+    from langchain_core.prompts import ChatPromptTemplate
     from supabase import create_client
     import os
     
