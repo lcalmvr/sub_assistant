@@ -31,8 +31,6 @@ def render_coverage_summary_panel(
     Render coverage configuration panel for Rating tab.
     This is option-agnostic - configures structure and defaults.
     """
-    st.markdown("#### Coverage Configuration")
-
     # Get submission's default policy form
     default_form = _get_submission_policy_form(sub_id, get_conn_func)
 
@@ -41,46 +39,22 @@ def render_coverage_summary_panel(
     form_labels = [f["label"] for f in policy_forms]
     form_ids = [f["id"] for f in policy_forms]
 
-    # Initialize session state if not set
+    # Keys
     session_key = f"policy_form_{sub_id}"
+    prev_form_key = f"policy_form_prev_{sub_id}"
+    agg_override_key = f"agg_overrides_{sub_id}"
+    sublimit_key = f"sublimit_defaults_{sub_id}"
+
+    # Initialize session state if not set
     if session_key not in st.session_state:
         st.session_state[session_key] = default_form
-
-    # Get current index from session state
-    current_form = st.session_state[session_key]
-    current_idx = form_ids.index(current_form) if current_form in form_ids else 0
-
-    selected_form_label = st.radio(
-        "Policy Form",
-        options=form_labels,
-        index=current_idx,
-        key=f"policy_form_radio_{sub_id}",
-        horizontal=True,
-    )
-    selected_form = form_ids[form_labels.index(selected_form_label)]
-
-    # Update session state if policy form changed
-    if selected_form != st.session_state[session_key]:
-        old_form = st.session_state[session_key]
-        st.session_state[session_key] = selected_form
-
-        # Reset sublimit defaults when switching away from Tech
-        # or when switching to a form where sublimits are active
-        sublimit_key = f"sublimit_defaults_{sub_id}"
-        if sublimit_key in st.session_state:
-            # Reset to config defaults
-            st.session_state[sublimit_key] = {}
-            for cov in get_sublimit_coverage_definitions():
-                st.session_state[sublimit_key][cov["id"]] = cov.get("default", 0)
-
-        st.rerun()
+    if prev_form_key not in st.session_state:
+        st.session_state[prev_form_key] = st.session_state[session_key]
 
     # Initialize coverage overrides if not set
-    agg_override_key = f"agg_overrides_{sub_id}"
     if agg_override_key not in st.session_state:
         st.session_state[agg_override_key] = {}
 
-    sublimit_key = f"sublimit_defaults_{sub_id}"
     # Always refresh from config to pick up any config changes
     config_defaults = {cov["id"]: cov.get("default", 0) for cov in get_sublimit_coverage_definitions()}
     if sublimit_key not in st.session_state:
@@ -89,38 +63,87 @@ def render_coverage_summary_panel(
         # Update any values that are still at old defaults to new defaults
         current = st.session_state[sublimit_key]
         for cov_id, new_default in config_defaults.items():
-            # If value matches no known option or is missing, reset to config default
             if cov_id not in current:
                 current[cov_id] = new_default
 
-    # Single container with edit dropdowns on left, summary on right
-    with st.expander("Coverage Limits", expanded=True):
-        col_edit, col_summary = st.columns([1, 1])
+    # Use same coverage editor component as Quote tab
+    from pages_components.coverage_editor import render_coverage_editor, reset_coverage_editor
+    from pages_components.coverages_panel import build_coverages_from_rating
 
-        # Process edit column FIRST to update session state
-        with col_edit:
-            # Tabs for Variable vs Standard editing
-            tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
+    with st.expander("Coverage Schedule", expanded=True):
+        # Policy form radio buttons with Edit button inline
+        radio_col, btn_col = st.columns([4, 1])
 
-            with tab_var:
-                _render_sublimit_defaults(sub_id, selected_form)
+        # Get current form for radio default
+        current_form = st.session_state[session_key]
+        current_idx = form_ids.index(current_form) if current_form in form_ids else 0
 
-            with tab_std:
-                _render_aggregate_coverages_edit(sub_id, selected_form)
+        selected_form_label = radio_col.radio(
+            "Policy Form",
+            options=form_labels,
+            index=current_idx,
+            key=f"policy_form_radio_{sub_id}",
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        selected_form = form_ids[form_labels.index(selected_form_label)]
 
-        # Then render summary using updated values
-        with col_summary:
-            st.markdown("**Summary**")
-            _render_unified_summary(sub_id, selected_form, aggregate_limit)
+        # Always update session_key to match widget selection
+        st.session_state[session_key] = selected_form
 
-            # Bulk update buttons
-            st.markdown("---")
+        # Check if form changed from PREVIOUS render (not current session state)
+        prev_form = st.session_state[prev_form_key]
+        form_changed = (selected_form != prev_form)
+
+        with btn_col:
             render_bulk_coverage_buttons_rating(
                 sub_id,
                 selected_form,
                 st.session_state[sublimit_key],
                 st.session_state[agg_override_key],
             )
+
+        # Reset coverages if form changed
+        if form_changed:
+            # Reset sublimit defaults for new form
+            st.session_state[sublimit_key] = {}
+            for cov in get_sublimit_coverage_definitions():
+                st.session_state[sublimit_key][cov["id"]] = cov.get("default", 0)
+
+            # Clear aggregate overrides too
+            st.session_state[agg_override_key] = {}
+
+            # Use proper reset function to clear editor AND widget keys
+            reset_coverage_editor(f"rating_{sub_id}")
+
+            # Update prev_form to current
+            st.session_state[prev_form_key] = selected_form
+            st.rerun()
+
+        # Build coverages dict from current session state
+        rating_coverages = build_coverages_from_rating(sub_id, aggregate_limit)
+
+        # Use shared coverage editor (same as Quote tab)
+        def on_rating_coverage_change(updated_coverages: dict):
+            # Sync changes back to Rating tab session state
+            if "sublimit_coverages" in updated_coverages:
+                for cov_id, val in updated_coverages["sublimit_coverages"].items():
+                    st.session_state[sublimit_key][cov_id] = val
+            if "aggregate_coverages" in updated_coverages:
+                for cov_id, val in updated_coverages["aggregate_coverages"].items():
+                    if val != aggregate_limit:
+                        st.session_state[agg_override_key][cov_id] = val
+                    elif cov_id in st.session_state[agg_override_key]:
+                        del st.session_state[agg_override_key][cov_id]
+
+        render_coverage_editor(
+            editor_id=f"rating_{sub_id}",
+            current_coverages=rating_coverages,
+            aggregate_limit=aggregate_limit,
+            mode="edit",
+            on_change=on_rating_coverage_change,
+            show_header=False,
+        )
 
     # Build final coverage config
     final_coverages = {

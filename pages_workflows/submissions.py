@@ -855,79 +855,23 @@ def render():
                 # Get raw industry for premium calculation (shared function handles slug mapping)
                 raw_industry = rating_sub.get("industry") or "Technology"
 
-                # ─────────────────────────────────────────────────────────────
-                # Rating Parameters Row
-                # ─────────────────────────────────────────────────────────────
-                col_ret, col_haz, col_adj = st.columns(3)
+                # Rating Parameters setup
+                retention_options = [25_000, 50_000, 100_000, 150_000, 250_000]
+                retention_labels = ["$25K", "$50K", "$100K", "$150K", "$250K"]
 
-                with col_ret:
-                    # Retention selector
-                    retention_options = [25_000, 50_000, 100_000, 150_000, 250_000]
-                    retention_labels = ["$25K", "$50K", "$100K", "$150K", "$250K"]
-                    selected_retention = st.selectbox(
-                        "Retention",
-                        options=retention_options,
-                        format_func=lambda x: retention_labels[retention_options.index(x)],
-                        index=1,  # Default to 50K
-                        key=f"rating_retention_{sub_id}"
-                    )
+                current_hazard = rating_sub.get("hazard_override")
+                current_overrides = rating_sub.get("control_overrides") or {}
+                if isinstance(current_overrides, str):
+                    try:
+                        current_overrides = json_mod.loads(current_overrides)
+                    except:
+                        current_overrides = {}
+                current_adj = current_overrides.get("overall", 0)
 
-                with col_haz:
-                    # Hazard class override
-                    current_hazard = rating_sub.get("hazard_override")
-                    hazard_options = [None, 1, 2, 3, 4, 5]
-                    hazard_labels = ["Auto-detect", "1 - Low", "2 - Below Avg", "3 - Average", "4 - Above Avg", "5 - High"]
-                    hazard_idx = hazard_options.index(current_hazard) if current_hazard in hazard_options else 0
-                    new_hazard = st.selectbox(
-                        "Hazard Class",
-                        options=hazard_options,
-                        format_func=lambda x: hazard_labels[hazard_options.index(x)],
-                        index=hazard_idx,
-                        key=f"rating_hazard_{sub_id}"
-                    )
-                    if new_hazard != current_hazard:
-                        with get_conn().cursor() as cur:
-                            cur.execute(
-                                "UPDATE submissions SET hazard_override = %s WHERE id = %s",
-                                (new_hazard, sub_id)
-                            )
-                        clear_submission_caches()
-                        st.rerun()
-
-                with col_adj:
-                    # Control adjustment
-                    current_overrides = rating_sub.get("control_overrides") or {}
-                    if isinstance(current_overrides, str):
-                        try:
-                            current_overrides = json_mod.loads(current_overrides)
-                        except:
-                            current_overrides = {}
-                    current_adj = current_overrides.get("overall", 0)
-                    adj_options = [-0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15]
-                    adj_labels = ["-15%", "-10%", "-5%", "None", "+5%", "+10%", "+15%"]
-                    adj_idx = adj_options.index(current_adj) if current_adj in adj_options else 3
-                    new_adj = st.selectbox(
-                        "Control Adjustment",
-                        options=adj_options,
-                        format_func=lambda x: adj_labels[adj_options.index(x)],
-                        index=adj_idx,
-                        key=f"rating_ctrl_adj_{sub_id}"
-                    )
-                    if new_adj != current_adj:
-                        with get_conn().cursor() as cur:
-                            cur.execute(
-                                "UPDATE submissions SET control_overrides = %s WHERE id = %s",
-                                (json_mod.dumps({"overall": new_adj}), sub_id)
-                            )
-                        clear_submission_caches()
-                        st.rerun()
-
-                st.divider()
-
-                # ─────────────────────────────────────────────────────────────
-                # Premium Matrix
-                # ─────────────────────────────────────────────────────────────
-                st.markdown("##### Premium Matrix")
+                # Get current selections from session state (dropdowns rendered below)
+                selected_retention = st.session_state.get(f"rating_retention_{sub_id}", 50_000)
+                new_hazard = st.session_state.get(f"rating_hazard_{sub_id}", current_hazard)
+                new_adj = st.session_state.get(f"rating_ctrl_adj_{sub_id}", current_adj)
 
                 # Build rating inputs
                 revenue = rating_sub.get("revenue") or 0
@@ -1029,24 +973,63 @@ def render():
                                 st.success(f"Created: {quote_name}")
                                 st.rerun()
 
-                st.caption(f"Revenue: ${display_revenue:,.0f} | Industry: {raw_industry}")
+                # Rating Parameters (Retention, Hazard Class, Control Adjustment)
+                col_ret, col_haz, col_adj = st.columns(3)
 
-                # ─────────────────────────────────────────────────────────────
-                # Coverage Configuration
-                # ─────────────────────────────────────────────────────────────
-                st.divider()
-                from pages_components.coverage_summary_panel import render_coverage_summary_panel
-                coverage_config = render_coverage_summary_panel(
-                    sub_id=sub_id,
-                    aggregate_limit=limits[0],  # Use first limit option for ballpark
-                    get_conn_func=get_conn,
-                )
+                with col_ret:
+                    selected_retention = st.selectbox(
+                        "Retention",
+                        options=retention_options,
+                        format_func=lambda x: retention_labels[retention_options.index(x)],
+                        index=retention_options.index(selected_retention) if selected_retention in retention_options else 1,
+                        key=f"rating_retention_{sub_id}"
+                    )
+
+                with col_haz:
+                    hazard_options = [None, 1, 2, 3, 4, 5]
+                    hazard_labels = ["Auto-detect", "1 - Low", "2 - Below Avg", "3 - Average", "4 - Above Avg", "5 - High"]
+                    hazard_idx = hazard_options.index(current_hazard) if current_hazard in hazard_options else 0
+                    new_hazard = st.selectbox(
+                        "Hazard Class",
+                        options=hazard_options,
+                        format_func=lambda x: hazard_labels[hazard_options.index(x)],
+                        index=hazard_idx,
+                        key=f"rating_hazard_{sub_id}"
+                    )
+                    if new_hazard != current_hazard:
+                        with get_conn().cursor() as cur:
+                            cur.execute(
+                                "UPDATE submissions SET hazard_override = %s WHERE id = %s",
+                                (new_hazard, sub_id)
+                            )
+                        clear_submission_caches()
+                        st.rerun()
+
+                with col_adj:
+                    adj_options = [-0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15]
+                    adj_labels = ["-15%", "-10%", "-5%", "None", "+5%", "+10%", "+15%"]
+                    adj_idx = adj_options.index(current_adj) if current_adj in adj_options else 3
+                    new_adj = st.selectbox(
+                        "Control Adjustment",
+                        options=adj_options,
+                        format_func=lambda x: adj_labels[adj_options.index(x)],
+                        index=adj_idx,
+                        key=f"rating_ctrl_adj_{sub_id}"
+                    )
+                    if new_adj != current_adj:
+                        with get_conn().cursor() as cur:
+                            cur.execute(
+                                "UPDATE submissions SET control_overrides = %s WHERE id = %s",
+                                (json_mod.dumps({"overall": new_adj}), sub_id)
+                            )
+                        clear_submission_caches()
+                        st.rerun()
 
                 # ─────────────────────────────────────────────────────────────
                 # Rating Factors Summary (concise, universal)
                 # ─────────────────────────────────────────────────────────────
                 if breakdown_data:
-                    with st.expander("Rating Factors", expanded=False):
+                    with st.expander("Rating Factors", expanded=True):
                         bd = breakdown_data
 
                         # Compact summary in columns using markdown for single-spaced output
@@ -1095,6 +1078,16 @@ def render():
                                 override_text = ""
 
                             st.markdown(f"**Controls**<br>{ctrl_text}<br>{adj_text}{override_text}", unsafe_allow_html=True)
+
+                        # Revenue & Industry at bottom of expander
+                        st.caption(f"Revenue: ${display_revenue:,.0f} | Industry: {raw_industry}")
+
+                from pages_components.coverage_summary_panel import render_coverage_summary_panel
+                coverage_config = render_coverage_summary_panel(
+                    sub_id=sub_id,
+                    aggregate_limit=limits[0],  # Use first limit option for ballpark
+                    get_conn_func=get_conn,
+                )
             else:
                 st.warning("No submission data available for rating.")
 
