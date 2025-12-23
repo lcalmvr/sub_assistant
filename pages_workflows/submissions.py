@@ -1114,9 +1114,7 @@ def render():
             from pages_components.endorsements_panel import render_endorsements_panel
             from pages_components.subjectivities_panel import render_subjectivities_panel
             from pages_components.coverages_panel import render_coverages_panel, get_coverages_for_quote
-            from pages_components.generate_quote_button import render_generate_quote_button
             from pages_components.tower_db import save_tower, list_quotes_for_submission
-            from pages_components.document_actions_panel import render_document_actions
             from core.bound_option import has_bound_option
             # Bulk coverage buttons are now embedded in coverage panels
 
@@ -1149,36 +1147,20 @@ def render():
                 # Panel order depends on primary vs excess
                 current_position = get_current_quote_position(sub_id)
                 viewing_quote_id = st.session_state.get("viewing_quote_id")
-                tower_layers = st.session_state.get("tower_layers", [])
 
                 if current_position == "excess" and viewing_quote_id:
                     # EXCESS: Tower structure first, then coverage schedule
                     render_tower_panel(sub_id, expanded=True, readonly=is_bound)
                     render_sublimits_panel(sub_id, quote_id=viewing_quote_id, expanded=False)
                 else:
-                    # PRIMARY: Coverage panel first, then tower
+                    # PRIMARY: Coverage panel only (no tower - it only shows us)
                     render_coverages_panel(sub_id, expanded=False, readonly=is_bound)
-                    tower_expanded = len(tower_layers) > 1
-                    render_tower_panel(sub_id, expanded=tower_expanded, readonly=is_bound)
 
                 # Add coverages to config for quote generation
                 config["coverages"] = get_coverages_for_quote(sub_id)
 
                 # Endorsements (option-specific - varies by primary/excess/quote)
                 render_endorsements_panel(sub_id, expanded=False)
-
-                # Document Actions (Generate Quote/Binder buttons)
-                st.divider()
-                if viewing_quote_id:
-                    render_document_actions(sub_id, viewing_quote_id, position=current_position)
-                else:
-                    st.caption("Select or create a quote option above to generate documents.")
-
-                # ─────────────────────────────────────────────────────────────
-                # SUBMISSION-LEVEL TERMS
-                # ─────────────────────────────────────────────────────────────
-                st.divider()
-                st.markdown("##### Submission Terms")
 
                 # Subjectivities (submission-level - shared across options)
                 render_subjectivities_panel(sub_id, expanded=False)

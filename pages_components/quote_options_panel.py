@@ -1,17 +1,14 @@
 """
 Quote Options Panel Component
-Displays saved quote options as a dropdown selector with View/Clone/Delete actions.
-Provides buttons to create new Primary or Excess quote options.
+Displays saved quote options with a single-row layout: Dropdown | + Add | Bind | Delete.
+Adding a new option clones settings from the currently loaded quote.
 """
 from __future__ import annotations
 
 import streamlit as st
-import os
-import importlib.util
 from pages_components.tower_db import (
     list_quotes_for_submission,
     get_quote_by_id,
-    clone_quote,
     delete_tower,
     update_quote_field,
     save_tower,
@@ -75,14 +72,24 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
     # Get all saved quote options for this submission
     all_quotes = list_quotes_for_submission(sub_id)
 
-    # Add Primary/Excess option buttons (hidden when readonly)
-    if not readonly:
-        _render_add_option_buttons(sub_id, all_quotes)
-    else:
-        st.info("📋 Policy is bound. Quote options are read-only for reference.")
+    # Show readonly notice if bound
+    if readonly:
+        st.info("Policy is bound. Quote options are read-only for reference.")
 
-    if not all_quotes:
-        st.caption("No saved options yet. Use the buttons above to create your first quote option.")
+    if not all_quotes and not readonly:
+        # No quotes yet - show simple add buttons
+        col_primary, col_excess, col_spacer = st.columns([1, 1, 2])
+        with col_primary:
+            if st.button("Add Primary", key=f"add_primary_empty_{sub_id}", use_container_width=True):
+                _create_primary_option(sub_id, [], None)
+        with col_excess:
+            if st.button("Add Excess", key=f"add_excess_empty_{sub_id}", use_container_width=True):
+                st.session_state[f"show_excess_dialog_{sub_id}"] = True
+        if st.session_state.get(f"show_excess_dialog_{sub_id}"):
+            _render_excess_option_dialog(sub_id, [])
+        return
+    elif not all_quotes:
+        st.caption("No saved quote options.")
         return
 
     # Build dropdown options with bound indicator
@@ -145,68 +152,76 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
             if selected_id and selected_id != viewing_quote_id:
                 _view_quote(selected_id)
     else:
-        # Full edit mode: Dropdown | Bind | Clone | Delete
-        col_select, col_bind, col_clone, col_delete = st.columns([4, 1, 1, 1])
+        # Full edit mode: Two rows - buttons on top, dropdown below
+        # Row 1: Action buttons
+        col_add, col_quote, col_bind, col_delete = st.columns(4)
 
-        with col_select:
-            # Build options list with IDs (no empty placeholder needed now)
-            option_ids = list(quote_options.keys())
-            option_labels = [quote_options[qid]["label"] for qid in quote_options.keys()]
+        with col_add:
+            with st.popover("Add", use_container_width=True):
+                if st.button("Primary", key=f"add_primary_{sub_id}", use_container_width=True):
+                    _create_primary_option(sub_id, all_quotes, viewing_quote_id)
+                if st.button("Excess", key=f"add_excess_{sub_id}", use_container_width=True):
+                    st.session_state[f"show_excess_dialog_{sub_id}"] = True
+                    st.rerun()
 
-            # Find current index
-            default_idx = 0
-            if viewing_quote_id and viewing_quote_id in quote_options:
-                default_idx = option_ids.index(viewing_quote_id)
-
-            selected_id = st.selectbox(
-                f"Saved Quote Options ({len(all_quotes)})",
-                options=option_ids,
-                format_func=lambda x: option_labels[option_ids.index(x)] if x in option_ids else x,
-                index=default_idx,
-                key="saved_quote_selector",
-            )
-
-            # Auto-load when selection changes
-            if selected_id and selected_id != viewing_quote_id:
-                _view_quote(selected_id)
+        with col_quote:
+            quote_disabled = not viewing_quote_id
+            if st.button("Quote", key="generate_quote_btn", use_container_width=True, disabled=quote_disabled, type="primary"):
+                if viewing_quote_id:
+                    st.session_state[f"show_generate_dialog_{sub_id}"] = True
 
         with col_bind:
-            st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
             bind_disabled = not viewing_quote_id
-
-            # Check if currently viewing option is bound
             is_currently_bound = False
             if viewing_quote_id and viewing_quote_id in quote_options:
                 is_currently_bound = quote_options[viewing_quote_id]["is_bound"]
 
             if is_currently_bound:
-                # Show unbind button
-                if st.button("Unbind", key="unbind_selected_btn", use_container_width=True, disabled=bind_disabled):
+                if st.button("Unbind", key="unbind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
                     if viewing_quote_id:
                         unbind_option(viewing_quote_id)
                         st.success("Option unbound")
                         st.rerun()
             else:
-                # Show bind button
                 if st.button("Bind", key="bind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
                     if viewing_quote_id:
                         bind_option(viewing_quote_id, bound_by="user")
                         st.success("Option bound!")
                         st.rerun()
 
-        with col_clone:
-            st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
-            clone_disabled = not viewing_quote_id
-            if st.button("Clone", key="clone_selected_btn", use_container_width=True, disabled=clone_disabled):
-                if viewing_quote_id:
-                    _clone_quote_to_draft(viewing_quote_id, sub_id, all_quotes)
-
         with col_delete:
-            st.markdown("<br>", unsafe_allow_html=True)  # Align with dropdown
             delete_disabled = not viewing_quote_id
-            if st.button("Delete", key="delete_selected_btn", use_container_width=True, disabled=delete_disabled):
+            if st.button("Delete", key="delete_selected_btn", use_container_width=True, disabled=delete_disabled, type="primary"):
                 if viewing_quote_id:
                     _delete_quote(viewing_quote_id, viewing_quote_id)
+
+        # Row 2: Dropdown selector
+        option_ids = list(quote_options.keys())
+        option_labels = [quote_options[qid]["label"] for qid in quote_options.keys()]
+
+        default_idx = 0
+        if viewing_quote_id and viewing_quote_id in quote_options:
+            default_idx = option_ids.index(viewing_quote_id)
+
+        selected_id = st.selectbox(
+            "Quote Options",
+            options=option_ids,
+            format_func=lambda x: option_labels[option_ids.index(x)] if x in option_ids else x,
+            index=default_idx,
+            key="saved_quote_selector",
+            label_visibility="collapsed",
+        )
+
+        # Auto-load when selection changes
+        if selected_id and selected_id != viewing_quote_id:
+            _view_quote(selected_id)
+
+        # Handle dialogs (outside columns)
+        if st.session_state.get(f"show_excess_dialog_{sub_id}"):
+            _render_excess_option_dialog(sub_id, all_quotes)
+
+        if st.session_state.get(f"show_generate_dialog_{sub_id}") and viewing_quote_id:
+            _render_generate_dialog(sub_id, viewing_quote_id)
 
     # Show premium summary when viewing a quote (skip when bound - card has the info)
     if viewing_quote_id and not readonly:
@@ -670,40 +685,6 @@ def _view_quote(quote_id: str):
         st.rerun()
 
 
-def _clone_quote_to_draft(quote_id: str, sub_id: str, all_quotes: list):
-    """
-    Clone a saved quote to create a new saved option in the database.
-    The new option will be immediately selectable in the dropdown.
-    """
-    try:
-        # Generate unique name for the clone
-        quote_data = get_quote_by_id(quote_id)
-        if not quote_data:
-            st.error("Could not load quote data")
-            return
-
-        original_name = quote_data.get("quote_name", "Option")
-        existing_names = [q.get("quote_name", "") for q in all_quotes]
-
-        # Generate "Copy of X" or "Copy of X (2)" etc.
-        new_name = f"Copy of {original_name}"
-        if new_name in existing_names:
-            i = 2
-            while f"Copy of {original_name} ({i})" in existing_names:
-                i += 1
-            new_name = f"Copy of {original_name} ({i})"
-
-        # Actually create new record in database
-        new_quote_id = clone_quote(quote_id, new_name)
-
-        # Select the newly created clone
-        st.session_state.viewing_quote_id = new_quote_id
-
-        st.success(f"Created: {new_name}")
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"Error cloning: {e}")
 
 
 def _delete_quote(quote_id: str, viewing_quote_id: str):
@@ -721,6 +702,158 @@ def _delete_quote(quote_id: str, viewing_quote_id: str):
         st.rerun()
     except Exception as e:
         st.error(f"Error deleting: {e}")
+
+
+def _render_generate_dialog(sub_id: str, quote_id: str):
+    """Render dialog for generating quote with package options."""
+    from core.document_generator import generate_document
+    from core.package_generator import generate_package
+    from core.document_library import get_entries_for_package, DOCUMENT_TYPES as LIB_DOC_TYPES
+
+    quote_data = get_quote_by_id(quote_id)
+    position = quote_data.get("position", "primary") if quote_data else "primary"
+    doc_type = "quote_excess" if position == "excess" else "quote_primary"
+
+    @st.dialog("Generate Quote", width="large")
+    def show_dialog():
+        # Get quote's endorsements
+        quote_endorsements = _get_quote_endorsements(quote_id)
+        matched_endorsements = _match_endorsements_to_library(quote_endorsements, position)
+
+        package_type = st.radio(
+            "Output type:",
+            options=["quote_only", "full_package"],
+            format_func=lambda x: "Quote Only" if x == "quote_only" else "Full Package",
+            horizontal=True,
+            key=f"gen_pkg_type_{quote_id}"
+        )
+
+        selected_documents = []
+
+        if package_type == "full_package":
+            st.markdown("---")
+
+            # Show endorsements from the quote
+            if quote_endorsements:
+                st.markdown("**Endorsements** (from quote):")
+                for name in quote_endorsements:
+                    st.caption(f"• {name}")
+                if matched_endorsements:
+                    st.caption(f"_{len(matched_endorsements)} matched to library_")
+                    selected_documents.extend([e['id'] for e in matched_endorsements])
+            else:
+                st.caption("_No endorsements on this quote_")
+
+            st.markdown("---")
+
+            # Additional documents
+            st.markdown("**Additional Documents:**")
+            additional_docs = get_entries_for_package(
+                position=position,
+                document_types=["claims_sheet", "marketing"]
+            )
+
+            if additional_docs:
+                for doc in additional_docs:
+                    dtype = doc.get("document_type", "")
+                    type_label = LIB_DOC_TYPES.get(dtype, dtype)
+                    default = dtype == "claims_sheet"
+
+                    if st.checkbox(
+                        f"{doc['code']} - {doc['title']}",
+                        value=default,
+                        key=f"gen_doc_{doc['id']}_{quote_id}",
+                        help=type_label
+                    ):
+                        selected_documents.append(doc["id"])
+            else:
+                st.caption("_No additional documents available_")
+
+        st.markdown("---")
+        col_cancel, col_generate = st.columns(2)
+
+        with col_cancel:
+            if st.button("Cancel", key=f"gen_cancel_{quote_id}", use_container_width=True):
+                st.session_state[f"show_generate_dialog_{sub_id}"] = False
+                st.rerun()
+
+        with col_generate:
+            btn_label = "Generate Quote" if package_type == "quote_only" else "Generate Package"
+            if st.button(btn_label, key=f"gen_confirm_{quote_id}", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("Generating..."):
+                        if package_type == "full_package" and selected_documents:
+                            result = generate_package(
+                                submission_id=sub_id,
+                                quote_option_id=quote_id,
+                                doc_type=doc_type,
+                                package_type=package_type,
+                                selected_documents=selected_documents,
+                                created_by="user"
+                            )
+                        else:
+                            result = generate_document(
+                                submission_id=sub_id,
+                                quote_option_id=quote_id,
+                                doc_type=doc_type,
+                                created_by="user"
+                            )
+                    st.session_state[f"show_generate_dialog_{sub_id}"] = False
+                    st.success(f"Generated: {result['document_number']}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    show_dialog()
+
+
+def _get_quote_endorsements(quote_id: str) -> list:
+    """Get endorsement names from the quote option."""
+    import json
+    try:
+        with get_conn().cursor() as cur:
+            cur.execute(
+                "SELECT endorsements FROM insurance_towers WHERE id = %s",
+                (quote_id,)
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                endorsements = row[0]
+                if isinstance(endorsements, str):
+                    endorsements = json.loads(endorsements)
+                if isinstance(endorsements, list):
+                    return endorsements
+    except Exception:
+        pass
+    return []
+
+
+def _match_endorsements_to_library(endorsement_names: list, position: str) -> list:
+    """Match quote endorsement names to library documents."""
+    from core.document_library import get_library_entries
+
+    if not endorsement_names:
+        return []
+
+    library_endorsements = get_library_entries(
+        document_type="endorsement",
+        position=position,
+        status="active"
+    )
+
+    matched = []
+    for name in endorsement_names:
+        name_lower = name.lower().strip()
+        for lib_doc in library_endorsements:
+            if lib_doc['id'] in [m['id'] for m in matched]:
+                continue
+            title_lower = lib_doc.get('title', '').lower()
+            code_lower = lib_doc.get('code', '').lower()
+            if (name_lower in title_lower or title_lower in name_lower or
+                name_lower in code_lower):
+                matched.append(lib_doc)
+                break
+    return matched
 
 
 def auto_load_quote_for_submission(sub_id: str):
@@ -866,33 +999,36 @@ def _render_bound_quote_cards(sub_id: str, all_quotes: list, bound_option: dict,
                 render_details(coverages, endorsements)
 
 
-# ─────────────────────── Add Option Buttons ───────────────────────
+def _create_primary_option(sub_id: str, all_quotes: list, clone_from_quote_id: str = None):
+    """Create a new primary quote option, optionally cloning from an existing quote.
 
-def _render_add_option_buttons(sub_id: str, all_quotes: list):
-    """Render buttons to add new Primary or Excess quote options."""
-    col_primary, col_excess, col_spacer = st.columns([1, 1, 2])
-
-    with col_primary:
-        if st.button("+ Add Primary", key=f"add_primary_opt_{sub_id}", use_container_width=True):
-            # _view_quote inside _create_primary_option calls rerun
-            _create_primary_option(sub_id, all_quotes)
-
-    with col_excess:
-        if st.button("+ Add Excess", key=f"add_excess_opt_{sub_id}", use_container_width=True):
-            st.session_state[f"show_excess_dialog_{sub_id}"] = True
-
-    # Handle excess dialog
-    if st.session_state.get(f"show_excess_dialog_{sub_id}"):
-        _render_excess_option_dialog(sub_id, all_quotes)
-
-
-def _create_primary_option(sub_id: str, all_quotes: list):
-    """Create a new primary quote option with defaults."""
+    Args:
+        sub_id: Submission ID
+        all_quotes: List of existing quotes
+        clone_from_quote_id: If provided, clone settings from this quote
+    """
     from pages_components.coverages_panel import build_coverages_from_rating
     from rating_engine.coverage_config import get_default_policy_form
 
+    # Default values
     default_limit = 1_000_000
     default_retention = 25_000
+    policy_form = None
+    coverages = None
+
+    # If cloning from existing quote, use its settings
+    if clone_from_quote_id:
+        source_quote = get_quote_by_id(clone_from_quote_id)
+        if source_quote:
+            # Clone limit/retention from source
+            tower_json_source = source_quote.get("tower_json", [])
+            if tower_json_source and len(tower_json_source) > 0:
+                default_limit = tower_json_source[0].get("limit", default_limit)
+            default_retention = source_quote.get("primary_retention", default_retention)
+
+            # Clone policy form and coverages
+            policy_form = source_quote.get("policy_form")
+            coverages = source_quote.get("coverages")
 
     # Build tower with CMAI as primary
     tower_json = [{
@@ -902,22 +1038,21 @@ def _create_primary_option(sub_id: str, all_quotes: list):
         "premium": None,
     }]
 
-    # Count existing primary options for naming
-    primary_quotes = [q for q in all_quotes if q.get("position", "primary") == "primary"]
-    next_num = len(primary_quotes) + 1
     quote_name = generate_quote_name(default_limit, default_retention)
 
     # Check for duplicate names
-    existing_names = [q["quote_name"] for q in all_quotes]
+    existing_names = [q["quote_name"] for q in all_quotes] if all_quotes else []
     if quote_name in existing_names:
         n = 2
         while f"{quote_name} ({n})" in existing_names:
             n += 1
         quote_name = f"{quote_name} ({n})"
 
-    # Get policy form and coverages from Rating tab
-    policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
-    coverages = build_coverages_from_rating(sub_id, default_limit)
+    # Use cloned values or get from Rating tab
+    if policy_form is None:
+        policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
+    if coverages is None:
+        coverages = build_coverages_from_rating(sub_id, default_limit)
 
     # Save to database
     new_id = save_tower(
@@ -931,7 +1066,6 @@ def _create_primary_option(sub_id: str, all_quotes: list):
     )
 
     # Load the newly created quote into session state
-    # This ensures the tower panel displays correctly
     _view_quote(new_id)
     st.success(f"Created: {quote_name}")
 
