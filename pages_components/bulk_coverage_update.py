@@ -73,6 +73,87 @@ def render_bulk_coverage_modal(sub_id: str, saved_options: list[dict]):
         show_modal()
 
 
+def _build_rows_from_source(source_coverages: dict, coverage_options: list) -> list:
+    """
+    Build coverage rows from source coverages (for "Load Current Settings" feature).
+
+    Handles both:
+    - Quote tab: actual values in sublimit_coverages/aggregate_coverages
+    - Rating tab: symbolic values in sublimit_defaults/agg_overrides
+
+    Args:
+        source_coverages: Coverage settings dict
+        coverage_options: List of coverage definitions with id, label, type
+
+    Returns:
+        List of row dicts with coverage_id and value
+    """
+    rows = []
+
+    # Check if this is from Rating tab (has is_rating_source flag)
+    is_rating = source_coverages.get("is_rating_source", False)
+
+    if is_rating:
+        # Rating tab format: sublimit_defaults and agg_overrides with symbolic values
+        sublimit_defaults = source_coverages.get("sublimit_defaults", {})
+        agg_overrides = source_coverages.get("agg_overrides", {})
+
+        # Process sublimit coverages
+        for cov in coverage_options:
+            if cov["type"] == "sublimit":
+                cov_id = cov["id"]
+                val = sublimit_defaults.get(cov_id)
+                if val is not None and val != 0 and val != "none":
+                    # Convert symbolic to actual value for the dropdown
+                    if val == "aggregate" or val == "50%":
+                        # Use $1M as representative for full/50% since actual depends on option
+                        actual_val = 1_000_000
+                    elif isinstance(val, (int, float)):
+                        actual_val = int(val)
+                    else:
+                        actual_val = 100_000
+                    rows.append({"coverage_id": cov_id, "value": actual_val})
+
+        # Process aggregate coverages
+        for cov in coverage_options:
+            if cov["type"] == "aggregate":
+                cov_id = cov["id"]
+                val = agg_overrides.get(cov_id)
+                if val == "Aggregate" or val == "Full Limits":
+                    rows.append({"coverage_id": cov_id, "value": "full"})
+                elif val == "$1M":
+                    rows.append({"coverage_id": cov_id, "value": 1_000_000})
+                elif val != "None" and val is not None:
+                    rows.append({"coverage_id": cov_id, "value": "full"})
+    else:
+        # Quote tab format: sublimit_coverages and aggregate_coverages with actual values
+        sublimit_covs = source_coverages.get("sublimit_coverages", {})
+        aggregate_covs = source_coverages.get("aggregate_coverages", {})
+
+        # Process sublimit coverages
+        for cov in coverage_options:
+            if cov["type"] == "sublimit":
+                cov_id = cov["id"]
+                val = sublimit_covs.get(cov_id, 0)
+                if val and val > 0:
+                    rows.append({"coverage_id": cov_id, "value": val})
+
+        # Process aggregate coverages
+        for cov in coverage_options:
+            if cov["type"] == "aggregate":
+                cov_id = cov["id"]
+                val = aggregate_covs.get(cov_id, 0)
+                if val and val > 0:
+                    # Map actual value to dropdown option
+                    if val == 1_000_000:
+                        rows.append({"coverage_id": cov_id, "value": 1_000_000})
+                    else:
+                        # Anything else is "full limits"
+                        rows.append({"coverage_id": cov_id, "value": "full"})
+
+    return rows
+
+
 def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: bool = False, key_prefix: str = ""):
     """Render the bulk update UI with support for multiple coverage rows."""
     prefix = f"{key_prefix}_" if key_prefix else ""
@@ -107,6 +188,10 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
     if selection_key not in st.session_state:
         st.session_state[selection_key] = {opt["id"]: True for opt in saved_options}
 
+    # Get source coverages for "Load Current Settings" feature
+    source_key = f"{prefix}bulk_cov_source_{sub_id}"
+    source_coverages = st.session_state.get(source_key, {})
+
     # Use fragment for the entire UI to allow independent rerun
     @st.fragment
     def render_bulk_ui_fragment():
@@ -114,6 +199,24 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
 
         # Track rows to remove (can't modify list while iterating)
         row_to_remove = None
+
+        # Load Current Settings / Clear All buttons
+        col_load, col_clear, col_spacer = st.columns([1.5, 1, 2.5])
+        with col_load:
+            if st.button("Load Current Settings", key=f"{prefix}bulk_load_current_{sub_id}", use_container_width=True):
+                new_rows = _build_rows_from_source(source_coverages, coverage_options)
+                if new_rows:
+                    st.session_state[rows_key] = new_rows
+                    st.rerun(scope="fragment")
+                else:
+                    st.warning("No coverage settings to load")
+        with col_clear:
+            if st.button("Clear All", key=f"{prefix}bulk_clear_all_{sub_id}", use_container_width=True):
+                # Reset to single empty row
+                st.session_state[rows_key] = [{"coverage_id": coverage_options[0]["id"], "value": 100_000}]
+                st.rerun(scope="fragment")
+
+        st.markdown("---")
 
         # Header row
         col_cov_h, col_val_h, col_rm_h = st.columns([2, 2, 0.5])
@@ -428,11 +531,11 @@ def build_coverages_for_option_from_rating(
 
 def render_bulk_coverage_buttons(sub_id: str, source_coverages: dict, source_label: str = "current"):
     """
-    Render both bulk coverage update buttons side by side (Quote tab version).
+    Render Edit Coverages button (Quote tab version).
 
     Args:
         sub_id: Submission ID
-        source_coverages: The current coverage settings to push (actual values from Quote tab)
+        source_coverages: The current coverage settings (for "Load Current Settings" feature)
         source_label: Label for the source (e.g., "this option")
     """
     # Get all primary options for this submission
@@ -442,15 +545,8 @@ def render_bulk_coverage_buttons(sub_id: str, source_coverages: dict, source_lab
     if not primary_options:
         return
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # Button 1: Single coverage update modal
-        _render_single_coverage_button(sub_id, primary_options, key_prefix="quote")
-
-    with col2:
-        # Button 2: Push all coverages
-        _render_push_all_button(sub_id, primary_options, source_coverages, source_label, key_prefix="quote")
+    # Single button - Edit Coverages with Load Current Settings capability
+    _render_single_coverage_button(sub_id, primary_options, source_coverages=source_coverages, key_prefix="quote")
 
 
 def render_bulk_coverage_buttons_rating(
@@ -460,7 +556,7 @@ def render_bulk_coverage_buttons_rating(
     agg_overrides: dict,
 ):
     """
-    Render both bulk coverage update buttons (Rating tab version).
+    Render Edit Coverages button (Rating tab version).
 
     Handles symbolic values like "aggregate", "50%" by converting them
     per-option based on each option's aggregate limit.
@@ -472,27 +568,33 @@ def render_bulk_coverage_buttons_rating(
     if not primary_options:
         return
 
-    col1, col2 = st.columns(2)
+    # Build source coverages from Rating defaults (for "Load Current Settings" feature)
+    # Use a representative aggregate limit - actual values will be calculated per-option
+    rating_source = {
+        "policy_form": policy_form,
+        "sublimit_defaults": sublimit_defaults,
+        "agg_overrides": agg_overrides,
+        "is_rating_source": True,  # Flag to indicate these are symbolic values
+    }
 
-    with col1:
-        # Button 1: Single coverage update modal
-        _render_single_coverage_button(sub_id, primary_options, key_prefix="rating")
-
-    with col2:
-        # Button 2: Push all coverages from Rating defaults
-        _render_push_all_rating_button(sub_id, primary_options, policy_form, sublimit_defaults, agg_overrides)
+    # Single button - Edit Coverages with Load Current Settings capability
+    _render_single_coverage_button(sub_id, primary_options, source_coverages=rating_source, key_prefix="rating")
 
 
-def _render_single_coverage_button(sub_id: str, saved_options: list[dict], key_prefix: str = ""):
+def _render_single_coverage_button(sub_id: str, saved_options: list[dict], source_coverages: dict = None, key_prefix: str = ""):
     """Render the coverage update modal button."""
     prefix = f"{key_prefix}_" if key_prefix else ""
     modal_key = f"show_{prefix}bulk_cov_modal_{sub_id}"
     trigger_key = f"{prefix}bulk_cov_modal_triggered_{sub_id}"
     rows_key = f"{prefix}bulk_cov_rows_{sub_id}"
+    source_key = f"{prefix}bulk_cov_source_{sub_id}"
 
     if st.button("Edit Coverages", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", use_container_width=True):
         st.session_state[trigger_key] = True
         st.session_state[modal_key] = True
+        # Store source coverages for "Load Current Settings" feature
+        if source_coverages:
+            st.session_state[source_key] = source_coverages
         # Reset rows when opening dialog fresh
         if rows_key in st.session_state:
             del st.session_state[rows_key]
@@ -505,266 +607,3 @@ def _render_single_coverage_button(sub_id: str, saved_options: list[dict], key_p
             _render_bulk_update_ui(sub_id, saved_options, in_modal=True, key_prefix=key_prefix)
 
         show_modal()
-
-
-def _render_push_all_button(sub_id: str, primary_options: list[dict], source_coverages: dict, source_label: str, key_prefix: str = ""):
-    """Render the push all coverages button (Quote tab version)."""
-    prefix = f"{key_prefix}_" if key_prefix else ""
-    trigger_key = f"{prefix}push_all_cov_triggered_{sub_id}"
-
-    if st.button("Push All to Options", key=f"{prefix}push_all_cov_btn_{sub_id}", use_container_width=True):
-        st.session_state[trigger_key] = True
-
-    if st.session_state.get(trigger_key, False):
-        st.session_state[trigger_key] = False
-
-        @st.dialog("Push All Coverages", width="large")
-        def show_push_modal():
-            _render_push_all_ui(sub_id, primary_options, source_coverages, source_label, key_prefix=key_prefix)
-
-        show_push_modal()
-
-
-def _render_push_all_rating_button(
-    sub_id: str,
-    primary_options: list[dict],
-    policy_form: str,
-    sublimit_defaults: dict,
-    agg_overrides: dict,
-):
-    """Render the push all coverages button (Rating tab version)."""
-    trigger_key = f"push_all_rating_triggered_{sub_id}"
-
-    if st.button("Push All to Options", key=f"push_all_rating_btn_{sub_id}", use_container_width=True):
-        st.session_state[trigger_key] = True
-
-    if st.session_state.get(trigger_key, False):
-        st.session_state[trigger_key] = False
-
-        @st.dialog("Push Rating Defaults to Options", width="large")
-        def show_push_modal():
-            _render_push_all_rating_ui(sub_id, primary_options, policy_form, sublimit_defaults, agg_overrides)
-
-        show_push_modal()
-
-
-def _render_push_all_ui(sub_id: str, primary_options: list[dict], source_coverages: dict, source_label: str, key_prefix: str = ""):
-    """Render the push all coverages UI."""
-    prefix = f"{key_prefix}_" if key_prefix else ""
-    st.markdown(f"Push **{source_label}** coverage settings to all primary options.")
-    st.markdown("---")
-
-    # Show current coverage summary
-    st.markdown("**Coverage settings to push:**")
-
-    sublimit_covs = source_coverages.get("sublimit_coverages", {})
-    aggregate_covs = source_coverages.get("aggregate_coverages", {})
-
-    # Build summary
-    sub_defs = {c["id"]: c["label"] for c in get_sublimit_coverage_definitions()}
-    agg_defs = {c["id"]: c["label"] for c in get_aggregate_coverage_definitions()}
-
-    coverage_items = []
-    for cov_id, value in sublimit_covs.items():
-        label = sub_defs.get(cov_id, cov_id)
-        display = format_limit_display(value) if value else "None"
-        coverage_items.append(f"• {label}: {display}")
-
-    for cov_id, value in aggregate_covs.items():
-        label = agg_defs.get(cov_id, cov_id)
-        display = format_limit_display(value) if value else "None"
-        coverage_items.append(f"• {label}: {display}")
-
-    if coverage_items:
-        # Show in two columns to save space
-        mid = len(coverage_items) // 2 + len(coverage_items) % 2
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("\n".join(coverage_items[:mid]))
-        with col2:
-            st.markdown("\n".join(coverage_items[mid:]))
-    else:
-        st.info("No coverage settings to push.")
-        return
-
-    st.markdown("---")
-    st.markdown(f"**Will update {len(primary_options)} primary option{'s' if len(primary_options) != 1 else ''}:**")
-
-    for opt in primary_options:
-        st.markdown(f"• {opt.get('quote_name', 'Unnamed')}")
-
-    st.markdown("---")
-
-    col_cancel, col_apply = st.columns(2)
-
-    with col_cancel:
-        if st.button("Cancel", key=f"{prefix}push_all_cancel_{sub_id}", use_container_width=True):
-            st.rerun()
-
-    with col_apply:
-        if st.button("Push to All", key=f"{prefix}push_all_apply_{sub_id}", type="primary", use_container_width=True):
-            updated_count = 0
-
-            for opt in primary_options:
-                opt_id = opt["id"]
-
-                # Get fresh quote from database
-                quote = get_quote_by_id(opt_id)
-                if not quote:
-                    continue
-
-                # Get current coverages or initialize
-                coverages = quote.get("coverages", {})
-                if not coverages:
-                    coverages = {
-                        "policy_form": source_coverages.get("policy_form", "cyber"),
-                        "aggregate_limit": 0,
-                        "aggregate_coverages": {},
-                        "sublimit_coverages": {}
-                    }
-
-                # Update aggregate limit from tower if available
-                tower_json = quote.get("tower_json", [])
-                if tower_json:
-                    coverages["aggregate_limit"] = tower_json[0].get("limit", 1_000_000)
-
-                # Copy all coverage values from source
-                coverages["policy_form"] = source_coverages.get("policy_form", coverages.get("policy_form", "cyber"))
-                coverages["sublimit_coverages"] = dict(sublimit_covs)
-                coverages["aggregate_coverages"] = dict(aggregate_covs)
-
-                # Save to database
-                update_quote_field(opt_id, "coverages", coverages)
-                updated_count += 1
-
-            st.success(f"Pushed coverage settings to {updated_count} option{'s' if updated_count != 1 else ''}")
-
-            # Clear cached coverages so they reload from DB
-            if f"quote_coverages_{sub_id}" in st.session_state:
-                del st.session_state[f"quote_coverages_{sub_id}"]
-            if f"last_synced_quote_{sub_id}" in st.session_state:
-                del st.session_state[f"last_synced_quote_{sub_id}"]
-            # Reset the coverage editor to pick up new values
-            reset_coverage_editor(f"quote_{sub_id}")
-
-            st.rerun()
-
-
-def _render_push_all_rating_ui(
-    sub_id: str,
-    primary_options: list[dict],
-    policy_form: str,
-    sublimit_defaults: dict,
-    agg_overrides: dict,
-):
-    """Render the push all coverages UI for Rating tab."""
-    st.markdown("Push **Rating defaults** to all primary options.")
-    st.markdown("_Values like 'Aggregate' and '50%' will be calculated per-option based on each option's limit._")
-    st.markdown("---")
-
-    # Show current coverage summary (symbolic values)
-    st.markdown("**Coverage settings to push:**")
-
-    sub_defs = {c["id"]: c["label"] for c in get_sublimit_coverage_definitions()}
-    agg_defs = {c["id"]: c["label"] for c in get_aggregate_coverage_definitions()}
-
-    # Format sublimit defaults for display
-    def format_symbolic(val):
-        if val == "aggregate":
-            return "Full Limits"
-        elif val == "50%":
-            return "50% Agg"
-        elif val == "none" or val == 0:
-            return "None"
-        elif isinstance(val, (int, float)):
-            return format_limit_display(int(val))
-        return str(val)
-
-    coverage_items = []
-
-    # Variable/sublimit coverages
-    for cov in get_sublimit_coverage_definitions():
-        cov_id = cov["id"]
-        label = cov["label"]
-        config_default = cov.get("default", 0)
-        form_setting = cov.get(policy_form, 0)
-
-        if form_setting != "sublimit":
-            coverage_items.append(f"• {label}: None")
-        else:
-            val = sublimit_defaults.get(cov_id, config_default)
-            coverage_items.append(f"• {label}: {format_symbolic(val)}")
-
-    # Aggregate/standard coverages
-    for cov in get_aggregate_coverage_definitions():
-        cov_id = cov["id"]
-        label = cov["label"]
-        form_default = cov.get(policy_form, 0)
-        default_status = "Aggregate" if form_default == "aggregate" else "None"
-        override = agg_overrides.get(cov_id, default_status)
-
-        if override == "Aggregate":
-            display = "Full Limits"
-        elif override == "$1M":
-            display = "$1M"
-        elif override == "None":
-            display = "None"
-        else:
-            display = "Full Limits" if form_default == "aggregate" else "None"
-        coverage_items.append(f"• {label}: {display}")
-
-    if coverage_items:
-        mid = len(coverage_items) // 2 + len(coverage_items) % 2
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("\n".join(coverage_items[:mid]))
-        with col2:
-            st.markdown("\n".join(coverage_items[mid:]))
-
-    st.markdown("---")
-    st.markdown(f"**Will update {len(primary_options)} primary option{'s' if len(primary_options) != 1 else ''}:**")
-
-    for opt in primary_options:
-        tower_json = opt.get("tower_json", [])
-        opt_limit = tower_json[0].get("limit", 1_000_000) if tower_json else 1_000_000
-        st.markdown(f"• {opt.get('quote_name', 'Unnamed')} ({format_limit_display(opt_limit)} limit)")
-
-    st.markdown("---")
-
-    col_cancel, col_apply = st.columns(2)
-
-    with col_cancel:
-        if st.button("Cancel", key=f"push_rating_cancel_{sub_id}", use_container_width=True):
-            st.rerun()
-
-    with col_apply:
-        if st.button("Push to All", key=f"push_rating_apply_{sub_id}", type="primary", use_container_width=True):
-            updated_count = 0
-
-            for opt in primary_options:
-                opt_id = opt["id"]
-
-                # Get option's aggregate limit from tower
-                tower_json = opt.get("tower_json", [])
-                aggregate_limit = tower_json[0].get("limit", 1_000_000) if tower_json else 1_000_000
-
-                # Build coverages for this option using Rating defaults
-                new_coverages = build_coverages_for_option_from_rating(
-                    sub_id, aggregate_limit, policy_form, sublimit_defaults, agg_overrides
-                )
-
-                # Save to database
-                update_quote_field(opt_id, "coverages", new_coverages)
-                updated_count += 1
-
-            st.success(f"Pushed Rating defaults to {updated_count} option{'s' if updated_count != 1 else ''}")
-
-            # Clear cached coverages so they reload from DB
-            if f"quote_coverages_{sub_id}" in st.session_state:
-                del st.session_state[f"quote_coverages_{sub_id}"]
-            if f"last_synced_quote_{sub_id}" in st.session_state:
-                del st.session_state[f"last_synced_quote_{sub_id}"]
-            # Reset the coverage editor to pick up new values
-            reset_coverage_editor(f"quote_{sub_id}")
-
-            st.rerun()
