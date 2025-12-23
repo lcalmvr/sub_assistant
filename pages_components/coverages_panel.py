@@ -104,6 +104,17 @@ def render_coverages_panel(
             if quote_id:
                 update_quote_field(quote_id, "coverages", updated_coverages)
 
+        # Header row with policy info and Edit Coverages button
+        header_left, header_mid, header_right = st.columns([2, 2, 1])
+        with header_left:
+            form_label = coverages.get("policy_form", "cyber").replace("_", "/").title()
+            st.caption(f"**Policy Form:** {form_label}")
+        with header_mid:
+            st.caption(f"**Aggregate:** {format_limit_display(aggregate_limit)}")
+        with header_right:
+            if not readonly:
+                render_bulk_coverage_buttons(sub_id, coverages, "this option")
+
         # Use the shared coverage editor component
         updated_coverages = render_coverage_editor(
             editor_id=f"quote_{sub_id}",
@@ -111,16 +122,11 @@ def render_coverages_panel(
             aggregate_limit=aggregate_limit,
             mode=mode,
             on_change=on_coverage_change if not readonly else None,
-            show_header=True,
+            show_header=False,  # We handle header above
         )
 
         # Update session state with any changes
         st.session_state[session_key] = updated_coverages
-
-        # Bulk update buttons (only in edit mode)
-        if not readonly:
-            st.markdown("---")
-            render_bulk_coverage_buttons(sub_id, updated_coverages, "this option")
 
 
 def build_coverages_from_rating(sub_id: str, aggregate_limit: int) -> dict:

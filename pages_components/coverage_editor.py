@@ -294,26 +294,18 @@ def _render_edit_mode(
     aggregate_limit: int,
     on_change: Optional[Callable[[dict], None]],
 ) -> dict:
-    """Render coverages in full edit mode."""
-    # Two-column layout
-    col_edit, col_summary = st.columns([1, 1])
+    """Render coverages in full edit mode with two-column grid layout."""
+    tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
 
-    with col_edit:
-        tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
+    with tab_var:
+        coverages = _render_variable_limits_edit(
+            editor_id, coverages, aggregate_limit, on_change
+        )
 
-        with tab_var:
-            coverages = _render_variable_limits_edit(
-                editor_id, coverages, aggregate_limit, on_change
-            )
-
-        with tab_std:
-            coverages = _render_standard_limits_edit(
-                editor_id, coverages, aggregate_limit, on_change
-            )
-
-    with col_summary:
-        st.markdown("**Summary**")
-        render_coverage_summary(coverages, aggregate_limit)
+    with tab_std:
+        coverages = _render_standard_limits_edit(
+            editor_id, coverages, aggregate_limit, on_change
+        )
 
     return coverages
 
@@ -325,32 +317,21 @@ def _render_diff_mode(
     original_coverages: Optional[dict],
     on_change: Optional[Callable[[dict], None]],
 ) -> dict:
-    """Render coverages in diff mode - edit with change highlighting."""
+    """Render coverages in diff mode - edit with change highlighting and two-column grid."""
     if original_coverages is None:
         original_coverages = coverages
 
-    # Two-column layout
-    col_edit, col_summary = st.columns([1, 1])
+    tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
 
-    with col_edit:
-        tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
+    with tab_var:
+        coverages = _render_variable_limits_diff(
+            editor_id, coverages, aggregate_limit, original_coverages, on_change
+        )
 
-        with tab_var:
-            coverages = _render_variable_limits_diff(
-                editor_id, coverages, aggregate_limit, original_coverages, on_change
-            )
-
-        with tab_std:
-            coverages = _render_standard_limits_diff(
-                editor_id, coverages, aggregate_limit, original_coverages, on_change
-            )
-
-    with col_summary:
-        st.markdown("**Changes**")
-        if has_coverage_changes(original_coverages, coverages):
-            render_coverage_summary(coverages, aggregate_limit, original_coverages)
-        else:
-            st.caption("No changes yet")
+    with tab_std:
+        coverages = _render_standard_limits_diff(
+            editor_id, coverages, aggregate_limit, original_coverages, on_change
+        )
 
     return coverages
 
@@ -361,7 +342,7 @@ def _render_variable_limits_edit(
     aggregate_limit: int,
     on_change: Optional[Callable[[dict], None]],
 ) -> dict:
-    """Render variable/sublimit coverages edit mode."""
+    """Render variable/sublimit coverages edit mode with two-column grid."""
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     sub_defs = get_sublimit_coverage_definitions()
@@ -380,7 +361,11 @@ def _render_variable_limits_edit(
     option_labels = [o[0] for o in options]
     option_values = [o[1] for o in options]
 
-    for cov in sub_defs:
+    # Split into two columns
+    mid = (len(sub_defs) + 1) // 2
+    col_a, col_b = st.columns(2)
+
+    def render_coverage_row(cov, col_suffix):
         cov_id = cov["id"]
         label = cov["label"]
         current_val = sub_values.get(cov_id, 0)
@@ -388,13 +373,18 @@ def _render_variable_limits_edit(
         # Find matching option index
         idx = _find_option_index(current_val, option_values, aggregate_limit)
 
-        new_idx = st.selectbox(
-            label,
-            options=range(len(options)),
-            index=idx,
-            format_func=lambda i: option_labels[i],
-            key=f"cov_edit_{editor_id}_sub_{cov_id}_r{refresh}",
-        )
+        c1, c2 = st.columns([1.8, 1])
+        with c1:
+            st.markdown(f"<div style='font-size: 14px; padding: 8px 0;'>{label}</div>", unsafe_allow_html=True)
+        with c2:
+            new_idx = st.selectbox(
+                label,
+                options=range(len(options)),
+                index=idx,
+                format_func=lambda i: option_labels[i],
+                key=f"cov_edit_{editor_id}_sub_{cov_id}_{col_suffix}_r{refresh}",
+                label_visibility="collapsed",
+            )
 
         new_val = option_values[new_idx]
 
@@ -405,6 +395,14 @@ def _render_variable_limits_edit(
             if on_change:
                 on_change(coverages)
 
+    with col_a:
+        for cov in sub_defs[:mid]:
+            render_coverage_row(cov, "a")
+
+    with col_b:
+        for cov in sub_defs[mid:]:
+            render_coverage_row(cov, "b")
+
     return coverages
 
 
@@ -414,7 +412,7 @@ def _render_standard_limits_edit(
     aggregate_limit: int,
     on_change: Optional[Callable[[dict], None]],
 ) -> dict:
-    """Render standard/aggregate coverages edit mode."""
+    """Render standard/aggregate coverages edit mode with two-column grid."""
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     agg_defs = get_aggregate_coverage_definitions()
@@ -432,7 +430,11 @@ def _render_standard_limits_edit(
     # Build coverage list - Tech E&O first
     coverage_list = _order_coverages(agg_defs)
 
-    for cov in coverage_list:
+    # Split into two columns
+    mid = (len(coverage_list) + 1) // 2
+    col_a, col_b = st.columns(2)
+
+    def render_coverage_row(cov, col_suffix):
         cov_id = cov["id"]
         label = cov["label"]
         current_val = agg_values.get(cov_id, 0)
@@ -440,13 +442,18 @@ def _render_standard_limits_edit(
         # Find matching option index
         idx = _find_standard_option_index(current_val, option_values, aggregate_limit)
 
-        new_idx = st.selectbox(
-            label,
-            options=range(len(options)),
-            index=idx,
-            format_func=lambda i: option_labels[i],
-            key=f"cov_edit_{editor_id}_agg_{cov_id}_r{refresh}",
-        )
+        c1, c2 = st.columns([1.8, 1])
+        with c1:
+            st.markdown(f"<div style='font-size: 14px; padding: 8px 0;'>{label}</div>", unsafe_allow_html=True)
+        with c2:
+            new_idx = st.selectbox(
+                label,
+                options=range(len(options)),
+                index=idx,
+                format_func=lambda i: option_labels[i],
+                key=f"cov_edit_{editor_id}_agg_{cov_id}_{col_suffix}_r{refresh}",
+                label_visibility="collapsed",
+            )
 
         new_val = option_values[new_idx]
 
@@ -456,6 +463,14 @@ def _render_standard_limits_edit(
             st.session_state[session_key] = coverages
             if on_change:
                 on_change(coverages)
+
+    with col_a:
+        for cov in coverage_list[:mid]:
+            render_coverage_row(cov, "a")
+
+    with col_b:
+        for cov in coverage_list[mid:]:
+            render_coverage_row(cov, "b")
 
     return coverages
 
@@ -467,7 +482,7 @@ def _render_variable_limits_diff(
     original_coverages: dict,
     on_change: Optional[Callable[[dict], None]],
 ) -> dict:
-    """Render variable/sublimit coverages in diff mode with change indicators."""
+    """Render variable/sublimit coverages in diff mode with two-column grid and change indicators."""
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     sub_defs = get_sublimit_coverage_definitions()
@@ -487,7 +502,11 @@ def _render_variable_limits_diff(
     option_labels = [o[0] for o in options]
     option_values = [o[1] for o in options]
 
-    for cov in sub_defs:
+    # Split into two columns
+    mid = (len(sub_defs) + 1) // 2
+    col_a, col_b = st.columns(2)
+
+    def render_coverage_row(cov, col_suffix):
         cov_id = cov["id"]
         label = cov["label"]
         current_val = sub_values.get(cov_id, 0)
@@ -500,14 +519,20 @@ def _render_variable_limits_diff(
         # Find matching option index
         idx = _find_option_index(current_val, option_values, aggregate_limit)
 
-        new_idx = st.selectbox(
-            display_label,
-            options=range(len(options)),
-            index=idx,
-            format_func=lambda i: option_labels[i],
-            key=f"cov_diff_{editor_id}_sub_{cov_id}_r{refresh}",
-            help=f"Original: {format_limit_display(orig_val)}" if is_changed else None,
-        )
+        c1, c2 = st.columns([1.8, 1])
+        with c1:
+            color = "#e67700" if is_changed else "inherit"
+            st.markdown(f"<div style='font-size: 14px; padding: 8px 0; color: {color};'>{display_label}</div>", unsafe_allow_html=True)
+        with c2:
+            new_idx = st.selectbox(
+                label,
+                options=range(len(options)),
+                index=idx,
+                format_func=lambda i: option_labels[i],
+                key=f"cov_diff_{editor_id}_sub_{cov_id}_{col_suffix}_r{refresh}",
+                label_visibility="collapsed",
+                help=f"Original: {format_limit_display(orig_val)}" if is_changed else None,
+            )
 
         new_val = option_values[new_idx]
 
@@ -517,6 +542,14 @@ def _render_variable_limits_diff(
             st.session_state[session_key] = coverages
             if on_change:
                 on_change(coverages)
+
+    with col_a:
+        for cov in sub_defs[:mid]:
+            render_coverage_row(cov, "a")
+
+    with col_b:
+        for cov in sub_defs[mid:]:
+            render_coverage_row(cov, "b")
 
     return coverages
 
@@ -528,7 +561,7 @@ def _render_standard_limits_diff(
     original_coverages: dict,
     on_change: Optional[Callable[[dict], None]],
 ) -> dict:
-    """Render standard/aggregate coverages in diff mode with change indicators."""
+    """Render standard/aggregate coverages in diff mode with two-column grid and change indicators."""
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     agg_defs = get_aggregate_coverage_definitions()
@@ -547,7 +580,11 @@ def _render_standard_limits_diff(
     # Build coverage list - Tech E&O first
     coverage_list = _order_coverages(agg_defs)
 
-    for cov in coverage_list:
+    # Split into two columns
+    mid = (len(coverage_list) + 1) // 2
+    col_a, col_b = st.columns(2)
+
+    def render_coverage_row(cov, col_suffix):
         cov_id = cov["id"]
         label = cov["label"]
         current_val = agg_values.get(cov_id, 0)
@@ -560,14 +597,20 @@ def _render_standard_limits_diff(
         # Find matching option index
         idx = _find_standard_option_index(current_val, option_values, aggregate_limit)
 
-        new_idx = st.selectbox(
-            display_label,
-            options=range(len(options)),
-            index=idx,
-            format_func=lambda i: option_labels[i],
-            key=f"cov_diff_{editor_id}_agg_{cov_id}_r{refresh}",
-            help=f"Original: {format_limit_display(orig_val)}" if is_changed else None,
-        )
+        c1, c2 = st.columns([1.8, 1])
+        with c1:
+            color = "#e67700" if is_changed else "inherit"
+            st.markdown(f"<div style='font-size: 14px; padding: 8px 0; color: {color};'>{display_label}</div>", unsafe_allow_html=True)
+        with c2:
+            new_idx = st.selectbox(
+                label,
+                options=range(len(options)),
+                index=idx,
+                format_func=lambda i: option_labels[i],
+                key=f"cov_diff_{editor_id}_agg_{cov_id}_{col_suffix}_r{refresh}",
+                label_visibility="collapsed",
+                help=f"Original: {format_limit_display(orig_val)}" if is_changed else None,
+            )
 
         new_val = option_values[new_idx]
 
@@ -577,6 +620,14 @@ def _render_standard_limits_diff(
             st.session_state[session_key] = coverages
             if on_change:
                 on_change(coverages)
+
+    with col_a:
+        for cov in coverage_list[:mid]:
+            render_coverage_row(cov, "a")
+
+    with col_b:
+        for cov in coverage_list[mid:]:
+            render_coverage_row(cov, "b")
 
     return coverages
 

@@ -589,7 +589,7 @@ def _render_single_coverage_button(sub_id: str, saved_options: list[dict], sourc
     rows_key = f"{prefix}bulk_cov_rows_{sub_id}"
     source_key = f"{prefix}bulk_cov_source_{sub_id}"
 
-    if st.button("Edit Coverages", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", use_container_width=True):
+    if st.button("Edit Coverages", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", use_container_width=True, type="primary"):
         st.session_state[trigger_key] = True
         st.session_state[modal_key] = True
         # Store source coverages for "Load Current Settings" feature
