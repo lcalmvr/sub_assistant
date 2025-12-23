@@ -1951,7 +1951,6 @@ def _render_coverage_change_with_editor(submission_id: str, change_details: dict
 
     # ── Individual Coverage Limits ──
     st.markdown("**Coverage Schedule**")
-    st.caption("Edit individual coverage limits below")
 
     # Use the selected aggregate limit for the coverage editor
     aggregate_limit = new_aggregate
@@ -1964,7 +1963,7 @@ def _render_coverage_change_with_editor(submission_id: str, change_details: dict
         aggregate_limit=aggregate_limit,
         mode="diff",
         original_coverages=current_coverages,
-        show_header=True,
+        show_header=False,
     )
 
     # Compute changes between original and edited coverages
@@ -1983,6 +1982,9 @@ def _render_coverage_change_with_editor(submission_id: str, change_details: dict
         change_details["coverage_type"] = _infer_change_type(change_details)
     else:
         change_details["coverage_type"] = "no_change"
+
+    # Divider before premium section
+    st.divider()
 
 
 def _infer_change_type(changes: dict) -> str:

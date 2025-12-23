@@ -153,8 +153,8 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                 _view_quote(selected_id)
     else:
         # Full edit mode: Two rows - buttons on top, dropdown below
-        # Row 1: Action buttons
-        col_add, col_quote, col_bind, col_delete = st.columns(4)
+        # Row 1: Action buttons (Add, Delete, Quote, Bind)
+        col_add, col_delete, col_quote, col_bind = st.columns(4)
 
         with col_add:
             with st.popover("Add", use_container_width=True):
@@ -163,6 +163,12 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                 if st.button("Excess", key=f"add_excess_{sub_id}", use_container_width=True):
                     st.session_state[f"show_excess_dialog_{sub_id}"] = True
                     st.rerun()
+
+        with col_delete:
+            delete_disabled = not viewing_quote_id
+            if st.button("Delete", key="delete_selected_btn", use_container_width=True, disabled=delete_disabled):
+                if viewing_quote_id:
+                    _delete_quote(viewing_quote_id, viewing_quote_id)
 
         with col_quote:
             quote_disabled = not viewing_quote_id
@@ -188,12 +194,6 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                         bind_option(viewing_quote_id, bound_by="user")
                         st.success("Option bound!")
                         st.rerun()
-
-        with col_delete:
-            delete_disabled = not viewing_quote_id
-            if st.button("Delete", key="delete_selected_btn", use_container_width=True, disabled=delete_disabled, type="primary"):
-                if viewing_quote_id:
-                    _delete_quote(viewing_quote_id, viewing_quote_id)
 
         # Row 2: Dropdown selector
         option_ids = list(quote_options.keys())

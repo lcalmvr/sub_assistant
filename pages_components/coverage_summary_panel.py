@@ -235,7 +235,7 @@ def _render_unified_summary(sub_id: str, policy_form: str, aggregate_limit: int)
 
 
 def _render_aggregate_coverages_edit(sub_id: str, policy_form: str) -> None:
-    """Render aggregate coverages edit mode with dropdowns."""
+    """Render aggregate coverages edit mode with two-column grid layout."""
     agg_defs = get_aggregate_coverage_definitions()
     agg_override_key = f"agg_overrides_{sub_id}"
     overrides = st.session_state.get(agg_override_key, {})
@@ -253,7 +253,11 @@ def _render_aggregate_coverages_edit(sub_id: str, policy_form: str) -> None:
         else:
             coverage_list.append(cov)
 
-    for cov in coverage_list:
+    # Split into two columns
+    mid = (len(coverage_list) + 1) // 2
+    col_a, col_b = st.columns(2)
+
+    def render_coverage_row(cov, parent_col):
         cov_id = cov["id"]
         label = cov["label"]
         form_default = cov.get(policy_form, 0)
@@ -263,19 +267,32 @@ def _render_aggregate_coverages_edit(sub_id: str, policy_form: str) -> None:
         display_current = display_map.get(current_status, current_status)
         idx = options.index(display_current) if display_current in options else 0
 
-        new_display = st.selectbox(
-            label,
-            options=options,
-            index=idx,
-            key=f"agg_{sub_id}_{policy_form}_{cov_id}",
-        )
-        new_status = storage_map.get(new_display, new_display)
+        with parent_col:
+            c1, c2 = st.columns([1.8, 1])
+            with c1:
+                st.markdown(f"<div style='font-size: 14px; padding: 8px 0;'>{label}</div>", unsafe_allow_html=True)
+            with c2:
+                new_display = st.selectbox(
+                    label,
+                    options=options,
+                    index=idx,
+                    key=f"agg_{sub_id}_{policy_form}_{cov_id}",
+                    label_visibility="collapsed",
+                )
 
-        # Store override if different from form default
-        if new_status != default_status:
-            st.session_state[agg_override_key][cov_id] = new_status
-        elif cov_id in st.session_state[agg_override_key]:
-            del st.session_state[agg_override_key][cov_id]
+            new_status = storage_map.get(new_display, new_display)
+
+            # Store override if different from form default
+            if new_status != default_status:
+                st.session_state[agg_override_key][cov_id] = new_status
+            elif cov_id in st.session_state[agg_override_key]:
+                del st.session_state[agg_override_key][cov_id]
+
+    for cov in coverage_list[:mid]:
+        render_coverage_row(cov, col_a)
+
+    for cov in coverage_list[mid:]:
+        render_coverage_row(cov, col_b)
 
 
 def _render_aggregate_coverages(sub_id: str, policy_form: str) -> None:
@@ -379,7 +396,7 @@ def _render_aggregate_coverages(sub_id: str, policy_form: str) -> None:
 
 
 def _render_sublimit_defaults(sub_id: str, policy_form: str) -> None:
-    """Render sublimit default configuration with extended options."""
+    """Render sublimit default configuration with two-column grid layout."""
     sub_defs = get_sublimit_coverage_definitions()
     sublimit_key = f"sublimit_defaults_{sub_id}"
     defaults = st.session_state.get(sublimit_key, {})
@@ -390,14 +407,18 @@ def _render_sublimit_defaults(sub_id: str, policy_form: str) -> None:
         ("$250K", 250_000),
         ("$500K", 500_000),
         ("$1M", 1_000_000),
-        ("50% of Aggregate", "50%"),
+        ("50% Agg", "50%"),
         ("Aggregate", "aggregate"),
         ("None", "none"),
     ]
     option_labels = [o[0] for o in options]
     option_values = [o[1] for o in options]
 
-    for cov in sub_defs:
+    # Split into two columns
+    mid = (len(sub_defs) + 1) // 2
+    col_a, col_b = st.columns(2)
+
+    def render_coverage_row(cov, parent_col):
         cov_id = cov["id"]
         label = cov["label"]
         config_default = cov.get("default", 0)
@@ -417,17 +438,28 @@ def _render_sublimit_defaults(sub_id: str, policy_form: str) -> None:
         else:
             idx = 0
 
-        # Include policy_form in key so it resets when form changes
-        new_idx = st.selectbox(
-            label,
-            options=range(len(options)),
-            index=idx,
-            format_func=lambda i: option_labels[i],
-            key=f"sub_{sub_id}_{policy_form}_{cov_id}",
-        )
+        with parent_col:
+            c1, c2 = st.columns([1.8, 1])
+            with c1:
+                st.markdown(f"<div style='font-size: 14px; padding: 8px 0;'>{label}</div>", unsafe_allow_html=True)
+            with c2:
+                new_idx = st.selectbox(
+                    label,
+                    options=range(len(options)),
+                    index=idx,
+                    format_func=lambda i: option_labels[i],
+                    key=f"sub_{sub_id}_{policy_form}_{cov_id}",
+                    label_visibility="collapsed",
+                )
 
-        # Update session state with the value
-        st.session_state[sublimit_key][cov_id] = option_values[new_idx]
+            # Update session state with the value
+            st.session_state[sublimit_key][cov_id] = option_values[new_idx]
+
+    for cov in sub_defs[:mid]:
+        render_coverage_row(cov, col_a)
+
+    for cov in sub_defs[mid:]:
+        render_coverage_row(cov, col_b)
 
 
 def save_submission_policy_form(sub_id: str, policy_form: str, get_conn_func) -> bool:
