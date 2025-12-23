@@ -54,7 +54,22 @@ def render_coverages_panel(
 
         # Only initialize if not already in session state - preserves edits
         if session_key not in st.session_state:
-            st.session_state[session_key] = build_coverages_from_rating(sub_id, aggregate_limit)
+            # First try to load from database if we have a quote selected
+            quote_id = st.session_state.get("viewing_quote_id")
+            loaded_from_db = False
+            if quote_id:
+                from pages_components.tower_db import get_quote_by_id
+                quote = get_quote_by_id(quote_id)
+                if quote and quote.get("coverages"):
+                    db_coverages = quote.get("coverages")
+                    if db_coverages.get("sublimit_coverages") or db_coverages.get("aggregate_coverages"):
+                        st.session_state[session_key] = db_coverages
+                        loaded_from_db = True
+
+            # Fall back to building from Rating defaults
+            if not loaded_from_db:
+                st.session_state[session_key] = build_coverages_from_rating(sub_id, aggregate_limit)
+
             # Clear widget keys so selectboxes use fresh values from coverages
             _clear_coverage_widget_keys(sub_id)
 
@@ -219,11 +234,13 @@ def _update_for_new_limit(coverages: dict, new_limit: int, sub_id: str) -> dict:
 
 def _clear_coverage_widget_keys(sub_id: str):
     """Clear all coverage-related widget keys so selectboxes use fresh values."""
+    # Use reset_coverage_editor which handles refresh counter
+    reset_coverage_editor(f"quote_{sub_id}")
+
+    # Also clear legacy keys
     keys_to_clear = [k for k in list(st.session_state.keys())
                      if k.startswith(f"quote_sublimit_{sub_id}_")
-                     or k.startswith(f"quote_agg_{sub_id}_")
-                     or k.startswith(f"cov_edit_quote_{sub_id}_")
-                     or k.startswith(f"cov_diff_quote_{sub_id}_")]
+                     or k.startswith(f"quote_agg_{sub_id}_")]
     for k in keys_to_clear:
         del st.session_state[k]
 

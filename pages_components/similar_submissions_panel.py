@@ -47,7 +47,7 @@ def render_similar_submissions_panel(sub_id: str, ops_vec: list, ctrl_vec: list,
     if sim_search_term:
         # Search mode: load submissions based on search term
         where_sql = "LOWER(applicant_name) LIKE LOWER(%s) AND id <> %s"
-        params = [f"%{sim_search_term}%", sub_id]
+        params = (f"%{sim_search_term}%", sub_id)
         sim_df = load_submissions_func(where_sql, params)
         
         # Add similarity column as None for search results

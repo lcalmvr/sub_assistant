@@ -252,10 +252,22 @@ def apply_coverage_changes(base_coverages: dict, changes: dict) -> dict:
 
 
 def reset_coverage_editor(editor_id: str) -> None:
-    """Clear the session state for a coverage editor instance."""
+    """Clear the session state for a coverage editor instance, including widget keys."""
     session_key = f"coverage_editor_{editor_id}"
     if session_key in st.session_state:
         del st.session_state[session_key]
+
+    # Also clear individual widget keys (selectboxes store their own state)
+    keys_to_clear = [
+        k for k in list(st.session_state.keys())
+        if k.startswith(f"cov_edit_{editor_id}_") or k.startswith(f"cov_diff_{editor_id}_")
+    ]
+    for k in keys_to_clear:
+        del st.session_state[k]
+
+    # Increment refresh counter to force new widget keys
+    refresh_key = f"coverage_editor_refresh_{editor_id}"
+    st.session_state[refresh_key] = st.session_state.get(refresh_key, 0) + 1
 
 
 # ─────────────────────── Internal Rendering Functions ───────────────────────
@@ -351,6 +363,7 @@ def _render_variable_limits_edit(
 ) -> dict:
     """Render variable/sublimit coverages edit mode."""
     session_key = f"coverage_editor_{editor_id}"
+    refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     sub_defs = get_sublimit_coverage_definitions()
     sub_values = coverages.get("sublimit_coverages", {})
 
@@ -380,7 +393,7 @@ def _render_variable_limits_edit(
             options=range(len(options)),
             index=idx,
             format_func=lambda i: option_labels[i],
-            key=f"cov_edit_{editor_id}_sub_{cov_id}",
+            key=f"cov_edit_{editor_id}_sub_{cov_id}_r{refresh}",
         )
 
         new_val = option_values[new_idx]
@@ -403,6 +416,7 @@ def _render_standard_limits_edit(
 ) -> dict:
     """Render standard/aggregate coverages edit mode."""
     session_key = f"coverage_editor_{editor_id}"
+    refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     agg_defs = get_aggregate_coverage_definitions()
     agg_values = coverages.get("aggregate_coverages", {})
 
@@ -431,7 +445,7 @@ def _render_standard_limits_edit(
             options=range(len(options)),
             index=idx,
             format_func=lambda i: option_labels[i],
-            key=f"cov_edit_{editor_id}_agg_{cov_id}",
+            key=f"cov_edit_{editor_id}_agg_{cov_id}_r{refresh}",
         )
 
         new_val = option_values[new_idx]
@@ -455,6 +469,7 @@ def _render_variable_limits_diff(
 ) -> dict:
     """Render variable/sublimit coverages in diff mode with change indicators."""
     session_key = f"coverage_editor_{editor_id}"
+    refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     sub_defs = get_sublimit_coverage_definitions()
     sub_values = coverages.get("sublimit_coverages", {})
     orig_sub = original_coverages.get("sublimit_coverages", {})
@@ -490,7 +505,7 @@ def _render_variable_limits_diff(
             options=range(len(options)),
             index=idx,
             format_func=lambda i: option_labels[i],
-            key=f"cov_diff_{editor_id}_sub_{cov_id}",
+            key=f"cov_diff_{editor_id}_sub_{cov_id}_r{refresh}",
             help=f"Original: {format_limit_display(orig_val)}" if is_changed else None,
         )
 
@@ -515,6 +530,7 @@ def _render_standard_limits_diff(
 ) -> dict:
     """Render standard/aggregate coverages in diff mode with change indicators."""
     session_key = f"coverage_editor_{editor_id}"
+    refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     agg_defs = get_aggregate_coverage_definitions()
     agg_values = coverages.get("aggregate_coverages", {})
     orig_agg = original_coverages.get("aggregate_coverages", {})
@@ -549,7 +565,7 @@ def _render_standard_limits_diff(
             options=range(len(options)),
             index=idx,
             format_func=lambda i: option_labels[i],
-            key=f"cov_diff_{editor_id}_agg_{cov_id}",
+            key=f"cov_diff_{editor_id}_agg_{cov_id}_r{refresh}",
             help=f"Original: {format_limit_display(orig_val)}" if is_changed else None,
         )
 

@@ -51,7 +51,19 @@ from pages_components.status_header import render_status_header
 from pages_components.account_history_panel import render_account_history_compact
 from pages_components.renewal_panel import render_renewal_panel
 from pages_components.endorsements_history_panel import render_endorsements_history_panel
-from core.policy_tab_data import load_policy_tab_data
+from core.policy_tab_data import load_policy_tab_data as _load_policy_tab_data_uncached
+
+@st.cache_data(ttl=30)
+def load_policy_tab_data(submission_id: str) -> dict:
+    """Cached wrapper for policy tab data loader. 30s TTL."""
+    return _load_policy_tab_data_uncached(submission_id)
+
+def clear_submission_caches():
+    """Clear all submission-related caches. Call after any save operation."""
+    load_submissions.clear()
+    load_documents.clear()
+    load_submission.clear()
+    load_policy_tab_data.clear()
 
 def map_industry_to_slug(industry_name):
     """Map NAICS industry names to rating engine slugs"""
@@ -368,7 +380,9 @@ def latest_edits_map(submission_id: str) -> dict[str, str]:
         )
         return {row[0]: row[1] for row in cur.fetchall()}
 
-def load_submissions(where_clause: str, params: list) -> pd.DataFrame:
+@st.cache_data(ttl=30)
+def load_submissions(where_clause: str, params: tuple) -> pd.DataFrame:
+    """Load submissions list with 30s cache to reduce DB hits on reruns."""
     qry = f"""
         SELECT id,
            date_received,
@@ -383,9 +397,11 @@ def load_submissions(where_clause: str, params: list) -> pd.DataFrame:
     ORDER BY date_received DESC
     LIMIT 100
     """
-    return pd.read_sql(qry, get_conn(), params=params)
+    return pd.read_sql(qry, get_conn(), params=list(params))
 
+@st.cache_data(ttl=30)
 def load_documents(submission_id: str) -> pd.DataFrame:
+    """Load documents for a submission with 30s cache."""
     qry = """
     SELECT filename, document_type, page_count, is_priority, doc_metadata, extracted_data
         FROM documents
@@ -394,8 +410,9 @@ def load_documents(submission_id: str) -> pd.DataFrame:
     """
     return pd.read_sql(qry, get_conn(), params=[submission_id])
 
+@st.cache_data(ttl=30)
 def load_submission(submission_id: str) -> pd.DataFrame:
-    """Load a single submission with all details for comparison"""
+    """Load a single submission with all details for comparison. Cached 30s."""
     qry = """
     SELECT id, date_received, applicant_name, annual_revenue, naics_primary_title,
            naics_secondary_title, industry_tags, business_summary, cyber_exposures,
@@ -517,7 +534,8 @@ def _process_uploaded_document(submission_id, filename, file_path, doc_type, is_
                 )
             )
             get_conn().commit()
-            
+            clear_submission_caches()
+
     except Exception as e:
         raise Exception(f"Failed to process document: {str(e)}")
 
@@ -589,6 +607,7 @@ def _render_policy_period_section(sub_id: str):
             if st.button("Save", key=f"save_period_{sub_id}", type="primary"):
                 with conn.cursor() as cur:
                     cur.execute("UPDATE submissions SET effective_date = %s, expiration_date = %s, updated_at = now() WHERE id = %s", (new_effective, new_expiration, sub_id))
+                clear_submission_caches()
                 st.session_state[edit_key] = False
                 st.rerun()
         with c2:
@@ -650,6 +669,7 @@ def _render_broker_section(sub_id: str):
                                     SET broker_org_id = %s, broker_employment_id = %s, updated_at = now()
                                     WHERE id = %s
                                 """, (emp["org_id"], emp["id"], sub_id))
+                            clear_submission_caches()
                             st.session_state[edit_key] = False
                             st.rerun()
                             break
@@ -685,11 +705,11 @@ def render():
         # Load submissions with search filter
         if search_term:
             where_sql = "LOWER(applicant_name) LIKE LOWER(%s)"
-            params = [f"%{search_term}%"]
+            params = (f"%{search_term}%",)
         else:
             where_sql = "TRUE"
-            params = []
-    
+            params = ()
+
         sub_df = load_submissions(where_sql, params)
         label_map = {f"{r.applicant_name} – {str(r.id)[:8]}": r.id for r in sub_df.itertuples()}
         # Restore previous selection if available
@@ -871,6 +891,7 @@ def render():
                                 "UPDATE submissions SET hazard_override = %s WHERE id = %s",
                                 (new_hazard, sub_id)
                             )
+                        clear_submission_caches()
                         st.rerun()
 
                 with col_adj:
@@ -898,6 +919,7 @@ def render():
                                 "UPDATE submissions SET control_overrides = %s WHERE id = %s",
                                 (json_mod.dumps({"overall": new_adj}), sub_id)
                             )
+                        clear_submission_caches()
                         st.rerun()
 
                 st.divider()
@@ -1486,7 +1508,7 @@ def render():
                                 comment="Updated business_summary",
                                 user_id=CURRENT_USER
                             )
-                    
+                            clear_submission_caches()
                             st.session_state[f"editing_biz_{sub_id}"] = False
                             st.success("✅ Business summary saved successfully!")
                             st.rerun()
@@ -1529,6 +1551,7 @@ def render():
                                     (edited_rev if edited_rev > 0 else None, sub_id)
                                 )
                                 conn.commit()
+                            clear_submission_caches()
                             st.session_state[f"editing_rev_{sub_id}"] = False
                             st.success("Revenue saved!")
                             st.rerun()
@@ -1582,7 +1605,7 @@ def render():
                                 comment="Updated cyber_exposures",
                                 user_id=CURRENT_USER
                             )
-                    
+                            clear_submission_caches()
                             st.session_state[f"editing_exp_{sub_id}"] = False
                             st.success("✅ Exposure summary saved successfully!")
                             st.rerun()
@@ -1626,7 +1649,7 @@ def render():
                                 comment="Updated nist_controls_summary",
                                 user_id=CURRENT_USER
                             )
-                    
+                            clear_submission_caches()
                             st.session_state[f"editing_ctrl_{sub_id}"] = False
                             st.success("✅ NIST controls summary saved successfully!")
                             st.rerun()
@@ -1670,7 +1693,7 @@ def render():
                                 comment="Updated bullet_point_summary",
                                 user_id=CURRENT_USER
                             )
-                    
+                            clear_submission_caches()
                             st.session_state[f"editing_bullet_{sub_id}"] = False
                             st.success("✅ Bullet point summary saved successfully!")
                             st.rerun()

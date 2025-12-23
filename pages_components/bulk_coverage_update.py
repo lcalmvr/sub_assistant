@@ -20,6 +20,7 @@ from pages_components.tower_db import (
     get_quote_by_id,
     list_quotes_for_submission,
 )
+from pages_components.coverage_editor import reset_coverage_editor
 
 
 def render_bulk_coverage_expander(sub_id: str, saved_options: list[dict]):
@@ -50,18 +51,22 @@ def render_bulk_coverage_modal(sub_id: str, saved_options: list[dict]):
 
     modal_key = f"show_bulk_cov_modal_{sub_id}"
     trigger_key = f"bulk_cov_modal_triggered_{sub_id}"
+    rows_key = f"bulk_cov_rows_{sub_id}"
 
     # Modal trigger button - set a trigger flag
     if st.button("Update Coverage Across Options", key=f"bulk_cov_modal_btn_{sub_id}"):
         st.session_state[trigger_key] = True
         st.session_state[modal_key] = True
+        # Reset rows when opening dialog fresh
+        if rows_key in st.session_state:
+            del st.session_state[rows_key]
 
     # Only show modal if it was just triggered (not on random reruns)
     if st.session_state.get(trigger_key, False):
         # Clear the trigger immediately so it doesn't persist
         st.session_state[trigger_key] = False
 
-        @st.dialog("Update Coverage Across Options", width="large")
+        @st.dialog("Edit Coverages Across Options", width="large")
         def show_modal():
             _render_bulk_update_ui(sub_id, saved_options, in_modal=True)
 
@@ -69,7 +74,7 @@ def render_bulk_coverage_modal(sub_id: str, saved_options: list[dict]):
 
 
 def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: bool = False, key_prefix: str = ""):
-    """Render the bulk update UI (shared between expander and modal)."""
+    """Render the bulk update UI with support for multiple coverage rows."""
     prefix = f"{key_prefix}_" if key_prefix else ""
 
     # Get all coverage definitions
@@ -91,162 +96,268 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
             "type": "aggregate"
         })
 
-    coverage_labels = [c["label"] for c in coverage_options]
-
-    # Coverage selector
-    col1, col2 = st.columns(2)
-
-    with col1:
-        selected_coverage_label = st.selectbox(
-            "Coverage",
-            options=coverage_labels,
-            key=f"{prefix}bulk_cov_select_{sub_id}"
-        )
-        selected_coverage = next(c for c in coverage_options if c["label"] == selected_coverage_label)
-
-    # Value options depend on coverage type
-    with col2:
-        if selected_coverage["type"] == "sublimit":
-            value_options = [
-                ("$100K", 100_000),
-                ("$250K", 250_000),
-                ("$500K", 500_000),
-                ("$1M", 1_000_000),
-                ("None", 0),
-            ]
-        else:
-            value_options = [
-                ("Full Limits", "full"),  # Will be resolved per-option based on aggregate
-                ("$1M", 1_000_000),
-                ("No Coverage", 0),
-            ]
-
-        value_labels = [v[0] for v in value_options]
-        selected_value_label = st.selectbox(
-            "New Value",
-            options=value_labels,
-            key=f"{prefix}bulk_val_select_{sub_id}"
-        )
-        selected_value = next(v[1] for v in value_options if v[0] == selected_value_label)
-
-    st.markdown("---")
-    st.markdown("**Apply to:**")
+    # Session state for coverage rows: list of {"coverage_id": str, "value": any}
+    rows_key = f"{prefix}bulk_cov_rows_{sub_id}"
+    if rows_key not in st.session_state:
+        # Start with one empty row
+        st.session_state[rows_key] = [{"coverage_id": coverage_options[0]["id"], "value": 100_000}]
 
     # Initialize selection state
     selection_key = f"{prefix}bulk_cov_selections_{sub_id}"
     if selection_key not in st.session_state:
         st.session_state[selection_key] = {opt["id"]: True for opt in saved_options}
 
-    # Select All / Select None buttons
-    col_all, col_none, col_spacer = st.columns([1, 1, 3])
-    with col_all:
-        if st.button("Select All", key=f"{prefix}bulk_select_all_{sub_id}", use_container_width=True):
-            st.session_state[selection_key] = {opt["id"]: True for opt in saved_options}
-            st.rerun()
-    with col_none:
-        if st.button("Select None", key=f"{prefix}bulk_select_none_{sub_id}", use_container_width=True):
-            st.session_state[selection_key] = {opt["id"]: False for opt in saved_options}
-            st.rerun()
+    # Use fragment for the entire UI to allow independent rerun
+    @st.fragment
+    def render_bulk_ui_fragment():
+        rows = st.session_state[rows_key]
 
-    # Option checkboxes with current values
-    st.markdown("")  # Spacing
+        # Track rows to remove (can't modify list while iterating)
+        row_to_remove = None
 
-    for opt in saved_options:
-        opt_id = opt["id"]
-        opt_name = opt.get("quote_name", f"Option {opt_id[:8]}")
+        # Header row
+        col_cov_h, col_val_h, col_rm_h = st.columns([2, 2, 0.5])
+        with col_cov_h:
+            st.caption("Coverage")
+        with col_val_h:
+            st.caption("New Value")
 
-        # Get current value for this coverage
-        coverages = opt.get("coverages", {})
-        if selected_coverage["type"] == "sublimit":
-            current_val = coverages.get("sublimit_coverages", {}).get(selected_coverage["id"], 0)
-        else:
-            current_val = coverages.get("aggregate_coverages", {}).get(selected_coverage["id"], 0)
+        # Render each coverage row
+        for row_idx, row in enumerate(rows):
+            # Get list of already-selected coverage IDs (for filtering dropdowns)
+            selected_cov_ids = {r["coverage_id"] for i, r in enumerate(rows) if r["coverage_id"] and i != row_idx}
 
-        current_display = format_limit_display(current_val) if current_val else "None"
+            col_cov, col_val, col_remove = st.columns([2, 2, 0.5])
 
-        # Checkbox with current value shown
-        col_check, col_current = st.columns([3, 1])
-        with col_check:
-            is_selected = st.checkbox(
-                opt_name,
-                value=st.session_state[selection_key].get(opt_id, True),
-                key=f"{prefix}bulk_opt_{sub_id}_{opt_id}"
-            )
-            st.session_state[selection_key][opt_id] = is_selected
-        with col_current:
-            st.caption(f"Current: {current_display}")
+            # Available coverages for this row (exclude already selected by other rows)
+            available_options = [
+                c for c in coverage_options
+                if c["id"] not in selected_cov_ids
+            ]
+            available_labels = [c["label"] for c in available_options]
 
-    st.markdown("---")
+            # Find current selection
+            current_cov = next((c for c in coverage_options if c["id"] == row["coverage_id"]), None)
+            if current_cov and current_cov["label"] in available_labels:
+                current_idx = available_labels.index(current_cov["label"])
+            else:
+                current_idx = 0
+                if available_options:
+                    row["coverage_id"] = available_options[0]["id"]
 
-    # Count selected
-    selected_count = sum(1 for v in st.session_state[selection_key].values() if v)
+            with col_cov:
+                new_label = st.selectbox(
+                    f"Coverage {row_idx}",
+                    options=available_labels,
+                    index=current_idx,
+                    key=f"{prefix}bulk_cov_row_{sub_id}_{row_idx}",
+                    label_visibility="collapsed",
+                )
+                new_cov = next((c for c in available_options if c["label"] == new_label), available_options[0] if available_options else None)
+                if new_cov:
+                    row["coverage_id"] = new_cov["id"]
 
-    # Apply button
-    if st.button(
-        f"Apply to {selected_count} Option{'s' if selected_count != 1 else ''}",
-        key=f"{prefix}bulk_apply_{sub_id}",
-        type="primary",
-        disabled=selected_count == 0
-    ):
-        # Apply changes
-        updated_count = 0
+            # Value options depend on coverage type
+            with col_val:
+                cov_type = new_cov["type"] if new_cov else "sublimit"
+                if cov_type == "sublimit":
+                    value_options = [
+                        ("$100K", 100_000),
+                        ("$250K", 250_000),
+                        ("$500K", 500_000),
+                        ("$1M", 1_000_000),
+                        ("None", 0),
+                    ]
+                else:
+                    value_options = [
+                        ("Full Limits", "full"),
+                        ("$1M", 1_000_000),
+                        ("No Coverage", 0),
+                    ]
+
+                value_labels = [v[0] for v in value_options]
+                value_values = [v[1] for v in value_options]
+
+                # Find current value index
+                current_val_idx = 0
+                if row["value"] is not None and row["value"] in value_values:
+                    current_val_idx = value_values.index(row["value"])
+
+                new_val_label = st.selectbox(
+                    f"Value {row_idx}",
+                    options=value_labels,
+                    index=current_val_idx,
+                    key=f"{prefix}bulk_val_row_{sub_id}_{row_idx}",
+                    label_visibility="collapsed",
+                )
+                row["value"] = next(v[1] for v in value_options if v[0] == new_val_label)
+
+            with col_remove:
+                if len(rows) > 1:
+                    if st.button("−", key=f"{prefix}bulk_remove_row_{sub_id}_{row_idx}"):
+                        row_to_remove = row_idx
+
+        # Handle row removal after iteration
+        if row_to_remove is not None:
+            rows.pop(row_to_remove)
+            st.session_state[rows_key] = rows
+            st.rerun(scope="fragment")
+
+        # Add coverage button
+        all_selected_ids = {r["coverage_id"] for r in rows if r["coverage_id"]}
+        unselected = [c for c in coverage_options if c["id"] not in all_selected_ids]
+        if unselected:
+            if st.button("Add Coverage", key=f"{prefix}bulk_add_row_{sub_id}"):
+                default_val = 100_000 if unselected[0]["type"] == "sublimit" else "full"
+                rows.append({"coverage_id": unselected[0]["id"], "value": default_val})
+                st.session_state[rows_key] = rows
+                st.rerun(scope="fragment")
+
+        st.markdown("---")
+        st.markdown("**Apply to:**")
+
+        # Select All / Select None buttons
+        col_all, col_none, col_spacer = st.columns([1, 1, 3])
+        with col_all:
+            if st.button("Select All", key=f"{prefix}bulk_select_all_{sub_id}", use_container_width=True):
+                for opt in saved_options:
+                    st.session_state[f"{prefix}bulk_opt_{sub_id}_{opt['id']}"] = True
+                    st.session_state[selection_key][opt["id"]] = True
+                st.rerun(scope="fragment")
+        with col_none:
+            if st.button("Select None", key=f"{prefix}bulk_select_none_{sub_id}", use_container_width=True):
+                for opt in saved_options:
+                    st.session_state[f"{prefix}bulk_opt_{sub_id}_{opt['id']}"] = False
+                    st.session_state[selection_key][opt["id"]] = False
+                st.rerun(scope="fragment")
+
+        # Option checkboxes
         for opt in saved_options:
             opt_id = opt["id"]
-            if not st.session_state[selection_key].get(opt_id, False):
+            opt_name = opt.get("quote_name", f"Option {opt_id[:8]}")
+            # Escape $ signs to prevent LaTeX rendering
+            opt_name_escaped = opt_name.replace("$", r"\$")
+            checkbox_key = f"{prefix}bulk_opt_{sub_id}_{opt_id}"
+
+            default_val = st.session_state.get(checkbox_key, st.session_state[selection_key].get(opt_id, True))
+
+            is_selected = st.checkbox(
+                opt_name_escaped,
+                value=default_val,
+                key=checkbox_key
+            )
+            st.session_state[selection_key][opt_id] = is_selected
+
+        st.markdown("---")
+
+        # Count for button label
+        coverage_count = len(rows)
+        selected_count = sum(1 for v in st.session_state[selection_key].values() if v)
+
+        # Apply button
+        if st.button(
+            f"Apply {coverage_count} Coverage{'s' if coverage_count != 1 else ''} to {selected_count} Option{'s' if selected_count != 1 else ''}",
+            key=f"{prefix}bulk_apply_{sub_id}",
+            type="primary",
+            disabled=selected_count == 0 or coverage_count == 0
+        ):
+            _apply_bulk_coverage_update(
+                sub_id, rows, saved_options, coverage_options,
+                selection_key, rows_key, prefix, in_modal
+            )
+
+    # Render the fragment
+    render_bulk_ui_fragment()
+
+
+def _apply_bulk_coverage_update(
+    sub_id: str,
+    rows: list,
+    saved_options: list,
+    coverage_options: list,
+    selection_key: str,
+    rows_key: str,
+    prefix: str,
+    in_modal: bool,
+):
+    """Apply bulk coverage updates to selected options."""
+    # Re-read rows fresh from session state
+    apply_rows = st.session_state.get(rows_key, [])
+    coverage_count = len(apply_rows)
+
+    # Apply changes
+    updated_count = 0
+    for opt in saved_options:
+        opt_id = opt["id"]
+        if not st.session_state[selection_key].get(opt_id, False):
+            continue
+
+        # Get fresh coverages from database
+        quote = get_quote_by_id(opt_id)
+        if not quote:
+            continue
+
+        coverages = quote.get("coverages", {})
+
+        if not coverages:
+            # Initialize empty coverages structure
+            coverages = {
+                "policy_form": quote.get("policy_form", "cyber"),
+                "aggregate_limit": 0,
+                "aggregate_coverages": {},
+                "sublimit_coverages": {}
+            }
+
+        # Get aggregate limit for "full" resolution
+        tower_json = quote.get("tower_json", [])
+        aggregate_limit = tower_json[0].get("limit", 1_000_000) if tower_json else 1_000_000
+
+        # Apply each coverage row
+        for row in apply_rows:
+            cov_id = row["coverage_id"]
+            value = row["value"]
+            cov_def = next((c for c in coverage_options if c["id"] == cov_id), None)
+            if not cov_def:
                 continue
 
-            # Get fresh coverages from database
-            quote = get_quote_by_id(opt_id)
-            if not quote:
-                continue
-
-            coverages = quote.get("coverages", {})
-            if not coverages:
-                # Initialize empty coverages structure
-                coverages = {
-                    "policy_form": quote.get("policy_form", "cyber"),
-                    "aggregate_limit": 0,
-                    "aggregate_coverages": {},
-                    "sublimit_coverages": {}
-                }
-
-            # Determine the actual value to set
-            actual_value = selected_value
-            if selected_value == "full":
-                # Get aggregate limit from tower_json
-                tower_json = quote.get("tower_json", [])
-                if tower_json:
-                    actual_value = tower_json[0].get("limit", 1_000_000)
-                else:
-                    actual_value = 1_000_000
+            # Resolve "full" to actual aggregate limit
+            actual_value = value
+            if value == "full":
+                actual_value = aggregate_limit
 
             # Update the coverage
-            if selected_coverage["type"] == "sublimit":
+            if cov_def["type"] == "sublimit":
                 if "sublimit_coverages" not in coverages:
                     coverages["sublimit_coverages"] = {}
-                coverages["sublimit_coverages"][selected_coverage["id"]] = actual_value
+                coverages["sublimit_coverages"][cov_id] = actual_value
             else:
                 if "aggregate_coverages" not in coverages:
                     coverages["aggregate_coverages"] = {}
-                coverages["aggregate_coverages"][selected_coverage["id"]] = actual_value
+                coverages["aggregate_coverages"][cov_id] = actual_value
 
-            # Save to database
-            update_quote_field(opt_id, "coverages", coverages)
-            updated_count += 1
+        # Save to database
+        update_quote_field(opt_id, "coverages", coverages)
+        updated_count += 1
 
-        st.success(f"Updated {selected_coverage_label} to {selected_value_label} on {updated_count} option{'s' if updated_count != 1 else ''}")
+    if updated_count > 0:
+        st.success(f"Updated {coverage_count} coverage{'s' if coverage_count != 1 else ''} on {updated_count} option{'s' if updated_count != 1 else ''}")
+    else:
+        st.warning("No options were updated. Check selections above.")
 
-        # Clear the viewing quote to force reload
-        if "viewing_quote_id" in st.session_state:
-            # Clear cached coverages so they reload from DB
-            if f"quote_coverages_{sub_id}" in st.session_state:
-                del st.session_state[f"quote_coverages_{sub_id}"]
-            if f"last_synced_quote_{sub_id}" in st.session_state:
-                del st.session_state[f"last_synced_quote_{sub_id}"]
+    # Clear cached coverages so they reload from DB
+    if f"quote_coverages_{sub_id}" in st.session_state:
+        del st.session_state[f"quote_coverages_{sub_id}"]
+    if f"last_synced_quote_{sub_id}" in st.session_state:
+        del st.session_state[f"last_synced_quote_{sub_id}"]
+    # Reset the coverage editor to pick up new values
+    reset_coverage_editor(f"quote_{sub_id}")
+    # Clear the rows for next time
+    if rows_key in st.session_state:
+        del st.session_state[rows_key]
 
-        if in_modal:
-            st.session_state[f"show_{prefix}bulk_cov_modal_{sub_id}"] = False
-            st.rerun()
+    if in_modal:
+        st.session_state[f"show_{prefix}bulk_cov_modal_{sub_id}"] = False
+        st.rerun()
 
 
 # ─────────────────────── Push All Coverages ───────────────────────
@@ -373,19 +484,23 @@ def render_bulk_coverage_buttons_rating(
 
 
 def _render_single_coverage_button(sub_id: str, saved_options: list[dict], key_prefix: str = ""):
-    """Render the single coverage update modal button."""
+    """Render the coverage update modal button."""
     prefix = f"{key_prefix}_" if key_prefix else ""
     modal_key = f"show_{prefix}bulk_cov_modal_{sub_id}"
     trigger_key = f"{prefix}bulk_cov_modal_triggered_{sub_id}"
+    rows_key = f"{prefix}bulk_cov_rows_{sub_id}"
 
-    if st.button("Edit One Coverage", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", use_container_width=True):
+    if st.button("Edit Coverages", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", use_container_width=True):
         st.session_state[trigger_key] = True
         st.session_state[modal_key] = True
+        # Reset rows when opening dialog fresh
+        if rows_key in st.session_state:
+            del st.session_state[rows_key]
 
     if st.session_state.get(trigger_key, False):
         st.session_state[trigger_key] = False
 
-        @st.dialog("Update Coverage Across Options", width="large")
+        @st.dialog("Edit Coverages Across Options", width="large")
         def show_modal():
             _render_bulk_update_ui(sub_id, saved_options, in_modal=True, key_prefix=key_prefix)
 
@@ -529,6 +644,8 @@ def _render_push_all_ui(sub_id: str, primary_options: list[dict], source_coverag
                 del st.session_state[f"quote_coverages_{sub_id}"]
             if f"last_synced_quote_{sub_id}" in st.session_state:
                 del st.session_state[f"last_synced_quote_{sub_id}"]
+            # Reset the coverage editor to pick up new values
+            reset_coverage_editor(f"quote_{sub_id}")
 
             st.rerun()
 
@@ -647,5 +764,7 @@ def _render_push_all_rating_ui(
                 del st.session_state[f"quote_coverages_{sub_id}"]
             if f"last_synced_quote_{sub_id}" in st.session_state:
                 del st.session_state[f"last_synced_quote_{sub_id}"]
+            # Reset the coverage editor to pick up new values
+            reset_coverage_editor(f"quote_{sub_id}")
 
             st.rerun()
