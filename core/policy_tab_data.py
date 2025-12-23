@@ -45,7 +45,6 @@ def load_policy_tab_data(submission_id: str) -> dict:
         - documents: List of document dicts
         - broker_employments: List of available broker employments
         - effective_state: Computed policy state (premium, cancellation, etc.)
-        - endorsement_catalog: Available endorsement templates
     """
     with get_conn() as conn:
         # Query 1: Get submission basics + bound option in one query
@@ -250,30 +249,6 @@ def load_policy_tab_data(submission_id: str) -> dict:
             # brkr tables don't exist - that's fine
             pass
 
-        # Query 5: Get endorsement catalog entries for the form
-        endorsement_catalog = []
-        position = bound_option.get("position", "primary") if bound_option else "primary"
-        try:
-            catalog_result = conn.execute(text("""
-                SELECT id, code, title, endorsement_type, description
-                FROM endorsement_catalog
-                WHERE status = 'active'
-                AND (position IS NULL OR position = :position OR position = 'both')
-                ORDER BY code
-            """), {"position": position})
-
-            for crow in catalog_result.fetchall():
-                endorsement_catalog.append({
-                    "id": str(crow[0]),
-                    "code": crow[1],
-                    "title": crow[2],
-                    "endorsement_type": crow[3],
-                    "description": crow[4],
-                })
-        except Exception:
-            # endorsement_catalog table might not exist
-            pass
-
         # Compute effective state from the data we already have
         effective_state = _compute_effective_state(bound_option, endorsements, submission)
 
@@ -284,7 +259,6 @@ def load_policy_tab_data(submission_id: str) -> dict:
             "endorsements": endorsements,
             "documents": documents,
             "broker_employments": broker_employments,
-            "endorsement_catalog": endorsement_catalog,
             "effective_state": effective_state,
         }
 
@@ -378,10 +352,3 @@ def _compute_effective_state(bound_option: Optional[dict], endorsements: list, s
     }
 
 
-def get_entries_for_type_from_cache(endorsement_catalog: list, endorsement_type: str) -> list:
-    """
-    Filter endorsement catalog entries by type.
-
-    Uses pre-loaded catalog data instead of a database query.
-    """
-    return [e for e in endorsement_catalog if e.get("endorsement_type") == endorsement_type]

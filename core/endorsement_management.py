@@ -73,8 +73,6 @@ def create_endorsement(
     days_remaining: int = None,
     carries_to_renewal: bool = None,
     notes: str = None,
-    catalog_id: str = None,
-    formal_title: str = None,
     created_by: str = "system"
 ) -> str:
     """
@@ -93,8 +91,6 @@ def create_endorsement(
         days_remaining: Days remaining in policy term
         carries_to_renewal: Override default carryover behavior
         notes: Additional notes
-        catalog_id: UUID of endorsement catalog entry (optional)
-        formal_title: Formal title for printing (optional, uses catalog title if catalog_id provided)
         created_by: User creating the endorsement
 
     Returns:
@@ -115,12 +111,12 @@ def create_endorsement(
                 submission_id, tower_id, endorsement_number, endorsement_type,
                 effective_date, description, change_details,
                 premium_method, premium_change, original_annual_premium, days_remaining,
-                carries_to_renewal, notes, catalog_id, formal_title, created_by, status
+                carries_to_renewal, notes, created_by, status
             ) VALUES (
                 :submission_id, :tower_id, :endorsement_number, :endorsement_type,
                 :effective_date, :description, :change_details,
                 :premium_method, :premium_change, :original_annual_premium, :days_remaining,
-                :carries_to_renewal, :notes, :catalog_id, :formal_title, :created_by, 'draft'
+                :carries_to_renewal, :notes, :created_by, 'draft'
             )
             RETURNING id
         """), {
@@ -137,8 +133,6 @@ def create_endorsement(
             "days_remaining": days_remaining,
             "carries_to_renewal": carries_to_renewal,
             "notes": notes,
-            "catalog_id": catalog_id,
-            "formal_title": formal_title,
             "created_by": created_by,
         })
 

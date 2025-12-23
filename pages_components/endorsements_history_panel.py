@@ -29,7 +29,6 @@ from core.endorsement_management import (
     calculate_pro_rata_premium,
     save_endorsement_document_url,
 )
-from core.endorsement_catalog import get_entries_for_type
 from pages_components.shared_address_form import render_address_form, format_address
 
 
@@ -46,8 +45,7 @@ def render_endorsements_history_panel(
         submission_id: UUID of the current submission
         preloaded_data: Optional pre-loaded data from policy_tab_data.load_policy_tab_data()
                        If provided, uses this data instead of making database queries.
-                       Expected keys: bound_option, effective_state, endorsements,
-                                     endorsement_catalog, submission
+                       Expected keys: bound_option, effective_state, endorsements, submission
     """
     if not submission_id:
         return
@@ -59,7 +57,6 @@ def render_endorsements_history_panel(
         state = preloaded_data.get("effective_state", {})
         bound = preloaded_data.get("bound_option")
         endorsements = preloaded_data.get("endorsements", [])
-        endorsement_catalog = preloaded_data.get("endorsement_catalog", [])
         policy_dates = (
             preloaded_data.get("submission", {}).get("effective_date"),
             preloaded_data.get("submission", {}).get("expiration_date"),
@@ -71,7 +68,6 @@ def render_endorsements_history_panel(
         state = get_effective_policy_state(submission_id)
         bound = get_bound_option(submission_id)
         endorsements = get_endorsements(submission_id, include_voided=True)
-        endorsement_catalog = None  # Will fetch on demand
         policy_dates = None  # Will fetch on demand
 
     # Mid-term Endorsements header with New button
@@ -84,12 +80,11 @@ def render_endorsements_history_panel(
         _render_new_endorsement_form_v2(
             submission_id,
             bound,
-            endorsement_catalog=endorsement_catalog,
             policy_dates=policy_dates
         )
 
     # Render endorsements list
-    _render_endorsements_list_compact(endorsements, bound, endorsement_catalog, policy_dates)
+    _render_endorsements_list_compact(endorsements, bound, policy_dates)
 
     # Edit dialog - rendered at panel level (not inside row loop)
     _render_edit_endorsement_dialog()
@@ -255,14 +250,13 @@ def _render_edit_endorsement_dialog():
         _render_edit_dialog_content(
             edit_data["endorsement"],
             edit_data.get("bound"),
-            edit_data.get("endorsement_catalog"),
             edit_data.get("policy_dates")
         )
 
     show_dialog()
 
 
-def _render_edit_dialog_content(e: dict, bound: dict = None, endorsement_catalog: list = None, policy_dates: tuple = None):
+def _render_edit_dialog_content(e: dict, bound: dict = None, policy_dates: tuple = None):
     """Render edit dialog content - same fields as create dialog but pre-populated."""
     endorsement_id = e["id"]
     endorsement_type = e["endorsement_type"]
@@ -626,7 +620,6 @@ def _render_endorsement_details(e: dict, endorsement_type: str, change_details: 
 def _render_new_endorsement_form(
     submission_id: str,
     bound: dict,
-    endorsement_catalog: list = None,
     policy_dates: tuple = None
 ):
     """Render form for creating a new endorsement.
@@ -634,7 +627,6 @@ def _render_new_endorsement_form(
     Args:
         submission_id: UUID of the submission
         bound: Bound option dict
-        endorsement_catalog: Optional pre-loaded catalog entries (avoids DB query)
         policy_dates: Optional tuple of (effective_date, expiration_date) (avoids DB query)
     """
     st.markdown("**New Endorsement**")
@@ -669,43 +661,18 @@ def _render_new_endorsement_form(
             key=f"new_end_date_{submission_id}"
         )
 
-    # Template selector from endorsement bank (use pre-loaded if available)
-    if endorsement_catalog is not None:
-        # Filter pre-loaded catalog by type
-        catalog_entries = [
-            e for e in endorsement_catalog
-            if e.get("endorsement_type") == endorsement_type
-        ]
-    else:
-        catalog_entries = get_entries_for_type(endorsement_type, position)
-    selected_template = None
-    formal_title = None
-    catalog_id = None
-
-    if catalog_entries:
-        template_options = [{"id": None, "code": "", "title": "(No template - custom)"}] + catalog_entries
-        selected_template = st.selectbox(
-            "Template",
-            options=template_options,
-            format_func=lambda x: f"{x['code']} - {x['title']}" if x.get('code') else x['title'],
-            key=f"new_end_template_{submission_id}"
-        )
-        if selected_template and selected_template.get("id"):
-            formal_title = selected_template["title"]
-            catalog_id = selected_template["id"]
-
     # Type-specific fields (render before description so we can use details for auto-description)
     change_details = {}
     _render_type_specific_fields(endorsement_type, change_details, submission_id)
 
-    # Description - optional for self-explanatory types or when template selected
+    # Description - optional for self-explanatory types
     # BOR uses Change Reason field instead of Description, so skip entirely
     self_explanatory_types = {"extension", "cancellation", "reinstatement", "erp", "name_change", "address_change", "coverage_change"}
     no_description_types = {"bor_change"}  # These types don't need description at all
 
     if endorsement_type in no_description_types:
         description = ""  # BOR uses change_reason from type-specific fields
-    elif endorsement_type in self_explanatory_types or catalog_id:
+    elif endorsement_type in self_explanatory_types:
         description = st.text_input(
             "Description (optional)",
             placeholder="Auto-generated if left blank",
@@ -841,11 +808,7 @@ def _render_new_endorsement_form(
         # Auto-generate description for self-explanatory types if not provided
         final_description = description
         if not final_description:
-            # Use template title as description if template selected
-            if formal_title:
-                final_description = formal_title
-            else:
-                final_description = _generate_auto_description(endorsement_type, change_details)
+            final_description = _generate_auto_description(endorsement_type, change_details)
 
         if not final_description:
             st.error("Description is required")
@@ -872,8 +835,6 @@ def _render_new_endorsement_form(
                 days_remaining=days_rem if premium_method == "pro_rata" else None,
                 carries_to_renewal=carries_to_renewal,
                 notes=notes if notes else None,
-                catalog_id=catalog_id,
-                formal_title=formal_title,
                 created_by="user"
             )
 
@@ -1160,7 +1121,7 @@ def _render_bor_change_fields(change_details: dict, submission_id: str):
         st.caption("Note: No BOR letter date provided. You can still create the endorsement.")
 
 
-def _render_endorsements_list_compact(endorsements: list, bound: dict = None, endorsement_catalog: list = None, policy_dates: tuple = None):
+def _render_endorsements_list_compact(endorsements: list, bound: dict = None, policy_dates: tuple = None):
     """Render endorsements using st.dataframe with single action dropdown."""
     import pandas as pd
 
@@ -1278,7 +1239,6 @@ def _render_endorsements_list_compact(endorsements: list, bound: dict = None, en
                 st.session_state["_edit_endorsement_data"] = {
                     "endorsement": e,
                     "bound": bound,
-                    "endorsement_catalog": endorsement_catalog,
                     "policy_dates": policy_dates
                 }
                 st.rerun()  # Reset at top of function prevents infinite loop
@@ -1299,7 +1259,6 @@ def _render_endorsements_list_compact(endorsements: list, bound: dict = None, en
 def _render_new_endorsement_form_v2(
     submission_id: str,
     bound: dict,
-    endorsement_catalog: list = None,
     policy_dates: tuple = None
 ):
     """Render simplified, type-driven new endorsement form.
@@ -1314,7 +1273,7 @@ def _render_new_endorsement_form_v2(
     @st.dialog("New Endorsement", width="large")
     def show_new_endorsement_dialog():
         _render_endorsement_dialog_content(
-            submission_id, bound, endorsement_catalog, policy_dates
+            submission_id, bound, policy_dates
         )
 
     if st.button("➕ New Endorsement", key=f"open_endorsement_dialog_{submission_id}"):
@@ -1326,7 +1285,6 @@ def _render_new_endorsement_form_v2(
 def _render_endorsement_dialog_content(
     submission_id: str,
     bound: dict,
-    endorsement_catalog: list = None,
     policy_dates: tuple = None
 ):
     """Content for the new endorsement dialog."""
@@ -1370,29 +1328,9 @@ def _render_endorsement_dialog_content(
         change_details = {}
         _render_type_fields_v2(endorsement_type, change_details, submission_id, exp_date)
 
-        # Template selector (if catalog has entries for this type)
-        formal_title = None
-        catalog_id = None
-        if endorsement_catalog is not None:
-            catalog_entries = [e for e in endorsement_catalog if e.get("endorsement_type") == endorsement_type]
-        else:
-            catalog_entries = get_entries_for_type(endorsement_type, position)
-
-        if catalog_entries:
-            template_options = [{"id": None, "code": "", "title": "(Custom)"}] + catalog_entries
-            selected = st.selectbox(
-                "Template",
-                options=template_options,
-                format_func=lambda x: f"{x['code']} - {x['title']}" if x.get('code') else x['title'],
-                key=f"new_v2_template_{submission_id}"
-            )
-            if selected and selected.get("id"):
-                formal_title = selected["title"]
-                catalog_id = selected["id"]
-
         # Description - only if not self-explanatory
         self_explanatory = {"extension", "cancellation", "reinstatement", "erp", "bor_change", "coverage_change", "address_change", "name_change"}
-        if endorsement_type not in self_explanatory and not catalog_id:
+        if endorsement_type not in self_explanatory:
             description = st.text_input(
                 "Description",
                 placeholder="Brief description...",
@@ -1464,10 +1402,7 @@ def _render_endorsement_dialog_content(
             # Generate description if not provided
             final_desc = description
             if not final_desc:
-                if formal_title:
-                    final_desc = formal_title
-                else:
-                    final_desc = _generate_auto_description(endorsement_type, change_details)
+                final_desc = _generate_auto_description(endorsement_type, change_details)
 
             if not final_desc:
                 st.error("Description is required")
@@ -1494,8 +1429,6 @@ def _render_endorsement_dialog_content(
                     days_remaining=days_rem if premium_method == "pro_rata" else None,
                     carries_to_renewal=ENDORSEMENT_TYPES[endorsement_type]["carries_to_renewal"],
                     notes=notes if notes else None,
-                    catalog_id=catalog_id,
-                    formal_title=formal_title,
                     created_by="user"
                 )
 
