@@ -29,6 +29,7 @@ st.info("""
 - 📊 **Stats** - Submission statistics and analytics
 - 📋 **Coverage Catalog** - Manage carrier coverage mappings
 - 📚 **Document Library** - Manage endorsements, marketing materials, and claims sheets
+- ⚖️ **Compliance** - Compliance resources and rules engine for quotes, binders, and policies
 
 Use the sidebar to navigate between pages.
 """)
@@ -65,3 +66,8 @@ with col5:
     st.markdown("### 📚 Documents")
     if st.button("Document Library", use_container_width=True):
         st.switch_page("pages/document_library.py")
+
+with col6:
+    st.markdown("### ⚖️ Compliance")
+    if st.button("Compliance Resources", use_container_width=True):
+        st.switch_page("pages/compliance.py")
