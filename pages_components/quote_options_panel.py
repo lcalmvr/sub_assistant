@@ -72,9 +72,7 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
     # Get all saved quote options for this submission
     all_quotes = list_quotes_for_submission(sub_id)
 
-    # Show readonly notice if bound
-    if readonly:
-        st.info("Policy is bound. Quote options are read-only for reference.")
+    # No banner needed - the bound card makes it clear
 
     if not all_quotes and not readonly:
         # No quotes yet - show simple add buttons
@@ -631,58 +629,9 @@ def _view_quote(quote_id: str):
     Load a saved quote for VIEWING (read-only comparison).
     This populates the tower display but does NOT enable editing.
     """
-    quote_data = get_quote_by_id(quote_id)
-    if quote_data:
-        # Store viewing state
-        st.session_state.viewing_quote_id = quote_id
-
-        # Load tower data for display
-        st.session_state.tower_layers = quote_data["tower_json"]
-        st.session_state.primary_retention = quote_data["primary_retention"]
-        st.session_state.sublimits = quote_data.get("sublimits") or []
-        st.session_state.loaded_tower_id = quote_data["id"]
-        st.session_state.quote_name = quote_data.get("quote_name", "Option A")
-        st.session_state.quoted_premium = quote_data.get("quoted_premium")
-
-        # Mark as viewing (read-only), not as a draft being edited
-        st.session_state._viewing_saved_option = True
-        st.session_state._quote_just_loaded = True
-
-        # Load coverages and policy form from saved quote
-        sub_id = quote_data.get("submission_id")
-        if sub_id:
-            # Clear old widget keys so selectboxes pick up new values
-            keys_to_clear = [k for k in list(st.session_state.keys())
-                           if k.startswith(f"quote_sublimit_{sub_id}_")
-                           or k.startswith(f"quote_agg_{sub_id}_")
-                           or k.startswith("_saved_cmai_limit_")
-                           or k.startswith("_saved_cmai_premium_")]
-            for k in keys_to_clear:
-                del st.session_state[k]
-
-            # Load saved coverages into session state for the coverages panel
-            saved_coverages = quote_data.get("coverages")
-            if saved_coverages:
-                st.session_state[f"quote_coverages_{sub_id}"] = saved_coverages
-
-            # Load policy form
-            saved_policy_form = quote_data.get("policy_form")
-            if saved_policy_form:
-                st.session_state[f"policy_form_{sub_id}"] = saved_policy_form
-
-        # Sync dropdowns to show the viewed option's values
-        tower_json = quote_data["tower_json"]
-        if tower_json and len(tower_json) > 0:
-            first_layer = tower_json[0]
-            limit = first_layer.get("limit")
-            st.session_state._loaded_quote_limit = limit
-            st.session_state._loaded_quote_retention = quote_data.get("primary_retention")
-
-            # Update selected_limit so coverages panel uses correct aggregate
-            if sub_id and limit:
-                st.session_state[f"selected_limit_{sub_id}"] = limit
-
-        st.rerun()
+    from utils.quote_option_factory import load_quote_into_session
+    load_quote_into_session(quote_id)
+    st.rerun()
 
 
 
@@ -902,14 +851,13 @@ def clear_draft_state():
 
 def _render_bound_quote_cards(sub_id: str, all_quotes: list, bound_option: dict, viewing_quote_id: str):
     """
-    Render quote options as clean card summaries when policy is bound.
+    Render quote options as compact card summaries when policy is bound.
 
     Shows:
-    - Bound option prominently with text summary
-    - Other options as simple cards
-    - Coverages and endorsements in expanders
+    - Bound option with green highlight
+    - Other options in a 3-column grid
+    - Each card clickable to view details in modal
     """
-    from rating_engine.coverage_config import get_coverage_label
     from pages_components.tower_db import get_quote_by_id
 
     bound_option_id = bound_option.get("id") if bound_option else None
@@ -924,79 +872,124 @@ def _render_bound_quote_cards(sub_id: str, all_quotes: list, bound_option: dict,
         else:
             other_quotes.append(quote)
 
-    # Helper to format currency for plain text (no escaping needed)
+    # Helper to format currency compactly (no $ to avoid LaTeX)
     def fmt(val):
         if val is None:
             return "—"
         if val >= 1_000_000:
-            return f"${val / 1_000_000:.0f}M"
+            return f"{val / 1_000_000:.0f}M"
         elif val >= 1_000:
-            return f"${val / 1_000:.0f}K"
-        return f"${val:,.0f}"
+            return f"{val / 1_000:.0f}K"
+        return f"{val:,.0f}"
 
     # Helper to sanitize quote names (remove $ that cause LaTeX issues)
     def safe_name(name):
         return name.replace("$", "").replace("  ", " ") if name else "Option"
 
-    # Helper to render coverages/endorsements
-    def render_details(coverages, endorsements):
-        agg_cov = coverages.get("aggregate_coverages", {}) if coverages else {}
-        sub_cov = coverages.get("sublimit_coverages", {}) if coverages else {}
-
-        if agg_cov or sub_cov:
-            with st.expander("Coverages"):
-                cov_lines = []
-                for cov_id, val in agg_cov.items():
-                    if val and val > 0:
-                        label = get_coverage_label(cov_id)
-                        cov_lines.append(f"{label}: {fmt(val)}")
-                for cov_id, val in sub_cov.items():
-                    if val and val > 0:
-                        label = get_coverage_label(cov_id)
-                        cov_lines.append(f"{label}: {fmt(val)} (sublimit)")
-                st.text("\n".join(cov_lines) if cov_lines else "No coverages defined")
-
-        if endorsements:
-            with st.expander("Endorsements"):
-                if isinstance(endorsements, list):
-                    st.text("\n".join(endorsements))
-                elif isinstance(endorsements, dict):
-                    st.text("\n".join(endorsements.keys()))
-
-    # Render bound option as prominent card
+    # Render bound option as prominent button
     if bound_quote_data:
         tower_json = bound_option.get("tower_json") or []
         limit = tower_json[0].get("limit", 0) if tower_json else 0
         retention = bound_option.get("primary_retention", 0)
         premium = bound_option.get("sold_premium", 0)
         position = (bound_option.get("position") or "primary").title()
-        policy_form = bound_option.get("policy_form") or "—"
-        coverages = bound_option.get("coverages") or {}
-        endorsements = bound_option.get("endorsements") or []
+        policy_form = bound_option.get("policy_form") or "cyber"
+        bound_quote_id = bound_quote_data.get("id")
 
         with st.container(border=True):
-            st.text(f"✓ {safe_name(bound_quote_data.get('quote_name'))} — BOUND")
-            st.text(f"{fmt(limit)} limit · {fmt(retention)} retention · {fmt(premium)} premium")
-            st.caption(f"{position} · {policy_form}")
-            render_details(coverages, endorsements)
+            if st.button(
+                f"✓ {safe_name(bound_quote_data.get('quote_name'))} — BOUND",
+                key=f"view_bound_{bound_quote_id}",
+                use_container_width=True,
+                type="primary",
+            ):
+                st.session_state[f"view_quote_modal_{sub_id}"] = bound_quote_id
+            st.caption(f"{fmt(limit)} · {fmt(retention)} ret · {fmt(premium)} · {position} · {policy_form}")
 
-    # Show other options as cards with details
+    # Show other options in 3-column grid
     if other_quotes:
-        st.caption(f"{len(other_quotes)} other option(s) quoted:")
-        for quote in other_quotes:
-            quote_id = quote.get("id")
-            quote_name = quote.get("quote_name", "Option")
-            sold_premium = quote.get("sold_premium", 0)
+        st.caption(f"{len(other_quotes)} other option(s):")
 
-            # Fetch full quote data for coverages/endorsements
-            full_quote = get_quote_by_id(quote_id) if quote_id else {}
-            coverages = full_quote.get("coverages") if full_quote else {}
-            endorsements = full_quote.get("endorsements") if full_quote else []
+        # Render in rows of 3
+        for i in range(0, len(other_quotes), 3):
+            row_quotes = other_quotes[i:i+3]
+            cols = st.columns(3)
 
-            with st.container(border=True):
-                st.text(safe_name(quote_name))
-                st.caption(f"{fmt(sold_premium)} premium")
-                render_details(coverages, endorsements)
+            for col_idx, quote in enumerate(row_quotes):
+                with cols[col_idx]:
+                    quote_id = quote.get("id")
+                    quote_name = quote.get("quote_name", "Option")
+                    sold_premium = quote.get("sold_premium", 0)
+
+                    with st.container(border=True):
+                        if st.button(
+                            safe_name(quote_name),
+                            key=f"view_opt_{quote_id}",
+                            use_container_width=True,
+                        ):
+                            st.session_state[f"view_quote_modal_{sub_id}"] = quote_id
+                        st.caption(f"{fmt(sold_premium)} premium")
+
+    # Render modal if one is requested
+    modal_quote_id = st.session_state.get(f"view_quote_modal_{sub_id}")
+    if modal_quote_id:
+        _render_quote_detail_modal(sub_id, modal_quote_id)
+
+
+def _render_quote_detail_modal(sub_id: str, quote_id: str):
+    """Render a modal showing full quote details (read-only)."""
+    from pages_components.tower_db import get_quote_by_id
+    from pages_components.tower_panel import render_tower_panel
+    from pages_components.coverages_panel import render_coverages_panel
+    from pages_components.endorsements_panel import render_endorsements_panel
+
+    quote_data = get_quote_by_id(quote_id)
+    if not quote_data:
+        st.session_state[f"view_quote_modal_{sub_id}"] = None
+        return
+
+    quote_name = quote_data.get("quote_name", "Quote Option")
+    # Sanitize for dialog title
+    safe_title = quote_name.replace("$", "").replace("  ", " ")
+
+    @st.dialog(f"Quote: {safe_title}", width="large")
+    def show_modal():
+        # Load quote into session for panels to read
+        from utils.quote_option_factory import load_quote_into_session
+        load_quote_into_session(quote_id)
+
+        # Premium summary
+        st.subheader("Premium")
+        _render_premium_summary(quote_id, sub_id=sub_id, readonly=True)
+
+        st.divider()
+
+        # Tower
+        st.subheader("Tower")
+        render_tower_panel(sub_id, readonly=True)
+
+        st.divider()
+
+        # Coverages
+        st.subheader("Coverages")
+        render_coverages_panel(
+            sub_id=sub_id,
+            quote_id=quote_id,
+            readonly=True,
+        )
+
+        st.divider()
+
+        # Endorsements
+        st.subheader("Endorsements")
+        render_endorsements_panel(quote_id, readonly=True)
+
+        st.markdown("---")
+        if st.button("Close", key=f"close_modal_{quote_id}", use_container_width=True):
+            st.session_state[f"view_quote_modal_{sub_id}"] = None
+            st.rerun()
+
+    show_modal()
 
 
 def _create_primary_option(sub_id: str, all_quotes: list, clone_from_quote_id: str = None):
@@ -1007,67 +1000,25 @@ def _create_primary_option(sub_id: str, all_quotes: list, clone_from_quote_id: s
         all_quotes: List of existing quotes
         clone_from_quote_id: If provided, clone settings from this quote
     """
-    from pages_components.coverages_panel import build_coverages_from_rating
-    from rating_engine.coverage_config import get_default_policy_form
+    from utils.quote_option_factory import create_primary_quote_option, load_quote_into_session
 
-    # Default values
-    default_limit = 1_000_000
-    default_retention = 25_000
-    policy_form = None
-    coverages = None
-
-    # If cloning from existing quote, use its settings
-    if clone_from_quote_id:
-        source_quote = get_quote_by_id(clone_from_quote_id)
-        if source_quote:
-            # Clone limit/retention from source
-            tower_json_source = source_quote.get("tower_json", [])
-            if tower_json_source and len(tower_json_source) > 0:
-                default_limit = tower_json_source[0].get("limit", default_limit)
-            default_retention = source_quote.get("primary_retention", default_retention)
-
-            # Clone policy form and coverages
-            policy_form = source_quote.get("policy_form")
-            coverages = source_quote.get("coverages")
-
-    # Build tower with CMAI as primary
-    tower_json = [{
-        "carrier": "CMAI",
-        "limit": default_limit,
-        "attachment": 0,
-        "premium": None,
-    }]
-
-    quote_name = generate_quote_name(default_limit, default_retention)
-
-    # Check for duplicate names
+    # Get existing names for deduplication
     existing_names = [q["quote_name"] for q in all_quotes] if all_quotes else []
-    if quote_name in existing_names:
-        n = 2
-        while f"{quote_name} ({n})" in existing_names:
-            n += 1
-        quote_name = f"{quote_name} ({n})"
 
-    # Use cloned values or get from Rating tab
-    if policy_form is None:
-        policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
-    if coverages is None:
-        coverages = build_coverages_from_rating(sub_id, default_limit)
-
-    # Save to database
-    new_id = save_tower(
-        submission_id=sub_id,
-        tower_json=tower_json,
-        primary_retention=default_retention,
-        quote_name=quote_name,
-        position="primary",
-        policy_form=policy_form,
-        coverages=coverages,
+    # Use shared factory to create the quote
+    new_id = create_primary_quote_option(
+        sub_id=sub_id,
+        limit=1_000_000,  # Default limit
+        retention=25_000,  # Default retention
+        existing_quote_names=existing_names,
+        clone_from_quote_id=clone_from_quote_id,
     )
 
     # Load the newly created quote into session state
-    _view_quote(new_id)
-    st.success(f"Created: {quote_name}")
+    load_quote_into_session(new_id)
+    quote_data = get_quote_by_id(new_id)
+    st.success(f"Created: {quote_data.get('quote_name', 'New Option')}")
+    st.rerun()
 
 
 def _render_excess_option_dialog(sub_id: str, all_quotes: list):
@@ -1175,57 +1126,26 @@ def _create_excess_option(
         our_attachment: Our attachment point (total underlying limits)
         primary_retention: Primary retention for the tower
     """
-    from rating_engine.coverage_config import get_default_policy_form
+    from utils.quote_option_factory import create_excess_quote_option, load_quote_into_session
 
-    # Build tower showing underlying + CMAI excess
-    # The underlying layer represents total limits below us
-    tower_json = [
-        {
-            "carrier": underlying_carrier,
-            "limit": our_attachment,  # Underlying limits = our attachment
-            "attachment": 0,
-            "retention": primary_retention,
-            "premium": None,  # Unknown until captured
-        },
-        {
-            "carrier": "CMAI",
-            "limit": our_limit,
-            "attachment": our_attachment,
-            "premium": None,
-        },
-    ]
+    # Get existing names for deduplication
+    existing_names = [q["quote_name"] for q in all_quotes] if all_quotes else []
 
-    # Count existing excess options for naming
-    excess_quotes = [q for q in all_quotes if q.get("position") == "excess"]
-    next_num = len(excess_quotes) + 1
-
-    # Generate name showing our layer
-    quote_name = f"${our_limit // 1_000_000}M xs ${our_attachment // 1_000_000}M"
-
-    # Check for duplicate names
-    existing_names = [q["quote_name"] for q in all_quotes]
-    if quote_name in existing_names:
-        n = 2
-        while f"{quote_name} ({n})" in existing_names:
-            n += 1
-        quote_name = f"{quote_name} ({n})"
-
-    policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
-
-    # Save to database
-    new_id = save_tower(
-        submission_id=sub_id,
-        tower_json=tower_json,
+    # Use shared factory to create the quote
+    new_id = create_excess_quote_option(
+        sub_id=sub_id,
+        our_limit=our_limit,
+        our_attachment=our_attachment,
         primary_retention=primary_retention,
-        quote_name=quote_name,
-        position="excess",
-        policy_form=policy_form,
+        underlying_carrier=underlying_carrier,
+        existing_quote_names=existing_names,
     )
 
     # Load the newly created quote into session state
-    # This ensures the tower panel displays correctly
-    _view_quote(new_id)
-    st.success(f"Created: {quote_name}")
+    load_quote_into_session(new_id)
+    quote_data = get_quote_by_id(new_id)
+    st.success(f"Created: {quote_data.get('quote_name', 'New Option')}")
+    st.rerun()
 
 
 def get_current_quote_position(sub_id: str) -> str:
