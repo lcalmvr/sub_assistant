@@ -504,73 +504,37 @@ def _render_detail_view(sub_id: str, quote: dict, get_conn_func: Callable):
 
 def _create_default_quote(sub_id: str, position: str, get_conn_func: Callable):
     """Create a new quote with default values."""
+    from utils.quote_option_factory import create_primary_quote_option, create_excess_quote_option
+
     default_limit = 1_000_000
     default_retention = 50_000
 
-    tower_layers = [{
-        "carrier": "CMAI",
-        "limit": default_limit,
-        "attachment": 0,
-        "premium": None,
-        "retention": default_retention,
-    }]
-
-    # Count existing quotes to generate name
-    all_quotes = list_quotes_for_submission(sub_id)
-    position_quotes = [q for q in all_quotes if q.get("position", "primary") == position]
-    next_num = len(position_quotes) + 1
-
-    prefix = "Primary" if position == "primary" else "Excess"
-    quote_name = f"{prefix} Option {next_num}"
-
-    save_tower(
-        submission_id=sub_id,
-        tower_json=tower_layers,
-        primary_retention=default_retention,
-        sublimits=[],
-        quote_name=quote_name,
-        quoted_premium=None,
-        quote_notes=None,
-        technical_premium=None,
-        sold_premium=None,
-        endorsements=[],
-        position=position,
-    )
+    if position == "primary":
+        create_primary_quote_option(
+            sub_id=sub_id,
+            limit=default_limit,
+            retention=default_retention,
+        )
+    else:
+        create_excess_quote_option(
+            sub_id=sub_id,
+            our_limit=default_limit,
+            our_attachment=default_limit,  # Default xs $1M
+            primary_retention=default_retention,
+        )
 
 
 def _generate_default_options(sub_id: str, retention: float, get_conn_func: Callable):
     """Generate default $1M/$3M/$5M primary options."""
+    from utils.quote_option_factory import create_primary_quote_option
+
     limits = [1_000_000, 3_000_000, 5_000_000]
 
-    for idx, limit in enumerate(limits, 1):
-        tower_layers = [{
-            "carrier": "CMAI",
-            "limit": limit,
-            "attachment": 0,
-            "premium": None,
-            "retention": retention,
-        }]
-
-        # Calculate both technical and risk-adjusted premiums
-        premiums = _calculate_premiums(sub_id, limit, retention, get_conn_func)
-        technical_premium = premiums.get("technical_premium") if premiums else None
-        risk_adjusted_premium = premiums.get("risk_adjusted_premium") if premiums else None
-
-        quote_name = generate_quote_name(limit, retention)
-
-        save_tower(
-            submission_id=sub_id,
-            tower_json=tower_layers,
-            primary_retention=retention,
-            sublimits=[],
-            quote_name=quote_name,
-            quoted_premium=None,
-            quote_notes=None,
-            technical_premium=technical_premium,
-            risk_adjusted_premium=risk_adjusted_premium,
-            sold_premium=None,
-            endorsements=[],
-            position="primary",
+    for limit in limits:
+        create_primary_quote_option(
+            sub_id=sub_id,
+            limit=limit,
+            retention=int(retention),
         )
 
 

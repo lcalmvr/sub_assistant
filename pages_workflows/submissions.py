@@ -48,6 +48,7 @@ from pages_components.rating_panel_v2 import render_rating_panel
 from pages_components.similar_submissions_panel import render_similar_submissions_panel
 from pages_components.details_panel import render_details_panel
 from pages_components.status_header import render_status_header
+from pages_components.review_queue_panel import render_review_queue_panel
 from pages_components.account_history_panel import render_account_history_compact
 from pages_components.renewal_panel import render_renewal_panel
 from pages_components.endorsements_history_panel import render_endorsements_history_panel
@@ -1280,6 +1281,16 @@ def render():
 
             # ------------------- Unified Details Panel --------------------
             render_details_panel(sub_id, applicant_name, website, get_conn=get_conn)
+
+            # ------------------- Review Queue Panel -------------------
+            # Show conflicts requiring human attention (below account history)
+            review_summary = render_review_queue_panel(
+                submission_id=sub_id,
+                expanded=True,
+                show_resolved=False,
+            )
+            if review_summary["has_blockers"]:
+                st.warning("⚠️ Resolve high-priority conflicts before binding this submission.")
 
         # =================== POLICY TAB ===================
         with tab_policy:

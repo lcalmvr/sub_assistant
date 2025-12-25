@@ -191,73 +191,55 @@ def _create_quote_from_option(sub_id: str, option: dict, position: str):
         option: Option dict with limit, retention, premium, (optional: tower)
         position: "primary" or "excess"
     """
+    from utils.quote_option_factory import (
+        create_primary_quote_option,
+        create_excess_quote_option,
+        load_quote_into_session,
+    )
+    from pages_components.tower_db import get_quote_by_id
+
     limit = option.get("limit", 0)
     retention = option.get("retention", 0)
-    premium = option.get("premium")
 
-    # Build tower layers
-    if position == "primary":
-        tower_layers = [{
-            "carrier": "CMAI",
-            "limit": limit,
-            "attachment": 0,
-            "premium": premium,
-            "retention": retention,
-            "rpm": None,
-        }]
-    else:
-        # For excess: Use tower from option or create default
-        if option.get("tower"):
-            tower_layers = option["tower"]
-        else:
-            tower_layers = [{
-                "carrier": "CMAI",
-                "limit": limit,
-                "attachment": 0,
-                "premium": premium,
-                "retention": retention,
-                "rpm": None,
-            }]
-
-    # Generate smart name - extract attachment for excess positions
-    attachment = None
-    if position == "excess" and option.get("tower"):
-        tower = option.get("tower", [])
-        cmai_layer = next((l for l in tower if "CMAI" in str(l.get("carrier", "")).upper()), None)
-        if cmai_layer:
-            attachment = cmai_layer.get("attachment", 0)
-    quote_name = generate_quote_name(limit, retention, position, attachment)
-
-    # Save to database
     try:
-        tower_id = save_tower(
-            sub_id,
-            tower_layers,
-            retention,
-            [],  # sublimits
-            quote_name,
-            premium
-        )
+        if position == "primary":
+            # Use shared factory to create primary quote with proper premium initialization
+            quote_id = create_primary_quote_option(
+                sub_id=sub_id,
+                limit=limit,
+                retention=retention,
+            )
+        else:
+            # For excess: extract attachment from tower
+            attachment = 0
+            if option.get("tower"):
+                tower = option.get("tower", [])
+                cmai_layer = next((l for l in tower if "CMAI" in str(l.get("carrier", "")).upper()), None)
+                if cmai_layer:
+                    attachment = cmai_layer.get("attachment", 0)
 
-        # Update session state to load this new quote
-        st.session_state.tower_layers = tower_layers
-        st.session_state.primary_retention = retention
-        st.session_state.sublimits = []
-        st.session_state.loaded_tower_id = tower_id
-        st.session_state.quote_name = quote_name
-        st.session_state.quoted_premium = premium
+            # Use shared factory to create excess quote
+            quote_id = create_excess_quote_option(
+                sub_id=sub_id,
+                our_limit=limit,
+                our_attachment=attachment,
+                primary_retention=retention,
+            )
+
+        # Load the created quote into session state
+        load_quote_into_session(quote_id)
+        quote_data = get_quote_by_id(quote_id)
 
         # Remove this option from the cards list
         session_key = f"quote_options_{sub_id}"
         if session_key in st.session_state:
             options = st.session_state[session_key]
-            # Remove option by matching limit and retention
             st.session_state[session_key] = [
                 opt for opt in options
                 if not (opt.get("limit") == limit and opt.get("retention") == retention)
             ]
 
-        st.success(f"Created: {quote_name}")
+        st.success(f"Created: {quote_data.get('quote_name', 'New Option')}")
     except Exception as e:
         st.error(f"Error creating quote: {e}")
 

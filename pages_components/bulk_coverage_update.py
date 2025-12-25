@@ -66,14 +66,14 @@ def render_bulk_coverage_modal(sub_id: str, saved_options: list[dict]):
         # Clear the trigger immediately so it doesn't persist
         st.session_state[trigger_key] = False
 
-        @st.dialog("Edit Coverages Across Options", width="large")
+        @st.dialog("Batch Edit Coverages", width="large")
         def show_modal():
             _render_bulk_update_ui(sub_id, saved_options, in_modal=True)
 
         show_modal()
 
 
-def _build_rows_from_source(source_coverages: dict, coverage_options: list) -> list:
+def _build_rows_from_source(source_coverages: dict, coverage_options: list, aggregate_limit: int = None) -> list:
     """
     Build coverage rows from source coverages (for "Load Current Settings" feature).
 
@@ -147,8 +147,11 @@ def _build_rows_from_source(source_coverages: dict, coverage_options: list) -> l
                     # Map actual value to dropdown option
                     if val == 1_000_000:
                         rows.append({"coverage_id": cov_id, "value": 1_000_000})
+                    elif aggregate_limit and val == aggregate_limit:
+                        # If value equals aggregate limit, it's "full limits" (not a specific dollar amount)
+                        rows.append({"coverage_id": cov_id, "value": "full"})
                     else:
-                        # Anything else is "full limits"
+                        # Anything else is "full limits" (fallback for when we don't have aggregate_limit)
                         rows.append({"coverage_id": cov_id, "value": "full"})
 
     return rows
@@ -177,34 +180,54 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
             "type": "aggregate"
         })
 
-    # Session state for coverage rows: list of {"coverage_id": str, "value": any}
+    # Session state keys
     rows_key = f"{prefix}bulk_cov_rows_{sub_id}"
-    if rows_key not in st.session_state:
-        # Start with one empty row
-        st.session_state[rows_key] = [{"coverage_id": coverage_options[0]["id"], "value": 100_000}]
-
-    # Initialize selection state
     selection_key = f"{prefix}bulk_cov_selections_{sub_id}"
-    if selection_key not in st.session_state:
-        st.session_state[selection_key] = {opt["id"]: True for opt in saved_options}
-
-    # Get source coverages for "Load Current Settings" feature
     source_key = f"{prefix}bulk_cov_source_{sub_id}"
-    source_coverages = st.session_state.get(source_key, {})
 
     # Use fragment for the entire UI to allow independent rerun
     @st.fragment
     def render_bulk_ui_fragment():
+        # Initialize session state INSIDE fragment to ensure it's always available
+        # Session state for coverage rows: list of {"coverage_id": str, "value": any}
+        if rows_key not in st.session_state:
+            # Start with one empty row
+            st.session_state[rows_key] = [{"coverage_id": coverage_options[0]["id"], "value": 100_000}]
+
+        # Initialize selection state
+        if selection_key not in st.session_state:
+            st.session_state[selection_key] = {opt["id"]: True for opt in saved_options}
+
+        # Get source coverages for "Load Current Settings" feature
+        source_coverages = st.session_state.get(source_key, {})
+        
         rows = st.session_state[rows_key]
 
         # Track rows to remove (can't modify list while iterating)
         row_to_remove = None
 
-        # Load Current Settings / Clear All buttons
-        col_load, col_clear, col_spacer = st.columns([1.5, 1, 2.5])
+        # Add Coverage / Load Current Settings / Clear All buttons (all same size, matching bottom buttons)
+        all_selected_ids = {r["coverage_id"] for r in rows if r["coverage_id"]}
+        unselected = [c for c in coverage_options if c["id"] not in all_selected_ids]
+        has_unselected = len(unselected) > 0
+        
+        if has_unselected:
+            col_add, col_load, col_clear = st.columns([1, 1, 1])
+        else:
+            col_add, col_load, col_clear = st.columns([0, 1, 1])
+        
+        with col_add:
+            if has_unselected:
+                if st.button("Add Coverage", key=f"{prefix}bulk_add_row_{sub_id}", use_container_width=True):
+                    default_val = 100_000 if unselected[0]["type"] == "sublimit" else "full"
+                    rows.append({"coverage_id": unselected[0]["id"], "value": default_val})
+                    st.session_state[rows_key] = rows
+                    st.rerun(scope="fragment")
         with col_load:
             if st.button("Load Current Settings", key=f"{prefix}bulk_load_current_{sub_id}", use_container_width=True):
-                new_rows = _build_rows_from_source(source_coverages, coverage_options)
+                # Get aggregate limit from source if available (needed to detect "full limits")
+                source_agg_limit = source_coverages.get("aggregate_limit")
+                new_rows = _build_rows_from_source(source_coverages, coverage_options, source_agg_limit)
                 if new_rows:
                     st.session_state[rows_key] = new_rows
                     st.rerun(scope="fragment")
@@ -215,8 +238,6 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
                 # Reset to single empty row
                 st.session_state[rows_key] = [{"coverage_id": coverage_options[0]["id"], "value": 100_000}]
                 st.rerun(scope="fragment")
-
-        st.markdown("---")
 
         # Header row
         col_cov_h, col_val_h, col_rm_h = st.columns([2, 2, 0.5])
@@ -306,21 +327,32 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
             st.session_state[rows_key] = rows
             st.rerun(scope="fragment")
 
-        # Add coverage button
-        all_selected_ids = {r["coverage_id"] for r in rows if r["coverage_id"]}
-        unselected = [c for c in coverage_options if c["id"] not in all_selected_ids]
-        if unselected:
-            if st.button("Add Coverage", key=f"{prefix}bulk_add_row_{sub_id}"):
-                default_val = 100_000 if unselected[0]["type"] == "sublimit" else "full"
-                rows.append({"coverage_id": unselected[0]["id"], "value": default_val})
-                st.session_state[rows_key] = rows
-                st.rerun(scope="fragment")
-
         st.markdown("---")
-        st.markdown("**Apply to:**")
-
-        # Select All / Select None buttons
-        col_all, col_none, col_spacer = st.columns([1, 1, 3])
+        
+        # Apply button, Select All, Select None buttons (all same size) - Apply first
+        # Read checkbox states from session to get current count (checkboxes rendered below)
+        coverage_count = len(rows)
+        # Calculate selected count by reading checkbox keys directly from session state
+        selected_count = 0
+        for opt in saved_options:
+            opt_id = opt["id"]
+            checkbox_key = f"{prefix}bulk_opt_{sub_id}_{opt_id}"
+            if st.session_state.get(checkbox_key, st.session_state[selection_key].get(opt_id, True)):
+                selected_count += 1
+        
+        col_apply, col_all, col_none = st.columns([1, 1, 1])
+        with col_apply:
+            if st.button(
+                f"Apply {coverage_count} Coverage{'s' if coverage_count != 1 else ''} to {selected_count} Option{'s' if selected_count != 1 else ''}",
+                key=f"{prefix}bulk_apply_{sub_id}",
+                type="primary",
+                disabled=selected_count == 0 or coverage_count == 0,
+                use_container_width=True
+            ):
+                _apply_bulk_coverage_update(
+                    sub_id, rows, saved_options, coverage_options,
+                    selection_key, rows_key, prefix, in_modal
+                )
         with col_all:
             if st.button("Select All", key=f"{prefix}bulk_select_all_{sub_id}", use_container_width=True):
                 for opt in saved_options:
@@ -333,8 +365,10 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
                     st.session_state[f"{prefix}bulk_opt_{sub_id}_{opt['id']}"] = False
                     st.session_state[selection_key][opt["id"]] = False
                 st.rerun(scope="fragment")
+        
+        st.markdown("**Apply to:**")
 
-        # Option checkboxes
+        # Option checkboxes (render after buttons but state is read above)
         for opt in saved_options:
             opt_id = opt["id"]
             opt_name = opt.get("quote_name", f"Option {opt_id[:8]}")
@@ -350,24 +384,6 @@ def _render_bulk_update_ui(sub_id: str, saved_options: list[dict], in_modal: boo
                 key=checkbox_key
             )
             st.session_state[selection_key][opt_id] = is_selected
-
-        st.markdown("---")
-
-        # Count for button label
-        coverage_count = len(rows)
-        selected_count = sum(1 for v in st.session_state[selection_key].values() if v)
-
-        # Apply button
-        if st.button(
-            f"Apply {coverage_count} Coverage{'s' if coverage_count != 1 else ''} to {selected_count} Option{'s' if selected_count != 1 else ''}",
-            key=f"{prefix}bulk_apply_{sub_id}",
-            type="primary",
-            disabled=selected_count == 0 or coverage_count == 0
-        ):
-            _apply_bulk_coverage_update(
-                sub_id, rows, saved_options, coverage_options,
-                selection_key, rows_key, prefix, in_modal
-            )
 
     # Render the fragment
     render_bulk_ui_fragment()
@@ -402,18 +418,28 @@ def _apply_bulk_coverage_update(
 
         coverages = quote.get("coverages", {})
 
+        # Get aggregate limit for "full" resolution
+        tower_json = quote.get("tower_json", [])
+        aggregate_limit = tower_json[0].get("limit", 1_000_000) if tower_json else 1_000_000
+
         if not coverages:
             # Initialize empty coverages structure
             coverages = {
                 "policy_form": quote.get("policy_form", "cyber"),
-                "aggregate_limit": 0,
+                "aggregate_limit": aggregate_limit,
                 "aggregate_coverages": {},
                 "sublimit_coverages": {}
             }
-
-        # Get aggregate limit for "full" resolution
-        tower_json = quote.get("tower_json", [])
-        aggregate_limit = tower_json[0].get("limit", 1_000_000) if tower_json else 1_000_000
+        else:
+            # Preserve existing structure and ensure aggregate_limit is set
+            if "policy_form" not in coverages:
+                coverages["policy_form"] = quote.get("policy_form", "cyber")
+            if "aggregate_limit" not in coverages:
+                coverages["aggregate_limit"] = aggregate_limit
+            if "aggregate_coverages" not in coverages:
+                coverages["aggregate_coverages"] = {}
+            if "sublimit_coverages" not in coverages:
+                coverages["sublimit_coverages"] = {}
 
         # Apply each coverage row
         for row in apply_rows:
@@ -454,12 +480,15 @@ def _apply_bulk_coverage_update(
         del st.session_state[f"last_synced_quote_{sub_id}"]
     # Reset the coverage editor to pick up new values
     reset_coverage_editor(f"quote_{sub_id}")
-    # Clear the rows for next time
+    # Clear the rows for next time (but allow reinitialization in fragment)
     if rows_key in st.session_state:
         del st.session_state[rows_key]
 
     if in_modal:
         st.session_state[f"show_{prefix}bulk_cov_modal_{sub_id}"] = False
+        st.rerun()
+    else:
+        # In tab mode, need to rerun to refresh UI and reinitialize rows_key
         st.rerun()
 
 
@@ -589,7 +618,7 @@ def _render_single_coverage_button(sub_id: str, saved_options: list[dict], sourc
     rows_key = f"{prefix}bulk_cov_rows_{sub_id}"
     source_key = f"{prefix}bulk_cov_source_{sub_id}"
 
-    if st.button("Edit Coverages", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", use_container_width=True, type="primary"):
+    if st.button("Batch Edit", key=f"{prefix}bulk_cov_modal_btn_{sub_id}", type="primary"):
         st.session_state[trigger_key] = True
         st.session_state[modal_key] = True
         # Store source coverages for "Load Current Settings" feature
@@ -602,7 +631,7 @@ def _render_single_coverage_button(sub_id: str, saved_options: list[dict], sourc
     if st.session_state.get(trigger_key, False):
         st.session_state[trigger_key] = False
 
-        @st.dialog("Edit Coverages Across Options", width="large")
+        @st.dialog("Batch Edit Coverages", width="large")
         def show_modal():
             _render_bulk_update_ui(sub_id, saved_options, in_modal=True, key_prefix=key_prefix)
 

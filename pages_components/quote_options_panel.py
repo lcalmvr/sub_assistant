@@ -849,17 +849,93 @@ def clear_draft_state():
 
 # ─────────────────────── Bound Quote Cards ───────────────────────
 
+def _format_amount_short(amount: float) -> str:
+    """Format amount for compact display (no $ to avoid LaTeX issues)."""
+    if amount is None or amount == 0:
+        return "—"
+    if amount >= 1_000_000 and amount % 1_000_000 == 0:
+        return f"{int(amount // 1_000_000)}M"
+    elif amount >= 1_000 and amount % 1_000 == 0:
+        return f"{int(amount // 1_000)}K"
+    return f"{int(amount):,}"
+
+
+def _render_clickable_quote_card(
+    quote: dict,
+    quote_id: str,
+    sub_id: str,
+    is_bound: bool = False,
+    bound_option: dict = None
+):
+    """
+    Render a clickable quote card - the button IS the card (no container wrapper).
+    Matches the pattern used in excess tower and coverage cards.
+    
+    Args:
+        quote: Quote data dict
+        quote_id: Quote ID
+        sub_id: Submission ID
+        is_bound: Whether this is the bound option
+        bound_option: Full bound option dict (for bound card only)
+    """
+    # Get quote data - use bound_option for bound card, quote for others
+    if is_bound and bound_option:
+        tower_json = bound_option.get("tower_json") or []
+        limit = tower_json[0].get("limit", 0) if tower_json else 0
+        retention = bound_option.get("primary_retention", 0)
+        premium = bound_option.get("sold_premium") or bound_option.get("quoted_premium") or 0
+        position = (bound_option.get("position") or "primary").title()
+        policy_form = bound_option.get("policy_form") or "cyber"
+        quote_name = quote.get("quote_name", "Option")
+    else:
+        tower_json = quote.get("tower_json") or []
+        limit = tower_json[0].get("limit", 0) if tower_json else 0
+        retention = quote.get("primary_retention", 0)
+        premium = quote.get("sold_premium") or quote.get("quoted_premium") or 0
+        position = (quote.get("position") or "primary").title()
+        policy_form = quote.get("policy_form") or "cyber"
+        quote_name = quote.get("quote_name", "Option")
+    
+    # Sanitize quote name (remove $ that cause LaTeX issues)
+    safe_name = quote_name.replace("$", "").replace("  ", " ") if quote_name else "Option"
+    
+    # Format premium WITHOUT $ to avoid LaTeX issues (same pattern as coverage/tower cards)
+    premium_str = _format_amount_short(premium)
+    
+    # Build card content - option name on top, premium on bottom
+    # No checkmark needed for bound (primary button type makes it clear)
+    if is_bound:
+        # Bound card - primary styling
+        line1 = f"**{safe_name} — BOUND**"
+        line2 = premium_str
+        button_type = "primary"
+    else:
+        # Other options - secondary styling
+        line1 = f"**{safe_name}**"
+        line2 = premium_str
+        button_type = "secondary"
+    
+    # Clickable card button - button IS the card (no container wrapper)
+    card_key = f"quote_card_{quote_id}_{sub_id}"
+    if st.button(
+        f"{line1}\n\n{line2}",
+        key=card_key,
+        use_container_width=True,
+        type=button_type,
+        help="Click to view details"
+    ):
+        st.session_state[f"view_quote_modal_{sub_id}"] = quote_id
+
+
 def _render_bound_quote_cards(sub_id: str, all_quotes: list, bound_option: dict, viewing_quote_id: str):
     """
     Render quote options as compact card summaries when policy is bound.
 
     Shows:
-    - Bound option with green highlight
-    - Other options in a 3-column grid
-    - Each card clickable to view details in modal
+    - Bound option as prominent card at top
+    - Other options in cards below
+    - Each entire card is clickable to view details in modal
     """
-    from pages_components.tower_db import get_quote_by_id
-
     bound_option_id = bound_option.get("id") if bound_option else None
 
     # Get full quote data for bound option
@@ -872,44 +948,22 @@ def _render_bound_quote_cards(sub_id: str, all_quotes: list, bound_option: dict,
         else:
             other_quotes.append(quote)
 
-    # Helper to format currency compactly (no $ to avoid LaTeX)
-    def fmt(val):
-        if val is None:
-            return "—"
-        if val >= 1_000_000:
-            return f"{val / 1_000_000:.0f}M"
-        elif val >= 1_000:
-            return f"{val / 1_000:.0f}K"
-        return f"{val:,.0f}"
-
-    # Helper to sanitize quote names (remove $ that cause LaTeX issues)
-    def safe_name(name):
-        return name.replace("$", "").replace("  ", " ") if name else "Option"
-
-    # Render bound option as prominent button
+    # Render bound option as prominent card at top
     if bound_quote_data:
-        tower_json = bound_option.get("tower_json") or []
-        limit = tower_json[0].get("limit", 0) if tower_json else 0
-        retention = bound_option.get("primary_retention", 0)
-        premium = bound_option.get("sold_premium", 0)
-        position = (bound_option.get("position") or "primary").title()
-        policy_form = bound_option.get("policy_form") or "cyber"
         bound_quote_id = bound_quote_data.get("id")
+        _render_clickable_quote_card(
+            quote=bound_quote_data,
+            quote_id=bound_quote_id,
+            sub_id=sub_id,
+            is_bound=True,
+            bound_option=bound_option
+        )
+        st.markdown("")  # Spacing
 
-        with st.container(border=True):
-            if st.button(
-                f"✓ {safe_name(bound_quote_data.get('quote_name'))} — BOUND",
-                key=f"view_bound_{bound_quote_id}",
-                use_container_width=True,
-                type="primary",
-            ):
-                st.session_state[f"view_quote_modal_{sub_id}"] = bound_quote_id
-            st.caption(f"{fmt(limit)} · {fmt(retention)} ret · {fmt(premium)} · {position} · {policy_form}")
-
-    # Show other options in 3-column grid
+    # Show other options in cards below
     if other_quotes:
         st.caption(f"{len(other_quotes)} other option(s):")
-
+        
         # Render in rows of 3
         for i in range(0, len(other_quotes), 3):
             row_quotes = other_quotes[i:i+3]
@@ -918,17 +972,12 @@ def _render_bound_quote_cards(sub_id: str, all_quotes: list, bound_option: dict,
             for col_idx, quote in enumerate(row_quotes):
                 with cols[col_idx]:
                     quote_id = quote.get("id")
-                    quote_name = quote.get("quote_name", "Option")
-                    sold_premium = quote.get("sold_premium", 0)
-
-                    with st.container(border=True):
-                        if st.button(
-                            safe_name(quote_name),
-                            key=f"view_opt_{quote_id}",
-                            use_container_width=True,
-                        ):
-                            st.session_state[f"view_quote_modal_{sub_id}"] = quote_id
-                        st.caption(f"{fmt(sold_premium)} premium")
+                    _render_clickable_quote_card(
+                        quote=quote,
+                        quote_id=quote_id,
+                        sub_id=sub_id,
+                        is_bound=False
+                    )
 
     # Render modal if one is requested
     modal_quote_id = st.session_state.get(f"view_quote_modal_{sub_id}")
@@ -958,36 +1007,75 @@ def _render_quote_detail_modal(sub_id: str, quote_id: str):
         from utils.quote_option_factory import load_quote_into_session
         load_quote_into_session(quote_id)
 
+        # Get quote position (primary vs excess)
+        position = quote_data.get("position", "primary")
+        is_excess = position == "excess"
+        
+        # Check if this is a bound quote
+        is_bound_quote = quote_data.get("is_bound", False)
+
         # Premium summary
         st.subheader("Premium")
         _render_premium_summary(quote_id, sub_id=sub_id, readonly=True)
 
-        st.divider()
+        # Tower - only show for excess (same rule as quote screen)
+        if is_excess:
+            st.subheader("Tower")
+            render_tower_panel(sub_id, expanded=True, readonly=True)
 
-        # Tower
-        st.subheader("Tower")
-        render_tower_panel(sub_id, readonly=True)
-
-        st.divider()
-
-        # Coverages
-        st.subheader("Coverages")
+        # Coverages - editable for bound quotes (changes will create revised binder)
         render_coverages_panel(
             sub_id=sub_id,
-            quote_id=quote_id,
-            readonly=True,
+            expanded=True,
+            readonly=not is_bound_quote,  # Allow editing if bound quote
+            hide_bulk_edit=is_bound_quote,  # Hide bulk edit button for bound quotes in modal
         )
 
-        st.divider()
+        # Endorsements (title is in expander)
+        render_endorsements_panel(sub_id, expanded=True, position=position)
 
-        # Endorsements
-        st.subheader("Endorsements")
-        render_endorsements_panel(quote_id, readonly=True)
-
-        st.markdown("---")
-        if st.button("Close", key=f"close_modal_{quote_id}", use_container_width=True):
-            st.session_state[f"view_quote_modal_{sub_id}"] = None
-            st.rerun()
+        # Action buttons
+        if is_bound_quote:
+            # Info box above buttons for bound quotes
+            st.info("📝 Saving changes will create a new revised binder.")
+            
+            # Save/Cancel buttons for bound quotes
+            col_cancel, col_save = st.columns([1, 1])
+            with col_cancel:
+                if st.button("Cancel", key=f"cancel_{quote_id}", use_container_width=True):
+                    # Clear coverage editor state to reset changes
+                    from pages_components.coverage_editor import reset_coverage_editor
+                    reset_coverage_editor(f"quote_{sub_id}")
+                    st.session_state[f"view_quote_modal_{sub_id}"] = None
+                    st.rerun()
+            with col_save:
+                if st.button("Save Changes & Revise Binder", key=f"save_{quote_id}", type="primary", use_container_width=True):
+                    # Save coverages to quote
+                    session_key = f"quote_coverages_{sub_id}"
+                    updated_coverages = st.session_state.get(session_key)
+                    if updated_coverages:
+                        from pages_components.tower_db import update_quote_field
+                        update_quote_field(quote_id, "coverages", updated_coverages)
+                    
+                    # Generate revised binder
+                    try:
+                        from core.document_generator import generate_document
+                        result = generate_document(
+                            submission_id=sub_id,
+                            quote_option_id=quote_id,
+                            doc_type="binder",
+                            created_by="user"
+                        )
+                        st.session_state[f"view_quote_modal_{sub_id}"] = None
+                        st.success(f"Coverages updated. Revised binder created: {result.get('document_number', 'N/A')}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Coverages updated, but binder generation failed: {e}")
+        else:
+            # Close button for non-bound quotes
+            if st.button("Close", key=f"close_modal_{quote_id}", use_container_width=True):
+                st.session_state[f"view_quote_modal_{sub_id}"] = None
+                st.rerun()
 
     show_modal()
 

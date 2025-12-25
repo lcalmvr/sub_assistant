@@ -34,6 +34,7 @@ def render_coverages_panel(
     expanded: bool = False,
     saved_coverages: Optional[dict] = None,
     readonly: bool = False,
+    hide_bulk_edit: bool = False,
 ):
     """
     Render the coverages panel for Quote tab.
@@ -104,18 +105,31 @@ def render_coverages_panel(
             if quote_id:
                 update_quote_field(quote_id, "coverages", updated_coverages)
 
-        # Header row with policy info and Edit Coverages button
-        header_left, header_mid, header_right = st.columns([2, 2, 1])
-        with header_left:
-            form_label = coverages.get("policy_form", "cyber").replace("_", "/").title()
-            st.caption(f"**Policy Form:** {form_label}")
-        with header_mid:
-            st.caption(f"**Aggregate:** {format_limit_display(aggregate_limit)}")
-        with header_right:
-            if not readonly:
-                render_bulk_coverage_buttons(sub_id, coverages, "this option")
-
-        # Use the shared coverage editor component
+        # OPTION 3: Batch Edit as third tab
+        # If this doesn't work well, roll back to OPTION 2 (button at bottom, full width)
+        # To roll back: Change batch_edit_tab_content to None and add button at bottom instead
+        def render_batch_edit_tab():
+            """Render batch edit UI as tab content."""
+            from pages_components.bulk_coverage_update import _render_bulk_update_ui
+            from pages_components.tower_db import list_quotes_for_submission
+            
+            # Get all primary quote options for batch editing
+            all_quotes = list_quotes_for_submission(sub_id)
+            primary_options = [q for q in all_quotes if q.get("position", "primary") == "primary"]
+            
+            if not primary_options:
+                st.info("No quote options available for batch editing. Create at least one quote option first.")
+                return
+            
+            # Store current coverages as source for "Load Current Settings"
+            # Include aggregate_limit so "full limits" can be detected correctly
+            source_key = f"quote_bulk_cov_source_{sub_id}"
+            source_with_limit = {**coverages, "aggregate_limit": aggregate_limit}
+            st.session_state[source_key] = source_with_limit
+            
+            # Render the bulk update UI (adapted for tab, not modal)
+            _render_bulk_update_ui(sub_id, primary_options, in_modal=False, key_prefix="quote")
+        
         updated_coverages = render_coverage_editor(
             editor_id=f"quote_{sub_id}",
             current_coverages=coverages,
@@ -123,6 +137,7 @@ def render_coverages_panel(
             mode=mode,
             on_change=on_coverage_change if not readonly else None,
             show_header=False,  # We handle header above
+            batch_edit_tab_content=render_batch_edit_tab if (not readonly and not hide_bulk_edit) else None,
         )
 
         # Update session state with any changes

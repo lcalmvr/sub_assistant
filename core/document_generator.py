@@ -158,6 +158,20 @@ def generate_document(
 
     # Gather context data
     context = get_document_context(submission_id, quote_option_id)
+    
+    # Check if this is a revised binder (there's already a binder for this quote option)
+    is_revised = False
+    if doc_type == "binder":
+        with get_conn() as conn:
+            result = conn.execute(text("""
+                SELECT COUNT(*) FROM policy_documents
+                WHERE quote_option_id = :quote_option_id
+                AND document_type = 'binder'
+                AND status != 'void'
+            """), {"quote_option_id": quote_option_id})
+            existing_count = result.fetchone()[0]
+            is_revised = existing_count > 0
+        context["is_revised_binder"] = is_revised
 
     # Generate document number
     document_number = _generate_document_number(doc_config["prefix"])

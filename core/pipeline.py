@@ -648,6 +648,9 @@ def parse_controls_from_summary(bullet_summary: str, nist_summary: str = "") -> 
 # ───────────── Guideline RAG (user-provided) ─────────────
 from ai.guideline_rag import get_ai_decision
 
+# ───────────── Conflict Detection ─────────────
+from core.conflict_service import save_field_value, ConflictService
+
 # ───────────── DB helpers (schema-safe) ─────────────
 
 def _existing_columns(table: str) -> set[str]:
@@ -1194,6 +1197,50 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
         "ai_rec": ai_text,
         "ai_cites": ai_cites,
     })
+
+    # ───────────── Save field values for conflict detection ─────────────
+    # Track extracted values with provenance for conflict detection system
+    sid_str = str(sid)
+
+    # Applicant info (from application documents)
+    if name:
+        save_field_value(sid_str, "applicant_name", name, "ai_extraction")
+    if website:
+        save_field_value(sid_str, "website", website, "ai_extraction")
+    if revenue:
+        save_field_value(sid_str, "annual_revenue", revenue, "ai_extraction")
+
+    # NAICS classification
+    primary = naics_result.get("primary", {}) or {}
+    secondary = naics_result.get("secondary", {}) or {}
+    if primary.get("code"):
+        save_field_value(
+            sid_str, "naics_primary_code", primary["code"], "ai_extraction",
+            confidence=primary.get("confidence"),
+        )
+    if primary.get("title"):
+        save_field_value(
+            sid_str, "naics_primary_title", primary["title"], "ai_extraction",
+            confidence=primary.get("confidence"),
+        )
+    if secondary.get("code"):
+        save_field_value(
+            sid_str, "naics_secondary_code", secondary["code"], "ai_extraction",
+            confidence=secondary.get("confidence"),
+        )
+
+    # Broker info (from email parsing)
+    if broker_email:
+        save_field_value(sid_str, "broker_email", broker_email, "broker_submission")
+
+    # ───────────── Run full conflict detection ─────────────
+    # Run detection with app_data for contradiction checks and broker_info for sign-offs
+    conflict_service = ConflictService()
+    conflict_service.run_full_detection(
+        submission_id=sid_str,
+        app_data=app_data,
+        broker_info=broker_info,
+    )
 
     return sid
 

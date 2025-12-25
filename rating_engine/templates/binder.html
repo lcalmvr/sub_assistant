@@ -8,7 +8,7 @@
 
 {# Document Header #}
 <div class="document-header">
-    <div class="document-type">Certificate of Insurance / Binder</div>
+    <div class="document-type">Certificate of Insurance / {% if is_revised_binder %}Revised {% endif %}Binder</div>
     <div class="document-number">{{ document_number }} | {{ generated_at }}</div>
 </div>
 

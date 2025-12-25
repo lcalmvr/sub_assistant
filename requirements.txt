@@ -23,3 +23,10 @@ pypdf
 tiktoken
 streamlit-pdf-viewer
 streamlit-quill
+fastapi
+uvicorn[standard]
+python-multipart
+email-validator
+python-jose[cryptography]
+passlib[bcrypt]
+sqlalchemy

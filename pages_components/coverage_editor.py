@@ -31,6 +31,8 @@ def render_coverage_editor(
     original_coverages: Optional[dict] = None,
     on_change: Optional[Callable[[dict], None]] = None,
     show_header: bool = True,
+    top_right_button: Optional[Callable[[], None]] = None,
+    batch_edit_tab_content: Optional[Callable[[], None]] = None,
 ) -> dict:
     """
     Reusable coverage editor component.
@@ -43,6 +45,8 @@ def render_coverage_editor(
         original_coverages: For diff mode - the baseline to compare against
         on_change: Callback when coverages change (receives updated coverages dict)
         show_header: Whether to show the policy form header
+        top_right_button: Optional callable to render a button in the top right corner (DEPRECATED - use batch_edit_tab_content)
+        batch_edit_tab_content: Optional callable to render batch edit UI as a third tab
 
     Returns:
         Updated coverages dict
@@ -67,7 +71,7 @@ def render_coverage_editor(
             editor_id, coverages, aggregate_limit, original_coverages, on_change
         )
     else:  # edit mode
-        coverages = _render_edit_mode(editor_id, coverages, aggregate_limit, on_change)
+        coverages = _render_edit_mode(editor_id, coverages, aggregate_limit, on_change, top_right_button, batch_edit_tab_content)
 
     # Update session state
     st.session_state[session_key] = coverages
@@ -293,9 +297,21 @@ def _render_edit_mode(
     coverages: dict,
     aggregate_limit: int,
     on_change: Optional[Callable[[dict], None]],
+    top_right_button: Optional[Callable[[], None]] = None,
+    batch_edit_tab_content: Optional[Callable[[], None]] = None,
 ) -> dict:
     """Render coverages in full edit mode with two-column grid layout."""
-    tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
+    # Create tabs - add Batch Edit tab if content provided
+    if batch_edit_tab_content:
+        tab_var, tab_std, tab_batch = st.tabs(["Variable Limits", "Standard Limits", "Batch Edit"])
+    else:
+        # Fallback: show top_right_button if provided (old behavior)
+        if top_right_button:
+            btn_spacer, btn_col = st.columns([5, 1])
+            with btn_col:
+                top_right_button()
+        tab_var, tab_std = st.tabs(["Variable Limits", "Standard Limits"])
+        tab_batch = None
 
     with tab_var:
         coverages = _render_variable_limits_edit(
@@ -306,6 +322,11 @@ def _render_edit_mode(
         coverages = _render_standard_limits_edit(
             editor_id, coverages, aggregate_limit, on_change
         )
+    
+    # Render batch edit tab if provided
+    if tab_batch is not None and batch_edit_tab_content:
+        with tab_batch:
+            batch_edit_tab_content()
 
     return coverages
 
