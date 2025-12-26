@@ -24,6 +24,7 @@ st.markdown("Welcome to the comprehensive submission management platform.")
 
 st.info("""
 **Available Pages:**
+- 🏷️ **Account Dashboard** - Search accounts and open submissions
 - 📂 **Submissions** - Manage and review AI-processed submissions
 - 🏢 **Brokers** - Broker and company management
 - 📊 **Stats** - Submission statistics and analytics
@@ -37,37 +38,22 @@ Use the sidebar to navigate between pages.
 st.markdown("---")
 st.markdown("**Quick Actions:**")
 
-col1, col2, col3, col4 = st.columns(4)
+row1 = st.columns(3)
+with row1[0]:
+    st.page_link("pages/submissions.py", label="Submissions", icon="📂", use_container_width=True)
+with row1[1]:
+    st.page_link("pages/account_dashboard.py", label="Accounts", icon="🏷️", use_container_width=True)
+with row1[2]:
+    st.page_link("pages/brokers.py", label="Brokers", icon="🏢", use_container_width=True)
 
-with col1:
-    st.markdown("### 📂 Submissions")
-    if st.button("View Submissions", use_container_width=True):
-        st.switch_page("pages/submissions.py")
+row2 = st.columns(3)
+with row2[0]:
+    st.page_link("pages/stats.py", label="Statistics", icon="📊", use_container_width=True)
+with row2[1]:
+    st.page_link("pages/coverage_catalog.py", label="Catalog", icon="📋", use_container_width=True)
+with row2[2]:
+    st.page_link("pages/document_library.py", label="Documents", icon="📚", use_container_width=True)
 
-with col2:
-    st.markdown("### 🏢 Brokers")
-    if st.button("Manage Brokers", use_container_width=True):
-        st.switch_page("pages/brokers.py")
-
-with col3:
-    st.markdown("### 📊 Statistics")
-    if st.button("View Analytics", use_container_width=True):
-        st.switch_page("pages/stats.py")
-
-with col4:
-    st.markdown("### 📋 Catalog")
-    if st.button("Coverage Catalog", use_container_width=True):
-        st.switch_page("pages/coverage_catalog.py")
-
-# Second row
-col5, col6, col7, col8 = st.columns(4)
-
-with col5:
-    st.markdown("### 📚 Documents")
-    if st.button("Document Library", use_container_width=True):
-        st.switch_page("pages/document_library.py")
-
-with col6:
-    st.markdown("### ⚖️ Compliance")
-    if st.button("Compliance Resources", use_container_width=True):
-        st.switch_page("pages/compliance.py")
+row3 = st.columns(3)
+with row3[0]:
+    st.page_link("pages/compliance.py", label="Compliance", icon="⚖️", use_container_width=True)
