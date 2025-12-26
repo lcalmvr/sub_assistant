@@ -52,6 +52,10 @@ from core.conflict_detection import (
     conflicts_to_dicts,
     detect_conflicts,
 )
+from core.credibility_score import (
+    CredibilityScore,
+    calculate_credibility_score,
+)
 
 # Database connection
 import os
@@ -302,6 +306,7 @@ class ConflictService:
         submission_id: str,
         app_data: dict | None = None,
         broker_info: dict | None = None,
+        submission_data: dict | None = None,
     ) -> list[dict]:
         """
         Run full detection including application contradictions.
@@ -309,7 +314,78 @@ class ConflictService:
         Call this from the pipeline when you have access to app_data
         and broker_info.
         """
-        return self._run_and_cache(submission_id, app_data, broker_info)
+        conflicts = self._run_and_cache(submission_id, app_data, broker_info)
+
+        # Also calculate and store credibility score
+        if app_data:
+            self.calculate_and_store_credibility(
+                submission_id=submission_id,
+                app_data=app_data,
+                submission_data=submission_data,
+            )
+
+        return conflicts
+
+    def calculate_and_store_credibility(
+        self,
+        submission_id: str,
+        app_data: dict,
+        submission_data: dict | None = None,
+    ) -> CredibilityScore:
+        """
+        Calculate and store the credibility score for an application.
+
+        Args:
+            submission_id: UUID of the submission
+            app_data: The application form data
+            submission_data: Additional metadata (NAICS, revenue, etc.)
+
+        Returns:
+            The calculated CredibilityScore
+        """
+        score = calculate_credibility_score(
+            app_data=app_data,
+            submission_data=submission_data,
+        )
+
+        # Store in database
+        _store_credibility_score(submission_id, score)
+
+        return score
+
+    def get_credibility_score(self, submission_id: str) -> dict | None:
+        """
+        Get the stored credibility score for a submission.
+
+        Returns:
+            Dict with score data, or None if not calculated
+        """
+        return _get_credibility_score(submission_id)
+
+    def calculate_credibility_from_stored_data(
+        self,
+        submission_id: str,
+    ) -> CredibilityScore | None:
+        """
+        Calculate credibility score using app data stored in documents table.
+
+        This is the manual trigger - fetches app_data from documents
+        and submission context, then calculates and stores the score.
+
+        Returns:
+            The calculated score, or None if no app data found
+        """
+        app_data = get_app_data_for_submission(submission_id)
+        if not app_data:
+            return None
+
+        submission_data = get_submission_context(submission_id)
+
+        return self.calculate_and_store_credibility(
+            submission_id=submission_id,
+            app_data=app_data,
+            submission_data=submission_data,
+        )
 
 
 # =============================================================================
@@ -745,6 +821,61 @@ def get_pending_review_count_all() -> dict[str, int]:
 # DUPLICATE DETECTION (USING VECTOR SIMILARITY)
 # =============================================================================
 
+def get_app_data_for_submission(submission_id: str) -> dict | None:
+    """
+    Retrieve standardized application data for a submission.
+
+    Looks for application.standardized.json in the documents table.
+    Returns the nested 'data' object if found, otherwise None.
+    """
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            SELECT extracted_data
+            FROM documents
+            WHERE submission_id = :submission_id
+              AND filename LIKE '%.standardized.json'
+            LIMIT 1
+        """), {"submission_id": submission_id})
+
+        row = result.fetchone()
+        if not row or not row[0]:
+            return None
+
+        extracted = row[0] if isinstance(row[0], dict) else {}
+        content = extracted.get("content", {})
+
+        # The actual app data is nested under content.data
+        if isinstance(content, dict):
+            return content.get("data", content)
+
+        return None
+
+
+def get_submission_context(submission_id: str) -> dict:
+    """
+    Get submission metadata for plausibility context.
+    """
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            SELECT applicant_name, naics_primary_code, annual_revenue,
+                   business_summary, industry_tags
+            FROM submissions
+            WHERE id = :submission_id
+        """), {"submission_id": submission_id})
+
+        row = result.fetchone()
+        if not row:
+            return {}
+
+        return {
+            "applicant_name": row[0],
+            "naics_primary_code": row[1],
+            "annual_revenue": row[2],
+            "business_summary": row[3],
+            "industry_tags": row[4],
+        }
+
+
 def check_duplicate_submission(
     submission_id: str,
     similarity_threshold: float = 0.95,
@@ -807,3 +938,116 @@ def check_duplicate_submission(
             }
             for row in result.fetchall()
         ]
+
+
+# =============================================================================
+# CREDIBILITY SCORE STORAGE
+# =============================================================================
+
+def _store_credibility_score(
+    submission_id: str,
+    score: CredibilityScore,
+) -> None:
+    """
+    Store or update credibility score for a submission.
+
+    Uses an upsert pattern - inserts if not exists, updates if exists.
+    Silently fails if table doesn't exist yet.
+    """
+    score_data = score.to_dict()
+
+    try:
+        with get_conn() as conn:
+            # Check if score exists
+            result = conn.execute(text("""
+                SELECT id FROM credibility_scores WHERE submission_id = :submission_id
+            """), {"submission_id": submission_id})
+
+            existing = result.fetchone()
+
+            if existing:
+                # Update existing
+                conn.execute(text("""
+                    UPDATE credibility_scores
+                    SET total_score = :total_score,
+                        label = :label,
+                        consistency_score = :consistency_score,
+                        plausibility_score = :plausibility_score,
+                        completeness_score = :completeness_score,
+                        issue_count = :issue_count,
+                        score_details = :score_details,
+                        calculated_at = :calculated_at
+                    WHERE submission_id = :submission_id
+                """), {
+                    "submission_id": submission_id,
+                    "total_score": score_data["total_score"],
+                    "label": score_data["label"],
+                    "consistency_score": score_data["dimensions"]["consistency"]["score"],
+                    "plausibility_score": score_data["dimensions"]["plausibility"]["score"],
+                    "completeness_score": score_data["dimensions"]["completeness"]["score"],
+                    "issue_count": len(score_data["issues"]),
+                    "score_details": _json_dumps(score_data),
+                    "calculated_at": datetime.utcnow(),
+                })
+            else:
+                # Insert new
+                conn.execute(text("""
+                    INSERT INTO credibility_scores (
+                        id, submission_id, total_score, label,
+                        consistency_score, plausibility_score, completeness_score,
+                        issue_count, score_details, calculated_at
+                    ) VALUES (
+                        :id, :submission_id, :total_score, :label,
+                        :consistency_score, :plausibility_score, :completeness_score,
+                        :issue_count, :score_details, :calculated_at
+                    )
+                """), {
+                    "id": str(uuid4()),
+                    "submission_id": submission_id,
+                    "total_score": score_data["total_score"],
+                    "label": score_data["label"],
+                    "consistency_score": score_data["dimensions"]["consistency"]["score"],
+                    "plausibility_score": score_data["dimensions"]["plausibility"]["score"],
+                    "completeness_score": score_data["dimensions"]["completeness"]["score"],
+                    "issue_count": len(score_data["issues"]),
+                    "score_details": _json_dumps(score_data),
+                    "calculated_at": datetime.utcnow(),
+                })
+    except Exception:
+        # Table may not exist yet - silently skip
+        pass
+
+
+def _get_credibility_score(submission_id: str) -> dict | None:
+    """
+    Get the stored credibility score for a submission.
+
+    Returns:
+        Dict with score data, or None if not calculated or table doesn't exist
+    """
+    try:
+        with get_conn() as conn:
+            result = conn.execute(text("""
+                SELECT total_score, label, consistency_score, plausibility_score,
+                       completeness_score, issue_count, score_details, calculated_at
+                FROM credibility_scores
+                WHERE submission_id = :submission_id
+            """), {"submission_id": submission_id})
+
+            row = result.fetchone()
+            if not row:
+                return None
+
+            return {
+                "total_score": float(row[0]) if row[0] is not None else None,
+                "label": row[1],
+                "consistency_score": float(row[2]) if row[2] is not None else None,
+                "plausibility_score": float(row[3]) if row[3] is not None else None,
+                "completeness_score": float(row[4]) if row[4] is not None else None,
+                "issue_count": row[5] or 0,
+                "details": row[6] or {},
+                "calculated_at": row[7],
+            }
+    except Exception:
+        # Table may not exist yet
+        return None

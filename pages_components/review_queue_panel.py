@@ -31,6 +31,7 @@ def render_review_queue_panel(
     expanded: bool = True,
     show_resolved: bool = False,
     on_resolve: Callable[[str], None] | None = None,
+    show_credibility_score: bool = True,
 ) -> dict:
     """
     Render the review queue panel for a submission.
@@ -40,12 +41,18 @@ def render_review_queue_panel(
         expanded: Whether the panel is initially expanded
         show_resolved: Whether to show resolved/deferred items
         on_resolve: Callback when an item is resolved (for UI refresh)
+        show_credibility_score: Whether to show the credibility score
 
     Returns:
-        Summary dict with counts: {pending, high_priority, resolved, has_blockers}
+        Summary dict with counts: {pending, high_priority, resolved, has_blockers, credibility_score}
     """
     service = ConflictService()
     _inject_review_queue_styles()
+
+    # Get credibility score if available
+    credibility_score = None
+    if show_credibility_score:
+        credibility_score = service.get_credibility_score(submission_id)
 
     # Get pending items first
     pending_items = get_review_items(submission_id, status="pending")
@@ -76,6 +83,33 @@ def render_review_queue_panel(
         title = f"Review Queue ({pending} pending: {priority_str})"
 
     with st.expander(title, expanded=expanded and pending > 0):
+        # Credibility Score display (if available) or calculate button
+        if credibility_score and credibility_score.get("total_score") is not None:
+            _render_credibility_score(credibility_score)
+            # Recalculate button (small, inline)
+            if st.button("Recalculate", key=f"recalc_cred_{submission_id}", type="secondary"):
+                result = service.calculate_credibility_from_stored_data(submission_id)
+                if result:
+                    st.success(f"Score updated: {result.total_score:.0f} ({result.label})")
+                    st.rerun()
+                else:
+                    st.warning("No application data found for this submission")
+            st.markdown("")
+        else:
+            # No score yet - show calculate button
+            calc_col1, calc_col2 = st.columns([3, 1])
+            with calc_col1:
+                st.caption("Application credibility score not yet calculated")
+            with calc_col2:
+                if st.button("Calculate", key=f"calc_cred_{submission_id}", type="primary"):
+                    result = service.calculate_credibility_from_stored_data(submission_id)
+                    if result:
+                        st.success(f"Score: {result.total_score:.0f} ({result.label})")
+                        st.rerun()
+                    else:
+                        st.warning("No application data found")
+            st.markdown("")
+
         # Header with summary + refresh
         col1, col2 = st.columns([6, 1])
         with col1:
@@ -96,6 +130,7 @@ def render_review_queue_panel(
                 "resolved": resolved,
                 "deferred": deferred,
                 "has_blockers": False,
+                "credibility_score": credibility_score,
             }
 
         # Group items by category
@@ -172,6 +207,7 @@ def render_review_queue_panel(
         "resolved": resolved,
         "deferred": deferred,
         "has_blockers": high > 0,
+        "credibility_score": credibility_score,
     }
 
 
@@ -896,6 +932,80 @@ def _get_priority_badge_html(priority: str) -> str:
 def _get_source_badge_html(source_label: str) -> str:
     """HTML badge for source labels."""
     return f'<span class="rq-badge rq-badge--source">{source_label}</span>'
+
+
+def _render_credibility_score(score_data: dict) -> None:
+    """Render the credibility score display."""
+    total = score_data.get("total_score", 0)
+    label = score_data.get("label", "unknown")
+    consistency = score_data.get("consistency_score", 0)
+    plausibility = score_data.get("plausibility_score", 0)
+    completeness = score_data.get("completeness_score", 0)
+    issue_count = score_data.get("issue_count", 0)
+
+    # Determine color based on label
+    colors = {
+        "excellent": ("#065f46", "#d1fae5", "#a7f3d0"),  # green
+        "good": ("#065f46", "#d1fae5", "#a7f3d0"),       # green
+        "fair": ("#92400e", "#fef3c7", "#fde68a"),       # yellow
+        "poor": ("#991b1b", "#fee2e2", "#fecaca"),       # red
+        "very_poor": ("#991b1b", "#fee2e2", "#fecaca"),  # red
+    }
+    text_color, bg_color, border_color = colors.get(label, ("#374151", "#f3f4f6", "#e5e7eb"))
+
+    # Build progress bars for each dimension
+    def progress_bar(score: float, weight: str) -> str:
+        filled = int(score / 10)
+        empty = 10 - filled
+        bar = "█" * filled + "░" * empty
+        return f"{bar} {score:.0f}%"
+
+    # Get issues from details if available
+    details = score_data.get("details", {})
+    issues = details.get("issues", []) if isinstance(details, dict) else []
+
+    st.markdown(
+        f"""
+        <div style="
+            background: {bg_color};
+            border: 1px solid {border_color};
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+        ">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="font-size: 14px; font-weight: 600; color: #374151;">Application Credibility</span>
+                </div>
+                <div style="
+                    background: {border_color};
+                    color: {text_color};
+                    padding: 4px 12px;
+                    border-radius: 999px;
+                    font-size: 14px;
+                    font-weight: 700;
+                ">{total:.0f} ({label.replace('_', ' ').title()})</div>
+            </div>
+            <div style="margin-top: 12px; font-family: monospace; font-size: 12px; color: #4b5563;">
+                <div style="margin-bottom: 4px;">Consistency:  {progress_bar(consistency or 0, "40%")}</div>
+                <div style="margin-bottom: 4px;">Plausibility: {progress_bar(plausibility or 0, "35%")}</div>
+                <div>Completeness: {progress_bar(completeness or 0, "25%")}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Show issues if any
+    if issues and issue_count > 0:
+        with st.expander(f"Credibility Issues ({issue_count})", expanded=False):
+            for issue in issues[:5]:  # Show first 5
+                severity = issue.get("severity", "medium")
+                message = issue.get("message", "")
+                severity_icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}.get(severity, "⚪")
+                st.markdown(f"{severity_icon} {message}")
+            if len(issues) > 5:
+                st.caption(f"... and {len(issues) - 5} more")
 
 
 def _render_queue_summary_html(pending: int, high: int, medium: int) -> str:
