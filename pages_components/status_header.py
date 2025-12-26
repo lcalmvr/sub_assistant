@@ -6,7 +6,7 @@ Status: [Quoted & Bound] · Effective 5/1/25 · Updated 12/19/25    [Change]
 """
 
 import streamlit as st
-from typing import Optional
+from typing import Optional, Callable
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -33,7 +33,12 @@ LOST_REASONS = [
 ]
 
 
-def render_status_header(submission_id: str, get_conn=None):
+def render_status_header(
+    submission_id: str,
+    get_conn=None,
+    right_actions: Optional[Callable[[], None]] = None,
+    show_change_button: bool = True,
+):
     """
     Renders compact status header with inline editing.
 
@@ -107,8 +112,21 @@ def render_status_header(submission_id: str, get_conn=None):
     is_editing = st.session_state.get(edit_key, False)
 
     if not is_editing:
+        if right_actions is None and not show_change_button:
+            display_parts = [f"**Status:** {smart_status}"]
+            if current_reason and current_outcome in ["declined", "lost"]:
+                reason_display = current_reason if len(current_reason) <= 50 else current_reason[:47] + "..."
+                display_parts.append(f"· {reason_display}")
+            if date_display:
+                display_parts.append(f"· {date_display}")
+            display_parts.append(f"· Updated {updated_display}")
+            st.markdown(" ".join(display_parts))
+            return
+
         # Display mode
-        col_status, col_btn = st.columns([6, 1])
+        # Give extra room to actions when we render multiple buttons.
+        col_ratio = [6, 1] if right_actions is None else [7, 2]
+        col_status, col_btn = st.columns(col_ratio)
 
         with col_status:
             display_parts = [f"**Status:** {smart_status}"]
@@ -121,9 +139,30 @@ def render_status_header(submission_id: str, get_conn=None):
             st.markdown(" ".join(display_parts))
 
         with col_btn:
-            if st.button("Change", key=f"change_status_btn_{submission_id}", type="secondary"):
-                st.session_state[edit_key] = True
-                st.rerun()
+            if right_actions is not None and show_change_button:
+                b1, b2 = st.columns([1, 1], gap="small")
+                with b1:
+                    right_actions()
+                with b2:
+                    if st.button(
+                        "Change",
+                        key=f"change_status_btn_{submission_id}",
+                        type="secondary",
+                        use_container_width=False,
+                    ):
+                        st.session_state[edit_key] = True
+                        st.rerun()
+            elif right_actions is not None and not show_change_button:
+                right_actions()
+            elif show_change_button:
+                if st.button(
+                    "Change",
+                    key=f"change_status_btn_{submission_id}",
+                    type="secondary",
+                    use_container_width=False,
+                ):
+                    st.session_state[edit_key] = True
+                    st.rerun()
     else:
         # Edit mode
         _render_status_edit_form(

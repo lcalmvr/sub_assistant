@@ -686,53 +686,208 @@ def _render_broker_section(sub_id: str):
 
 
 # ─────────────────────── UI starts ──────────────────────────
+def _sync_selected_submission_from_query_params():
+    query_sub_id = st.query_params.get("selected_submission_id")
+    if query_sub_id:
+        st.session_state.selected_submission_id = str(query_sub_id)
+        st.query_params.clear()  # Clear to avoid stale params
+
+
+def _format_submission_label(applicant_name: str, submission_id: str) -> str:
+    return f"{applicant_name} – {str(submission_id)[:8]}"
+
+
+def _get_current_submission_display(submission_id: str) -> Optional[dict]:
+    if not submission_id:
+        return None
+    try:
+        df = load_submission(str(submission_id))
+        if df is None or df.empty:
+            return None
+        row = df.iloc[0]
+        applicant_name = row["applicant_name"]
+        submission_id = str(row["id"])
+        return {
+            "id": submission_id,
+            "short_id": submission_id[:8],
+            "applicant_name": applicant_name,
+            "label": _format_submission_label(applicant_name, submission_id),
+        }
+    except Exception:
+        return None
+
+
+def _render_submission_context(submission_id: str):
+    """Compact broker + account context line shown above tabs."""
+    if not submission_id:
+        return
+
+    try:
+        from core.bor_management import get_current_broker
+        from core.account_management import get_submission_account
+
+        broker = get_current_broker(submission_id)
+        account = get_submission_account(submission_id)
+
+        if account:
+            acct_text = account.get("name") or "—"
+            if account.get("website"):
+                acct_text += f" · {account['website']}"
+        else:
+            acct_text = "Not linked"
+
+        if broker:
+            broker_text = broker.get("broker_name") or "—"
+            contact = broker.get("contact_name")
+            email = broker.get("contact_email")
+            if contact:
+                broker_text += f" - {contact}"
+            if email:
+                broker_text += f" ({email})"
+        else:
+            broker_text = "Not assigned"
+
+        st.caption(f"Account: {acct_text}  ·  Broker: {broker_text}")
+    except Exception:
+        # Context is helpful but non-critical; avoid breaking page render.
+        return
+
+
+def _render_submission_switcher(current_sub_id: Optional[str], *, status_edit_submission_id: Optional[str] = None):
+    """Popover-based submission search/switcher (used in header)."""
+    with st.popover("Load / Edit", use_container_width=True):
+        # Keep this simple: quick recent picks + a selectbox with built-in type-to-filter.
+        sub_df = load_submissions("TRUE", ())
+        label_map = {
+            _format_submission_label(r.applicant_name, r.id): str(r.id)
+            for r in sub_df.itertuples()
+        }
+
+        current_display = _get_current_submission_display(current_sub_id) if current_sub_id else None
+        current_label = current_display["label"] if current_display else None
+        if current_sub_id and current_label and current_label not in label_map:
+            label_map = {current_label: str(current_sub_id), **label_map}
+
+        options = list(label_map.keys()) or ["—"]
+        default_idx = options.index(current_label) if current_label in options else 0
+
+        st.caption("Search")
+        selected_label = st.selectbox(
+            "Open submission",
+            options,
+            index=default_idx,
+            key=f"submission_switch_select_{current_sub_id or 'none'}",
+            label_visibility="collapsed",
+        )
+
+        new_sub_id = label_map.get(selected_label)
+        if new_sub_id and str(new_sub_id) != str(current_sub_id):
+            st.session_state.selected_submission_id = str(new_sub_id)
+            st.rerun()
+
+        if status_edit_submission_id:
+            if st.button(
+                "Edit status…",
+                key=f"edit_status_from_switch_{status_edit_submission_id}",
+                use_container_width=True,
+            ):
+                st.session_state[f"editing_status_{status_edit_submission_id}"] = True
+                st.rerun()
+
+        recent_df = sub_df.head(5) if not sub_df.empty else sub_df
+        if recent_df is not None and not recent_df.empty:
+            st.divider()
+            st.caption("Recent")
+            for r in recent_df.itertuples():
+                label = _format_submission_label(r.applicant_name, r.id)
+                if st.button(label, key=f"recent_submission_btn_{r.id}", use_container_width=True):
+                    st.session_state.selected_submission_id = str(r.id)
+                    st.rerun()
+
+
 def render():
     """Main render function for the submissions page"""
     import pandas as pd
 
-    st.title("📂 AI-Processed Submissions")
+    _sync_selected_submission_from_query_params()
+    current_sub_id = st.session_state.get("selected_submission_id")
 
-    # Search and submission selection in same row
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        search_term = st.text_input("🔍 Search by company name", key="search_submissions", placeholder="Enter company name...")
-        # Trigger rerun when search term changes
-        if search_term != st.session_state.get("last_search_term", ""):
-            st.session_state.last_search_term = search_term
-            st.rerun()
-
-    with col2:
-        # Load submissions with search filter
-        if search_term:
-            where_sql = "LOWER(applicant_name) LIKE LOWER(%s)"
-            params = (f"%{search_term}%",)
+    # Resolve current selection (and display label) from DB.
+    sub_id = None
+    current_display = None
+    if current_sub_id:
+        current_display = _get_current_submission_display(str(current_sub_id))
+        if current_display:
+            sub_id = current_display["id"]
         else:
-            where_sql = "TRUE"
-            params = ()
+            # Stale selection (e.g., deleted submission) - clear.
+            st.session_state.pop("selected_submission_id", None)
+            current_sub_id = None
 
-        sub_df = load_submissions(where_sql, params)
-        label_map = {f"{r.applicant_name} – {str(r.id)[:8]}": r.id for r in sub_df.itertuples()}
-        # Restore previous selection if available
-        id_to_label = {str(v): k for k, v in label_map.items()}
+    sub_df = pd.DataFrame()
+    search_term = ""
+    if not sub_id:
+        # Selection mode: show full picker UI (search/select + recent table)
+        st.header("Submissions")
+        col1, col2 = st.columns([2, 1])
 
-        # Check for query param (for links from account history)
-        query_sub_id = st.query_params.get("selected_submission_id")
-        if query_sub_id:
-            st.session_state.selected_submission_id = query_sub_id
-            st.query_params.clear()  # Clear to avoid stale params
+        with col1:
+            search_term = st.text_input(
+                "🔍 Search by company name",
+                key="submission_picker_search",
+                placeholder="Enter company name...",
+            )
 
-        current_sub_id = st.session_state.get("selected_submission_id")
-        current_label = id_to_label.get(current_sub_id) if current_sub_id else None
-        options = list(label_map.keys()) or ["—"]
-        default_idx = options.index(current_label) if current_label in options else 0
+        with col2:
+            if search_term:
+                where_sql = "LOWER(applicant_name) LIKE LOWER(%s)"
+                params = (f"%{search_term}%",)
+            else:
+                where_sql = "TRUE"
+                params = ()
 
-        label_selected = st.selectbox("Open submission:", options, index=default_idx)
-        sub_id = label_map.get(label_selected)
+            sub_df = load_submissions(where_sql, params)
+            label_map = {
+                _format_submission_label(r.applicant_name, r.id): str(r.id)
+                for r in sub_df.itertuples()
+            }
 
-        # Store in session state for cross-page access
-        if sub_id:
-            st.session_state.selected_submission_id = str(sub_id)
+            options = list(label_map.keys()) or ["—"]
+            chosen_label = st.selectbox("Open submission:", options, index=0)
+            chosen = label_map.get(chosen_label)
+            if chosen:
+                st.session_state.selected_submission_id = str(chosen)
+                st.rerun()
+    else:
+        # Work mode: unified top header with actions on the same row.
+        import html as _html
+        st.markdown(
+            """
+<style>
+div[data-testid="stButton"] button { white-space: nowrap; }
+div[data-testid="stPopover"] button { white-space: nowrap; }
+.submission-title {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.05 !important;
+}
+</style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Give the right-side actions enough room so the button label doesn't wrap/truncate.
+        title_col, actions_col = st.columns([8, 4])
+        with title_col:
+            st.markdown(
+                f"<h1 class='submission-title'>{_html.escape(current_display['applicant_name'])}</h1>",
+                unsafe_allow_html=True,
+            )
+        with actions_col:
+            # Nested cols to right-align the action button.
+            spacer, btn_col = st.columns([3, 5])
+            with btn_col:
+                _render_submission_switcher(current_sub_id=sub_id, status_edit_submission_id=sub_id)
 
     # Configure column display (shared configuration)
     column_config = {
@@ -788,35 +943,21 @@ def render():
     else:
         sub_df_display = sub_df
 
-    # Use different expander behavior based on search state
-    if search_term:
-        # Force expanded when searching
-        with st.expander("📋 Recent submissions (filtered)", expanded=True):
-
+    if not sub_id:
+        # Selection mode: show recent submissions table
+        title = "📋 Recent submissions (filtered)" if search_term else "📋 Recent submissions"
+        with st.expander(title, expanded=True):
             st.dataframe(
-                sub_df_display, 
-                use_container_width=True, 
+                sub_df_display,
+                use_container_width=True,
                 hide_index=True,
-                column_config=column_config
+                column_config=column_config,
             )
-    else:
-        # Default expander behavior when not searching
-        with st.expander("📋 Recent submissions", expanded=True):
-
-            st.dataframe(
-                sub_df_display, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config=column_config
-            )
-
 
     if sub_id:
-        st.divider()
-        st.subheader(label_selected)
-
         # ------------------- STATUS HEADER -------------------
-        render_status_header(sub_id, get_conn=get_conn)
+        render_status_header(sub_id, get_conn=get_conn, show_change_button=False)
+        _render_submission_context(sub_id)
 
         # ------------------- TABS -------------------
         tab_details, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"])
