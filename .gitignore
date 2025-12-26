@@ -68,3 +68,6 @@ endorsement_test.pdf
 
 # Design mockups
 mockups/
+
+# Node modules (broker portal frontend)
+node_modules/
