@@ -57,6 +57,17 @@ from core.credibility_score import (
     calculate_credibility_score,
 )
 
+# Dynamic conflict analyzer (LLM-based)
+try:
+    from ai.conflict_analyzer import (
+        analyze_application as analyze_conflicts_dynamic,
+        get_detected_conflicts as get_dynamic_conflicts,
+        resolve_conflict as resolve_dynamic_conflict,
+    )
+    HAS_CONFLICT_ANALYZER = True
+except ImportError:
+    HAS_CONFLICT_ANALYZER = False
+
 # Database connection
 import os
 import importlib.util
@@ -316,6 +327,29 @@ class ConflictService:
         """
         conflicts = self._run_and_cache(submission_id, app_data, broker_info)
 
+        # Run dynamic LLM-based conflict detection
+        if app_data and HAS_CONFLICT_ANALYZER:
+            try:
+                # Get submission context for plausibility checks
+                context = submission_data or get_submission_context(submission_id)
+                submission_context = {
+                    "industry": context.get("naics_primary_code"),
+                    "business_type": None,  # Could be extracted from industry_tags
+                    "annual_revenue": context.get("annual_revenue"),
+                    "employee_count": None,  # Not currently tracked
+                }
+
+                # Run dynamic analysis
+                analyze_conflicts_dynamic(
+                    submission_id=submission_id,
+                    app_data=app_data,
+                    submission_context=submission_context,
+                    add_new_to_catalog=True,
+                )
+            except Exception as e:
+                # Don't fail the whole pipeline if dynamic analysis fails
+                print(f"Dynamic conflict analysis failed: {e}")
+
         # Also calculate and store credibility score
         if app_data:
             self.calculate_and_store_credibility(
@@ -325,6 +359,42 @@ class ConflictService:
             )
 
         return conflicts
+
+    def get_dynamic_conflicts(self, submission_id: str) -> list[dict]:
+        """
+        Get dynamically detected conflicts for a submission.
+
+        Returns conflicts detected by the LLM analyzer.
+        """
+        if not HAS_CONFLICT_ANALYZER:
+            return []
+        try:
+            return get_dynamic_conflicts(submission_id)
+        except Exception:
+            return []
+
+    def resolve_dynamic_conflict(
+        self,
+        conflict_id: str,
+        status: str,
+        resolved_by: str,
+        notes: str | None = None,
+    ) -> bool:
+        """
+        Resolve a dynamically detected conflict.
+
+        Args:
+            conflict_id: UUID of the detected_conflict
+            status: 'confirmed' or 'dismissed'
+            resolved_by: Username/email
+            notes: Optional resolution notes
+        """
+        if not HAS_CONFLICT_ANALYZER:
+            return False
+        try:
+            return resolve_dynamic_conflict(conflict_id, status, resolved_by, notes)
+        except Exception:
+            return False
 
     def calculate_and_store_credibility(
         self,
