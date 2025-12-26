@@ -38,6 +38,7 @@
 
 {# Policy Period #}
 <div class="info-box">
+    {% if effective_date and effective_date != '—' and expiration_date and expiration_date != '—' %}
     <div class="info-grid">
         <div class="info-item">
             <div class="info-label">Effective Date</div>
@@ -48,6 +49,12 @@
             <div class="info-value">{{ expiration_date }}</div>
         </div>
     </div>
+    {% else %}
+    <div class="info-item">
+        <div class="info-label">Policy Period</div>
+        <div class="info-value">12 month policy period</div>
+    </div>
+    {% endif %}
 </div>
 
 {# Excess Layer Summary - Highlighted Box #}
