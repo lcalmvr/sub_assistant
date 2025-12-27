@@ -114,12 +114,14 @@ def render_status_header(
     if not is_editing:
         if right_actions is None and not show_change_button:
             display_parts = [f"**Status:** {smart_status}"]
-            if current_reason and current_outcome in ["declined", "lost"]:
+            if current_reason and current_status == "pending_info":
+                reason_display = current_reason if len(current_reason) <= 50 else current_reason[:47] + "..."
+                display_parts.append(f"· Waiting for: {reason_display}")
+            elif current_reason and current_outcome in ["declined", "lost"]:
                 reason_display = current_reason if len(current_reason) <= 50 else current_reason[:47] + "..."
                 display_parts.append(f"· {reason_display}")
             if date_display:
                 display_parts.append(f"· {date_display}")
-            display_parts.append(f"· Updated {updated_display}")
             st.markdown(" ".join(display_parts))
             return
 
@@ -130,12 +132,14 @@ def render_status_header(
 
         with col_status:
             display_parts = [f"**Status:** {smart_status}"]
-            if current_reason and current_outcome in ["declined", "lost"]:
+            if current_reason and current_status == "pending_info":
+                reason_display = current_reason if len(current_reason) <= 50 else current_reason[:47] + "..."
+                display_parts.append(f"· Waiting for: {reason_display}")
+            elif current_reason and current_outcome in ["declined", "lost"]:
                 reason_display = current_reason if len(current_reason) <= 50 else current_reason[:47] + "..."
                 display_parts.append(f"· {reason_display}")
             if date_display:
                 display_parts.append(f"· {date_display}")
-            display_parts.append(f"· Updated {updated_display}")
             st.markdown(" ".join(display_parts))
 
         with col_btn:

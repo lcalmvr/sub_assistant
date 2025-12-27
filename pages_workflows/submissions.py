@@ -748,7 +748,7 @@ def _render_submission_context(submission_id: str):
         else:
             broker_text = "Not assigned"
 
-        st.caption(f"Account: {acct_text}  ·  Broker: {broker_text}")
+        st.caption(f"Broker: {broker_text}")
     except Exception:
         # Context is helpful but non-critical; avoid breaking page render.
         return
