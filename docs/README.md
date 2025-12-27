@@ -36,6 +36,7 @@ Operational guides for common tasks and concepts.
 
 | Document | Description |
 |----------|-------------|
+| [Product Philosophy](product-philosophy.md) | AI vs. manual development, performance/lag tolerance, Streamlit vs. React |
 | [Account & Renewal Guide](account-renewal-guide.md) | Account linking, prior submission context, remarket/renewal workflows |
 | [Conflicts Guide](conflicts_guide.md) | Conflict types, detection rules, and application credibility scoring |
 | [Supabase Security Fix](supabase-security-fix.md) | RLS setup and security warning fixes |
