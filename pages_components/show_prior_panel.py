@@ -96,8 +96,6 @@ def render_prior_summary_card(submission_id: str, expanded: bool = False):
         with col2:
             st.markdown("**Exposure**")
             st.caption(f"Revenue: {prior['revenue']}")
-            if prior["employees"]:
-                st.caption(f"Employees: {prior['employees']:,}")
             if prior["industry"]:
                 st.caption(f"Industry: {prior['industry']}")
 
@@ -148,7 +146,7 @@ def render_yoy_changes(submission_id: str, compact: bool = False):
                 return "↓"
             return "→"
 
-        for key, label in [("revenue", "Revenue"), ("employees", "Employees")]:
+        for key, label in [("revenue", "Revenue")]:
             if key in changes:
                 c = changes[key]
                 rows.append({

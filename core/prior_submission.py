@@ -51,7 +51,6 @@ def get_prior_submission(submission_id: str) -> Optional[dict]:
                 s.submission_outcome,
                 s.outcome_reason,
                 s.annual_revenue,
-                s.employee_count,
                 s.naics_primary_code,
                 s.naics_primary_title,
                 s.website,
@@ -80,8 +79,8 @@ def get_prior_submission(submission_id: str) -> Optional[dict]:
         if not row:
             return None
 
-        # Parse tower_json for limit info
-        tower_json = row[19] or []
+        # Parse tower_json for limit info (index 18 after removing employee_count)
+        tower_json = row[18] or []
         total_limit = 0
         if tower_json and len(tower_json) > 0:
             total_limit = sum(layer.get("limit", 0) for layer in tower_json)
@@ -96,21 +95,20 @@ def get_prior_submission(submission_id: str) -> Optional[dict]:
             "submission_outcome": row[6],
             "outcome_reason": row[7],
             "annual_revenue": row[8],
-            "employee_count": row[9],
-            "naics_primary_code": row[10],
-            "naics_primary_title": row[11],
-            "website": row[12],
-            "broker_org_id": row[13],
-            "broker_employment_id": row[14],
+            "naics_primary_code": row[9],
+            "naics_primary_title": row[10],
+            "website": row[11],
+            "broker_org_id": row[12],
+            "broker_employment_id": row[13],
             # Bound option data
-            "tower_id": str(row[15]) if row[15] else None,
-            "sold_premium": row[16],
-            "primary_retention": row[17],
-            "policy_form": row[18],
+            "tower_id": str(row[14]) if row[14] else None,
+            "sold_premium": row[15],
+            "primary_retention": row[16],
+            "policy_form": row[17],
             "tower_json": tower_json,
             "total_limit": total_limit,
             # Computed
-            "was_bound": row[15] is not None,
+            "was_bound": row[14] is not None,
         }
 
 
@@ -161,7 +159,6 @@ def get_prior_submission_summary(submission_id: str) -> Optional[dict]:
         "retention_raw": retention,
         "revenue": revenue_str,
         "revenue_raw": revenue,
-        "employees": prior["employee_count"],
         "policy_form": prior["policy_form"],
         "industry": prior["naics_primary_title"],
     }
@@ -182,7 +179,6 @@ def calculate_yoy_changes(submission_id: str) -> Optional[dict]:
         result = conn.execute(text("""
             SELECT
                 s.annual_revenue,
-                s.employee_count,
                 t.sold_premium,
                 t.primary_retention,
                 t.tower_json
@@ -196,14 +192,12 @@ def calculate_yoy_changes(submission_id: str) -> Optional[dict]:
             return None
 
     current_revenue = current[0]
-    current_employees = current[1]
-    current_premium = current[2]
-    current_retention = current[3]
-    current_tower = current[4] or []
+    current_premium = current[1]
+    current_retention = current[2]
+    current_tower = current[3] or []
     current_limit = sum(layer.get("limit", 0) for layer in current_tower) if current_tower else None
 
     prior_revenue = prior["annual_revenue"]
-    prior_employees = prior["employee_count"]
     prior_premium = prior["sold_premium"]
     prior_retention = prior["primary_retention"]
     prior_limit = prior["total_limit"]
@@ -248,16 +242,6 @@ def calculate_yoy_changes(submission_id: str) -> Optional[dict]:
         "change": format_change(rev_change, rev_pct)[0],
         "pct": format_change(rev_change, rev_pct)[1],
         "direction": "up" if rev_change and rev_change > 0 else "down" if rev_change and rev_change < 0 else "same",
-    }
-
-    # Employees
-    emp_change, emp_pct = calc_change(current_employees, prior_employees)
-    changes["employees"] = {
-        "prior": str(prior_employees) if prior_employees else "—",
-        "current": str(current_employees) if current_employees else "—",
-        "change": format_change(emp_change, emp_pct, is_currency=False)[0],
-        "pct": format_change(emp_change, emp_pct, is_currency=False)[1],
-        "direction": "up" if emp_change and emp_change > 0 else "down" if emp_change and emp_change < 0 else "same",
     }
 
     # Premium (only if both had bound options)
