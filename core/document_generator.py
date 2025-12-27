@@ -123,6 +123,11 @@ DOCUMENT_TYPES = {
         "prefix": "B",
         "label": "Binder",
     },
+    "policy": {
+        "template": "policy_combined.html",
+        "prefix": "P",
+        "label": "Policy",
+    },
 }
 
 

@@ -52,6 +52,7 @@ from pages_components.review_queue_panel import render_review_queue_panel
 from pages_components.account_history_panel import render_account_history_compact
 from pages_components.renewal_panel import render_renewal_panel
 from pages_components.endorsements_history_panel import render_endorsements_history_panel
+from pages_components.admin_agent_sidebar import render_admin_agent_sidebar
 from core.policy_tab_data import load_policy_tab_data as _load_policy_tab_data_uncached
 
 @st.cache_data(ttl=30)
@@ -959,8 +960,35 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
         render_status_header(sub_id, get_conn=get_conn, show_change_button=False)
         _render_submission_context(sub_id)
 
+        # Check if we should return to Policy tab (after endorsement/admin action)
+        target_tab = None
+        if st.session_state.pop("_return_to_policy_tab", False):
+            target_tab = "Policy"
+        elif st.session_state.get("_active_tab"):
+            target_tab = st.session_state.pop("_active_tab", None)
+
         # ------------------- TABS -------------------
         tab_details, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"])
+
+        # If we need to switch to a specific tab, inject JavaScript to click it
+        if target_tab:
+            tab_index = {"Details": 0, "UW": 1, "Rating": 2, "Quote": 3, "Policy": 4}.get(target_tab, 0)
+            import streamlit.components.v1 as components
+            components.html(f"""
+                <script>
+                    // Wait for tabs to render then click the target tab
+                    function clickTab() {{
+                        const tabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+                        if (tabs && tabs.length > {tab_index}) {{
+                            tabs[{tab_index}].click();
+                        }} else {{
+                            // Retry if tabs aren't rendered yet
+                            setTimeout(clickTab, 50);
+                        }}
+                    }}
+                    setTimeout(clickTab, 100);
+                </script>
+            """, height=0)
 
         # Define quote_helpers up front for use in Quote tab
         quote_helpers = {
@@ -1435,143 +1463,14 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
 
         # =================== POLICY TAB ===================
         with tab_policy:
-            # Load all policy tab data in ONE database call
-            policy_data = load_policy_tab_data(sub_id)
-            bound_option = policy_data.get("bound_option")
-            effective_state = policy_data.get("effective_state", {})
-            submission_info = policy_data.get("submission", {})
-
-            if not bound_option:
-                # No bound policy - show message
-                st.info("No bound policy. Bind a quote option on the Quote tab to manage the policy.")
-            else:
-                # ------------------- POLICY SUMMARY --------------------
-                st.markdown("##### Policy Summary")
-
-                # Status indicator
-                if effective_state.get("is_cancelled"):
-                    status_text = "🔴 Cancelled"
-                elif effective_state.get("has_erp"):
-                    status_text = "🟡 ERP Active"
-                else:
-                    status_text = "🟢 Active"
-
-                # Dates
-                eff_date = submission_info.get("effective_date")
-                exp_date = effective_state.get("effective_expiration") or submission_info.get("expiration_date")
-                eff_str = eff_date.strftime("%m/%d/%Y") if eff_date and hasattr(eff_date, 'strftime') else str(eff_date or "—")
-                exp_str = exp_date.strftime("%m/%d/%Y") if exp_date and hasattr(exp_date, 'strftime') else str(exp_date or "—")
-
-                # Policy details from bound option
-                tower_json = bound_option.get("tower_json") or []
-                if tower_json and len(tower_json) > 0:
-                    primary_layer = tower_json[0]
-                    limit = primary_layer.get("limit", 0)
-                    limit_str = f"\\${limit:,.0f}" if limit else "—"
-                else:
-                    limit_str = "—"
-
-                retention = bound_option.get("primary_retention", 0)
-                retention_str = f"\\${retention:,.0f}" if retention else "—"
-                premium = effective_state.get("effective_premium", 0)
-                premium_str = f"\\${premium:,.0f}"
-                position = (bound_option.get("position") or "primary").title()
-                policy_form = bound_option.get("policy_form") or "—"
-
-                # Display summary in compact format
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"**Status:** {status_text}  \n**Period:** {eff_str} → {exp_str}  \n**Terms:** {limit_str} / {retention_str} SIR  \n**Premium:** {premium_str}  \n**Form:** {policy_form.title()}")
-                with col2:
-                    if st.button("Unbind Policy", key=f"unbind_{sub_id}"):
-                        st.session_state[f"confirm_unbind_{sub_id}"] = True
-
-                if st.session_state.get(f"confirm_unbind_{sub_id}"):
-                    st.warning("This will remove the bound status and delete associated binder documents. Endorsements will also be removed.")
-                    c1, c2, _ = st.columns([1, 1, 4])
-                    with c1:
-                        if st.button("Confirm Unbind", key=f"confirm_unbind_btn_{sub_id}", type="primary"):
-                            from core.bound_option import unbind_option
-                            tower_id = bound_option.get("id")
-                            if tower_id:
-                                unbind_option(tower_id)
-                                st.session_state.pop(f"confirm_unbind_{sub_id}", None)
-                                st.rerun()
-                    with c2:
-                        if st.button("Cancel", key=f"cancel_unbind_{sub_id}"):
-                            st.session_state.pop(f"confirm_unbind_{sub_id}", None)
-                            st.rerun()
-
-                st.divider()
-
-                # ------------------- POLICY DOCUMENTS --------------------
-                st.markdown("##### Policy Documents")
-
-                # Filter to show binders, policy docs, and bound quotes
-                all_docs = policy_data.get("documents", [])
-                policy_docs = [
-                    d for d in all_docs
-                    if d.get("document_type") in ("binder", "policy", "endorsement")
-                    or d.get("is_bound_quote", False)  # Include bound quotes
-                ]
-
-                # Sort: Quote first, then Binder, then Endorsements (by date within type)
-                def doc_sort_key(d):
-                    type_order = {
-                        "quote_primary": 0, "quote_excess": 0,
-                        "binder": 1,
-                        "policy": 2,
-                        "endorsement": 3
-                    }
-                    doc_type = d.get("document_type", "")
-                    return (type_order.get(doc_type, 99), d.get("created_at") or "")
-
-                policy_docs.sort(key=doc_sort_key)
-
-                if policy_docs:
-                    import pandas as pd
-
-                    doc_rows = []
-                    for doc in policy_docs:
-                        doc_type = doc.get("type_label", doc.get("document_type", "Document"))
-                        doc_number = doc.get("document_number", "")
-                        pdf_url = doc.get("pdf_url", "")
-                        created_at = doc.get("created_at")
-                        date_str = created_at.strftime("%m/%d/%Y") if created_at and hasattr(created_at, 'strftime') else ""
-
-                        doc_rows.append({
-                            "Document": f"{doc_type}: {doc_number}",
-                            "Date": date_str,
-                            "PDF": pdf_url or "",
-                        })
-
-                    # Placeholders
-                    doc_rows.append({"Document": "Dec Page — coming soon", "Date": "", "PDF": ""})
-                    doc_rows.append({"Document": "Policy Form — coming soon", "Date": "", "PDF": ""})
-
-                    df = pd.DataFrame(doc_rows)
-                    st.dataframe(
-                        df,
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "Document": st.column_config.TextColumn(width="large"),
-                            "Date": st.column_config.TextColumn(width="small"),
-                            "PDF": st.column_config.LinkColumn(display_text="PDF", width="small"),
-                        },
-                        height=(len(doc_rows) * 35) + 38,
-                    )
-                else:
-                    st.caption("No policy documents generated yet.")
-
-                st.divider()
-
-                # ------------------- ENDORSEMENTS --------------------
-                render_endorsements_history_panel(sub_id, preloaded_data=policy_data)
-
-                # ------------------- RENEWAL --------------------
-                st.markdown("##### Renewal")
-                render_renewal_panel(sub_id)
+            # Use shared policy panel component (same as admin console)
+            from pages_components.policy_panel import render_policy_panel
+            render_policy_panel(
+                submission_id=sub_id,
+                show_sidebar=True,
+                show_renewal=True,
+                compact=False
+            )
 
         # =================== UW TAB ===================
         with tab_uw:
