@@ -36,6 +36,7 @@ Operational guides for common tasks and concepts.
 
 | Document | Description |
 |----------|-------------|
+| [Account & Renewal Guide](account-renewal-guide.md) | Account linking, prior submission context, remarket/renewal workflows |
 | [Conflicts Guide](conflicts_guide.md) | Conflict types, detection rules, and application credibility scoring |
 | [Supabase Security Fix](supabase-security-fix.md) | RLS setup and security warning fixes |
 | [Batch Edit Rollback](batch-edit-rollback.md) | How to roll back batch edit UI changes if needed |
@@ -62,4 +63,4 @@ Old documentation that has been superseded. See `archived/` folder:
 
 ---
 
-*Last updated: 2025-12-26*
+*Last updated: 2025-12-27*
