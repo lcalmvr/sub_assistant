@@ -39,6 +39,11 @@ def render_details_panel(sub_id: str, applicant_name: str, website: Optional[str
             show_header=True,
             compact=False,
         )
+
+        # Show YoY changes if there's a prior submission
+        from pages_components.show_prior_panel import render_yoy_changes, render_prior_summary_card
+        render_prior_summary_card(sub_id, expanded=False)
+        render_yoy_changes(sub_id)
     else:
         # No account linked - show linking options
         _render_account_linking(sub_id, applicant_name, website)

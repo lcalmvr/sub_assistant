@@ -137,9 +137,13 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_help
     """Render rating panel when revenue exists"""
     # Map industry name to rating engine slug
     industry_slug = _map_industry_to_slug(sub_data[3])
-    
+
     # Rating Preview Section
     st.markdown("#### 🔍 Rating Preview")
+
+    # Show prior year rating context if available
+    from pages_components.show_prior_panel import render_prior_rating_context
+    render_prior_rating_context(sub_id)
     
     # Policy Configuration
     config_col1, config_col2 = st.columns([1, 1])

@@ -72,7 +72,9 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
     # Get all saved quote options for this submission
     all_quotes = list_quotes_for_submission(sub_id)
 
-    # No banner needed - the bound card makes it clear
+    # Show prior year quote context if available
+    from pages_components.show_prior_panel import render_prior_quote_context
+    render_prior_quote_context(sub_id)
 
     if not all_quotes and not readonly:
         # No quotes yet - show simple add buttons
