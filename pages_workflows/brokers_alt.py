@@ -21,10 +21,13 @@ import os
 import uuid
 from dataclasses import dataclass, asdict, field
 from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime, timedelta
 
 import streamlit as st
 import psycopg2
 from psycopg2.extras import execute_batch
+
+from core import broker_relationship as broker_rel
 
 
 # ---------------------
@@ -1088,6 +1091,9 @@ def _people_section():
                 else:
                     st.error("First and Last are required.")
 
+        if st.session_state.get("broker_rel_ok"):
+            _person_relationship_panel(store, sel)
+
     with st.expander("📋 People Table", expanded=True):
         rows = []
         for p in sorted(people, key=lambda x: (x.last_name or '') + ' ' + (x.first_name or '')):
@@ -1106,6 +1112,138 @@ def _people_section():
             st.info("No results.")
     # Employment managed separately in the Employment section.
 
+
+def _person_relationship_panel(store: Store, person_id: str) -> None:
+    person = store.people.get(person_id)
+    name = f"{person.first_name} {person.last_name}".strip() if person else person_id[:8]
+
+    with st.expander("🗒️ Relationship", expanded=True):
+        tab_next, tab_log, tab_timeline = st.tabs(["✅ Next steps", "✍️ Log", "🕒 Timeline"])
+
+        with tab_next:
+            items = broker_rel.list_open_next_steps(subject_type="person", subject_id=person_id, limit=25)
+            if not items:
+                st.caption("No open next steps.")
+            for it in items:
+                due = it.get("next_step_due_at")
+                due_txt = due.strftime("%b %d, %Y") if due else "—"
+                cols = st.columns([2, 7, 1, 1])
+                with cols[0]:
+                    st.caption(due_txt)
+                with cols[1]:
+                    st.write(it.get("next_step") or it.get("summary") or "")
+                with cols[2]:
+                    if st.button("Done", key=f"ns_done_{it['id']}", use_container_width=True):
+                        broker_rel.update_next_step_status(activity_id=it["id"], status="done")
+                        st.rerun()
+                with cols[3]:
+                    if st.button("Snooze", key=f"ns_snooze_{it['id']}", use_container_width=True):
+                        broker_rel.snooze_next_step(activity_id=it["id"], until_at=datetime.utcnow() + timedelta(days=7))
+                        st.rerun()
+
+        with tab_log:
+            with st.form(f"form_log_activity_{person_id}"):
+                st.caption(f"Log an interaction for **{name}**")
+                activity_type = st.selectbox(
+                    "Type",
+                    ["call", "email", "meeting", "visit", "conference", "note"],
+                    index=0,
+                    key=f"activity_type_{person_id}",
+                )
+                summary = st.text_area(
+                    "Summary",
+                    placeholder="1–2 lines…",
+                    height=90,
+                    key=f"activity_summary_{person_id}",
+                )
+                tags = st.multiselect(
+                    "Tags",
+                    ["intro", "market_update", "appetite", "pricing", "renewal", "follow_up", "loss", "relationship_risk"],
+                    key=f"activity_tags_{person_id}",
+                )
+                next_step = st.text_input(
+                    "Next step (optional)",
+                    placeholder="e.g., Send appetite update",
+                    key=f"activity_next_step_{person_id}",
+                )
+                due = st.date_input("Due date (optional)", value=None, key=f"activity_due_{person_id}")
+
+                active_team_ids = [
+                    tm.team_id
+                    for tm in store.team_memberships.values()
+                    if tm.person_id == person_id and tm.active
+                ]
+                team_label = {t.team_id: t.team_name for t in store.teams.values()}
+                also_link_team_ids = st.multiselect(
+                    "Also link to teams (optional)",
+                    options=active_team_ids,
+                    format_func=lambda x: team_label.get(x, x[:8]),
+                    key=f"activity_link_teams_{person_id}",
+                )
+
+                submitted = st.form_submit_button("Save", type="primary")
+                if submitted:
+                    due_at = None
+                    if due:
+                        due_at = datetime(due.year, due.month, due.day)
+                    broker_rel.create_activity(
+                        subject_type="person",
+                        subject_id=person_id,
+                        activity_type=activity_type,
+                        summary=summary,
+                        tags=tags,
+                        next_step=next_step or None,
+                        next_step_due_at=due_at,
+                        created_by=CURRENT_USER,
+                        also_link_team_ids=also_link_team_ids,
+                    )
+                    st.success("Saved.")
+                    st.rerun()
+
+        with tab_timeline:
+            activities = broker_rel.list_activities(subject_type="person", subject_id=person_id, limit=50)
+            submissions = broker_rel.list_submission_events_for_person(person_id=person_id, limit=25)
+
+            rows: list[dict[str, Any]] = []
+            for a in activities:
+                rows.append(
+                    {
+                        "When": a["occurred_at"],
+                        "Type": a["activity_type"],
+                        "Summary": a["summary"],
+                        "Tags": ", ".join(a.get("tags") or []),
+                        "Next step": a.get("next_step") or "",
+                        "Due": a.get("next_step_due_at"),
+                        "Source": "Manual",
+                    }
+                )
+            for s in submissions:
+                rows.append(
+                    {
+                        "When": s["occurred_at"],
+                        "Type": "submission",
+                        "Summary": f"{s['title']} · {_pretty_token(s.get('status'))} · {_pretty_token(s.get('outcome'))}",
+                        "Tags": "",
+                        "Next step": "",
+                        "Due": None,
+                        "Source": "Auto",
+                    }
+                )
+
+            if not rows:
+                st.caption("No activity yet.")
+            else:
+                df = __import__("pandas").DataFrame(rows).sort_values("When", ascending=False)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def _pretty_token(value: Any) -> str:
+    if value is None:
+        return "—"
+    s = str(value).strip()
+    if not s:
+        return "—"
+    return s.replace("_", " ").title()
 
 
 def _teams_section():
@@ -2040,19 +2178,31 @@ def _quick_entry_section():
 
 def render():
     """Render the alternate Brokers prototype page."""
-    st.title("🏗️ People/Organizations Prototype (Alt)")
-    st.caption("Experimental model: Organization → Offices; People with single active Employment; Teams by Organization.")
+    st.title("🏢 Brokers")
+    st.caption("Manage broker organizations, teams, people, and relationship activities (notes/visits/reminders).")
 
     # Disable browser autofill behaviors for this page
     _disable_autofill()
 
+    ok, err = broker_rel.ensure_tables()
+    st.session_state["broker_rel_ok"] = ok
+    if not ok:
+        st.warning(
+            "Broker relationship tables are not available yet (activities/next steps). "
+            "Run `db_setup/create_broker_relationship_tables.sql` or grant DB permissions."
+        )
+        if err:
+            st.caption(f"DB error: {err}")
 
-    tab0, tab1, tab2, tab_dba, tab3, tab4, tab5 = st.tabs([
-        "🧭 Quick Entry", "🏢 Organizations", "🏬 Offices", "🏷️ DBAs", "👥 Teams", "👤 People", "💼 Employment",
+    tab0, tab_outreach, tab1, tab2, tab_dba, tab3, tab4, tab5 = st.tabs([
+        "🧭 Quick Entry", "📣 Outreach", "🏢 Organizations", "🏬 Offices", "🏷️ DBAs", "👥 Teams", "👤 People", "💼 Employment",
     ])
 
     with tab0:
         _quick_entry_section()
+
+    with tab_outreach:
+        _outreach_section()
 
     with tab1:
         _organizations_section()
@@ -2066,3 +2216,66 @@ def render():
         _people_section()
     with tab5:
         _employment_section()
+
+
+def _outreach_section():
+    store = _ensure_store()
+    st.subheader("Outreach Recommendations")
+    st.caption("Rules-based suggestions based on submissions + last touchpoints. v1: person-level.")
+
+    if not st.session_state.get("broker_rel_ok"):
+        st.info("Broker relationship tables are not available yet.")
+        return
+
+    @st.dialog("Log touchpoint")
+    def _log_touch_dialog(person_id: str):
+        person = store.people.get(person_id)
+        name = f"{person.first_name} {person.last_name}".strip() if person else person_id[:8]
+        st.write(f"**{name}**")
+        activity_type = st.selectbox("Type", ["call", "email", "meeting", "visit", "conference", "note"], index=0)
+        summary = st.text_area("Summary", placeholder="1–2 lines…", height=120)
+        tags = st.multiselect(
+            "Tags",
+            ["intro", "market_update", "appetite", "pricing", "renewal", "follow_up", "loss", "relationship_risk"],
+        )
+        next_step = st.text_input("Next step (optional)", placeholder="e.g., Send appetite update")
+        due = st.date_input("Due date (optional)", value=None)
+        if st.button("Save", type="primary"):
+            due_at = None
+            if due:
+                due_at = datetime(due.year, due.month, due.day)
+            broker_rel.create_activity(
+                subject_type="person",
+                subject_id=person_id,
+                activity_type=activity_type,
+                summary=summary,
+                tags=tags,
+                next_step=next_step or None,
+                next_step_due_at=due_at,
+                created_by=CURRENT_USER,
+            )
+            st.success("Saved.")
+            st.rerun()
+
+    recs = broker_rel.outreach_recommendations_people(limit=30)
+    if not recs:
+        st.info("No outreach recommendations available yet.")
+        return
+
+    for rec in recs:
+        cols = st.columns([4, 2, 2, 3, 1])
+        with cols[0]:
+            st.markdown(f"**{rec['name']}**")
+            st.caption(" · ".join(rec["reasons"][:2]))
+        with cols[1]:
+            st.caption("Subs (90d)")
+            st.write(rec["subs_90d"])
+        with cols[2]:
+            st.caption("Written (365d)")
+            st.write(f"${rec['written_premium_365d']:,.0f}" if rec["written_premium_365d"] else "—")
+        with cols[3]:
+            st.caption("Suggested")
+            st.write(rec["suggested_action"])
+        with cols[4]:
+            if st.button("Log", key=f"log_touch_{rec['person_id']}"):
+                _log_touch_dialog(rec["person_id"])

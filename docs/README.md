@@ -20,6 +20,7 @@ Detailed plans for features - some implemented, some tabled for future sprints.
 
 | Document | Status | Description |
 |----------|--------|-------------|
+| [Broker Relationship Management + Outreach Agent](broker_relationship_management_plan.md) | Planned | Broker activities (notes/visits/reminders) + outreach recommendations |
 | [Conflict Review Implementation](conflict_review_implementation_plan.md) | Implemented | Dynamic conflict detection with LLM-based analysis |
 | [Coverage Sublimits Plan](coverage_sublimits_plan.md) | Implemented | Sublimit/coinsurance structure for coverages |
 | [Quote Tab Design](quote_tab_design.md) | Implemented | Quote options panel and tower visualization |
