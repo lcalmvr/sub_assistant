@@ -53,7 +53,7 @@ def _render_linked_account(submission_id: str, account: dict):
                 st.rerun()
 
         with col_unlink:
-            if st.button("Unlink", key=f"unlink_acct_btn_{submission_id}", type="secondary"):
+            if st.button("🔗", key=f"unlink_acct_btn_{submission_id}", type="secondary", help="Unlink account"):
                 account_mgmt.unlink_submission_from_account(submission_id)
                 st.rerun()
 

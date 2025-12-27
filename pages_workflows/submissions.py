@@ -795,6 +795,22 @@ def _render_submission_switcher(current_sub_id: Optional[str], *, status_edit_su
                 st.session_state[f"editing_status_{status_edit_submission_id}"] = True
                 st.rerun()
 
+            if st.button(
+                "Edit broker…",
+                key=f"edit_broker_from_switch_{status_edit_submission_id}",
+                use_container_width=True,
+            ):
+                st.session_state[f"editing_parties_{status_edit_submission_id}"] = True
+                st.rerun()
+
+            if st.button(
+                "Edit account…",
+                key=f"edit_account_from_switch_{status_edit_submission_id}",
+                use_container_width=True,
+            ):
+                st.session_state[f"editing_parties_{status_edit_submission_id}"] = True
+                st.rerun()
+
         recent_df = sub_df.head(5) if not sub_df.empty else sub_df
         if recent_df is not None and not recent_df.empty:
             st.divider()
@@ -968,7 +984,9 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
             target_tab = st.session_state.pop("_active_tab", None)
 
         # ------------------- TABS -------------------
-        tab_details, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"])
+        tab_details, tab_review, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(
+            ["📋 Details", "🧾 Review Queue", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"]
+        )
 
         # If we need to switch to a specific tab, inject JavaScript to click it
         if target_tab:
@@ -1451,14 +1469,14 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
             # ------------------- Unified Details Panel --------------------
             render_details_panel(sub_id, applicant_name, website, get_conn=get_conn)
 
-            # ------------------- Review Queue Panel -------------------
-            # Show conflicts requiring human attention (below account history)
+        # =================== REVIEW QUEUE TAB ===================
+        with tab_review:
             review_summary = render_review_queue_panel(
                 submission_id=sub_id,
                 expanded=True,
                 show_resolved=False,
             )
-            if review_summary["has_blockers"]:
+            if review_summary.get("has_blockers"):
                 st.warning("⚠️ Resolve high-priority conflicts before binding this submission.")
 
         # =================== POLICY TAB ===================

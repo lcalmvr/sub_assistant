@@ -4,11 +4,16 @@ UW Guide Workflow
 Underwriter reference guide with conflict catalog, guidelines, and best practices.
 """
 
+import os
+import re
+from urllib.parse import urlparse, unquote
 import streamlit as st
 from sqlalchemy import text
 import json
 
 from core.db import get_conn
+from core import market_news
+from ai.market_news_intel import suggest_bullets_and_tags
 
 
 def render():
@@ -17,8 +22,9 @@ def render():
     st.markdown("Reference materials and tools for underwriting decisions")
 
     # Create tabs
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab_news, tab2, tab3, tab4 = st.tabs([
         "🔍 Common Conflicts",
+        "📰 Market News",
         "📋 Field Definitions",
         "📖 Guidelines",
         "❓ Supplemental Questions",
@@ -26,6 +32,9 @@ def render():
 
     with tab1:
         render_conflicts_tab()
+
+    with tab_news:
+        render_market_news_tab()
 
     with tab2:
         render_field_definitions_tab()
@@ -36,6 +45,201 @@ def render():
     with tab4:
         render_supplemental_questions_tab()
 
+
+@st.cache_data(ttl=30)
+def _load_market_news(search: str, category: str, limit: int) -> list[dict]:
+    return market_news.list_articles(
+        search=search or None,
+        category=None if category == "all" else category,
+        limit=limit,
+    )
+
+
+def render_market_news_tab():
+    st.header("Market News")
+    st.caption("Team-curated cyber insurance and cybersecurity articles. Searchable and reusable as a knowledge base.")
+
+    ok, err = market_news.ensure_tables()
+    if not ok:
+        st.warning("Market News tables are not available yet. Run `db_setup/create_market_news_table.sql`.")
+        if err:
+            st.caption(f"DB error: {err}")
+        return
+
+    current_user = st.session_state.get("current_user", os.getenv("USER", "unknown"))
+
+    def _normalize_url(raw: str) -> str:
+        raw = (raw or "").strip()
+        if not raw:
+            return ""
+        if raw.startswith(("http://", "https://")):
+            return raw
+        return f"https://{raw}"
+
+    def _guess_source_from_url(raw: str) -> str | None:
+        url = _normalize_url(raw)
+        if not url:
+            return None
+        host = (urlparse(url).netloc or "").lower()
+        host = host.replace("www.", "").strip()
+        return host or None
+
+    def _guess_title_from_url(raw: str) -> str | None:
+        url = _normalize_url(raw)
+        if not url:
+            return None
+        path = urlparse(url).path or ""
+        last = path.rstrip("/").split("/")[-1]
+        last = unquote(last)
+        last = re.sub(r"\\.(html|htm|php)$", "", last, flags=re.IGNORECASE)
+        last = re.sub(r"[-_]+", " ", last).strip()
+        if not last or len(last) < 6:
+            return None
+        return last[:1].upper() + last[1:]
+
+    @st.dialog("Post article")
+    def _post_dialog():
+        url_raw = st.text_input("Link", placeholder="Paste URL… (optional but recommended)")
+        title = st.text_input("Title", placeholder="Optional (auto from link if blank)")
+        category = st.selectbox(
+            "Category",
+            options=["cyber_insurance", "cybersecurity"],
+            format_func=lambda x: "Cyber Insurance" if x == "cyber_insurance" else "Cybersecurity",
+        )
+        takeaway = st.text_input("UW takeaway (optional)", placeholder="1 line: why this matters")
+
+        if "market_news_post_summary" not in st.session_state:
+            st.session_state.market_news_post_summary = ""
+        if "market_news_post_tags" not in st.session_state:
+            st.session_state.market_news_post_tags = ""
+        if "market_news_post_excerpt" not in st.session_state:
+            st.session_state.market_news_post_excerpt = ""
+
+        col_ai, col_hint = st.columns([1, 3], vertical_alignment="center")
+        with col_ai:
+            if st.button("Auto bullets + tags", use_container_width=True):
+                url_norm = _normalize_url(url_raw) if url_raw else ""
+                sug = suggest_bullets_and_tags(
+                    title=title or _guess_title_from_url(url_raw) or "",
+                    url=url_norm,
+                    takeaway=takeaway,
+                    excerpt=st.session_state.get("market_news_post_excerpt") or "",
+                )
+                bullets = sug.get("bullets") or []
+                tags = sug.get("tags") or []
+                st.session_state.market_news_post_summary = "\n".join([f"- {b}" for b in bullets])
+                st.session_state.market_news_post_tags = ", ".join(tags)
+                st.session_state.market_news_post_used_ai = bool(sug.get("used_ai"))
+        with col_hint:
+            st.caption("Generates a short bullet summary and tag suggestions from the info you provided.")
+            if st.session_state.get("market_news_post_used_ai") is False:
+                st.caption("Using lightweight suggestions (no AI key configured).")
+
+        guessed_source = _guess_source_from_url(url_raw) or ""
+        with st.expander("Add details (optional)", expanded=False):
+            source = st.text_input("Source", value=guessed_source, placeholder="e.g., wsj.com, advisen.com, cisa.gov")
+            published_at = st.date_input("Published date", value=None)
+            st.text_area(
+                "Paste excerpt (optional)",
+                height=120,
+                placeholder="Paste a paragraph or two (improves auto summary + tags).",
+                key="market_news_post_excerpt",
+            )
+
+            tags_raw = st.text_input(
+                "Tags (comma-separated)",
+                placeholder="claims, regs, ransomware, pricing…",
+                key="market_news_post_tags",
+            )
+            summary = st.text_area(
+                "Bullet summary",
+                height=140,
+                placeholder="- …\n- …",
+                key="market_news_post_summary",
+            )
+            internal_notes = st.text_area("Internal notes", height=100, placeholder="Longer context if needed.")
+
+        if st.button("Share", type="primary"):
+            url = _normalize_url(url_raw) if url_raw else None
+            final_title = (title or "").strip() or _guess_title_from_url(url_raw) or (url_raw or "").strip()
+            if not final_title:
+                st.error("Add a link or a title.")
+                return
+
+            tags_raw_val = locals().get("tags_raw", "")
+            tags = [t.strip() for t in (tags_raw_val or "").split(",") if t.strip()]
+            internal_notes_val = (locals().get("internal_notes") or "").strip()
+            takeaway_val = (takeaway or "").strip()
+            merged_notes = None
+            if takeaway_val and internal_notes_val:
+                merged_notes = takeaway_val + "\n\n" + internal_notes_val
+            else:
+                merged_notes = takeaway_val or internal_notes_val or None
+
+            market_news.create_article(
+                title=final_title,
+                url=url,
+                source=(locals().get("source") or "").strip() or guessed_source or None,
+                category=category,
+                published_at=locals().get("published_at"),
+                tags=tags,
+                summary=(locals().get("summary") or "").strip() or None,
+                internal_notes=merged_notes,
+                created_by=current_user,
+            )
+            _load_market_news.clear()
+            st.session_state.market_news_post_summary = ""
+            st.session_state.market_news_post_tags = ""
+            st.session_state.market_news_post_excerpt = ""
+            st.session_state.pop("market_news_post_used_ai", None)
+            st.success("Posted.")
+            st.rerun()
+
+    controls = st.columns([2, 1, 1])
+    with controls[0]:
+        search = st.text_input("Search", placeholder="Search titles, sources, summaries…", key="market_news_search")
+    with controls[1]:
+        category = st.selectbox(
+            "Category",
+            options=["all", "cyber_insurance", "cybersecurity"],
+            format_func=lambda x: "All" if x == "all" else ("Cyber Insurance" if x == "cyber_insurance" else "Cybersecurity"),
+            key="market_news_category",
+        )
+    with controls[2]:
+        if st.button("Post article", type="primary", use_container_width=True):
+            _post_dialog()
+
+    articles = _load_market_news(search=search, category=category, limit=100)
+    if not articles:
+        st.info("No articles yet. Post the first one.")
+        return
+
+    for a in articles:
+        title = a["title"]
+        meta_parts = []
+        if a.get("source"):
+            meta_parts.append(a["source"])
+        if a.get("published_at"):
+            meta_parts.append(a["published_at"].strftime("%b %d, %Y"))
+        cat = a.get("category")
+        if cat:
+            meta_parts.append("Cyber Insurance" if cat == "cyber_insurance" else "Cybersecurity")
+        meta = " · ".join(meta_parts)
+
+        with st.expander(title, expanded=False):
+            if meta:
+                st.caption(meta)
+            if a.get("url"):
+                st.link_button("Open article", a["url"])
+            tags = a.get("tags") or []
+            if tags:
+                st.caption("Tags: " + ", ".join(tags))
+            if a.get("summary"):
+                st.markdown(a["summary"])
+            if a.get("internal_notes"):
+                st.markdown("**Internal notes**")
+                st.markdown(a["internal_notes"])
+            st.caption(f"Posted by {a.get('created_by') or '—'}")
 
 def render_conflicts_tab():
     """Render the Common Conflicts tab with conflict catalog."""

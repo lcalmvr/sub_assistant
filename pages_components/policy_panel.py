@@ -223,7 +223,6 @@ def render_policy_panel(
     render_endorsements_history_panel(
         submission_id,
         preloaded_data=policy_data,
-        compact=compact
     )
 
     # ------------------- RENEWAL --------------------
