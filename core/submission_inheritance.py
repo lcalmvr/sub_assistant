@@ -188,7 +188,7 @@ def create_submission_from_prior(
                 applicant_name, account_id, website,
                 naics_primary_code, naics_primary_title,
                 naics_secondary_code, naics_secondary_title,
-                annual_revenue, employee_count,
+                annual_revenue,
                 broker_org_id, broker_employment_id,
                 expiration_date, effective_date
             FROM submissions
@@ -202,7 +202,7 @@ def create_submission_from_prior(
         (applicant_name, account_id, website,
          naics_primary_code, naics_primary_title,
          naics_secondary_code, naics_secondary_title,
-         annual_revenue, employee_count,
+         annual_revenue,
          broker_org_id, broker_employment_id,
          prior_expiration, prior_effective) = row
 
@@ -230,7 +230,7 @@ def create_submission_from_prior(
                 applicant_name, account_id, website,
                 naics_primary_code, naics_primary_title,
                 naics_secondary_code, naics_secondary_title,
-                annual_revenue, employee_count,
+                annual_revenue,
                 broker_org_id, broker_employment_id,
                 effective_date, expiration_date,
                 prior_submission_id, renewal_type,
@@ -240,7 +240,7 @@ def create_submission_from_prior(
                 :applicant_name, :account_id, :website,
                 :naics_primary_code, :naics_primary_title,
                 :naics_secondary_code, :naics_secondary_title,
-                :annual_revenue, :employee_count,
+                :annual_revenue,
                 :broker_org_id, :broker_employment_id,
                 :effective_date, :expiration_date,
                 :prior_id, :renewal_type,
@@ -257,7 +257,6 @@ def create_submission_from_prior(
             "naics_secondary_code": naics_secondary_code,
             "naics_secondary_title": naics_secondary_title,
             "annual_revenue": annual_revenue,
-            "employee_count": employee_count,
             "broker_org_id": broker_org_id,
             "broker_employment_id": broker_employment_id,
             "effective_date": effective_date,
