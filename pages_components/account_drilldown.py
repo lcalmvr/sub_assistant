@@ -219,42 +219,53 @@ def _render_summary_header(
                         # Create Remarket/Renewal based on bound status
                         if current_submission_id:
                             from core.bound_option import has_bound_option
-                            is_bound = has_bound_option(current_submission_id)
+                            from core.submission_inheritance import get_child_submission, create_submission_from_prior
 
-                            if is_bound:
-                                if st.button(
-                                    "Create Renewal",
-                                    key=f"create_renewal_{current_submission_id}",
-                                    use_container_width=True,
-                                ):
-                                    from core.submission_inheritance import create_submission_from_prior
-                                    try:
-                                        new_id = create_submission_from_prior(
-                                            prior_id=current_submission_id,
-                                            renewal_type="renewal",
-                                            created_by="user",
-                                        )
-                                        st.query_params["selected_submission_id"] = new_id
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
+                            # Check if child already exists (linear chain - no branching)
+                            child = get_child_submission(current_submission_id)
+
+                            if child:
+                                # Already has a child - show link instead of create button
+                                child_type = (child.get("renewal_type") or "submission").title()
+                                child_id_short = child["id"][:8]
+                                st.markdown(f"**{child_type} exists**")
+                                st.markdown(f"[Open {child_id_short}](?selected_submission_id={child['id']})")
                             else:
-                                if st.button(
-                                    "Create Remarket",
-                                    key=f"create_remarket_{current_submission_id}",
-                                    use_container_width=True,
-                                ):
-                                    from core.submission_inheritance import create_submission_from_prior
-                                    try:
-                                        new_id = create_submission_from_prior(
-                                            prior_id=current_submission_id,
-                                            renewal_type="remarket",
-                                            created_by="user",
-                                        )
-                                        st.query_params["selected_submission_id"] = new_id
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error: {e}")
+                                # No child yet - show create button
+                                is_bound = has_bound_option(current_submission_id)
+
+                                if is_bound:
+                                    if st.button(
+                                        "Create Renewal",
+                                        key=f"create_renewal_{current_submission_id}",
+                                        use_container_width=True,
+                                    ):
+                                        try:
+                                            new_id = create_submission_from_prior(
+                                                prior_id=current_submission_id,
+                                                renewal_type="renewal",
+                                                created_by="user",
+                                            )
+                                            st.query_params["selected_submission_id"] = new_id
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error: {e}")
+                                else:
+                                    if st.button(
+                                        "Create Remarket",
+                                        key=f"create_remarket_{current_submission_id}",
+                                        use_container_width=True,
+                                    ):
+                                        try:
+                                            new_id = create_submission_from_prior(
+                                                prior_id=current_submission_id,
+                                                renewal_type="remarket",
+                                                created_by="user",
+                                            )
+                                            st.query_params["selected_submission_id"] = new_id
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Error: {e}")
 
                         if show_unlink and current_submission_id:
                             if st.button(

@@ -12,6 +12,53 @@ from sqlalchemy import text
 from core.db import get_conn
 
 
+def has_child_submission(submission_id: str) -> bool:
+    """
+    Check if a submission already has a child (remarket or renewal).
+
+    Each submission can only spawn one child to maintain a linear chain.
+    Returns True if a child exists, False otherwise.
+    """
+    with get_conn() as conn:
+        result = conn.execute(
+            text("""
+                SELECT EXISTS(
+                    SELECT 1 FROM submissions
+                    WHERE prior_submission_id = :submission_id
+                )
+            """),
+            {"submission_id": submission_id}
+        )
+        return result.scalar()
+
+
+def get_child_submission(submission_id: str) -> Optional[dict]:
+    """
+    Get the child submission if one exists.
+
+    Returns dict with id, renewal_type, applicant_name or None.
+    """
+    with get_conn() as conn:
+        result = conn.execute(
+            text("""
+                SELECT id, renewal_type, applicant_name, submission_status, submission_outcome
+                FROM submissions
+                WHERE prior_submission_id = :submission_id
+            """),
+            {"submission_id": submission_id}
+        )
+        row = result.fetchone()
+        if row:
+            return {
+                "id": str(row[0]),
+                "renewal_type": row[1],
+                "applicant_name": row[2],
+                "status": row[3],
+                "outcome": row[4],
+            }
+        return None
+
+
 # Fields that can be inherited from prior submission
 INHERITABLE_FIELDS = {
     # Field name: (display_name, copy_for_renewal, copy_for_remarket)
