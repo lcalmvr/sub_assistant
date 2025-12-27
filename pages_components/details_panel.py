@@ -44,6 +44,16 @@ def render_details_panel(sub_id: str, applicant_name: str, website: Optional[str
         from pages_components.show_prior_panel import render_yoy_changes, render_prior_summary_card
         render_prior_summary_card(sub_id, expanded=False)
         render_yoy_changes(sub_id)
+
+        # Show remarket/renewal linking options
+        submissions = acct.get_account_submissions(current_account["id"])
+        if submissions and len(submissions) > 1:
+            from pages_components.remarket_linking import render_remarket_actions
+            render_remarket_actions(
+                account_id=current_account["id"],
+                current_submission_id=sub_id,
+                submissions=submissions,
+            )
     else:
         # No account linked - show linking options
         _render_account_linking(sub_id, applicant_name, website)
