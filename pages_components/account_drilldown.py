@@ -362,7 +362,7 @@ def _render_submissions_table(subs: list, current_submission_id: Optional[str], 
             column_config={
                 "open": st.column_config.LinkColumn("", display_text="Open", width="small"),
                 "id_short": st.column_config.TextColumn("ID", width="small"),
-                "date_received": st.column_config.DateColumn("Date", format="MM/DD/YY", width="small"),
+                "date_received": st.column_config.DateColumn("Received", format="MM/DD/YY", width="small"),
                 "status": st.column_config.TextColumn("Status", width="small"),
                 "outcome": st.column_config.TextColumn("Outcome", width="small"),
                 "annual_revenue": st.column_config.NumberColumn("Revenue", format="compact", width="small"),

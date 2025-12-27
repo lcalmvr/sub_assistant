@@ -896,7 +896,7 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
         # Give the right-side actions enough room so the button label doesn't wrap/truncate.
         title_col, actions_col = st.columns([8, 4])
         with title_col:
-            short_id = str(sub_id)[:6]
+            short_id = str(sub_id)[:8]
             st.markdown(
                 f"<h1 class='submission-title'>{_html.escape(current_display['applicant_name'])} <span style='color:#9ca3af;font-size:0.5em;font-weight:400'>({short_id})</span></h1>",
                 unsafe_allow_html=True,
