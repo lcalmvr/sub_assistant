@@ -99,99 +99,145 @@ def render_market_news_tab():
 
     @st.dialog("Post article")
     def _post_dialog():
-        url_raw = st.text_input("Link", placeholder="Paste URL… (optional but recommended)")
-        title = st.text_input("Title", placeholder="Optional (auto from link if blank)")
-        category = st.selectbox(
-            "Category",
-            options=["cyber_insurance", "cybersecurity"],
-            format_func=lambda x: "Cyber Insurance" if x == "cyber_insurance" else "Cybersecurity",
+        reset_keys = (
+            "market_news_post_link",
+            "market_news_post_title",
+            "market_news_post_category",
+            "market_news_post_takeaway",
+            "market_news_post_source",
+            "market_news_post_summary",
+            "market_news_post_tags",
+            "market_news_post_excerpt",
+            "market_news_post_addons",
+            "market_news_post_internal_notes",
+            "market_news_post_assist_mode",
         )
-        takeaway = st.text_input("UW takeaway (optional)", placeholder="1 line: why this matters")
 
-        if "market_news_post_summary" not in st.session_state:
-            st.session_state.market_news_post_summary = ""
-        if "market_news_post_tags" not in st.session_state:
-            st.session_state.market_news_post_tags = ""
-        if "market_news_post_excerpt" not in st.session_state:
-            st.session_state.market_news_post_excerpt = ""
+        # Reset must happen before widgets with these keys are instantiated.
+        if st.session_state.get("market_news_post_reset"):
+            for k in reset_keys:
+                st.session_state.pop(k, None)
+            st.session_state.pop("market_news_post_used_ai", None)
+            st.session_state["market_news_post_reset"] = False
 
-        col_ai, col_hint = st.columns([1, 3], vertical_alignment="center")
-        with col_ai:
-            if st.button("Auto bullets + tags", use_container_width=True):
-                url_norm = _normalize_url(url_raw) if url_raw else ""
-                sug = suggest_bullets_and_tags(
-                    title=title or _guess_title_from_url(url_raw) or "",
-                    url=url_norm,
-                    takeaway=takeaway,
-                    excerpt=st.session_state.get("market_news_post_excerpt") or "",
-                )
+        link_col, category_col = st.columns([3, 1], vertical_alignment="bottom")
+        with link_col:
+            st.text_input("Link", placeholder="Paste URL…", key="market_news_post_link")
+        with category_col:
+            st.selectbox(
+                "Category",
+                options=["cyber_insurance", "cybersecurity"],
+                format_func=lambda x: "Cyber Insurance" if x == "cyber_insurance" else "Cybersecurity",
+                key="market_news_post_category",
+                label_visibility="collapsed",
+            )
+        st.text_input("Title", placeholder="Optional (auto from link if blank)", key="market_news_post_title")
+
+        def _do_autogen():
+            url_raw = st.session_state.get("market_news_post_link") or ""
+            title = st.session_state.get("market_news_post_title") or ""
+            takeaway = st.session_state.get("market_news_post_takeaway") or ""
+            assist_mode = st.session_state.get("market_news_post_assist_mode") or "bullets_and_tags"
+            url_norm = _normalize_url(url_raw) if url_raw else ""
+
+            if not title.strip():
+                st.session_state["market_news_post_title"] = _guess_title_from_url(url_raw) or title
+            if not (st.session_state.get("market_news_post_source") or "").strip():
+                st.session_state["market_news_post_source"] = _guess_source_from_url(url_raw) or ""
+
+            sug = suggest_bullets_and_tags(
+                title=(st.session_state.get("market_news_post_title") or "").strip(),
+                url=url_norm,
+                takeaway=takeaway,
+                excerpt=st.session_state.get("market_news_post_excerpt") or "",
+            )
+            if assist_mode == "bullets_and_tags":
                 bullets = sug.get("bullets") or []
-                tags = sug.get("tags") or []
-                st.session_state.market_news_post_summary = "\n".join([f"- {b}" for b in bullets])
-                st.session_state.market_news_post_tags = ", ".join(tags)
-                st.session_state.market_news_post_used_ai = bool(sug.get("used_ai"))
-        with col_hint:
-            st.caption("Generates a short bullet summary and tag suggestions from the info you provided.")
-            if st.session_state.get("market_news_post_used_ai") is False:
-                st.caption("Using lightweight suggestions (no AI key configured).")
+                st.session_state["market_news_post_summary"] = "\n".join([f"- {b}" for b in bullets])
+            tags = sug.get("tags") or []
+            st.session_state["market_news_post_tags"] = ", ".join(tags)
+            st.session_state["market_news_post_used_ai"] = bool(sug.get("used_ai"))
 
-        guessed_source = _guess_source_from_url(url_raw) or ""
-        with st.expander("Add details (optional)", expanded=False):
-            source = st.text_input("Source", value=guessed_source, placeholder="e.g., wsj.com, advisen.com, cisa.gov")
+        action_left, action_right = st.columns([3, 2], vertical_alignment="bottom")
+        with action_left:
+            st.text_input("UW takeaway (optional)", placeholder="1 line: why this matters", key="market_news_post_takeaway")
+        with action_right:
+            mode_col, gen_col = st.columns([2, 3], vertical_alignment="bottom")
+            with mode_col:
+                assist_mode = st.selectbox(
+                    "Auto mode",
+                    options=["bullets_and_tags", "tags_only"],
+                    format_func=lambda x: "Bullets + tags" if x == "bullets_and_tags" else "Tags only",
+                    label_visibility="collapsed",
+                    key="market_news_post_assist_mode",
+                )
+            with gen_col:
+                st.button("Auto-generate", use_container_width=True, on_click=_do_autogen)
+
+        if st.session_state.get("market_news_post_used_ai") is False:
+            st.caption("Using lightweight suggestions (no AI key configured).")
+
+        st.text_input("Tags (optional)", placeholder="claims, regs, ransomware…", key="market_news_post_tags")
+        st.text_area(
+            "Bullet summary (optional)",
+            height=140,
+            placeholder="- …\n- …",
+            key="market_news_post_summary",
+        )
+        st.text_area(
+            "UW add-on bullets (optional)",
+            height=90,
+            placeholder="- UW add-on…",
+            key="market_news_post_addons",
+        )
+
+        with st.expander("Details (optional)", expanded=False):
+            st.text_input("Source", placeholder="e.g., wsj.com, advisen.com, cisa.gov", key="market_news_post_source")
             published_at = st.date_input("Published date", value=None)
             st.text_area(
                 "Paste excerpt (optional)",
-                height=120,
+                height=110,
                 placeholder="Paste a paragraph or two (improves auto summary + tags).",
                 key="market_news_post_excerpt",
             )
+            st.text_area("Internal notes (optional)", height=90, placeholder="Longer context if needed.", key="market_news_post_internal_notes")
 
-            tags_raw = st.text_input(
-                "Tags (comma-separated)",
-                placeholder="claims, regs, ransomware, pricing…",
-                key="market_news_post_tags",
-            )
-            summary = st.text_area(
-                "Bullet summary",
-                height=140,
-                placeholder="- …\n- …",
-                key="market_news_post_summary",
-            )
-            internal_notes = st.text_area("Internal notes", height=100, placeholder="Longer context if needed.")
-
-        if st.button("Share", type="primary"):
+        if st.button("Post", type="primary"):
+            url_raw = st.session_state.get("market_news_post_link") or ""
             url = _normalize_url(url_raw) if url_raw else None
+            title = st.session_state.get("market_news_post_title") or ""
             final_title = (title or "").strip() or _guess_title_from_url(url_raw) or (url_raw or "").strip()
             if not final_title:
                 st.error("Add a link or a title.")
                 return
 
-            tags_raw_val = locals().get("tags_raw", "")
+            tags_raw_val = st.session_state.get("market_news_post_tags") or ""
             tags = [t.strip() for t in (tags_raw_val or "").split(",") if t.strip()]
-            internal_notes_val = (locals().get("internal_notes") or "").strip()
-            takeaway_val = (takeaway or "").strip()
-            merged_notes = None
-            if takeaway_val and internal_notes_val:
-                merged_notes = takeaway_val + "\n\n" + internal_notes_val
+            summary_val = (st.session_state.get("market_news_post_summary") or "").strip()
+            addons_val = (st.session_state.get("market_news_post_addons") or "").strip()
+            combined_summary = None
+            if summary_val and addons_val:
+                combined_summary = summary_val + "\n" + addons_val
             else:
-                merged_notes = takeaway_val or internal_notes_val or None
+                combined_summary = summary_val or addons_val or None
+
+            takeaway_val = (st.session_state.get("market_news_post_takeaway") or "").strip()
+            internal_notes_val = (st.session_state.get("market_news_post_internal_notes") or "").strip()
+            merged_notes = (takeaway_val + "\n\n" + internal_notes_val).strip() if (takeaway_val or internal_notes_val) else None
 
             market_news.create_article(
                 title=final_title,
                 url=url,
-                source=(locals().get("source") or "").strip() or guessed_source or None,
-                category=category,
-                published_at=locals().get("published_at"),
+                source=(st.session_state.get("market_news_post_source") or "").strip() or None,
+                category=st.session_state.get("market_news_post_category") or "cyber_insurance",
+                published_at=published_at,
                 tags=tags,
-                summary=(locals().get("summary") or "").strip() or None,
+                summary=combined_summary,
                 internal_notes=merged_notes,
                 created_by=current_user,
             )
             _load_market_news.clear()
-            st.session_state.market_news_post_summary = ""
-            st.session_state.market_news_post_tags = ""
-            st.session_state.market_news_post_excerpt = ""
-            st.session_state.pop("market_news_post_used_ai", None)
+            st.session_state["market_news_post_reset"] = True
             st.success("Posted.")
             st.rerun()
 
@@ -214,6 +260,21 @@ def render_market_news_tab():
         st.info("No articles yet. Post the first one.")
         return
 
+    @st.dialog("Delete article")
+    def _delete_dialog(article_id: str, title: str):
+        st.markdown(f"**Delete this article?**")
+        st.caption(title)
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("Delete", type="primary", use_container_width=True):
+                market_news.delete_article(article_id=article_id)
+                _load_market_news.clear()
+                st.success("Deleted.")
+                st.rerun()
+        with c2:
+            if st.button("Cancel", use_container_width=True):
+                st.rerun()
+
     for a in articles:
         title = a["title"]
         meta_parts = []
@@ -227,19 +288,34 @@ def render_market_news_tab():
         meta = " · ".join(meta_parts)
 
         with st.expander(title, expanded=False):
-            if meta:
-                st.caption(meta)
-            if a.get("url"):
-                st.link_button("Open article", a["url"])
+            header_left, header_right = st.columns([6, 1])
+            with header_left:
+                if meta:
+                    st.caption(meta)
+                created_at = a.get("created_at")
+                created_txt = created_at.strftime("%b %d, %Y") if created_at and hasattr(created_at, "strftime") else None
+                by = a.get("created_by") or "—"
+                if created_txt:
+                    st.caption(f"Posted {created_txt} · {by}")
+                else:
+                    st.caption(f"Posted by {by}")
+            with header_right:
+                with st.popover("⋯"):
+                    if a.get("url"):
+                        st.link_button("Open article", a["url"])
+                    if st.button("Delete", key=f"delete_news_{a['id']}", type="secondary", use_container_width=True):
+                        _delete_dialog(a["id"], title)
+
             tags = a.get("tags") or []
             if tags:
                 st.caption("Tags: " + ", ".join(tags))
+
             if a.get("summary"):
                 st.markdown(a["summary"])
+
             if a.get("internal_notes"):
-                st.markdown("**Internal notes**")
-                st.markdown(a["internal_notes"])
-            st.caption(f"Posted by {a.get('created_by') or '—'}")
+                with st.expander("Notes", expanded=False):
+                    st.markdown(a["internal_notes"])
 
 def render_conflicts_tab():
     """Render the Common Conflicts tab with conflict catalog."""
