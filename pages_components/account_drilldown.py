@@ -341,17 +341,17 @@ def _render_submissions_table(subs: list, current_submission_id: Optional[str], 
     else:
         # Table view
         df = pd.DataFrame(subs)
-        df["open"] = df["id"].apply(lambda x: f"/submissions?selected_submission_id={x}")
 
         # Mark current
         if current_submission_id:
             df["is_current"] = df["id"] == current_submission_id
 
-        df["id_short"] = df["id"].astype(str).str[:8]
+        # ID as clickable link
+        df["id_link"] = df["id"].apply(lambda x: f"/submissions?selected_submission_id={x}")
         df["status"] = df["submission_status"].apply(lambda x: (x or "").replace("_", " ").title())
         df["outcome"] = df["submission_outcome"].apply(lambda x: (x or "").replace("_", " ").title())
 
-        display_cols = ["open", "id_short", "date_received", "status", "outcome"]
+        display_cols = ["id_link", "date_received", "status", "outcome"]
         if "annual_revenue" in df.columns:
             display_cols.append("annual_revenue")
 
@@ -360,8 +360,11 @@ def _render_submissions_table(subs: list, current_submission_id: Optional[str], 
             use_container_width=True,
             hide_index=True,
             column_config={
-                "open": st.column_config.LinkColumn("", display_text="Open", width="small"),
-                "id_short": st.column_config.TextColumn("ID", width="small"),
+                "id_link": st.column_config.LinkColumn(
+                    "ID",
+                    display_text=r"\?selected_submission_id=(.{8})",  # Regex to extract first 8 chars of ID
+                    width="small"
+                ),
                 "date_received": st.column_config.DateColumn("Received", format="MM/DD/YY", width="small"),
                 "status": st.column_config.TextColumn("Status", width="small"),
                 "outcome": st.column_config.TextColumn("Outcome", width="small"),
