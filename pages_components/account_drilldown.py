@@ -237,7 +237,7 @@ def _render_summary_header(
                                 if is_bound:
                                     if st.button(
                                         "Create Renewal",
-                                        key=f"create_renewal_{current_submission_id}",
+                                        key=f"acct_create_renewal_{current_submission_id}",
                                         use_container_width=True,
                                     ):
                                         try:
@@ -253,7 +253,7 @@ def _render_summary_header(
                                 else:
                                     if st.button(
                                         "Create Remarket",
-                                        key=f"create_remarket_{current_submission_id}",
+                                        key=f"acct_create_remarket_{current_submission_id}",
                                         use_container_width=True,
                                     ):
                                         try:
