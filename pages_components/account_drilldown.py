@@ -168,7 +168,8 @@ def _render_summary_header(
         with st.container(border=True):
             has_actions = bool(show_unlink and account.get("id"))
             if show_metrics:
-                cols = [5, 1, 1] + ([1] if has_actions else [])
+                # Give metrics more space: [3, 1.2, 1.2, 0.8] for better visibility
+                cols = [3, 1.2, 1.2] + ([0.8] if has_actions else [])
                 c = st.columns(cols)
                 c1, c2, c3 = c[0], c[1], c[2]
                 c4 = c[3] if has_actions else None
@@ -190,11 +191,24 @@ def _render_summary_header(
                 )
 
             if show_metrics and c2 and c3:
+                # Use compact custom metrics for better fit
+                premium_str = f"${written_premium:,.0f}" if written_premium else "—"
                 with c2:
-                    st.metric("Submissions", len(subs))
+                    st.markdown(
+                        f"""<div style="text-align:center">
+<div style="font-size:11px;color:#6b7280;margin-bottom:2px">Subs</div>
+<div style="font-size:22px;font-weight:600">{len(subs)}</div>
+</div>""",
+                        unsafe_allow_html=True,
+                    )
                 with c3:
-                    premium_str = f"${written_premium:,.0f}" if written_premium else "—"
-                    st.metric("Written", premium_str)
+                    st.markdown(
+                        f"""<div style="text-align:center">
+<div style="font-size:11px;color:#6b7280;margin-bottom:2px">Written</div>
+<div style="font-size:22px;font-weight:600">{premium_str}</div>
+</div>""",
+                        unsafe_allow_html=True,
+                    )
 
             # Unlink belongs with account context (not below tables)
             if has_actions and c4 is not None:

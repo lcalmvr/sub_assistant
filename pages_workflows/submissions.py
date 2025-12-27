@@ -896,8 +896,9 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
         # Give the right-side actions enough room so the button label doesn't wrap/truncate.
         title_col, actions_col = st.columns([8, 4])
         with title_col:
+            short_id = str(sub_id)[:6]
             st.markdown(
-                f"<h1 class='submission-title'>{_html.escape(current_display['applicant_name'])}</h1>",
+                f"<h1 class='submission-title'>{_html.escape(current_display['applicant_name'])} <span style='color:#9ca3af;font-size:0.5em;font-weight:400'>({short_id})</span></h1>",
                 unsafe_allow_html=True,
             )
         with actions_col:
@@ -985,12 +986,12 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
 
         # ------------------- TABS -------------------
         tab_details, tab_review, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(
-            ["📋 Details", "🧾 Review Queue", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"]
+            ["📋 Account", "⚠️ Review", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"]
         )
 
         # If we need to switch to a specific tab, inject JavaScript to click it
         if target_tab:
-            tab_index = {"Details": 0, "UW": 1, "Rating": 2, "Quote": 3, "Policy": 4}.get(target_tab, 0)
+            tab_index = {"Account": 0, "Review": 1, "UW": 2, "Rating": 3, "Quote": 4, "Policy": 5}.get(target_tab, 0)
             import streamlit.components.v1 as components
             components.html(f"""
                 <script>
