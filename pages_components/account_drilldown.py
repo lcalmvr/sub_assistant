@@ -354,50 +354,38 @@ def _render_remarket_action(subs: list, current_submission_id: Optional[str]):
     """
     Render 'Create Remarket' action for lost/declined submissions.
 
-    Shows a simple row below the submissions table to create a remarket
-    from any lost or declined submission.
+    If the CURRENT submission is lost/declined, show a button to create
+    a remarket from it. This is the primary use case.
     """
-    # Find lost/declined submissions (excluding current)
-    remarketable = [
-        s for s in subs
-        if s["id"] != current_submission_id
-        and (s.get("submission_outcome") == "lost" or s.get("submission_status") == "declined")
-    ]
+    # Find the current submission
+    current_sub = None
+    for s in subs:
+        if s["id"] == current_submission_id:
+            current_sub = s
+            break
 
-    if not remarketable:
+    if not current_sub:
         return
 
-    # Build options for dropdown
-    options = {}
-    for sub in remarketable:
-        eff_date = sub.get("effective_date") or sub.get("date_received")
-        date_str = eff_date.strftime("%m/%d/%Y") if eff_date else "N/A"
-        outcome = (sub.get("submission_outcome") or "").replace("_", " ").title()
-        status = (sub.get("submission_status") or "").replace("_", " ").title()
-        label = f"{date_str} · {status} · {outcome}"
-        options[sub["id"]] = label
+    # Only show if current submission is lost or declined
+    outcome = current_sub.get("submission_outcome")
+    status = current_sub.get("submission_status")
 
-    # Simple inline row
-    col1, col2, col3 = st.columns([1.5, 3, 1.5])
+    if outcome != "lost" and status != "declined":
+        return
+
+    # Show create remarket button
+    col1, col2 = st.columns([3, 1])
 
     with col1:
-        st.caption("Create remarket:")
+        st.caption("This submission was lost/declined. Create a remarket to try again.")
 
     with col2:
-        selected_id = st.selectbox(
-            "Select submission",
-            options=list(options.keys()),
-            format_func=lambda x: options.get(x, x),
-            key=f"remarket_select_{current_submission_id}",
-            label_visibility="collapsed",
-        )
-
-    with col3:
-        if st.button("🔁 Create", key=f"create_remarket_{current_submission_id}"):
+        if st.button("🔁 Create Remarket", key=f"create_remarket_{current_submission_id}", type="primary"):
             try:
                 from core.submission_inheritance import create_submission_from_prior
                 new_id = create_submission_from_prior(
-                    prior_id=selected_id,
+                    prior_id=current_submission_id,
                     renewal_type="remarket",
                     created_by="user",
                 )
