@@ -135,44 +135,17 @@ submissions
 
 ### UI: Create Remarket
 
-On the Account tab, for accounts with lost/declined submissions:
+On the Account tab, below the submissions table, a simple inline row appears when there are lost/declined submissions:
 
 ```
-┌─ 🔁 Create Remarket ─────────────────────────────┐
-│ Create a new submission to retry a previously    │
-│ lost account.                                    │
-│                                                  │
-│ Create remarket from: [12/15/2024 - Lost    ▼]  │
-│                                                  │
-│ [Create Remarket Submission]                     │
-└──────────────────────────────────────────────────┘
+Create remarket: [12/15/2024 · Quoted · Lost ▼] [🔁 Create]
 ```
 
 **What happens:**
 1. New submission created with `renewal_type = 'remarket'`
-2. Policy dates calculated (prior exp + 1 day = new eff)
+2. Policy dates calculated (new eff = prior exp, same day)
 3. Broker, NAICS, description inherited
 4. User redirected to new submission
-
-### UI: Link to Prior
-
-For submissions not yet linked to a prior:
-
-```
-┌─ 🔗 Link to Prior Submission ────────────────────┐
-│ Link this submission to a prior year to track    │
-│ renewal/remarket history and auto-fill data.     │
-│                                                  │
-│ Link as continuation of: [12/15/2024 - Lost ▼]  │
-│                                                  │
-│ Link type: ○ Renewal  ● Remarket                 │
-│                                                  │
-│ ☑ Auto-fill empty fields from prior              │
-│   (broker, industry, description)                │
-│                                                  │
-│ [Link to Prior]                                  │
-└──────────────────────────────────────────────────┘
-```
 
 ### Data Inheritance
 
@@ -189,7 +162,7 @@ When creating a remarket or linking to prior with auto-fill enabled:
 | `website` | ✅ Yes | Rarely changes |
 | `business_summary` | ✅ Yes | Business description stable |
 | `annual_revenue` | ❌ No | Changes YoY, show as reference |
-| `effective_date` | ❌ Calculated | Prior exp + 1 day |
+| `effective_date` | ❌ Calculated | Same as prior expiration |
 | `expiration_date` | ❌ Calculated | New eff + 365 days |
 
 ### Key Files
@@ -197,7 +170,7 @@ When creating a remarket or linking to prior with auto-fill enabled:
 | File | Purpose |
 |------|---------|
 | `core/submission_inheritance.py` | Inheritance logic, field copying |
-| `pages_components/remarket_linking.py` | UI for create/link actions |
+| `pages_components/account_drilldown.py` | Contains Create Remarket UI |
 
 ---
 
@@ -290,17 +263,6 @@ render_prior_rating_context(submission_id: str)
 
 render_prior_quote_context(submission_id: str)
     """Prior context for Quote tab."""
-```
-
-### pages_components/remarket_linking.py
-
-```python
-render_remarket_actions(
-    account_id: str,
-    current_submission_id: str,
-    submissions: list,
-)
-    """Render create remarket + link to prior UI."""
 ```
 
 ---

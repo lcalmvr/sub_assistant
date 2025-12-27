@@ -207,9 +207,10 @@ def create_submission_from_prior(
          prior_expiration, prior_effective) = row
 
         # Calculate new dates
+        # New effective = prior expiration (same day, no gap)
         if not effective_date:
             if prior_expiration:
-                effective_date = prior_expiration + timedelta(days=1)
+                effective_date = prior_expiration
             elif prior_effective:
                 effective_date = prior_effective + timedelta(days=365)
             else:

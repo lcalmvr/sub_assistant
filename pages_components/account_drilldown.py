@@ -76,6 +76,8 @@ def render_account_drilldown(
     # === SUBMISSIONS TABLE ===
     if subs:
         _render_submissions_table(subs, current_submission_id, compact)
+        # Show "Create Remarket" for lost/declined submissions
+        _render_remarket_action(subs, current_submission_id)
     else:
         st.caption("No submissions for this account")
 
@@ -346,3 +348,61 @@ def _get_status_emoji(outcome: str, status: str) -> str:
         return "🔄"
     else:
         return "📥"
+
+
+def _render_remarket_action(subs: list, current_submission_id: Optional[str]):
+    """
+    Render 'Create Remarket' action for lost/declined submissions.
+
+    Shows a simple row below the submissions table to create a remarket
+    from any lost or declined submission.
+    """
+    # Find lost/declined submissions (excluding current)
+    remarketable = [
+        s for s in subs
+        if s["id"] != current_submission_id
+        and (s.get("submission_outcome") == "lost" or s.get("submission_status") == "declined")
+    ]
+
+    if not remarketable:
+        return
+
+    # Build options for dropdown
+    options = {}
+    for sub in remarketable:
+        eff_date = sub.get("effective_date") or sub.get("date_received")
+        date_str = eff_date.strftime("%m/%d/%Y") if eff_date else "N/A"
+        outcome = (sub.get("submission_outcome") or "").replace("_", " ").title()
+        status = (sub.get("submission_status") or "").replace("_", " ").title()
+        label = f"{date_str} · {status} · {outcome}"
+        options[sub["id"]] = label
+
+    # Simple inline row
+    col1, col2, col3 = st.columns([1.5, 3, 1.5])
+
+    with col1:
+        st.caption("Create remarket:")
+
+    with col2:
+        selected_id = st.selectbox(
+            "Select submission",
+            options=list(options.keys()),
+            format_func=lambda x: options.get(x, x),
+            key=f"remarket_select_{current_submission_id}",
+            label_visibility="collapsed",
+        )
+
+    with col3:
+        if st.button("🔁 Create", key=f"create_remarket_{current_submission_id}"):
+            try:
+                from core.submission_inheritance import create_submission_from_prior
+                new_id = create_submission_from_prior(
+                    prior_id=selected_id,
+                    renewal_type="remarket",
+                    created_by="user",
+                )
+                st.success("Remarket created!")
+                st.query_params["selected_submission_id"] = new_id
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
