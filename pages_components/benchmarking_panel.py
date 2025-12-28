@@ -21,20 +21,30 @@ from core.benchmarking import (
 def _benchmarking_fragment(submission_id: str, get_conn) -> None:
     """Fragment for benchmarking panel to prevent full page reruns."""
 
+    # Simple toggle for revenue matching
+    similar_size = st.checkbox(
+        "Similar revenue size (±50%)",
+        value=True,
+        key=f"bench_rev_{submission_id}",
+    )
+
     # === FETCH COMPARABLES ===
-    # Always compare by operations (exposure) + similar revenue size
+    # Compare by operations (exposure) + optionally similar revenue size
     comparables = get_comparables(
         submission_id,
         get_conn,
         similarity_mode="operations",
-        revenue_tolerance=0.25,  # ±25% revenue match
+        revenue_tolerance=0.50 if similar_size else 0,  # ±50% or any size
         same_industry=False,
         outcome_filter=None,
         limit=15,
     )
 
     if not comparables:
-        st.info("No comparable submissions found.")
+        if similar_size:
+            st.info("No comparable submissions found. Try unchecking 'Similar revenue size' to see more.")
+        else:
+            st.info("No comparable submissions found.")
         return
 
     # === METRICS CARDS ===
