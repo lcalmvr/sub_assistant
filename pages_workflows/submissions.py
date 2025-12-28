@@ -902,9 +902,12 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                 unsafe_allow_html=True,
             )
         with actions_col:
-            # Nested cols to right-align the action button.
-            spacer, btn_col = st.columns([3, 5])
-            with btn_col:
+            # Nested cols to right-align the action buttons.
+            spacer, docs_col, switcher_col = st.columns([1, 2, 3])
+            with docs_col:
+                from pages_components.docs_popover import render_docs_popover
+                render_docs_popover(sub_id, get_conn)
+            with switcher_col:
                 _render_submission_switcher(current_sub_id=sub_id, status_edit_submission_id=sub_id)
 
     # Configure column display (shared configuration)
