@@ -112,7 +112,7 @@ def get_comparables(
                 s.submission_outcome,
                 s.outcome_reason,
                 s.effective_date,
-                s.ops_summary,
+                s.business_summary,
                 {vec_col} <=> %s AS distance
             FROM submissions s
             WHERE {where_sql}
@@ -154,7 +154,7 @@ def get_comparables(
             m.submission_outcome,
             m.outcome_reason,
             m.effective_date,
-            m.ops_summary,
+            m.business_summary,
             1 - m.distance as similarity_score,
             bt.layer_type,
             bt.attachment_point,
@@ -180,7 +180,7 @@ def get_comparables(
     for row in rows:
         (
             sub_id, name, date_recv, revenue, naics_code, naics_title,
-            tags, status, outcome, reason, eff_date, ops_summary, similarity,
+            tags, status, outcome, reason, eff_date, business_summary, similarity,
             layer_type, attachment, limit_amt, retention, premium, is_bound,
             claims_count, claims_paid
         ) = row
@@ -207,7 +207,7 @@ def get_comparables(
             "submission_outcome": outcome,
             "outcome_reason": reason,
             "effective_date": eff_date,
-            "ops_summary": ops_summary,
+            "ops_summary": business_summary,
             "similarity_score": round(similarity, 3) if similarity else 0,
             "layer_type": layer_type,
             "attachment_point": attachment or 0,
@@ -282,7 +282,7 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
                 s.naics_primary_code,
                 s.naics_primary_title,
                 s.industry_tags,
-                s.ops_summary,
+                s.business_summary,
                 t.position as layer_type,
                 (t.tower_json->0->>'attachment')::numeric as attachment_point,
                 (t.tower_json->0->>'limit')::numeric as limit_amount,
@@ -300,7 +300,7 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
         return {}
 
     (
-        name, revenue, naics_code, naics_title, tags, ops_summary,
+        name, revenue, naics_code, naics_title, tags, business_summary,
         layer_type, attachment, limit_amt, retention, premium
     ) = row
 
@@ -314,7 +314,7 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
         "naics_code": naics_code,
         "naics_title": naics_title,
         "industry_tags": tags or [],
-        "ops_summary": ops_summary,
+        "ops_summary": business_summary,
         "layer_type": layer_type,
         "attachment_point": float(attachment) if attachment else 0,
         "limit": float(limit_amt) if limit_amt else None,
