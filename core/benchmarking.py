@@ -96,7 +96,8 @@ def get_comparables(
 
     where_sql = " AND ".join(where_clauses)
 
-    # Main query
+    # Main query - insurance_towers stores tower_json as JSONB array
+    # Extract first layer's limit from tower_json, position from position column
     query = f"""
         WITH matched_subs AS (
             SELECT
@@ -121,15 +122,15 @@ def get_comparables(
         best_tower AS (
             SELECT DISTINCT ON (t.submission_id)
                 t.submission_id,
-                t.layer_type,
-                t.attachment_point,
-                t.limit_amount,
-                t.retention,
+                t.position as layer_type,
+                (t.tower_json->0->>'attachment')::numeric as attachment_point,
+                (t.tower_json->0->>'limit')::numeric as limit_amount,
+                t.primary_retention as retention,
                 COALESCE(t.sold_premium, t.quoted_premium) as premium,
-                t.is_bound
+                (t.sold_premium IS NOT NULL) as is_bound
             FROM insurance_towers t
             WHERE t.submission_id IN (SELECT id FROM matched_subs)
-            ORDER BY t.submission_id, t.is_bound DESC, t.created_at DESC
+            ORDER BY t.submission_id, t.sold_premium DESC NULLS LAST, t.created_at DESC
         ),
         loss_agg AS (
             SELECT
@@ -278,15 +279,15 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
                 s.naics_primary_code,
                 s.naics_primary_title,
                 s.industry_tags,
-                t.layer_type,
-                t.attachment_point,
-                t.limit_amount,
-                t.retention,
+                t.position as layer_type,
+                (t.tower_json->0->>'attachment')::numeric as attachment_point,
+                (t.tower_json->0->>'limit')::numeric as limit_amount,
+                t.primary_retention as retention,
                 COALESCE(t.sold_premium, t.quoted_premium) as premium
             FROM submissions s
             LEFT JOIN insurance_towers t ON t.submission_id = s.id
             WHERE s.id = %s
-            ORDER BY t.is_bound DESC, t.created_at DESC
+            ORDER BY t.sold_premium DESC NULLS LAST, t.created_at DESC
             LIMIT 1
         """, (submission_id,))
         row = cur.fetchone()
@@ -301,19 +302,19 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
 
     rate_per_mil = None
     if premium and limit_amt and limit_amt > 0:
-        rate_per_mil = premium / (limit_amt / 1_000_000)
+        rate_per_mil = float(premium) / (float(limit_amt) / 1_000_000)
 
     return {
         "applicant_name": name,
-        "annual_revenue": revenue,
+        "annual_revenue": float(revenue) if revenue else None,
         "naics_code": naics_code,
         "naics_title": naics_title,
         "industry_tags": tags or [],
         "layer_type": layer_type,
-        "attachment_point": attachment or 0,
-        "limit": limit_amt,
-        "retention": retention,
-        "premium": premium,
+        "attachment_point": float(attachment) if attachment else 0,
+        "limit": float(limit_amt) if limit_amt else None,
+        "retention": float(retention) if retention else None,
+        "premium": float(premium) if premium else None,
         "rate_per_mil": round(rate_per_mil, 0) if rate_per_mil else None,
     }
 
