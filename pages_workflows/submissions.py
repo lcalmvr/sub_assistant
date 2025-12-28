@@ -46,6 +46,7 @@ parse_controls_from_summary = pipeline.parse_controls_from_summary
 # Import modular components
 from pages_components.rating_panel_v2 import render_rating_panel
 from pages_components.similar_submissions_panel import render_similar_submissions_panel
+from pages_components.benchmarking_panel import render_benchmarking_panel
 from pages_components.details_panel import render_details_panel
 from pages_components.status_header import render_status_header
 from pages_components.review_queue_panel import render_review_queue_panel
@@ -988,13 +989,13 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
             target_tab = st.session_state.pop("_active_tab", None)
 
         # ------------------- TABS -------------------
-        tab_details, tab_review, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(
-            ["📋 Account", "⚠️ Review", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"]
+        tab_details, tab_review, tab_uw, tab_benchmark, tab_rating, tab_quote, tab_policy = st.tabs(
+            ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Benchmark", "📊 Rating", "💰 Quote", "📑 Policy"]
         )
 
         # If we need to switch to a specific tab, inject JavaScript to click it
         if target_tab:
-            tab_index = {"Account": 0, "Review": 1, "UW": 2, "Rating": 3, "Quote": 4, "Policy": 5}.get(target_tab, 0)
+            tab_index = {"Account": 0, "Review": 1, "UW": 2, "Benchmark": 3, "Rating": 4, "Quote": 5, "Policy": 6}.get(target_tab, 0)
             import streamlit.components.v1 as components
             components.html(f"""
                 <script>
@@ -1494,6 +1495,10 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                 compact=False
             )
 
+        # =================== BENCHMARK TAB ===================
+        with tab_benchmark:
+            render_benchmarking_panel(sub_id, get_conn)
+
         # =================== UW TAB ===================
         with tab_uw:
             # Pull submission data for UW tab (same query as Details tab)
@@ -1945,9 +1950,6 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                     st.info("No feedback history available")
 
             st.divider()
-
-            # ------------------- Similar Submissions --------------------
-            render_similar_submissions_panel(sub_id, ops_vec, ctrl_vec, get_conn, load_submissions, load_submission, format_nist_controls_list)
 
             # ------------------- Documents Section -----------------------
             st.subheader("📄 Documents")
