@@ -21,85 +21,37 @@ from core.benchmarking import (
 def _benchmarking_fragment(submission_id: str, get_conn) -> None:
     """Fragment for benchmarking panel to prevent full page reruns."""
 
-    # === FILTER CONTROLS ===
-    with st.container():
-        col1, col2, col3, col4 = st.columns(4)
-
-        with col1:
-            similarity_mode = st.selectbox(
-                "Similarity",
-                options=["operations", "controls", "combined"],
-                format_func=lambda x: {
-                    "operations": "Business Operations",
-                    "controls": "Controls (NIST)",
-                    "combined": "Operations & Controls",
-                }.get(x, x),
-                key=f"bench_sim_{submission_id}",
-            )
-
-        with col2:
-            revenue_match = st.checkbox(
-                "Revenue ±25%",
-                value=True,
-                key=f"bench_rev_{submission_id}",
-            )
-
-        with col3:
-            same_industry = st.checkbox(
-                "Same Industry",
-                value=False,
-                key=f"bench_ind_{submission_id}",
-            )
-
-        with col4:
-            outcome_filter = st.selectbox(
-                "Outcome",
-                options=[None, "bound", "lost", "declined"],
-                format_func=lambda x: {
-                    None: "All",
-                    "bound": "Bound Only",
-                    "lost": "Lost Only",
-                    "declined": "Declined Only",
-                }.get(x, x),
-                key=f"bench_out_{submission_id}",
-            )
-
     # === FETCH COMPARABLES ===
+    # Always compare by operations (exposure) + similar revenue size
     comparables = get_comparables(
         submission_id,
         get_conn,
-        similarity_mode=similarity_mode,
-        revenue_tolerance=0.25 if revenue_match else 0,
-        same_industry=same_industry,
-        outcome_filter=outcome_filter,
+        similarity_mode="operations",
+        revenue_tolerance=0.25,  # ±25% revenue match
+        same_industry=False,
+        outcome_filter=None,
         limit=15,
     )
 
     if not comparables:
-        st.info("No comparable submissions found with current filters. Try adjusting the filters.")
+        st.info("No comparable submissions found.")
         return
 
     # === METRICS CARDS ===
     metrics = get_benchmark_metrics(comparables)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.metric("Comparables", metrics["count"])
 
     with col2:
-        if metrics["bind_rate"] is not None:
-            st.metric("Bind Rate", f"{int(float(metrics['bind_rate']) * 100)}%")
-        else:
-            st.metric("Bind Rate", "—")
-
-    with col3:
         if metrics["avg_rate_per_mil"]:
             st.metric("Avg Rate/Mil", f"${float(metrics['avg_rate_per_mil']):,.0f}")
         else:
             st.metric("Avg Rate/Mil", "—")
 
-    with col4:
+    with col3:
         if metrics["avg_loss_ratio"] is not None:
             st.metric("Avg Loss Ratio", f"{int(float(metrics['avg_loss_ratio']) * 100)}%")
         else:
@@ -132,7 +84,7 @@ def _render_comparables_table(comparables: list[dict], submission_id: str) -> No
     # Format columns - convert Decimal to float for formatting
     df["id_short"] = df["id"].str[:8]
     df["revenue_fmt"] = df["annual_revenue"].apply(
-        lambda x: f"${float(x)/1e6:.1f}M" if x else "—"
+        lambda x: f"${float(x)/1e6:.0f}M" if x else "—"
     )
     df["industry"] = df["naics_title"].apply(
         lambda x: x[:20] + "..." if x and len(x) > 20 else (x or "—")
@@ -143,7 +95,7 @@ def _render_comparables_table(comparables: list[dict], submission_id: str) -> No
         axis=1,
     )
     df["limit_fmt"] = df["limit"].apply(
-        lambda x: f"${float(x)/1e6:.1f}M" if x else "—"
+        lambda x: f"${float(x)/1e6:.0f}M" if x else "—"
     )
     df["rate_fmt"] = df["rate_per_mil"].apply(
         lambda x: f"${float(x):,.0f}" if x else "—"
@@ -210,16 +162,22 @@ def _render_comparison_detail(
             st.markdown(f"**{current.get('applicant_name', '—')}**")
 
             if current.get("annual_revenue"):
-                st.markdown(f"Revenue: ${float(current['annual_revenue'])/1e6:.1f}M")
+                st.markdown(f"Revenue: ${float(current['annual_revenue'])/1e6:.0f}M")
             if current.get("naics_title"):
                 st.markdown(f"Industry: {current['naics_title']}")
+
+            # Operations description
+            if current.get("ops_summary"):
+                st.divider()
+                st.caption("**Operations**")
+                st.caption(current["ops_summary"][:300] + "..." if len(current.get("ops_summary", "")) > 300 else current["ops_summary"])
 
             st.divider()
 
             if current.get("limit"):
                 layer = "Excess" if current.get("layer_type") == "excess" else "Primary"
                 st.markdown(f"**{layer} Layer**")
-                st.markdown(f"Limit: ${float(current['limit'])/1e6:.1f}M")
+                st.markdown(f"Limit: ${float(current['limit'])/1e6:.0f}M")
                 if current.get("retention"):
                     st.markdown(f"Retention: ${float(current['retention']):,.0f}")
                 if current.get("premium"):
@@ -239,9 +197,16 @@ def _render_comparison_detail(
             st.markdown(f"**{outcome}**")
 
             if comparable.get("annual_revenue"):
-                st.markdown(f"Revenue: ${float(comparable['annual_revenue'])/1e6:.1f}M")
+                st.markdown(f"Revenue: ${float(comparable['annual_revenue'])/1e6:.0f}M")
             if comparable.get("naics_title"):
                 st.markdown(f"Industry: {comparable['naics_title']}")
+
+            # Operations description
+            if comparable.get("ops_summary"):
+                st.divider()
+                st.caption("**Operations**")
+                ops_text = comparable["ops_summary"]
+                st.caption(ops_text[:300] + "..." if len(ops_text) > 300 else ops_text)
 
             st.divider()
 
@@ -249,7 +214,7 @@ def _render_comparison_detail(
                 layer = "Excess" if comparable.get("layer_type") == "excess" else "Primary"
                 attach = f" xs ${float(comparable['attachment_point'])/1e6:.0f}M" if comparable.get("attachment_point") else ""
                 st.markdown(f"**{layer} Layer{attach}**")
-                st.markdown(f"Limit: ${float(comparable['limit'])/1e6:.1f}M")
+                st.markdown(f"Limit: ${float(comparable['limit'])/1e6:.0f}M")
                 if comparable.get("retention"):
                     st.markdown(f"Retention: ${float(comparable['retention']):,.0f}")
                 if comparable.get("premium"):
