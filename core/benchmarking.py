@@ -341,3 +341,74 @@ def format_outcome(status: str, outcome: str) -> str:
     else:
         emoji, text = OUTCOME_DISPLAY.get(outcome, ("", outcome or "—"))
     return f"{emoji} {text}"
+
+
+def get_controls_comparison(submission_id: str, comparable_id: str, get_conn) -> dict:
+    """
+    Compare controls between two submissions.
+
+    Returns dict with:
+        - similarity: float 0-1 (controls similarity score)
+        - comparison: str ("Stronger", "Weaker", "Similar", "Unknown")
+        - current_summary: str
+        - comparable_summary: str
+    """
+    conn = get_conn() if callable(get_conn) else get_conn
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT
+                id,
+                controls_embedding,
+                nist_controls_summary
+            FROM submissions
+            WHERE id IN (%s, %s)
+        """, (submission_id, comparable_id))
+        rows = cur.fetchall()
+
+    if len(rows) < 2:
+        return {
+            "similarity": None,
+            "comparison": "Unknown",
+            "current_summary": None,
+            "comparable_summary": None,
+        }
+
+    # Organize by ID
+    data = {str(r[0]): {"embedding": r[1], "summary": r[2]} for r in rows}
+    current = data.get(submission_id, {})
+    comparable = data.get(comparable_id, {})
+
+    # Calculate similarity if both have embeddings
+    similarity = None
+    comparison = "Unknown"
+
+    if current.get("embedding") is not None and comparable.get("embedding") is not None:
+        try:
+            import numpy as np
+            vec1 = np.array(current["embedding"])
+            vec2 = np.array(comparable["embedding"])
+            # Cosine similarity
+            dot = np.dot(vec1, vec2)
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
+            if norm1 > 0 and norm2 > 0:
+                similarity = float(dot / (norm1 * norm2))
+                # Convert to percentage-like scale
+                if similarity > 0.90:
+                    comparison = "Very similar controls"
+                elif similarity > 0.75:
+                    comparison = "Similar controls"
+                elif similarity > 0.50:
+                    comparison = "Somewhat different"
+                else:
+                    comparison = "Different controls"
+        except Exception:
+            pass
+
+    return {
+        "similarity": round(similarity, 2) if similarity else None,
+        "comparison": comparison,
+        "current_summary": current.get("summary"),
+        "comparable_summary": comparable.get("summary"),
+    }

@@ -13,6 +13,7 @@ from core.benchmarking import (
     get_comparables,
     get_benchmark_metrics,
     get_current_submission_profile,
+    get_controls_comparison,
     format_outcome,
 )
 
@@ -21,28 +22,36 @@ from core.benchmarking import (
 def _benchmarking_fragment(submission_id: str, get_conn) -> None:
     """Fragment for benchmarking panel to prevent full page reruns."""
 
-    # Simple toggle for revenue matching
-    similar_size = st.checkbox(
-        "Similar revenue size (±50%)",
-        value=True,
+    # Revenue size filter
+    revenue_options = {
+        "±25%": 0.25,
+        "±50%": 0.50,
+        "±100%": 1.0,
+        "Any size": 0,
+    }
+    revenue_choice = st.selectbox(
+        "Revenue range",
+        options=list(revenue_options.keys()),
+        index=1,  # Default to ±50%
         key=f"bench_rev_{submission_id}",
     )
+    revenue_tolerance = revenue_options[revenue_choice]
 
     # === FETCH COMPARABLES ===
-    # Compare by operations (exposure) + optionally similar revenue size
+    # Compare by operations (exposure) + revenue size
     comparables = get_comparables(
         submission_id,
         get_conn,
         similarity_mode="operations",
-        revenue_tolerance=0.50 if similar_size else 0,  # ±50% or any size
+        revenue_tolerance=revenue_tolerance,
         same_industry=False,
         outcome_filter=None,
         limit=15,
     )
 
     if not comparables:
-        if similar_size:
-            st.info("No comparable submissions found. Try unchecking 'Similar revenue size' to see more.")
+        if revenue_tolerance > 0:
+            st.info("No comparable submissions found. Try widening the revenue range.")
         else:
             st.info("No comparable submissions found.")
         return
@@ -245,6 +254,23 @@ def _render_comparison_detail(
             if comparable.get("submission_outcome") == "lost" and comparable.get("outcome_reason"):
                 st.divider()
                 st.caption(f"Lost reason: {comparable['outcome_reason']}")
+
+    # === CONTROLS COMPARISON ===
+    controls = get_controls_comparison(submission_id, comparable["id"], get_conn)
+    if controls.get("similarity") is not None:
+        st.markdown("---")
+        st.markdown(f"**Controls Comparison:** {controls['comparison']} ({int(controls['similarity']*100)}% match)")
+
+        if controls.get("current_summary") or controls.get("comparable_summary"):
+            col1, col2 = st.columns(2)
+            with col1:
+                if controls.get("current_summary"):
+                    with st.expander("Current controls summary"):
+                        st.caption(controls["current_summary"])
+            with col2:
+                if controls.get("comparable_summary"):
+                    with st.expander(f"{comparable['applicant_name']} controls"):
+                        st.caption(controls["comparable_summary"])
 
 
 def render_benchmarking_panel(submission_id: str, get_conn) -> None:
