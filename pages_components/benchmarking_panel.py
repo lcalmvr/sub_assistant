@@ -171,106 +171,92 @@ def _render_comparison_detail(
 
     current = get_current_submission_profile(submission_id, get_conn)
 
-    st.markdown(f"### Compare: Current vs {comparable['applicant_name']}")
+    st.markdown(f"#### Compare: Current vs {comparable['applicant_name']}")
 
     col1, col2 = st.columns(2)
+
+    # Helper to format currency without LaTeX issues
+    def fmt_currency(val, millions=False):
+        if val is None:
+            return "—"
+        v = float(val)
+        if millions:
+            return f"${v/1e6:.0f}M"
+        return f"${v:,.0f}"
 
     with col1:
         st.markdown("**Current Submission**")
         with st.container(border=True):
+            # Header section
             st.markdown(f"**{current.get('applicant_name', '—')}**")
+            rev = fmt_currency(current.get("annual_revenue"), millions=True)
+            ind = current.get("naics_title") or "—"
+            st.text(f"Revenue: {rev}  •  Industry: {ind[:30]}{'...' if len(ind) > 30 else ''}")
 
-            if current.get("annual_revenue"):
-                st.markdown(f"Revenue: ${float(current['annual_revenue'])/1e6:.0f}M")
-            if current.get("naics_title"):
-                st.markdown(f"Industry: {current['naics_title']}")
-
-            # Operations description
-            if current.get("ops_summary"):
-                st.divider()
-                st.caption("**Operations**")
-                st.caption(current["ops_summary"][:300] + "..." if len(current.get("ops_summary", "")) > 300 else current["ops_summary"])
-
-            st.divider()
-
+            # Pricing section
+            st.markdown("---")
             if current.get("limit"):
                 layer = "Excess" if current.get("layer_type") == "excess" else "Primary"
                 st.markdown(f"**{layer} Layer**")
-                st.markdown(f"Limit: ${float(current['limit'])/1e6:.0f}M")
-                if current.get("retention"):
-                    st.markdown(f"Retention: ${float(current['retention']):,.0f}")
-                if current.get("premium"):
-                    st.markdown(f"Premium: ${float(current['premium']):,.0f}")
-                if current.get("rate_per_mil"):
-                    st.markdown(f"Rate/Mil: ${float(current['rate_per_mil']):,.0f}")
+                st.text(f"Limit: {fmt_currency(current.get('limit'), True)}  •  Retention: {fmt_currency(current.get('retention'))}")
+                st.text(f"Premium: {fmt_currency(current.get('premium'))}  •  Rate/Mil: {fmt_currency(current.get('rate_per_mil'))}")
             else:
                 st.caption("No pricing entered yet")
 
+            # Operations at bottom
+            st.markdown("---")
+            st.caption("**Operations**")
+            ops = current.get("ops_summary") or "No description available"
+            st.caption(ops[:400] + "..." if len(ops) > 400 else ops)
+
     with col2:
-        st.markdown(f"**{comparable['applicant_name']}** ({int(float(comparable['similarity_score'])*100)}% similar)")
+        sim_pct = int(float(comparable['similarity_score'])*100)
+        st.markdown(f"**{comparable['applicant_name']}** ({sim_pct}% similar)")
         with st.container(border=True):
-            outcome = format_outcome(
-                comparable["submission_status"],
-                comparable["submission_outcome"]
-            )
+            # Header section with outcome
+            outcome = format_outcome(comparable["submission_status"], comparable["submission_outcome"])
             st.markdown(f"**{outcome}**")
+            rev = fmt_currency(comparable.get("annual_revenue"), millions=True)
+            ind = comparable.get("naics_title") or "—"
+            st.text(f"Revenue: {rev}  •  Industry: {ind[:30]}{'...' if len(ind) > 30 else ''}")
 
-            if comparable.get("annual_revenue"):
-                st.markdown(f"Revenue: ${float(comparable['annual_revenue'])/1e6:.0f}M")
-            if comparable.get("naics_title"):
-                st.markdown(f"Industry: {comparable['naics_title']}")
-
-            # Operations description
-            if comparable.get("ops_summary"):
-                st.divider()
-                st.caption("**Operations**")
-                ops_text = comparable["ops_summary"]
-                st.caption(ops_text[:300] + "..." if len(ops_text) > 300 else ops_text)
-
-            st.divider()
-
+            # Pricing section
+            st.markdown("---")
             if comparable.get("limit"):
                 layer = "Excess" if comparable.get("layer_type") == "excess" else "Primary"
-                attach = f" xs ${float(comparable['attachment_point'])/1e6:.0f}M" if comparable.get("attachment_point") else ""
+                attach = f" xs {fmt_currency(comparable.get('attachment_point'), True)}" if comparable.get("attachment_point") else ""
                 st.markdown(f"**{layer} Layer{attach}**")
-                st.markdown(f"Limit: ${float(comparable['limit'])/1e6:.0f}M")
-                if comparable.get("retention"):
-                    st.markdown(f"Retention: ${float(comparable['retention']):,.0f}")
-                if comparable.get("premium"):
-                    st.markdown(f"Premium: ${float(comparable['premium']):,.0f}")
-                if comparable.get("rate_per_mil"):
-                    st.markdown(f"Rate/Mil: ${float(comparable['rate_per_mil']):,.0f}")
+                st.text(f"Limit: {fmt_currency(comparable.get('limit'), True)}  •  Retention: {fmt_currency(comparable.get('retention'))}")
+                st.text(f"Premium: {fmt_currency(comparable.get('premium'))}  •  Rate/Mil: {fmt_currency(comparable.get('rate_per_mil'))}")
 
-            # Performance (if bound)
-            if comparable.get("is_bound"):
-                st.divider()
-                st.markdown("**Performance**")
-                st.markdown(f"Claims: {comparable['claims_count']}")
-                st.markdown(f"Paid: ${float(comparable['claims_paid']):,.0f}")
-                if comparable.get("loss_ratio") is not None:
-                    st.markdown(f"Loss Ratio: {int(float(comparable['loss_ratio'])*100)}%")
+                # Performance inline if bound
+                if comparable.get("is_bound"):
+                    st.text(f"Claims: {comparable['claims_count']}  •  Paid: {fmt_currency(comparable.get('claims_paid'))}  •  Loss: {int(float(comparable.get('loss_ratio') or 0)*100)}%")
+            else:
+                st.caption("No pricing data")
 
-            # Lost reason
+            # Lost reason if applicable
             if comparable.get("submission_outcome") == "lost" and comparable.get("outcome_reason"):
-                st.divider()
-                st.caption(f"Lost reason: {comparable['outcome_reason']}")
+                st.caption(f"Lost: {comparable['outcome_reason']}")
+
+            # Operations at bottom
+            st.markdown("---")
+            st.caption("**Operations**")
+            ops = comparable.get("ops_summary") or "No description available"
+            st.caption(ops[:400] + "..." if len(ops) > 400 else ops)
 
     # === CONTROLS COMPARISON ===
     controls = get_controls_comparison(submission_id, comparable["id"], get_conn)
     if controls.get("similarity") is not None:
-        st.markdown("---")
-        st.markdown(f"**Controls Comparison:** {controls['comparison']} ({int(controls['similarity']*100)}% match)")
-
-        if controls.get("current_summary") or controls.get("comparable_summary"):
-            col1, col2 = st.columns(2)
-            with col1:
-                if controls.get("current_summary"):
-                    with st.expander("Current controls summary"):
-                        st.caption(controls["current_summary"])
-            with col2:
-                if controls.get("comparable_summary"):
-                    with st.expander(f"{comparable['applicant_name']} controls"):
-                        st.caption(controls["comparable_summary"])
+        st.markdown(f"**Controls:** {controls['comparison']} ({int(controls['similarity']*100)}% match)")
+        with st.expander("View controls details"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.caption("**Current**")
+                st.caption(controls.get("current_summary") or "No controls data")
+            with c2:
+                st.caption(f"**{comparable['applicant_name']}**")
+                st.caption(controls.get("comparable_summary") or "No controls data")
 
 
 def render_benchmarking_panel(submission_id: str, get_conn) -> None:
