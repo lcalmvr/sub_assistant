@@ -52,18 +52,18 @@ def get_comparables(
     ops_vec, ctrl_vec, current_revenue, current_naics = row
 
     # Determine query vector based on mode
-    if similarity_mode == "operations" and ops_vec:
+    if similarity_mode == "operations" and ops_vec is not None:
         query_vec = ops_vec
         vec_col = "ops_embedding"
-    elif similarity_mode == "controls" and ctrl_vec:
+    elif similarity_mode == "controls" and ctrl_vec is not None:
         query_vec = ctrl_vec
         vec_col = "controls_embedding"
-    elif similarity_mode == "combined" and ops_vec and ctrl_vec:
+    elif similarity_mode == "combined" and ops_vec is not None and ctrl_vec is not None:
         query_vec = [a + b for a, b in zip(ops_vec, ctrl_vec)]
         vec_col = "(ops_embedding + controls_embedding)"
     else:
         # Fallback to operations
-        if ops_vec:
+        if ops_vec is not None:
             query_vec = ops_vec
             vec_col = "ops_embedding"
         else:
