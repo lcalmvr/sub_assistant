@@ -97,26 +97,26 @@ def render_benchmarking_panel(submission_id: str, get_conn) -> None:
 
     with col2:
         if metrics["bind_rate"] is not None:
-            st.metric("Bind Rate", f"{int(metrics['bind_rate'] * 100)}%")
+            st.metric("Bind Rate", f"{int(float(metrics['bind_rate']) * 100)}%")
         else:
             st.metric("Bind Rate", "—")
 
     with col3:
         if metrics["avg_rate_per_mil"]:
-            st.metric("Avg Rate/Mil", f"${metrics['avg_rate_per_mil']:,.0f}")
+            st.metric("Avg Rate/Mil", f"${float(metrics['avg_rate_per_mil']):,.0f}")
         else:
             st.metric("Avg Rate/Mil", "—")
 
     with col4:
         if metrics["avg_loss_ratio"] is not None:
-            st.metric("Avg Loss Ratio", f"{int(metrics['avg_loss_ratio'] * 100)}%")
+            st.metric("Avg Loss Ratio", f"{int(float(metrics['avg_loss_ratio']) * 100)}%")
         else:
             st.metric("Avg Loss Ratio", "—")
 
     # Rate range hint
     if metrics["rate_range"]:
         low, high = metrics["rate_range"]
-        st.caption(f"Rate range: ${low:,.0f} - ${high:,.0f} per mil (bound policies)")
+        st.caption(f"Rate range: ${float(low):,.0f} - ${float(high):,.0f} per mil (bound policies)")
 
     st.divider()
 
@@ -137,34 +137,34 @@ def _render_comparables_table(comparables: list[dict], submission_id: str) -> No
     # Build dataframe
     df = pd.DataFrame(comparables)
 
-    # Format columns
+    # Format columns - convert Decimal to float for formatting
     df["id_short"] = df["id"].str[:8]
     df["revenue_fmt"] = df["annual_revenue"].apply(
-        lambda x: f"${x/1e6:.1f}M" if x else "—"
+        lambda x: f"${float(x)/1e6:.1f}M" if x else "—"
     )
     df["industry"] = df["naics_title"].apply(
         lambda x: x[:20] + "..." if x and len(x) > 20 else (x or "—")
     )
     df["layer"] = df.apply(
-        lambda r: f"Exc ${r['attachment_point']/1e6:.0f}M" if r["layer_type"] == "excess" and r["attachment_point"]
+        lambda r: f"Exc ${float(r['attachment_point'])/1e6:.0f}M" if r["layer_type"] == "excess" and r["attachment_point"]
         else ("Pri" if r["layer_type"] == "primary" else "—"),
         axis=1,
     )
     df["limit_fmt"] = df["limit"].apply(
-        lambda x: f"${x/1e6:.1f}M" if x else "—"
+        lambda x: f"${float(x)/1e6:.1f}M" if x else "—"
     )
     df["rate_fmt"] = df["rate_per_mil"].apply(
-        lambda x: f"${x:,.0f}" if x else "—"
+        lambda x: f"${float(x):,.0f}" if x else "—"
     )
     df["outcome_fmt"] = df.apply(
         lambda r: format_outcome(r["submission_status"], r["submission_outcome"]),
         axis=1,
     )
     df["loss_fmt"] = df["loss_ratio"].apply(
-        lambda x: f"{int(x * 100)}%" if x is not None else "—"
+        lambda x: f"{int(float(x) * 100)}%" if x is not None else "—"
     )
     df["sim_fmt"] = df["similarity_score"].apply(
-        lambda x: f"{int(x * 100)}%" if x else "—"
+        lambda x: f"{int(float(x) * 100)}%" if x else "—"
     )
 
     # Display columns
@@ -218,7 +218,7 @@ def _render_comparison_detail(
             st.markdown(f"**{current.get('applicant_name', '—')}**")
 
             if current.get("annual_revenue"):
-                st.markdown(f"Revenue: ${current['annual_revenue']/1e6:.1f}M")
+                st.markdown(f"Revenue: ${float(current['annual_revenue'])/1e6:.1f}M")
             if current.get("naics_title"):
                 st.markdown(f"Industry: {current['naics_title']}")
 
@@ -227,18 +227,18 @@ def _render_comparison_detail(
             if current.get("limit"):
                 layer = "Excess" if current.get("layer_type") == "excess" else "Primary"
                 st.markdown(f"**{layer} Layer**")
-                st.markdown(f"Limit: ${current['limit']/1e6:.1f}M")
+                st.markdown(f"Limit: ${float(current['limit'])/1e6:.1f}M")
                 if current.get("retention"):
-                    st.markdown(f"Retention: ${current['retention']:,.0f}")
+                    st.markdown(f"Retention: ${float(current['retention']):,.0f}")
                 if current.get("premium"):
-                    st.markdown(f"Premium: ${current['premium']:,.0f}")
+                    st.markdown(f"Premium: ${float(current['premium']):,.0f}")
                 if current.get("rate_per_mil"):
-                    st.markdown(f"Rate/Mil: ${current['rate_per_mil']:,.0f}")
+                    st.markdown(f"Rate/Mil: ${float(current['rate_per_mil']):,.0f}")
             else:
                 st.caption("No pricing entered yet")
 
     with col2:
-        st.markdown(f"**{comparable['applicant_name']}** ({int(comparable['similarity_score']*100)}% similar)")
+        st.markdown(f"**{comparable['applicant_name']}** ({int(float(comparable['similarity_score'])*100)}% similar)")
         with st.container(border=True):
             outcome = format_outcome(
                 comparable["submission_status"],
@@ -247,7 +247,7 @@ def _render_comparison_detail(
             st.markdown(f"**{outcome}**")
 
             if comparable.get("annual_revenue"):
-                st.markdown(f"Revenue: ${comparable['annual_revenue']/1e6:.1f}M")
+                st.markdown(f"Revenue: ${float(comparable['annual_revenue'])/1e6:.1f}M")
             if comparable.get("naics_title"):
                 st.markdown(f"Industry: {comparable['naics_title']}")
 
@@ -255,26 +255,26 @@ def _render_comparison_detail(
 
             if comparable.get("limit"):
                 layer = "Excess" if comparable.get("layer_type") == "excess" else "Primary"
-                attach = f" xs ${comparable['attachment_point']/1e6:.0f}M" if comparable.get("attachment_point") else ""
+                attach = f" xs ${float(comparable['attachment_point'])/1e6:.0f}M" if comparable.get("attachment_point") else ""
                 st.markdown(f"**{layer} Layer{attach}**")
-                st.markdown(f"Limit: ${comparable['limit']/1e6:.1f}M")
+                st.markdown(f"Limit: ${float(comparable['limit'])/1e6:.1f}M")
                 if comparable.get("retention"):
-                    st.markdown(f"Retention: ${comparable['retention']:,.0f}")
+                    st.markdown(f"Retention: ${float(comparable['retention']):,.0f}")
                 if comparable.get("premium"):
-                    st.markdown(f"Premium: ${comparable['premium']:,.0f}")
+                    st.markdown(f"Premium: ${float(comparable['premium']):,.0f}")
                 if comparable.get("rate_per_mil"):
-                    st.markdown(f"Rate/Mil: ${comparable['rate_per_mil']:,.0f}")
+                    st.markdown(f"Rate/Mil: ${float(comparable['rate_per_mil']):,.0f}")
 
             # Performance (if bound)
-            if comparable["is_bound"]:
+            if comparable.get("is_bound"):
                 st.divider()
                 st.markdown("**Performance**")
                 st.markdown(f"Claims: {comparable['claims_count']}")
-                st.markdown(f"Paid: ${comparable['claims_paid']:,.0f}")
-                if comparable["loss_ratio"] is not None:
-                    st.markdown(f"Loss Ratio: {int(comparable['loss_ratio']*100)}%")
+                st.markdown(f"Paid: ${float(comparable['claims_paid']):,.0f}")
+                if comparable.get("loss_ratio") is not None:
+                    st.markdown(f"Loss Ratio: {int(float(comparable['loss_ratio'])*100)}%")
 
             # Lost reason
-            if comparable["submission_outcome"] == "lost" and comparable.get("outcome_reason"):
+            if comparable.get("submission_outcome") == "lost" and comparable.get("outcome_reason"):
                 st.divider()
                 st.caption(f"Lost reason: {comparable['outcome_reason']}")
