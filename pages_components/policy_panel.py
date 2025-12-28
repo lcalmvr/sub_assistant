@@ -52,6 +52,8 @@ def render_policy_panel(
         return
 
     # ------------------- POLICY SUMMARY --------------------
+    from utils.policy_summary import render_summary_card, fmt_currency
+
     if not compact:
         st.markdown("##### Policy Summary")
 
@@ -74,27 +76,33 @@ def render_policy_panel(
 
     # Policy details from bound option
     tower_json = bound_option.get("tower_json") or []
+    limit = 0
     if tower_json and len(tower_json) > 0:
         primary_layer = tower_json[0]
         limit = primary_layer.get("limit", 0)
-        limit_str = f"${limit:,.0f}" if limit else "—"
-    else:
-        limit_str = "—"
 
     retention = bound_option.get("primary_retention", 0)
-    retention_str = f"${retention:,.0f}" if retention else "—"
     premium = effective_state.get("effective_premium", 0)
-    premium_str = f"${premium:,.0f}"
     policy_form = bound_option.get("policy_form") or "—"
 
     # Display summary
     if compact:
-        # Single line compact format
+        # Single line compact format - escape $ for markdown
+        premium_str = fmt_currency(premium)
         st.markdown(f"**{applicant_name}** · {status_icon} {status_text} · {eff_str} → {exp_str} · {premium_str}")
     else:
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown(f"**Status:** {status_icon} {status_text}  \n**Period:** {eff_str} → {exp_str}  \n**Terms:** {limit_str} / {retention_str} SIR  \n**Premium:** {premium_str}  \n**Form:** {policy_form.title()}")
+            render_summary_card(
+                status_icon=status_icon,
+                status_text=status_text,
+                eff_date_str=eff_str,
+                exp_date_str=exp_str,
+                limit=limit,
+                retention=retention,
+                premium=premium,
+                policy_form=policy_form,
+            )
         with col2:
             if st.button("Unbind Policy", key=f"unbind_{submission_id}"):
                 st.session_state[f"confirm_unbind_{submission_id}"] = True

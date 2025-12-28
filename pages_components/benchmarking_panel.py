@@ -79,7 +79,7 @@ def _benchmarking_fragment(submission_id: str, get_conn) -> None:
     # Rate range hint
     if metrics["rate_range"]:
         low, high = metrics["rate_range"]
-        st.caption(f"Rate range: ${float(low):,.0f} - ${float(high):,.0f} per mil (bound policies)")
+        st.caption(f"Rate range: \\${float(low):,.0f} – \\${float(high):,.0f} per mil (bound policies)")
 
     st.divider()
 
@@ -138,7 +138,7 @@ def _render_comparables_table(comparables: list[dict], submission_id: str) -> No
 
     display_df.columns = [
         "ID", "Company", "Revenue", "Industry",
-        "Layer", "Limit", "Rate/Mil", "Outcome", "Loss%", "Sim"
+        "Layer", "Limit", "RPM", "Outcome", "Loss%", "Sim"
     ]
 
     # Selection via dataframe
@@ -168,6 +168,7 @@ def _render_comparison_detail(
     get_conn,
 ) -> None:
     """Render side-by-side comparison of current vs selected comparable."""
+    from utils.policy_summary import render_summary_card
 
     current = get_current_submission_profile(submission_id, get_conn)
 
@@ -175,75 +176,45 @@ def _render_comparison_detail(
 
     col1, col2 = st.columns(2)
 
-    # Helper to format currency without LaTeX issues
-    def fmt_currency(val, millions=False):
-        if val is None:
-            return "—"
-        v = float(val)
-        if millions:
-            return f"${v/1e6:.0f}M"
-        return f"${v:,.0f}"
-
     with col1:
         st.markdown("**Current Submission**")
         with st.container(border=True):
-            # Header section
-            st.markdown(f"**{current.get('applicant_name', '—')}**")
-            rev = fmt_currency(current.get("annual_revenue"), millions=True)
-            ind = current.get("naics_title") or "—"
-            st.text(f"Revenue: {rev}  •  Industry: {ind[:30]}{'...' if len(ind) > 30 else ''}")
-
-            # Pricing section
-            st.markdown("---")
-            if current.get("limit"):
-                layer = "Excess" if current.get("layer_type") == "excess" else "Primary"
-                st.markdown(f"**{layer} Layer**")
-                st.text(f"Limit: {fmt_currency(current.get('limit'), True)}  •  Retention: {fmt_currency(current.get('retention'))}")
-                st.text(f"Premium: {fmt_currency(current.get('premium'))}  •  Rate/Mil: {fmt_currency(current.get('rate_per_mil'))}")
-            else:
-                st.caption("No pricing entered yet")
-
-            # Operations at bottom
-            st.markdown("---")
-            st.caption("**Operations**")
-            ops = current.get("ops_summary") or "No description available"
-            st.caption(ops[:400] + "..." if len(ops) > 400 else ops)
+            render_summary_card(
+                status_icon="📋",
+                status_text=current.get('applicant_name', '—'),
+                limit=current.get("limit"),
+                retention=current.get("retention"),
+                premium=current.get("premium"),
+                rate_per_mil=current.get("rate_per_mil"),
+                layer_type=current.get("layer_type"),
+                description=current.get("ops_summary"),
+            )
 
     with col2:
         sim_pct = int(float(comparable['similarity_score'])*100)
         st.markdown(f"**{comparable['applicant_name']}** ({sim_pct}% similar)")
         with st.container(border=True):
-            # Header section with outcome
             outcome = format_outcome(comparable["submission_status"], comparable["submission_outcome"])
-            st.markdown(f"**{outcome}**")
-            rev = fmt_currency(comparable.get("annual_revenue"), millions=True)
-            ind = comparable.get("naics_title") or "—"
-            st.text(f"Revenue: {rev}  •  Industry: {ind[:30]}{'...' if len(ind) > 30 else ''}")
+            # Map outcome to icon
+            outcome_icon = "✅" if comparable.get("submission_outcome") == "bound" else "⏳"
+            if comparable.get("submission_status") == "declined":
+                outcome_icon = "🚫"
+            elif comparable.get("submission_outcome") == "lost":
+                outcome_icon = "❌"
 
-            # Pricing section
-            st.markdown("---")
-            if comparable.get("limit"):
-                layer = "Excess" if comparable.get("layer_type") == "excess" else "Primary"
-                attach = f" xs {fmt_currency(comparable.get('attachment_point'), True)}" if comparable.get("attachment_point") else ""
-                st.markdown(f"**{layer} Layer{attach}**")
-                st.text(f"Limit: {fmt_currency(comparable.get('limit'), True)}  •  Retention: {fmt_currency(comparable.get('retention'))}")
-                st.text(f"Premium: {fmt_currency(comparable.get('premium'))}  •  Rate/Mil: {fmt_currency(comparable.get('rate_per_mil'))}")
-
-                # Performance inline if bound
-                if comparable.get("is_bound"):
-                    st.text(f"Claims: {comparable['claims_count']}  •  Paid: {fmt_currency(comparable.get('claims_paid'))}  •  Loss: {int(float(comparable.get('loss_ratio') or 0)*100)}%")
-            else:
-                st.caption("No pricing data")
-
-            # Lost reason if applicable
-            if comparable.get("submission_outcome") == "lost" and comparable.get("outcome_reason"):
-                st.caption(f"Lost: {comparable['outcome_reason']}")
-
-            # Operations at bottom
-            st.markdown("---")
-            st.caption("**Operations**")
-            ops = comparable.get("ops_summary") or "No description available"
-            st.caption(ops[:400] + "..." if len(ops) > 400 else ops)
+            render_summary_card(
+                status_icon=outcome_icon,
+                status_text=outcome.replace(outcome_icon, "").strip(),
+                limit=comparable.get("limit"),
+                retention=comparable.get("retention"),
+                premium=comparable.get("premium"),
+                rate_per_mil=comparable.get("rate_per_mil"),
+                layer_type=comparable.get("layer_type"),
+                claims_count=comparable.get("claims_count") if comparable.get("is_bound") else None,
+                claims_paid=comparable.get("claims_paid") if comparable.get("is_bound") else None,
+                loss_ratio=comparable.get("loss_ratio") if comparable.get("is_bound") else None,
+                description=comparable.get("ops_summary"),
+            )
 
     # === CONTROLS COMPARISON ===
     controls = get_controls_comparison(submission_id, comparable["id"], get_conn)
