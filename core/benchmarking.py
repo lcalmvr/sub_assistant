@@ -98,7 +98,7 @@ def get_comparables(
 
     # Main query
     query = f"""
-        WITH similar AS (
+        WITH matched_subs AS (
             SELECT
                 s.id,
                 s.applicant_name,
@@ -128,7 +128,7 @@ def get_comparables(
                 COALESCE(t.sold_premium, t.quoted_premium) as premium,
                 t.is_bound
             FROM insurance_towers t
-            WHERE t.submission_id IN (SELECT id FROM similar)
+            WHERE t.submission_id IN (SELECT id FROM matched_subs)
             ORDER BY t.submission_id, t.is_bound DESC, t.created_at DESC
         ),
         loss_agg AS (
@@ -137,22 +137,22 @@ def get_comparables(
                 COUNT(*) as claims_count,
                 COALESCE(SUM(paid_amount), 0) as claims_paid
             FROM loss_history
-            WHERE submission_id IN (SELECT id FROM similar)
+            WHERE submission_id IN (SELECT id FROM matched_subs)
             GROUP BY submission_id
         )
         SELECT
-            s.id,
-            s.applicant_name,
-            s.date_received,
-            s.annual_revenue,
-            s.naics_primary_code,
-            s.naics_primary_title,
-            s.industry_tags,
-            s.submission_status,
-            s.submission_outcome,
-            s.outcome_reason,
-            s.effective_date,
-            1 - s.distance as similarity_score,
+            m.id,
+            m.applicant_name,
+            m.date_received,
+            m.annual_revenue,
+            m.naics_primary_code,
+            m.naics_primary_title,
+            m.industry_tags,
+            m.submission_status,
+            m.submission_outcome,
+            m.outcome_reason,
+            m.effective_date,
+            1 - m.distance as similarity_score,
             bt.layer_type,
             bt.attachment_point,
             bt.limit_amount,
@@ -161,9 +161,9 @@ def get_comparables(
             bt.is_bound,
             la.claims_count,
             la.claims_paid
-        FROM similar s
-        LEFT JOIN best_tower bt ON bt.submission_id = s.id
-        LEFT JOIN loss_agg la ON la.submission_id = s.id
+        FROM matched_subs m
+        LEFT JOIN best_tower bt ON bt.submission_id = m.id
+        LEFT JOIN loss_agg la ON la.submission_id = m.id
         ORDER BY similarity_score DESC
     """
 
