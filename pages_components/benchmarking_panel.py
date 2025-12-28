@@ -17,17 +17,9 @@ from core.benchmarking import (
 )
 
 
-def render_benchmarking_panel(submission_id: str, get_conn) -> None:
-    """
-    Render the benchmarking panel with filters, metrics, and comparables table.
-
-    Args:
-        submission_id: Current submission UUID
-        get_conn: Database connection function
-    """
-    if not submission_id:
-        st.info("Select a submission to see benchmarking data")
-        return
+@st.fragment
+def _benchmarking_fragment(submission_id: str, get_conn) -> None:
+    """Fragment for benchmarking panel to prevent full page reruns."""
 
     # === FILTER CONTROLS ===
     with st.container():
@@ -278,3 +270,18 @@ def _render_comparison_detail(
             if comparable.get("submission_outcome") == "lost" and comparable.get("outcome_reason"):
                 st.divider()
                 st.caption(f"Lost reason: {comparable['outcome_reason']}")
+
+
+def render_benchmarking_panel(submission_id: str, get_conn) -> None:
+    """
+    Render the benchmarking panel with filters, metrics, and comparables table.
+
+    Args:
+        submission_id: Current submission UUID
+        get_conn: Database connection function
+    """
+    if not submission_id:
+        st.info("Select a submission to see benchmarking data")
+        return
+
+    _benchmarking_fragment(submission_id, get_conn)
