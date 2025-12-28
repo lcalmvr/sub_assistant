@@ -75,8 +75,9 @@ def get_comparables(
 
     # Revenue filter
     if current_revenue and revenue_tolerance > 0:
-        min_rev = current_revenue * (1 - revenue_tolerance)
-        max_rev = current_revenue * (1 + revenue_tolerance)
+        rev = float(current_revenue)
+        min_rev = rev * (1 - revenue_tolerance)
+        max_rev = rev * (1 + revenue_tolerance)
         where_clauses.append("s.annual_revenue BETWEEN %s AND %s")
         params.extend([min_rev, max_rev])
 
