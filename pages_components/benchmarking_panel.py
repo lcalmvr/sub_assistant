@@ -61,6 +61,24 @@ def _parse_nist_flags(raw) -> dict:
     return {}
 
 
+def _normalize_flag_value(raw) -> str:
+    if not raw:
+        return "—"
+    if isinstance(raw, str):
+        for icon in ("✅", "⚠️", "❌"):
+            if icon in raw:
+                return icon
+        lowered = raw.lower()
+        if "strong" in lowered or "comprehensive" in lowered:
+            return "✅"
+        if "partial" in lowered or "inconsistent" in lowered:
+            return "⚠️"
+        if "lacking" in lowered or "no information" in lowered or "missing" in lowered:
+            return "❌"
+        return raw
+    return str(raw)
+
+
 def _join_limited(items: list[str], max_items: int = 2) -> str:
     if len(items) <= max_items:
         return ", ".join(items)
@@ -81,8 +99,8 @@ def _controls_delta(current_flags: dict, comparable_flags: dict) -> tuple[int, i
     stronger = []
     weaker = []
     for key, label in labels.items():
-        cur = rank.get(current_flags.get(key))
-        comp = rank.get(comparable_flags.get(key))
+        cur = rank.get(_normalize_flag_value(current_flags.get(key)))
+        comp = rank.get(_normalize_flag_value(comparable_flags.get(key)))
         if cur is None or comp is None:
             continue
         if comp > cur:
@@ -163,6 +181,16 @@ def _format_ilf(value: float | None) -> str:
         return "—"
     label = f"{value:.2f}".rstrip("0").rstrip(".")
     return f"{label}x"
+
+
+def _select_tower_layer(tower_json: list) -> dict:
+    if not tower_json:
+        return {}
+    for layer in tower_json:
+        carrier = (layer.get("carrier") or "").upper()
+        if carrier == "CMAI":
+            return layer
+    return min(tower_json, key=lambda layer: float(layer.get("attachment") or 0))
 
 
 def _build_tower_summary(tower_json: list, tower_premium: float | None = None) -> list[dict]:
@@ -718,6 +746,30 @@ def _render_comparison_detail(
     from utils.policy_summary import render_summary_card
 
     current = current_profile or get_current_submission_profile(submission_id, get_conn)
+    current_tower = get_best_tower(submission_id, get_conn)
+    comparable_tower = get_best_tower(comparable["id"], get_conn)
+
+    tower_layer = _select_tower_layer(current_tower.get("tower_json", []))
+    tower_limit = tower_layer.get("limit") if tower_layer else None
+    tower_premium = tower_layer.get("premium") if tower_layer else None
+    if tower_premium is None:
+        tower_premium = current_tower.get("tower_premium")
+    tower_retention = current_tower.get("primary_retention") or tower_layer.get("retention") if tower_layer else None
+    if tower_limit and tower_premium:
+        tower_rpm = float(tower_premium) / (float(tower_limit) / 1_000_000)
+    else:
+        tower_rpm = None
+
+    comp_layer = _select_tower_layer(comparable_tower.get("tower_json", []))
+    comp_limit = comp_layer.get("limit") if comp_layer else None
+    comp_premium = comp_layer.get("premium") if comp_layer else None
+    if comp_premium is None:
+        comp_premium = comparable_tower.get("tower_premium")
+    comp_retention = comparable_tower.get("primary_retention") or comp_layer.get("retention") if comp_layer else None
+    if comp_limit and comp_premium:
+        comp_rpm = float(comp_premium) / (float(comp_limit) / 1_000_000)
+    else:
+        comp_rpm = None
 
     st.markdown(f"#### Compare: Current vs {comparable['applicant_name']}")
 
@@ -767,10 +819,10 @@ def _render_comparison_detail(
                 status_text=cur_text,
                 date_label=current_date_label,
                 industry_tags=current.get("industry_tags"),
-                limit=current.get("limit"),
-                retention=current.get("retention"),
-                premium=current.get("premium"),
-                rate_per_mil=current.get("rate_per_mil"),
+                limit=tower_limit or current.get("limit"),
+                retention=tower_retention or current.get("retention"),
+                premium=tower_premium or current.get("premium"),
+                rate_per_mil=tower_rpm or current.get("rate_per_mil"),
                 loss_signal=cur_loss_signal,
                 claims_count=current.get("claims_count") if current_is_bound else None,
                 claims_paid=current.get("claims_paid") if current_is_bound else None,
@@ -794,10 +846,10 @@ def _render_comparison_detail(
                 status_text=outcome_text,
                 date_label=comp_date_label,
                 industry_tags=comparable.get("industry_tags"),
-                limit=comparable.get("limit"),
-                retention=comparable.get("retention"),
-                premium=comparable.get("premium"),
-                rate_per_mil=comparable.get("rate_per_mil"),
+                limit=comp_limit or comparable.get("limit"),
+                retention=comp_retention or comparable.get("retention"),
+                premium=comp_premium or comparable.get("premium"),
+                rate_per_mil=comp_rpm or comparable.get("rate_per_mil"),
                 loss_signal=comp_loss_signal,
                 claims_count=comparable.get("claims_count") if comparable.get("is_bound") else None,
                 claims_paid=comparable.get("claims_paid") if comparable.get("is_bound") else None,
@@ -812,8 +864,6 @@ def _render_comparison_detail(
         if comparable.get("ops_summary"):
             st.caption(comparable["ops_summary"])
 
-    current_tower = get_best_tower(submission_id, get_conn)
-    comparable_tower = get_best_tower(comparable["id"], get_conn)
     current_tower_rows = _build_tower_summary(
         current_tower.get("tower_json", []),
         current_tower.get("tower_premium"),
@@ -867,6 +917,26 @@ def _render_comparison_detail(
         st.markdown(f"**Controls:** {' · '.join(controls_parts)}")
     if controls.get("current_summary") or controls.get("comparable_summary"):
         with st.expander("Controls details"):
+            flag_rows = []
+            for key, label in {
+                "identify": "Identify",
+                "protect": "Protect",
+                "detect": "Detect",
+                "respond": "Respond",
+                "recover": "Recover",
+            }.items():
+                flag_rows.append({
+                    "Control": label,
+                    "Current": _normalize_flag_value(current_flags.get(key)),
+                    comparable['applicant_name']: _normalize_flag_value(comparable_flags.get(key)),
+                })
+            st.dataframe(
+                pd.DataFrame(flag_rows),
+                use_container_width=True,
+                hide_index=True,
+                height=min(len(flag_rows) * 35 + 38, 240),
+            )
+            st.caption("Narratives are generated separately and may not match the flags above.")
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**Current**")

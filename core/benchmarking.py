@@ -580,7 +580,7 @@ def get_best_tower(submission_id: str, get_conn) -> dict:
 
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT tower_json, sold_premium, quoted_premium
+            SELECT tower_json, sold_premium, quoted_premium, primary_retention
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY is_bound DESC, bound_at DESC NULLS LAST, created_at DESC
@@ -591,7 +591,7 @@ def get_best_tower(submission_id: str, get_conn) -> dict:
     if not row:
         return {}
 
-    tower_json, sold_premium, quoted_premium = row
+    tower_json, sold_premium, quoted_premium, primary_retention = row
     if isinstance(tower_json, str):
         try:
             tower_json = json.loads(tower_json)
@@ -601,4 +601,5 @@ def get_best_tower(submission_id: str, get_conn) -> dict:
     return {
         "tower_json": tower_json or [],
         "tower_premium": sold_premium or quoted_premium,
+        "primary_retention": float(primary_retention) if primary_retention else None,
     }
