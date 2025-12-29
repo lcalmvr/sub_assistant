@@ -297,3 +297,11 @@ OUTCOME_DISPLAY = {
 - Excess layers should show attachment point in display
 - Loss ratio only meaningful for bound policies with claims history
 - Consider caching comparables if query is slow (new `submission_benchmarks` table)
+
+### Loss Signal Thresholds (Comps Tab)
+
+- **Clean:** 0 claims and $0 paid
+- **Activity:** claims > 0 but $0 paid
+- **Low:** paid < $100K
+- **Moderate:** paid $100K–$1M
+- **Severe:** paid > $1M

@@ -6,7 +6,8 @@ for underwriting decision support.
 """
 
 from typing import Optional
-from datetime import date
+import json
+from datetime import date, timedelta
 from pgvector import Vector
 
 
@@ -17,7 +18,11 @@ def get_comparables(
     similarity_mode: str = "operations",  # operations, controls, combined
     revenue_tolerance: float = 0.25,  # ±25%
     same_industry: bool = False,
-    outcome_filter: Optional[str] = None,  # None=all, bound, lost, declined
+    stage_filter: Optional[str] = None,  # None=all, quoted, quoted_plus, bound, lost, received, declined
+    date_window_months: Optional[int] = 24,
+    layer_filter: str = "primary",  # primary, excess
+    attachment_min: float | None = None,
+    attachment_max: float | None = None,
     limit: int = 15,
 ) -> list[dict]:
     """
@@ -29,7 +34,7 @@ def get_comparables(
         similarity_mode: Vector similarity basis
         revenue_tolerance: Revenue match tolerance (0.25 = ±25%)
         same_industry: Require same NAICS code
-        outcome_filter: Filter by outcome
+        stage_filter: Filter by collapsed stage
         limit: Max results
 
     Returns:
@@ -67,7 +72,8 @@ def get_comparables(
             query_vec = ops_vec
             vec_col = "ops_embedding"
         else:
-            return []
+            query_vec = None
+            vec_col = "ops_embedding"
 
     # Build WHERE clauses
     where_clauses = ["s.id <> %s"]
@@ -86,15 +92,76 @@ def get_comparables(
         where_clauses.append("s.naics_primary_code = %s")
         params.append(current_naics)
 
-    # Outcome filter
-    if outcome_filter == "bound":
+    # Stage filter (collapsed status/outcome)
+    if stage_filter == "bound":
         where_clauses.append("s.submission_outcome = 'bound'")
-    elif outcome_filter == "lost":
+    elif stage_filter == "lost":
         where_clauses.append("s.submission_outcome = 'lost'")
-    elif outcome_filter == "declined":
+    elif stage_filter == "declined":
         where_clauses.append("s.submission_status = 'declined'")
+    elif stage_filter == "quoted":
+        where_clauses.append("s.submission_status = 'quoted'")
+    elif stage_filter == "quoted_plus":
+        where_clauses.append(
+            "(s.submission_status = 'quoted' OR s.submission_outcome IN ('bound', 'lost'))"
+        )
+    elif stage_filter == "received":
+        where_clauses.append(
+            "s.submission_status IN ('received', 'pending', 'waiting_for_response', 'open', "
+            "'renewal_expected', 'renewal_not_received')"
+        )
+
+    # Date window filter (effective date if present, else received)
+    if date_window_months:
+        cutoff = date.today() - timedelta(days=30 * date_window_months)
+        where_clauses.append("COALESCE(s.effective_date, s.date_received) >= %s")
+        params.append(cutoff)
 
     where_sql = " AND ".join(where_clauses)
+
+    controls_similarity_select = "NULL::float as controls_similarity"
+    if ctrl_vec is not None:
+        controls_similarity_select = (
+            "CASE WHEN m.controls_embedding IS NULL THEN NULL "
+            "ELSE 1 - (m.controls_embedding <=> %s) END as controls_similarity"
+        )
+
+    distance_select = "NULL::float as distance"
+    embedding_filter = ""
+    order_sql = ""
+    order_params: list = []
+    if query_vec is not None:
+        distance_select = f"{vec_col} <=> %s AS distance"
+        embedding_filter = f"AND {vec_col} IS NOT NULL"
+        order_sql = "ORDER BY distance LIMIT %s"
+        order_params = [limit]
+    else:
+        distance_select = "NULL::float as distance"
+        embedding_filter = ""
+        order_sql = """
+            ORDER BY
+                CASE WHEN s.annual_revenue IS NULL THEN 1 ELSE 0 END,
+                ABS(s.annual_revenue - %s) ASC NULLS LAST,
+                COALESCE(s.effective_date, s.date_received) DESC
+            LIMIT %s
+        """
+        order_params = [current_revenue, limit]
+
+    layer_params: list = []
+    layer_filters = []
+    if layer_filter == "primary":
+        layer_filters.append("COALESCE((layer->>'attachment')::numeric, 0) = 0")
+        layer_order = "ASC"
+    else:
+        layer_filters.append("COALESCE((layer->>'attachment')::numeric, 0) > 0")
+        if attachment_min is not None:
+            layer_filters.append("(layer->>'attachment')::numeric >= %s")
+            layer_params.append(attachment_min)
+        if attachment_max is not None:
+            layer_filters.append("(layer->>'attachment')::numeric <= %s")
+            layer_params.append(attachment_max)
+        layer_order = "DESC"
+    layer_where = " AND ".join(layer_filters) if layer_filters else "TRUE"
 
     # Main query - insurance_towers stores tower_json as JSONB array
     # Extract first layer's limit from tower_json, position from position column
@@ -112,26 +179,64 @@ def get_comparables(
                 s.submission_outcome,
                 s.outcome_reason,
                 s.effective_date,
+                COALESCE(s.effective_date, s.date_received) as benchmark_date,
+                CASE WHEN s.effective_date IS NOT NULL THEN 'eff' ELSE 'rec' END as benchmark_date_type,
                 s.business_summary,
-                {vec_col} <=> %s AS distance
+                s.nist_controls,
+                s.controls_embedding,
+                {distance_select}
             FROM submissions s
             WHERE {where_sql}
-              AND {vec_col} IS NOT NULL
-            ORDER BY distance
-            LIMIT %s
+            {embedding_filter}
+            {order_sql}
         ),
         best_tower AS (
             SELECT DISTINCT ON (t.submission_id)
                 t.submission_id,
-                t.position as layer_type,
-                (t.tower_json->0->>'attachment')::numeric as attachment_point,
-                (t.tower_json->0->>'limit')::numeric as limit_amount,
-                t.primary_retention as retention,
-                COALESCE(t.sold_premium, t.quoted_premium) as premium,
-                (t.sold_premium IS NOT NULL) as is_bound
+                t.tower_json,
+                t.primary_retention,
+                t.sold_premium,
+                t.quoted_premium,
+                t.is_bound,
+                t.bound_at,
+                t.created_at
             FROM insurance_towers t
             WHERE t.submission_id IN (SELECT id FROM matched_subs)
-            ORDER BY t.submission_id, t.sold_premium DESC NULLS LAST, t.created_at DESC
+            ORDER BY
+                t.submission_id,
+                t.is_bound DESC,
+                t.bound_at DESC NULLS LAST,
+                t.created_at DESC
+        ),
+        best_layer AS (
+            SELECT
+                b.submission_id,
+                l.attachment_point,
+                l.limit_amount,
+                l.carrier as layer_carrier,
+                u.underlying_carrier,
+                b.primary_retention as retention,
+                COALESCE(b.sold_premium, b.quoted_premium) as premium,
+                (b.is_bound IS TRUE) as is_bound
+            FROM best_tower b
+            CROSS JOIN LATERAL (
+                SELECT
+                    (layer->>'attachment')::numeric as attachment_point,
+                    (layer->>'limit')::numeric as limit_amount,
+                    layer->>'carrier' as carrier
+                FROM jsonb_array_elements(COALESCE(b.tower_json, '[]'::jsonb)) layer
+                WHERE {layer_where}
+                ORDER BY (layer->>'attachment')::numeric {layer_order}
+                LIMIT 1
+            ) l
+            LEFT JOIN LATERAL (
+                SELECT
+                    layer->>'carrier' as underlying_carrier
+                FROM jsonb_array_elements(COALESCE(b.tower_json, '[]'::jsonb)) layer
+                WHERE COALESCE((layer->>'attachment')::numeric, 0) = 0
+                ORDER BY (layer->>'attachment')::numeric ASC
+                LIMIT 1
+            ) u ON TRUE
         ),
         loss_agg AS (
             SELECT
@@ -154,23 +259,35 @@ def get_comparables(
             m.submission_outcome,
             m.outcome_reason,
             m.effective_date,
+            m.benchmark_date,
+            m.benchmark_date_type,
             m.business_summary,
+            m.nist_controls,
             1 - m.distance as similarity_score,
-            bt.layer_type,
-            bt.attachment_point,
-            bt.limit_amount,
-            bt.retention,
-            bt.premium,
-            bt.is_bound,
+            {controls_similarity_select},
+            bl.attachment_point,
+            bl.limit_amount,
+            bl.layer_carrier,
+            bl.underlying_carrier,
+            bl.retention,
+            bl.premium,
+            bl.is_bound,
             la.claims_count,
             la.claims_paid
         FROM matched_subs m
-        LEFT JOIN best_tower bt ON bt.submission_id = m.id
+        JOIN best_layer bl ON bl.submission_id = m.id
         LEFT JOIN loss_agg la ON la.submission_id = m.id
         ORDER BY similarity_score DESC
     """
 
-    params_full = [Vector(query_vec)] + params + [limit]
+    params_full: list = []
+    if query_vec is not None:
+        params_full.append(Vector(query_vec))
+    params_full.extend(params)
+    params_full.extend(order_params)
+    params_full.extend(layer_params)
+    if ctrl_vec is not None:
+        params_full.append(Vector(ctrl_vec))
 
     with conn.cursor() as cur:
         cur.execute(query, params_full)
@@ -180,8 +297,9 @@ def get_comparables(
     for row in rows:
         (
             sub_id, name, date_recv, revenue, naics_code, naics_title,
-            tags, status, outcome, reason, eff_date, business_summary, similarity,
-            layer_type, attachment, limit_amt, retention, premium, is_bound,
+            tags, status, outcome, reason, eff_date, bench_date, bench_date_type,
+            business_summary, nist_controls, similarity, controls_similarity,
+            attachment, limit_amt, layer_carrier, underlying_carrier, retention, premium, is_bound,
             claims_count, claims_paid
         ) = row
 
@@ -207,11 +325,17 @@ def get_comparables(
             "submission_outcome": outcome,
             "outcome_reason": reason,
             "effective_date": eff_date,
+            "benchmark_date": bench_date,
+            "benchmark_date_type": bench_date_type,
             "ops_summary": business_summary,
-            "similarity_score": round(similarity, 3) if similarity else 0,
-            "layer_type": layer_type,
+            "nist_controls": nist_controls,
+            "similarity_score": round(similarity, 3) if similarity is not None else None,
+            "controls_similarity": round(controls_similarity, 3) if controls_similarity is not None else None,
+            "layer_type": "primary" if (attachment or 0) <= 0 else "excess",
             "attachment_point": attachment or 0,
             "limit": limit_amt,
+            "carrier": layer_carrier,
+            "underlying_carrier": underlying_carrier,
             "retention": retention,
             "premium": premium,
             "rate_per_mil": round(rate_per_mil, 0) if rate_per_mil else None,
@@ -229,14 +353,15 @@ def get_benchmark_metrics(comparables: list[dict]) -> dict:
     Calculate summary metrics from comparables.
 
     Returns:
-        Dict with count, bind_rate, avg_rate_per_mil, avg_loss_ratio
+        Dict with count, bind_rate, avg_rate_per_mil_bound, avg_rate_per_mil_all, avg_loss_ratio
     """
     if not comparables:
         return {
             "count": 0,
             "bound_count": 0,
             "bind_rate": None,
-            "avg_rate_per_mil": None,
+            "avg_rate_per_mil_bound": None,
+            "avg_rate_per_mil_all": None,
             "avg_loss_ratio": None,
             "rate_range": None,
         }
@@ -249,12 +374,17 @@ def get_benchmark_metrics(comparables: list[dict]) -> dict:
 
     # Bind rate (of quoted)
     quoted = [c for c in comparables if c["submission_status"] == "quoted"]
-    bind_rate = bound_count / len(quoted) if quoted else None
+    quoted_count = len(quoted)
+    bind_rate = bound_count / quoted_count if quoted_count else None
 
     # Average rate per mil (bound only)
-    rates = [c["rate_per_mil"] for c in bound if c["rate_per_mil"]]
-    avg_rate = sum(rates) / len(rates) if rates else None
-    rate_range = (min(rates), max(rates)) if rates else None
+    rates_bound = [c["rate_per_mil"] for c in bound if c["rate_per_mil"]]
+    avg_rate_bound = sum(rates_bound) / len(rates_bound) if rates_bound else None
+    rate_range = (min(rates_bound), max(rates_bound)) if rates_bound else None
+
+    # Average rate per mil (all with rate)
+    rates_all = [c["rate_per_mil"] for c in comparables if c["rate_per_mil"]]
+    avg_rate_all = sum(rates_all) / len(rates_all) if rates_all else None
 
     # Average loss ratio (bound with claims data)
     loss_ratios = [c["loss_ratio"] for c in bound if c["loss_ratio"] is not None]
@@ -263,8 +393,10 @@ def get_benchmark_metrics(comparables: list[dict]) -> dict:
     return {
         "count": count,
         "bound_count": bound_count,
+        "quoted_count": quoted_count,
         "bind_rate": round(bind_rate, 2) if bind_rate is not None else None,
-        "avg_rate_per_mil": round(avg_rate, 0) if avg_rate else None,
+        "avg_rate_per_mil_bound": round(avg_rate_bound, 0) if avg_rate_bound else None,
+        "avg_rate_per_mil_all": round(avg_rate_all, 0) if avg_rate_all else None,
         "avg_loss_ratio": round(avg_loss, 3) if avg_loss is not None else None,
         "rate_range": rate_range,
     }
@@ -276,6 +408,15 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
 
     with conn.cursor() as cur:
         cur.execute("""
+            WITH loss_agg AS (
+                SELECT
+                    submission_id,
+                    COUNT(*) as claims_count,
+                    COALESCE(SUM(paid_amount), 0) as claims_paid
+                FROM loss_history
+                WHERE submission_id = %s
+                GROUP BY submission_id
+            )
             SELECT
                 s.applicant_name,
                 s.annual_revenue,
@@ -283,17 +424,26 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
                 s.naics_primary_title,
                 s.industry_tags,
                 s.business_summary,
+                s.submission_status,
+                s.submission_outcome,
+                s.effective_date,
+                s.date_received,
+                (s.ops_embedding IS NOT NULL) as has_ops_embedding,
+                s.nist_controls,
                 t.position as layer_type,
                 (t.tower_json->0->>'attachment')::numeric as attachment_point,
                 (t.tower_json->0->>'limit')::numeric as limit_amount,
                 t.primary_retention as retention,
-                COALESCE(t.sold_premium, t.quoted_premium) as premium
+                COALESCE(t.sold_premium, t.quoted_premium) as premium,
+                la.claims_count,
+                la.claims_paid
             FROM submissions s
             LEFT JOIN insurance_towers t ON t.submission_id = s.id
+            LEFT JOIN loss_agg la ON la.submission_id = s.id
             WHERE s.id = %s
             ORDER BY t.sold_premium DESC NULLS LAST, t.created_at DESC
             LIMIT 1
-        """, (submission_id,))
+        """, (submission_id, submission_id))
         row = cur.fetchone()
 
     if not row:
@@ -301,7 +451,9 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
 
     (
         name, revenue, naics_code, naics_title, tags, business_summary,
-        layer_type, attachment, limit_amt, retention, premium
+        submission_status, submission_outcome, effective_date, date_received,
+        has_ops_embedding, nist_controls, layer_type, attachment, limit_amt, retention, premium,
+        claims_count, claims_paid,
     ) = row
 
     rate_per_mil = None
@@ -315,12 +467,20 @@ def get_current_submission_profile(submission_id: str, get_conn) -> dict:
         "naics_title": naics_title,
         "industry_tags": tags or [],
         "ops_summary": business_summary,
+        "submission_status": submission_status,
+        "submission_outcome": submission_outcome,
+        "effective_date": effective_date,
+        "date_received": date_received,
+        "has_ops_embedding": bool(has_ops_embedding),
+        "nist_controls": nist_controls,
         "layer_type": layer_type,
         "attachment_point": float(attachment) if attachment else 0,
         "limit": float(limit_amt) if limit_amt else None,
         "retention": float(retention) if retention else None,
         "premium": float(premium) if premium else None,
         "rate_per_mil": round(rate_per_mil, 0) if rate_per_mil else None,
+        "claims_count": claims_count or 0,
+        "claims_paid": float(claims_paid) if claims_paid else 0,
     }
 
 
@@ -411,4 +571,34 @@ def get_controls_comparison(submission_id: str, comparable_id: str, get_conn) ->
         "comparison": comparison,
         "current_summary": current.get("summary"),
         "comparable_summary": comparable.get("summary"),
+    }
+
+
+def get_best_tower(submission_id: str, get_conn) -> dict:
+    """Return the best (bound else latest) tower for a submission."""
+    conn = get_conn() if callable(get_conn) else get_conn
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT tower_json, sold_premium, quoted_premium
+            FROM insurance_towers
+            WHERE submission_id = %s
+            ORDER BY is_bound DESC, bound_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+        """, (submission_id,))
+        row = cur.fetchone()
+
+    if not row:
+        return {}
+
+    tower_json, sold_premium, quoted_premium = row
+    if isinstance(tower_json, str):
+        try:
+            tower_json = json.loads(tower_json)
+        except json.JSONDecodeError:
+            tower_json = []
+
+    return {
+        "tower_json": tower_json or [],
+        "tower_premium": sold_premium or quoted_premium,
     }

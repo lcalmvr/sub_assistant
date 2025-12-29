@@ -990,12 +990,12 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
 
         # ------------------- TABS -------------------
         tab_details, tab_review, tab_uw, tab_benchmark, tab_rating, tab_quote, tab_policy = st.tabs(
-            ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Benchmark", "📊 Rating", "💰 Quote", "📑 Policy"]
+            ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Comps", "📊 Rating", "💰 Quote", "📑 Policy"]
         )
 
         # If we need to switch to a specific tab, inject JavaScript to click it
         if target_tab:
-            tab_index = {"Account": 0, "Review": 1, "UW": 2, "Benchmark": 3, "Rating": 4, "Quote": 5, "Policy": 6}.get(target_tab, 0)
+            tab_index = {"Account": 0, "Review": 1, "UW": 2, "Comps": 3, "Rating": 4, "Quote": 5, "Policy": 6}.get(target_tab, 0)
             import streamlit.components.v1 as components
             components.html(f"""
                 <script>
