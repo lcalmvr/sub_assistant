@@ -576,22 +576,40 @@ def get_controls_comparison(submission_id: str, comparable_id: str, get_conn) ->
 
 def get_best_tower(submission_id: str, get_conn) -> dict:
     """Return the best (bound else latest) tower for a submission."""
-    conn = get_conn() if callable(get_conn) else get_conn
+    conn_obj = get_conn() if callable(get_conn) else get_conn
 
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT tower_json, sold_premium, quoted_premium, primary_retention
+    def _fetch_with_conn(conn) -> tuple | None:
+        if hasattr(conn, "cursor"):
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT tower_json, sold_premium, quoted_premium, primary_retention, is_bound
+                FROM insurance_towers
+                WHERE submission_id = %s
+                ORDER BY is_bound DESC, bound_at DESC NULLS LAST, created_at DESC
+                LIMIT 1
+                """, (submission_id,))
+                return cur.fetchone()
+        from sqlalchemy import text as sql_text
+        query = sql_text("""
+            SELECT tower_json, sold_premium, quoted_premium, primary_retention, is_bound
             FROM insurance_towers
-            WHERE submission_id = %s
+            WHERE submission_id = :submission_id
             ORDER BY is_bound DESC, bound_at DESC NULLS LAST, created_at DESC
             LIMIT 1
-        """, (submission_id,))
-        row = cur.fetchone()
+        """)
+        return conn.execute(query, {"submission_id": submission_id}).fetchone()
+
+    row = None
+    if hasattr(conn_obj, "__enter__") and hasattr(conn_obj, "__exit__"):
+        with conn_obj as conn:
+            row = _fetch_with_conn(conn)
+    else:
+        row = _fetch_with_conn(conn_obj)
 
     if not row:
         return {}
 
-    tower_json, sold_premium, quoted_premium, primary_retention = row
+    tower_json, sold_premium, quoted_premium, primary_retention, is_bound = row
     if isinstance(tower_json, str):
         try:
             tower_json = json.loads(tower_json)
@@ -602,4 +620,5 @@ def get_best_tower(submission_id: str, get_conn) -> dict:
         "tower_json": tower_json or [],
         "tower_premium": sold_premium or quoted_premium,
         "primary_retention": float(primary_retention) if primary_retention else None,
+        "is_bound": bool(is_bound),
     }

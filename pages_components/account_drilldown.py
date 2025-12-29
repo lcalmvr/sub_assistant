@@ -18,6 +18,7 @@ from typing import Optional
 from datetime import datetime
 
 from core import account_management as acct
+from core.benchmarking import get_best_tower
 from core.db import get_conn
 from sqlalchemy import text
 
@@ -51,7 +52,9 @@ def render_account_drilldown(
         return
 
     subs = acct.get_account_submissions(account_id)
-    written_premium = _get_written_premium(account_id)
+    tower_map = _get_tower_summary(subs) if subs else {}
+    loss_map = _get_loss_summary(subs) if subs else {}
+    written_premium = _get_written_premium(subs, tower_map)
 
     # === SUMMARY HEADER ===
     if show_header:
@@ -75,24 +78,24 @@ def render_account_drilldown(
 
     # === SUBMISSIONS TABLE ===
     if subs:
-        _render_submissions_table(subs, current_submission_id, compact)
+        _render_submissions_table(subs, current_submission_id, compact, tower_map, loss_map)
     else:
         st.caption("No submissions for this account")
 
 
-def _get_written_premium(account_id: str) -> float:
-    """Get total bound premium for account."""
-    with get_conn() as conn:
-        row = conn.execute(
-            text("""
-                SELECT COALESCE(SUM(COALESCE(t.sold_premium, 0)), 0)::float
-                FROM submissions s
-                LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = TRUE
-                WHERE s.account_id = :account_id
-            """),
-            {"account_id": account_id},
-        ).fetchone()
-    return float(row[0] or 0) if row else 0.0
+def _get_written_premium(subs: list, tower_map: dict) -> float:
+    """Get total bound premium for account (CMAI layer only)."""
+    total = 0.0
+    for sub in subs:
+        if (sub.get("submission_outcome") or "").lower() != "bound":
+            continue
+        premium = tower_map.get(sub.get("id"), {}).get("premium")
+        if premium:
+            try:
+                total += float(premium)
+            except (TypeError, ValueError):
+                continue
+    return total
 
 
 def _render_summary_header(
@@ -332,7 +335,13 @@ def _render_account_edit_form(account: dict, edit_key: str):
                 st.rerun()
 
 
-def _render_submissions_table(subs: list, current_submission_id: Optional[str], compact: bool):
+def _render_submissions_table(
+    subs: list,
+    current_submission_id: Optional[str],
+    compact: bool,
+    tower_map: dict,
+    loss_map: dict,
+):
     """Render submissions history."""
     st.markdown("**Submissions**")
 
@@ -357,14 +366,38 @@ def _render_submissions_table(subs: list, current_submission_id: Optional[str], 
         if current_submission_id:
             df["is_current"] = df["id"] == current_submission_id
 
-        # ID as clickable link
         df["id_link"] = df["id"].apply(lambda x: f"/submissions?selected_submission_id={x}")
-        df["status"] = df["submission_status"].apply(lambda x: (x or "").replace("_", " ").title())
-        df["outcome"] = df["submission_outcome"].apply(lambda x: (x or "").replace("_", " ").title())
+        df["date_display"] = df.apply(_select_display_date, axis=1)
+        df["stage"] = df.apply(lambda r: _format_stage(r.get("submission_status"), r.get("submission_outcome")), axis=1)
 
-        display_cols = ["id_link", "date_received", "status", "outcome"]
-        if "annual_revenue" in df.columns:
-            display_cols.append("annual_revenue")
+        df["revenue_fmt"] = df["annual_revenue"].apply(_fmt_compact_amount)
+
+        df["limit_fmt"] = df["id"].apply(lambda x: _fmt_compact_amount(tower_map.get(x, {}).get("limit")))
+        df["att_fmt"] = df["id"].apply(lambda x: _fmt_compact_amount(tower_map.get(x, {}).get("attachment")))
+        df["sir_fmt"] = df["id"].apply(lambda x: _fmt_compact_amount(tower_map.get(x, {}).get("retention")))
+        df["premium_fmt"] = df["id"].apply(lambda x: _fmt_compact_amount(tower_map.get(x, {}).get("premium")))
+        df["rpm_fmt"] = df["id"].apply(lambda x: _fmt_compact_amount(tower_map.get(x, {}).get("rpm")))
+
+        def _claims_label(row: pd.Series) -> str:
+            if (row.get("submission_outcome") or "").lower() != "bound":
+                return "—"
+            loss = loss_map.get(row.get("id"), {})
+            return _loss_signal(loss.get("count", 0), loss.get("paid", 0))
+
+        df["claims_label"] = df.apply(_claims_label, axis=1)
+
+        display_cols = [
+            "id_link",
+            "date_display",
+            "revenue_fmt",
+            "limit_fmt",
+            "att_fmt",
+            "sir_fmt",
+            "premium_fmt",
+            "rpm_fmt",
+            "stage",
+            "claims_label",
+        ]
 
         st.dataframe(
             df[display_cols],
@@ -372,17 +405,146 @@ def _render_submissions_table(subs: list, current_submission_id: Optional[str], 
             hide_index=True,
             column_config={
                 "id_link": st.column_config.LinkColumn(
-                    "ID",
-                    display_text=r"\?selected_submission_id=(.{8})",  # Regex to extract first 8 chars of ID
-                    width="small"
+                    "Submission",
+                    display_text=r"\?selected_submission_id=(.{8})",
+                    width="small",
                 ),
-                "date_received": st.column_config.DateColumn("Received", format="MM/DD/YY", width="small"),
-                "status": st.column_config.TextColumn("Status", width="small"),
-                "outcome": st.column_config.TextColumn("Outcome", width="small"),
-                "annual_revenue": st.column_config.NumberColumn("Revenue", format="compact", width="small"),
+                "date_display": st.column_config.TextColumn(
+                    "Date",
+                    help="Effective date when available; otherwise received date.",
+                    width="small",
+                ),
+                "revenue_fmt": st.column_config.TextColumn("Revenue", width="small"),
+                "limit_fmt": st.column_config.TextColumn("Limit", width="small"),
+                "att_fmt": st.column_config.TextColumn("Att", width="small"),
+                "sir_fmt": st.column_config.TextColumn("SIR", width="small"),
+                "premium_fmt": st.column_config.TextColumn("Premium", width="small"),
+                "rpm_fmt": st.column_config.TextColumn("RPM", width="small"),
+                "stage": st.column_config.TextColumn("Stage", width="small"),
+                "claims_label": st.column_config.TextColumn("Claims", width="small"),
             },
             height=min(len(subs) * 35 + 38, 250),
         )
+
+
+def _select_tower_layer(tower_json: list) -> dict:
+    if not tower_json:
+        return {}
+    for layer in tower_json:
+        carrier = (layer.get("carrier") or "").upper()
+        if carrier == "CMAI":
+            return layer
+    return {}
+
+
+def _get_tower_summary(subs: list) -> dict:
+    summaries = {}
+    for sub in subs:
+        sub_id = sub.get("id")
+        if not sub_id:
+            continue
+        tower = get_best_tower(sub_id, get_conn)
+        layer = _select_tower_layer(tower.get("tower_json", []))
+        if not layer:
+            summaries[sub_id] = {
+                "limit": None,
+                "attachment": None,
+                "retention": None,
+                "premium": None,
+                "rpm": None,
+                "is_bound": False,
+            }
+            continue
+        limit = layer.get("limit")
+        attachment = layer.get("attachment")
+        retention = tower.get("primary_retention") or layer.get("retention")
+        premium = layer.get("premium")
+        if premium is None:
+            premium = tower.get("tower_premium")
+        rpm = None
+        if premium and limit:
+            rpm = float(premium) / (float(limit) / 1_000_000)
+        summaries[sub_id] = {
+            "limit": limit,
+            "attachment": attachment,
+            "retention": retention,
+            "premium": premium,
+            "rpm": rpm,
+            "is_bound": tower.get("is_bound", False),
+        }
+    return summaries
+
+
+def _get_loss_summary(subs: list) -> dict:
+    sub_ids = [s.get("id") for s in subs if s.get("id")]
+    if not sub_ids:
+        return {}
+    with get_conn() as conn:
+        rows = conn.execute(
+            text(
+                """
+                SELECT submission_id, COUNT(*) as claims_count, COALESCE(SUM(paid_amount), 0) as claims_paid
+                FROM loss_history
+                WHERE submission_id::text = ANY(:ids)
+                GROUP BY submission_id
+                """
+            ),
+            {"ids": sub_ids},
+        ).fetchall()
+    return {str(r[0]): {"count": int(r[1]), "paid": float(r[2] or 0)} for r in rows}
+
+
+def _select_display_date(row: pd.Series) -> str:
+    date_val = row.get("effective_date") or row.get("date_received")
+    if isinstance(date_val, datetime):
+        return date_val.strftime("%m/%d/%y")
+    if date_val:
+        return str(date_val)
+    return "—"
+
+
+def _format_stage(status: str, outcome: str) -> str:
+    status_norm = (status or "").lower()
+    outcome_norm = (outcome or "").lower()
+    if status_norm == "declined":
+        return "Declined"
+    if outcome_norm == "bound":
+        return "Bound"
+    if outcome_norm == "lost":
+        return "Lost"
+    if status_norm == "quoted":
+        return "Quoted"
+    return "Received"
+
+
+def _fmt_compact_amount(value) -> str:
+    if value is None:
+        return "—"
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if num >= 1_000_000:
+        compact = f"{num/1_000_000:.1f}".rstrip("0").rstrip(".")
+        return f"${compact}M"
+    if num >= 1_000:
+        compact = f"{num/1_000:.1f}".rstrip("0").rstrip(".")
+        return f"${compact}K"
+    return f"${num:,.0f}"
+
+
+def _loss_signal(claims_count: int, claims_paid: float) -> str:
+    paid = float(claims_paid or 0)
+    count = int(claims_count or 0)
+    if count == 0 and paid <= 0:
+        return "Clean"
+    if count > 0 and paid <= 0:
+        return "Activity"
+    if paid < 100_000:
+        return "Low"
+    if paid < 1_000_000:
+        return "Moderate"
+    return "Severe"
 
 
 def _get_status_emoji(outcome: str, status: str) -> str:
@@ -401,5 +563,3 @@ def _get_status_emoji(outcome: str, status: str) -> str:
         return "🔄"
     else:
         return "📥"
-
-
