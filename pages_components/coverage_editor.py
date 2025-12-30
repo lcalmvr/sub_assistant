@@ -59,6 +59,12 @@ def render_coverage_editor(
 
     coverages = st.session_state[session_key]
 
+    # Ensure required keys exist to prevent KeyError later
+    if "sublimit_coverages" not in coverages:
+        coverages["sublimit_coverages"] = {}
+    if "aggregate_coverages" not in coverages:
+        coverages["aggregate_coverages"] = {}
+
     # Header
     if show_header:
         form_label = _get_form_label(coverages.get("policy_form", "cyber"))
@@ -367,6 +373,10 @@ def _render_variable_limits_edit(
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     sub_defs = get_sublimit_coverage_definitions()
+
+    # Ensure sublimit_coverages key exists
+    if "sublimit_coverages" not in coverages:
+        coverages["sublimit_coverages"] = {}
     sub_values = coverages.get("sublimit_coverages", {})
 
     # Options for dropdown
@@ -437,6 +447,10 @@ def _render_standard_limits_edit(
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     agg_defs = get_aggregate_coverage_definitions()
+
+    # Ensure aggregate_coverages key exists
+    if "aggregate_coverages" not in coverages:
+        coverages["aggregate_coverages"] = {}
     agg_values = coverages.get("aggregate_coverages", {})
 
     # Options for edit mode
@@ -507,6 +521,10 @@ def _render_variable_limits_diff(
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     sub_defs = get_sublimit_coverage_definitions()
+
+    # Ensure sublimit_coverages key exists
+    if "sublimit_coverages" not in coverages:
+        coverages["sublimit_coverages"] = {}
     sub_values = coverages.get("sublimit_coverages", {})
     orig_sub = original_coverages.get("sublimit_coverages", {})
 
@@ -586,6 +604,10 @@ def _render_standard_limits_diff(
     session_key = f"coverage_editor_{editor_id}"
     refresh = st.session_state.get(f"coverage_editor_refresh_{editor_id}", 0)
     agg_defs = get_aggregate_coverage_definitions()
+
+    # Ensure aggregate_coverages key exists
+    if "aggregate_coverages" not in coverages:
+        coverages["aggregate_coverages"] = {}
     agg_values = coverages.get("aggregate_coverages", {})
     orig_agg = original_coverages.get("aggregate_coverages", {})
 
