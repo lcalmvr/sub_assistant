@@ -762,6 +762,154 @@ def calculate_premium_grid(submission_id: str):
 
 
 # ─────────────────────────────────────────────────────────────
+# Statistics Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/stats/summary")
+def get_stats_summary():
+    """Get submission status summary counts."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    submission_status,
+                    submission_outcome,
+                    COUNT(*) as count
+                FROM submissions
+                GROUP BY submission_status, submission_outcome
+            """)
+            rows = cur.fetchall()
+
+            # Build summary structure
+            summary = {}
+            for row in rows:
+                status = row["submission_status"] or "unknown"
+                outcome = row["submission_outcome"] or "pending"
+                count = row["count"]
+
+                if status not in summary:
+                    summary[status] = {}
+                summary[status][outcome] = count
+
+            # Calculate totals
+            received = summary.get("received", {}).get("pending", 0)
+            pending_info = summary.get("pending_info", {}).get("pending", 0)
+
+            quoted = summary.get("quoted", {})
+            bound = quoted.get("bound", 0)
+            lost = quoted.get("lost", 0)
+            waiting = quoted.get("waiting_for_response", 0)
+
+            declined = summary.get("declined", {}).get("declined", 0)
+
+            return {
+                "total": received + pending_info + bound + lost + waiting + declined,
+                "in_progress": received + pending_info,
+                "quoted": bound + lost + waiting,
+                "declined": declined,
+                "breakdown": {
+                    "received": received,
+                    "pending_info": pending_info,
+                    "waiting": waiting,
+                    "bound": bound,
+                    "lost": lost
+                },
+                "raw": summary
+            }
+
+
+@app.get("/api/stats/upcoming-renewals")
+def get_upcoming_renewals(days: int = 90):
+    """Get policies with upcoming renewals."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.expiration_date,
+                    (s.expiration_date - CURRENT_DATE) as days_until_expiry,
+                    t.sold_premium
+                FROM submissions s
+                LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = true
+                WHERE s.expiration_date IS NOT NULL
+                AND s.expiration_date >= CURRENT_DATE
+                AND s.expiration_date <= CURRENT_DATE + %s
+                AND t.is_bound = true
+                ORDER BY s.expiration_date ASC
+            """, (days,))
+            return cur.fetchall()
+
+
+@app.get("/api/stats/renewals-not-received")
+def get_renewals_not_received():
+    """Get renewals that were expected but not received."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.effective_date,
+                    s.outcome_reason
+                FROM submissions s
+                WHERE s.submission_status = 'renewal_not_received'
+                OR (s.submission_status = 'renewal_expected'
+                    AND s.effective_date < CURRENT_DATE)
+                ORDER BY s.effective_date DESC
+                LIMIT 50
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/stats/retention-metrics")
+def get_retention_metrics():
+    """Get renewal retention metrics by month."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Monthly breakdown
+            cur.execute("""
+                SELECT
+                    DATE_TRUNC('month', s.date_received) as month,
+                    COUNT(*) FILTER (WHERE s.submission_status NOT IN ('renewal_expected')) as renewals_received,
+                    COUNT(*) FILTER (WHERE s.submission_outcome = 'bound') as renewals_bound,
+                    COUNT(*) FILTER (WHERE s.submission_outcome = 'lost') as renewals_lost,
+                    COUNT(*) FILTER (WHERE s.submission_status = 'renewal_not_received') as renewals_not_received
+                FROM submissions s
+                WHERE s.renewal_type = 'renewal'
+                AND s.date_received IS NOT NULL
+                GROUP BY DATE_TRUNC('month', s.date_received)
+                ORDER BY month DESC
+                LIMIT 12
+            """)
+            monthly = cur.fetchall()
+
+            # Rate change analysis
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    bound_opt.sold_premium as current_premium,
+                    prior_opt.sold_premium as prior_premium
+                FROM submissions s
+                JOIN insurance_towers bound_opt ON bound_opt.submission_id = s.id AND bound_opt.is_bound = TRUE
+                JOIN submissions prior ON prior.id = s.prior_submission_id
+                JOIN insurance_towers prior_opt ON prior_opt.submission_id = prior.id AND prior_opt.is_bound = TRUE
+                WHERE s.renewal_type = 'renewal'
+                AND bound_opt.sold_premium IS NOT NULL
+                AND prior_opt.sold_premium IS NOT NULL
+                ORDER BY s.date_received DESC
+                LIMIT 20
+            """)
+            rate_changes = cur.fetchall()
+
+            return {
+                "monthly": monthly,
+                "rate_changes": rate_changes
+            }
+
+
+# ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
 

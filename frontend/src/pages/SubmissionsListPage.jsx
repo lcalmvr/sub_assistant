@@ -109,7 +109,7 @@ export default function SubmissionsListPage() {
           <h1 className="text-lg font-bold text-gray-900">Underwriting Portal</h1>
           <nav className="flex items-center gap-6">
             <Link to="/" className="nav-link-active">Submissions</Link>
-            <span className="nav-link">Statistics</span>
+            <Link to="/stats" className="nav-link">Statistics</Link>
             <span className="nav-link">Settings</span>
           </nav>
         </div>

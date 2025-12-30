@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import SubmissionLayout from './layouts/SubmissionLayout';
 import SubmissionsListPage from './pages/SubmissionsListPage';
+import StatsPage from './pages/StatsPage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import UWPage from './pages/UWPage';
@@ -27,6 +28,9 @@ function App() {
         <Routes>
           {/* Submissions List */}
           <Route path="/" element={<SubmissionsListPage />} />
+
+          {/* Statistics */}
+          <Route path="/stats" element={<StatsPage />} />
 
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>
