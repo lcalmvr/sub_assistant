@@ -10,6 +10,7 @@ import {
   bindQuoteOption,
   unbindQuoteOption,
   generateQuoteDocument,
+  getQuoteDocuments,
 } from '../api/client';
 
 // Format currency
@@ -180,6 +181,26 @@ function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending }) {
   );
 }
 
+// Format date
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  const date = new Date(dateStr);
+  return date.toLocaleDateString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
+// Document type label
+function getDocTypeLabel(type) {
+  const labels = {
+    quote_primary: 'Quote (Primary)',
+    quote_excess: 'Quote (Excess)',
+  };
+  return labels[type] || type;
+}
+
 // Quote detail panel
 function QuoteDetailPanel({ quote, submission, onRefresh }) {
   const queryClient = useQueryClient();
@@ -188,6 +209,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
   const [editedSoldPremium, setEditedSoldPremium] = useState(quote.sold_premium || '');
 
   const limit = getTowerLimit(quote);
+
+  // Query for quote documents
+  const { data: quoteDocuments } = useQuery({
+    queryKey: ['quoteDocuments', quote.id],
+    queryFn: () => getQuoteDocuments(quote.id).then(res => res.data),
+  });
 
   // Update mutation
   const updateMutation = useMutation({
@@ -228,6 +255,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
     mutationFn: () => generateQuoteDocument(quote.id),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['quoteDocuments', quote.id] });
       // Open the PDF in a new tab if available
       if (data.data?.pdf_url) {
         window.open(data.data.pdf_url, '_blank');
@@ -407,6 +435,55 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Quote Documents */}
+      {quoteDocuments && quoteDocuments.length > 0 && (
+        <div className="card">
+          <h4 className="form-section-title">Quote Documents</h4>
+          <div className="overflow-hidden rounded-lg border border-gray-200">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="table-header">Document</th>
+                  <th className="table-header">Date</th>
+                  <th className="table-header">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {quoteDocuments.map((doc) => (
+                  <tr key={doc.id} className="hover:bg-gray-50">
+                    <td className="table-cell">
+                      <span className="font-medium text-gray-900">
+                        {getDocTypeLabel(doc.document_type)}
+                      </span>
+                      {doc.document_number && (
+                        <span className="text-gray-500 text-sm ml-2">({doc.document_number})</span>
+                      )}
+                    </td>
+                    <td className="table-cell text-gray-600">
+                      {formatDate(doc.created_at)}
+                    </td>
+                    <td className="table-cell">
+                      {doc.pdf_url ? (
+                        <a
+                          href={doc.pdf_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-purple-600 hover:text-purple-800 font-medium"
+                        >
+                          View PDF
+                        </a>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

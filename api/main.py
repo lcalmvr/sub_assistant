@@ -178,6 +178,22 @@ def get_quote(quote_id: str):
             return row
 
 
+@app.get("/api/quotes/{quote_id}/documents")
+def get_quote_documents(quote_id: str):
+    """Get documents for a specific quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, document_type, document_number, pdf_url, created_at
+                FROM policy_documents
+                WHERE quote_option_id = %s
+                AND document_type IN ('quote_primary', 'quote_excess')
+                AND status != 'void'
+                ORDER BY created_at DESC
+            """, (quote_id,))
+            return cur.fetchall()
+
+
 class QuoteCreate(BaseModel):
     quote_name: str
     primary_retention: Optional[int] = 25000
@@ -566,12 +582,13 @@ def get_policy_data(submission_id: str):
             """, (submission_id,))
             bound_option = cur.fetchone()
 
-            # Get policy documents from policy_documents table
+            # Get policy documents from policy_documents table (exclude quote documents)
             cur.execute("""
                 SELECT id, document_type, document_number, pdf_url, created_at
                 FROM policy_documents
                 WHERE submission_id = %s
                 AND status != 'void'
+                AND document_type NOT IN ('quote_primary', 'quote_excess')
                 ORDER BY created_at DESC
             """, (submission_id,))
             documents = cur.fetchall()

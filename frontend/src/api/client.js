@@ -15,6 +15,7 @@ export const updateSubmission = (id, data) => api.patch(`/submissions/${id}`, da
 // Quote Options
 export const getQuoteOptions = (submissionId) => api.get(`/submissions/${submissionId}/quotes`);
 export const getQuoteOption = (id) => api.get(`/quotes/${id}`);
+export const getQuoteDocuments = (id) => api.get(`/quotes/${id}/documents`);
 export const createQuoteOption = (submissionId, data) => api.post(`/submissions/${submissionId}/quotes`, data);
 export const updateQuoteOption = (id, data) => api.patch(`/quotes/${id}`, data);
 export const deleteQuoteOption = (id) => api.delete(`/quotes/${id}`);
