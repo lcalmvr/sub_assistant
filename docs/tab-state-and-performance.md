@@ -121,8 +121,12 @@ rerun_on_policy_tab()  # Stays on Policy tab
 
 **How it works:**
 1. Sets `st.session_state["_active_tab"] = "TabName"`
-2. Calls `st.rerun()`
-3. In `submissions.py`, JavaScript clicks the correct tab after render
+2. Sets `st.session_state["_active_tab_request_id"]` (unique ID for this request)
+3. Sets `st.session_state["_active_tab_injected"] = False`
+4. Calls `st.rerun()`
+5. In `submissions.py`, JavaScript clicks the correct tab after render
+6. The JS click triggers another Streamlit rerun - the `_active_tab_injected` flag
+   prevents re-injecting JavaScript on subsequent reruns for the same request
 
 ## Decision Tree
 
@@ -235,7 +239,9 @@ with st.expander("Coverage Schedule"):
 ### Using `@st.fragment`:
 - `pages_components/policy_panel.py` - Subjectivity management
 - `pages_components/subjectivities_panel.py` - Add/remove subjectivities
-- `pages_components/coverage_summary_panel.py` - Policy form radio button with state reset
+
+**Note:** Avoid using fragments for content that must render on first page load.
+Fragments may not render properly until a rerun occurs.
 
 ### Using `@st.dialog`:
 - `pages_components/policy_panel.py` - Unbind confirmation
@@ -248,6 +254,8 @@ with st.expander("Coverage Schedule"):
 - `pages_components/admin_agent_sidebar.py`
 - `pages_components/review_queue_panel.py`
 - `pages_components/generate_quote_button.py`
+- `pages_components/coverage_summary_panel.py` - Policy form changes on Rating tab
+- `pages_workflows/submissions.py` - Create Option buttons, Hazard/Control changes
 
 ## Adding New Components
 

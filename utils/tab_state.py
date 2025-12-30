@@ -26,7 +26,11 @@ def rerun_on_tab(tab_name: str):
     Args:
         tab_name: One of "Account", "Review", "UW", "Comps", "Rating", "Quote", "Policy"
     """
+    import uuid
     st.session_state["_active_tab"] = tab_name
+    # Use unique request ID so we can track this specific request across reruns
+    st.session_state["_active_tab_request_id"] = str(uuid.uuid4())[:8]
+    st.session_state["_active_tab_injected"] = False
     st.rerun()
 
 
@@ -37,7 +41,10 @@ def rerun_on_quote_tab():
 
 def rerun_on_policy_tab():
     """Rerun and return to Policy tab."""
+    import uuid
     st.session_state["_return_to_policy_tab"] = True
+    st.session_state["_active_tab_request_id"] = str(uuid.uuid4())[:8]
+    st.session_state["_active_tab_injected"] = False
     st.rerun()
 
 
@@ -110,3 +117,41 @@ def save_and_rerun_on_comps_tab():
     """Clear caches and rerun on Comps tab. Use after saving data."""
     _clear_caches()
     rerun_on_comps_tab()
+
+
+# ─────────────────────────────────────────────────────────────
+# on_change callbacks: Set tab state BEFORE Streamlit's natural rerun
+# Use these with widget on_change parameter to prevent tab bouncing
+# ─────────────────────────────────────────────────────────────
+
+def _set_tab_state(tab_name: str):
+    """Set tab state without triggering rerun. For use in on_change callbacks."""
+    import uuid
+    st.session_state["_active_tab"] = tab_name
+    st.session_state["_active_tab_request_id"] = str(uuid.uuid4())[:8]
+    st.session_state["_active_tab_injected"] = False
+
+
+def on_change_stay_on_rating():
+    """on_change callback to stay on Rating tab after widget change."""
+    _set_tab_state("Rating")
+
+
+def on_change_stay_on_quote():
+    """on_change callback to stay on Quote tab after widget change."""
+    _set_tab_state("Quote")
+
+
+def on_change_stay_on_policy():
+    """on_change callback to stay on Policy tab after widget change."""
+    _set_tab_state("Policy")
+
+
+def on_change_stay_on_uw():
+    """on_change callback to stay on UW tab after widget change."""
+    _set_tab_state("UW")
+
+
+def on_change_stay_on_account():
+    """on_change callback to stay on Account tab after widget change."""
+    _set_tab_state("Account")

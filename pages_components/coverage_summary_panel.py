@@ -70,9 +70,7 @@ def render_coverage_summary_panel(
     from pages_components.coverage_editor import render_coverage_editor, reset_coverage_editor
     from pages_components.coverages_panel import build_coverages_from_rating
 
-    @st.fragment
-    def _render_coverage_content():
-        """Fragment for coverage form and editor - allows isolated reruns."""
+    with st.expander("Coverage Schedule", expanded=True):
         # Policy form radio buttons with Edit button inline
         radio_col, btn_col = st.columns([4, 1])
 
@@ -80,6 +78,8 @@ def render_coverage_summary_panel(
         current_form = st.session_state[session_key]
         current_idx = form_ids.index(current_form) if current_form in form_ids else 0
 
+        # Use on_change callback to set tab state BEFORE Streamlit's natural rerun
+        from utils.tab_state import on_change_stay_on_rating
         selected_form_label = radio_col.radio(
             "Policy Form",
             options=form_labels,
@@ -87,6 +87,7 @@ def render_coverage_summary_panel(
             key=f"policy_form_radio_{sub_id}",
             horizontal=True,
             label_visibility="collapsed",
+            on_change=on_change_stay_on_rating,
         )
         selected_form = form_ids[form_labels.index(selected_form_label)]
 
@@ -120,8 +121,9 @@ def render_coverage_summary_panel(
 
             # Update prev_form to current
             st.session_state[prev_form_key] = selected_form
-            # Fragment-scoped rerun to refresh with new form settings
-            st.rerun(scope="fragment")
+            # Use tab-aware rerun to stay on Rating tab
+            from utils.tab_state import rerun_on_rating_tab
+            rerun_on_rating_tab()
 
         # Build coverages dict from current session state
         rating_coverages = build_coverages_from_rating(sub_id, aggregate_limit)
@@ -147,9 +149,6 @@ def render_coverage_summary_panel(
             on_change=on_rating_coverage_change,
             show_header=False,
         )
-
-    with st.expander("Coverage Schedule", expanded=True):
-        _render_coverage_content()
 
     # Build final coverage config - read from session state (updated by fragment)
     final_coverages = {
@@ -369,7 +368,8 @@ def _render_aggregate_coverages(sub_id: str, policy_form: str) -> None:
         with col2:
             if st.button("Edit", key=f"edit_btn_{sub_id}", use_container_width=True):
                 st.session_state[edit_key] = True
-                st.rerun()
+                from utils.tab_state import rerun_on_rating_tab
+                rerun_on_rating_tab()
 
         # Group coverages by status
         full_limits = []
@@ -403,7 +403,8 @@ def _render_aggregate_coverages(sub_id: str, policy_form: str) -> None:
         with col2:
             if st.button("Done", key=f"done_btn_{sub_id}", use_container_width=True):
                 st.session_state[edit_key] = False
-                st.rerun()
+                from utils.tab_state import rerun_on_rating_tab
+                rerun_on_rating_tab()
 
         # Edit view
         for cov_id, label, current_status, default_status in coverage_status:

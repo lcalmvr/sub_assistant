@@ -54,9 +54,9 @@ def render_coverage_editor(
     # Initialize working copy in session state
     session_key = f"coverage_editor_{editor_id}"
 
-    if session_key not in st.session_state:
-        st.session_state[session_key] = copy.deepcopy(current_coverages)
-
+    # Always update with current_coverages to ensure fresh data
+    # The editor will track changes via on_change callback
+    st.session_state[session_key] = copy.deepcopy(current_coverages)
     coverages = st.session_state[session_key]
 
     # Ensure required keys exist to prevent KeyError later
@@ -328,7 +328,7 @@ def _render_edit_mode(
         coverages = _render_standard_limits_edit(
             editor_id, coverages, aggregate_limit, on_change
         )
-    
+
     # Render batch edit tab if provided
     if tab_batch is not None and batch_edit_tab_content:
         with tab_batch:

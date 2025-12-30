@@ -988,23 +988,42 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
 
         # Check if we should return to Policy tab (after endorsement/admin action)
         target_tab = None
+        inject_tab_js = False  # Only inject JS once per request
+
+        # Clean up old state keys from previous implementation
+        st.session_state.pop("_active_tab_use_count", None)
+
         if st.session_state.pop("_return_to_policy_tab", False):
             target_tab = "Policy"
+            # Only inject JS if we haven't already for this request
+            if not st.session_state.get("_active_tab_injected", False):
+                inject_tab_js = True
+                st.session_state["_active_tab_injected"] = True
         elif st.session_state.get("_active_tab"):
-            target_tab = st.session_state.pop("_active_tab", None)
+            target_tab = st.session_state.get("_active_tab")
+            # Only inject JS if we haven't already for this request
+            if not st.session_state.get("_active_tab_injected", False):
+                inject_tab_js = True
+                st.session_state["_active_tab_injected"] = True
+            else:
+                # Already injected - clear state for next time
+                st.session_state.pop("_active_tab", None)
+                st.session_state.pop("_active_tab_request_id", None)
+                st.session_state.pop("_active_tab_injected", None)
+
 
         # ------------------- TABS -------------------
-        if target_tab:
-            st.markdown(
-                "<style>div[data-testid='stTabs']{opacity:0;}</style>",
-                unsafe_allow_html=True,
-            )
+        # Ensure all tabs are visible (counteract any leftover opacity:0 from previous renders)
+        st.markdown(
+            "<style>div[data-testid='stTabs']{opacity:1 !important;}</style>",
+            unsafe_allow_html=True,
+        )
         tab_details, tab_review, tab_uw, tab_benchmark, tab_rating, tab_quote, tab_policy = st.tabs(
             ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Comps", "📊 Rating", "💰 Quote", "📑 Policy"]
         )
 
         # If we need to switch to a specific tab, inject JavaScript to click it
-        if target_tab:
+        if inject_tab_js and target_tab:
             tab_index = {"Account": 0, "Review": 1, "UW": 2, "Comps": 3, "Rating": 4, "Quote": 5, "Policy": 6}.get(target_tab, 0)
             import streamlit.components.v1 as components
             components.html(f"""
@@ -1013,12 +1032,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                     function clickTab() {{
                         const root = window.parent.document;
                         const tabs = root.querySelectorAll('[data-baseweb="tab"]');
-                        const tabsRoot = root.querySelector('[data-testid="stTabs"]');
                         if (tabs && tabs.length > {tab_index}) {{
                             tabs[{tab_index}].click();
-                            if (tabsRoot) {{
-                                tabsRoot.style.opacity = '1';
-                            }}
                         }} else {{
                             // Retry if tabs aren't rendered yet
                             setTimeout(clickTab, 50);
@@ -1123,16 +1138,18 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                 # Format retention for display
                 ret_label = f"${selected_retention // 1000}K"
 
-                # Show success message if option was just created
+                # Show success message if option was just created (use toast for persistence across reruns)
                 success_key = f"_create_option_success_{sub_id}"
                 if success_key in st.session_state:
                     created_name = st.session_state.pop(success_key)
-                    st.success(f"Created: {created_name}")
+                    st.toast(f"✓ Created: {created_name}", icon="✅")
 
                 # Display premium metrics with create option buttons
                 col1, col2, col3, col4 = st.columns(4)
                 cols = [col1, col2, col3, col4]
 
+                # Import on_click callback to prevent tab bouncing when button triggers rerun
+                from utils.tab_state import on_change_stay_on_rating
                 for i, (col, limit_label, limit, premium) in enumerate(zip(cols, limit_labels, limits, premiums)):
                     with col:
                         st.metric(
@@ -1141,7 +1158,7 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         )
                         # Create Quote Option button
                         if premium > 0:
-                            if st.button("+ Create Option", key=f"create_opt_{limit}_{selected_retention}_{sub_id}", use_container_width=True):
+                            if st.button("+ Create Option", key=f"create_opt_{limit}_{selected_retention}_{sub_id}", use_container_width=True, on_click=on_change_stay_on_rating):
                                 from pages_components.tower_db import save_tower, list_quotes_for_submission
                                 from pages_components.coverages_panel import build_coverages_from_rating
                                 from rating_engine.coverage_config import get_default_policy_form
@@ -1180,16 +1197,20 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                     primary_retention=selected_retention,
                                     quote_name=quote_name,
                                     technical_premium=premium,
+                                    sold_premium=premium,  # Initialize sold to technical premium
                                     position="primary",
                                     policy_form=policy_form,
                                     coverages=coverages,
                                 )
-                                # Clear caches so new option appears on Quote tab
-                                clear_submission_caches()
-                                # Store success message in session state to persist across reruns
+                                # Store success message to show after rerun
                                 st.session_state[f"_create_option_success_{sub_id}"] = quote_name
+                                # Use tab-aware rerun - clears caches and stays on Rating tab
+                                from utils.tab_state import save_and_rerun_on_rating_tab
+                                save_and_rerun_on_rating_tab()
 
                 # Rating Parameters (Retention, Hazard Class, Control Adjustment)
+                # Import on_change callback to prevent tab bouncing on widget change
+                from utils.tab_state import on_change_stay_on_rating
                 col_ret, col_haz, col_adj = st.columns(3)
 
                 with col_ret:
@@ -1198,7 +1219,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         options=retention_options,
                         format_func=lambda x: retention_labels[retention_options.index(x)],
                         index=retention_options.index(selected_retention) if selected_retention in retention_options else 1,
-                        key=f"rating_retention_{sub_id}"
+                        key=f"rating_retention_{sub_id}",
+                        on_change=on_change_stay_on_rating,
                     )
 
                 with col_haz:
@@ -1210,7 +1232,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         options=hazard_options,
                         format_func=lambda x: hazard_labels[hazard_options.index(x)],
                         index=hazard_idx,
-                        key=f"rating_hazard_{sub_id}"
+                        key=f"rating_hazard_{sub_id}",
+                        on_change=on_change_stay_on_rating,
                     )
                     if new_hazard != current_hazard:
                         with get_conn().cursor() as cur:
@@ -1230,7 +1253,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         options=adj_options,
                         format_func=lambda x: adj_labels[adj_options.index(x)],
                         index=adj_idx,
-                        key=f"rating_ctrl_adj_{sub_id}"
+                        key=f"rating_ctrl_adj_{sub_id}",
+                        on_change=on_change_stay_on_rating,
                     )
                     if new_adj != current_adj:
                         with get_conn().cursor() as cur:
