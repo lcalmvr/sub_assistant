@@ -492,6 +492,7 @@ export default function AccountDashboardPage() {
             <Link to="/brokers" className="nav-link">Brokers</Link>
             <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
             <span className="nav-link-active">Accounts</span>
+            <Link to="/document-library" className="nav-link">Docs</Link>
           </nav>
         </div>
       </header>

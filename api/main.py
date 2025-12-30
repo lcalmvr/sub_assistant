@@ -2163,6 +2163,293 @@ def get_account_submissions(account_id: str):
 
 
 # ─────────────────────────────────────────────────────────────
+# Document Library
+# ─────────────────────────────────────────────────────────────
+
+DOCUMENT_TYPES = {
+    "endorsement": "Endorsement",
+    "marketing": "Marketing Material",
+    "claims_sheet": "Claims Reporting Sheet",
+    "specimen": "Specimen Policy Form",
+}
+
+POSITION_OPTIONS = {
+    "primary": "Primary Only",
+    "excess": "Excess Only",
+    "either": "Primary or Excess",
+}
+
+STATUS_OPTIONS = {
+    "draft": "Draft",
+    "active": "Active",
+    "archived": "Archived",
+}
+
+
+@app.get("/api/document-library")
+def get_document_library_entries(
+    document_type: str = None,
+    category: str = None,
+    position: str = None,
+    status: str = None,
+    search: str = None,
+    include_archived: bool = False
+):
+    """Get document library entries with optional filters."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            conditions = []
+            params = []
+
+            if status and not include_archived:
+                conditions.append("status = %s")
+                params.append(status)
+            elif not include_archived:
+                conditions.append("status != 'archived'")
+
+            if document_type:
+                conditions.append("document_type = %s")
+                params.append(document_type)
+
+            if category:
+                conditions.append("category = %s")
+                params.append(category)
+
+            if position:
+                if position in ("primary", "excess"):
+                    conditions.append("(position = %s OR position = 'either')")
+                    params.append(position)
+                else:
+                    conditions.append("position = %s")
+                    params.append(position)
+
+            if search:
+                conditions.append("""
+                    (LOWER(code) LIKE LOWER(%s)
+                     OR LOWER(title) LIKE LOWER(%s)
+                     OR LOWER(COALESCE(content_plain, '')) LIKE LOWER(%s))
+                """)
+                search_param = f"%{search}%"
+                params.extend([search_param, search_param, search_param])
+
+            where_clause = " AND ".join(conditions) if conditions else "TRUE"
+
+            cur.execute(f"""
+                SELECT id, code, title, document_type, category,
+                       content_html, position, midterm_only,
+                       version, status, default_sort_order,
+                       created_at, updated_at,
+                       auto_attach_rules, fill_in_mappings
+                FROM document_library
+                WHERE {where_clause}
+                ORDER BY default_sort_order, code
+            """, params)
+
+            rows = cur.fetchall()
+            return [
+                {
+                    **dict(row),
+                    "document_type_label": DOCUMENT_TYPES.get(row["document_type"], row["document_type"]),
+                    "position_label": POSITION_OPTIONS.get(row["position"], row["position"]),
+                    "status_label": STATUS_OPTIONS.get(row["status"], row["status"]),
+                }
+                for row in rows
+            ]
+
+
+@app.get("/api/document-library/categories")
+def get_document_library_categories(document_type: str = None):
+    """Get distinct categories for filtering."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if document_type:
+                cur.execute("""
+                    SELECT DISTINCT category
+                    FROM document_library
+                    WHERE category IS NOT NULL AND document_type = %s
+                    ORDER BY category
+                """, (document_type,))
+            else:
+                cur.execute("""
+                    SELECT DISTINCT category
+                    FROM document_library
+                    WHERE category IS NOT NULL
+                    ORDER BY category
+                """)
+            return [row["category"] for row in cur.fetchall()]
+
+
+@app.get("/api/document-library/{entry_id}")
+def get_document_library_entry(entry_id: str):
+    """Get a single document library entry."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, code, title, document_type, category,
+                       content_html, position, midterm_only,
+                       version, version_notes, status, default_sort_order,
+                       created_at, updated_at, created_by,
+                       auto_attach_rules, fill_in_mappings
+                FROM document_library
+                WHERE id = %s
+            """, (entry_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Document not found")
+            return {
+                **dict(row),
+                "document_type_label": DOCUMENT_TYPES.get(row["document_type"], row["document_type"]),
+                "position_label": POSITION_OPTIONS.get(row["position"], row["position"]),
+                "status_label": STATUS_OPTIONS.get(row["status"], row["status"]),
+            }
+
+
+@app.post("/api/document-library")
+def create_document_library_entry(data: dict):
+    """Create a new document library entry."""
+    import json
+    import re
+
+    code = data.get("code", "").strip()
+    title = data.get("title", "").strip()
+    document_type = data.get("document_type")
+
+    if not code or not title or not document_type:
+        raise HTTPException(status_code=400, detail="code, title, and document_type are required")
+
+    content_html = data.get("content_html")
+    content_plain = None
+    if content_html:
+        # Simple HTML to plain text
+        text = re.sub(r'<[^>]+>', ' ', content_html)
+        text = re.sub(r'\s+', ' ', text)
+        content_plain = text.strip()
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO document_library (
+                    code, title, document_type, category,
+                    content_html, content_plain, position, midterm_only,
+                    default_sort_order, status, created_by,
+                    auto_attach_rules, fill_in_mappings
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+                RETURNING id
+            """, (
+                code,
+                title,
+                document_type,
+                data.get("category"),
+                content_html,
+                content_plain,
+                data.get("position", "either"),
+                data.get("midterm_only", False),
+                data.get("default_sort_order", 100),
+                data.get("status", "draft"),
+                "api",
+                json.dumps(data.get("auto_attach_rules")) if data.get("auto_attach_rules") else None,
+                json.dumps(data.get("fill_in_mappings")) if data.get("fill_in_mappings") else None,
+            ))
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": str(row["id"]), "message": "Document created"}
+
+
+@app.patch("/api/document-library/{entry_id}")
+def update_document_library_entry(entry_id: str, data: dict):
+    """Update a document library entry."""
+    import json
+    import re
+
+    updates = []
+    params = []
+
+    if "code" in data:
+        updates.append("code = %s")
+        params.append(data["code"])
+    if "title" in data:
+        updates.append("title = %s")
+        params.append(data["title"])
+    if "document_type" in data:
+        updates.append("document_type = %s")
+        params.append(data["document_type"])
+    if "category" in data:
+        updates.append("category = %s")
+        params.append(data["category"] or None)
+    if "content_html" in data:
+        updates.append("content_html = %s")
+        params.append(data["content_html"])
+        # Update plain text
+        content_plain = None
+        if data["content_html"]:
+            text = re.sub(r'<[^>]+>', ' ', data["content_html"])
+            text = re.sub(r'\s+', ' ', text)
+            content_plain = text.strip()
+        updates.append("content_plain = %s")
+        params.append(content_plain)
+    if "position" in data:
+        updates.append("position = %s")
+        params.append(data["position"])
+    if "midterm_only" in data:
+        updates.append("midterm_only = %s")
+        params.append(data["midterm_only"])
+    if "default_sort_order" in data:
+        updates.append("default_sort_order = %s")
+        params.append(data["default_sort_order"])
+    if "status" in data:
+        updates.append("status = %s")
+        params.append(data["status"])
+    if "version_notes" in data:
+        updates.append("version_notes = %s")
+        params.append(data["version_notes"])
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    params.append(entry_id)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE document_library
+                SET {", ".join(updates)}, updated_at = now()
+                WHERE id = %s
+            """, params)
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+@app.post("/api/document-library/{entry_id}/activate")
+def activate_document_library_entry(entry_id: str):
+    """Activate a document library entry."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE document_library
+                SET status = 'active', updated_at = now()
+                WHERE id = %s
+            """, (entry_id,))
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+@app.post("/api/document-library/{entry_id}/archive")
+def archive_document_library_entry(entry_id: str):
+    """Archive a document library entry."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE document_library
+                SET status = 'archived', updated_at = now()
+                WHERE id = %s
+            """, (entry_id,))
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+# ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
 

@@ -1609,6 +1609,7 @@ export default function BrokersPage() {
             <span className="nav-link-active">Brokers</span>
             <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
             <Link to="/accounts" className="nav-link">Accounts</Link>
+            <Link to="/document-library" className="nav-link">Docs</Link>
           </nav>
         </div>
       </header>

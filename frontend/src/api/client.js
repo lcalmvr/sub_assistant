@@ -204,4 +204,23 @@ export const updateCoverageTags = (id, tags) => api.patch(`/coverage-catalog/${i
 export const deleteCoverageMapping = (id) => api.delete(`/coverage-catalog/${id}`);
 export const deleteRejectedCoverages = () => api.delete('/coverage-catalog/rejected');
 
+// Document Library
+export const getDocumentLibraryEntries = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.document_type) query.append('document_type', params.document_type);
+  if (params.category) query.append('category', params.category);
+  if (params.position) query.append('position', params.position);
+  if (params.status) query.append('status', params.status);
+  if (params.search) query.append('search', params.search);
+  if (params.include_archived) query.append('include_archived', params.include_archived);
+  const queryStr = query.toString();
+  return api.get(`/document-library${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getDocumentLibraryCategories = () => api.get('/document-library/categories');
+export const getDocumentLibraryEntry = (entryId) => api.get(`/document-library/${entryId}`);
+export const createDocumentLibraryEntry = (data) => api.post('/document-library', data);
+export const updateDocumentLibraryEntry = (entryId, data) => api.patch(`/document-library/${entryId}`, data);
+export const activateDocumentLibraryEntry = (entryId) => api.post(`/document-library/${entryId}/activate`);
+export const archiveDocumentLibraryEntry = (entryId) => api.post(`/document-library/${entryId}/archive`);
+
 export default api;

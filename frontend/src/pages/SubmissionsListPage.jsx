@@ -116,6 +116,7 @@ export default function SubmissionsListPage() {
             <Link to="/brokers" className="nav-link">Brokers</Link>
             <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
             <Link to="/accounts" className="nav-link">Accounts</Link>
+            <Link to="/document-library" className="nav-link">Docs</Link>
           </nav>
         </div>
       </header>

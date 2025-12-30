@@ -10,6 +10,7 @@ import UWGuidePage from './pages/UWGuidePage';
 import BrokersPage from './pages/BrokersPage';
 import CoverageCatalogPage from './pages/CoverageCatalogPage';
 import AccountDashboardPage from './pages/AccountDashboardPage';
+import DocumentLibraryPage from './pages/DocumentLibraryPage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import UWPage from './pages/UWPage';
@@ -55,6 +56,9 @@ function App() {
 
           {/* Account Dashboard */}
           <Route path="/accounts" element={<AccountDashboardPage />} />
+
+          {/* Document Library */}
+          <Route path="/document-library" element={<DocumentLibraryPage />} />
 
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>
