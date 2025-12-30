@@ -1123,6 +1123,12 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                 # Format retention for display
                 ret_label = f"${selected_retention // 1000}K"
 
+                # Show success message if option was just created
+                success_key = f"_create_option_success_{sub_id}"
+                if success_key in st.session_state:
+                    created_name = st.session_state.pop(success_key)
+                    st.success(f"Created: {created_name}")
+
                 # Display premium metrics with create option buttons
                 col1, col2, col3, col4 = st.columns(4)
                 cols = [col1, col2, col3, col4]
@@ -1178,9 +1184,10 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                     policy_form=policy_form,
                                     coverages=coverages,
                                 )
-                                st.success(f"Created: {quote_name}")
-                                st.session_state["_active_tab"] = "Rating"
-                                st.rerun()
+                                # Clear caches so new option appears on Quote tab
+                                clear_submission_caches()
+                                # Store success message in session state to persist across reruns
+                                st.session_state[f"_create_option_success_{sub_id}"] = quote_name
 
                 # Rating Parameters (Retention, Hazard Class, Control Adjustment)
                 col_ret, col_haz, col_adj = st.columns(3)
