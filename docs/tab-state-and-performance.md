@@ -57,6 +57,7 @@ def render_my_panel(submission_id: str):
 **Examples in codebase:**
 - `pages_components/policy_panel.py` - `_render_pending_subjectivities()`
 - `pages_components/subjectivities_panel.py` - `_render_subjectivities_content()`
+- `pages_components/coverage_summary_panel.py` - `_render_coverage_content()` (policy form changes)
 
 ### 2. `@st.dialog` - Best for Confirmations
 
@@ -192,11 +193,49 @@ def _my_fragment():
         st.rerun(scope="fragment")  # GOOD - stays in fragment
 ```
 
+### 4. Using fragments for form controls that need state reset
+
+When a widget change requires resetting other state (e.g., radio button changing coverage defaults), wrap the entire section in a fragment:
+
+```python
+@st.fragment
+def _render_coverage_content():
+    """Fragment for coverage form and editor - allows isolated reruns."""
+    # Radio button for form selection
+    selected_form = st.radio("Policy Form", ["Cyber", "Tech"], horizontal=True)
+
+    # Detect if form changed
+    prev_form = st.session_state.get("prev_form")
+    form_changed = (selected_form != prev_form)
+
+    if form_changed:
+        # Reset dependent state
+        st.session_state["coverage_defaults"] = get_defaults_for_form(selected_form)
+        reset_coverage_editor("my_editor")
+        st.session_state["prev_form"] = selected_form
+        # Fragment-scoped rerun to apply new state
+        st.rerun(scope="fragment")
+
+    # Render editor with current state
+    render_coverage_editor(...)
+
+# Call the fragment
+with st.expander("Coverage Schedule"):
+    _render_coverage_content()
+```
+
+**Why this works:**
+- Radio button click triggers natural Streamlit rerun
+- Fragment detects form changed, resets state, calls `st.rerun(scope="fragment")`
+- Only the fragment reruns (instant), not the whole page
+- Tab state is preserved because tabs aren't re-rendered
+
 ## Files Using These Patterns
 
 ### Using `@st.fragment`:
 - `pages_components/policy_panel.py` - Subjectivity management
 - `pages_components/subjectivities_panel.py` - Add/remove subjectivities
+- `pages_components/coverage_summary_panel.py` - Policy form radio button with state reset
 
 ### Using `@st.dialog`:
 - `pages_components/policy_panel.py` - Unbind confirmation
