@@ -1,0 +1,875 @@
+"""
+FastAPI backend for the React frontend.
+Exposes the existing database and business logic via REST API.
+"""
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, List
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+app = FastAPI(title="Underwriting Assistant API")
+
+# CORS for local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def get_conn():
+    """Get database connection using existing DATABASE_URL."""
+    return psycopg2.connect(
+        os.environ.get("DATABASE_URL"),
+        cursor_factory=RealDictCursor
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# Submissions Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions")
+def list_submissions():
+    """List all submissions with bound status."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.naics_primary_title,
+                    s.annual_revenue,
+                    s.submission_status as status,
+                    s.created_at,
+                    s.decision_tag,
+                    COALESCE(bound.is_bound, false) as has_bound_quote,
+                    bound.quote_name as bound_quote_name
+                FROM submissions s
+                LEFT JOIN (
+                    SELECT DISTINCT ON (submission_id)
+                        submission_id, is_bound, quote_name
+                    FROM insurance_towers
+                    WHERE is_bound = true
+                    ORDER BY submission_id, created_at DESC
+                ) bound ON s.id = bound.submission_id
+                ORDER BY s.created_at DESC
+                LIMIT 100
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/submissions/{submission_id}")
+def get_submission(submission_id: str):
+    """Get a single submission with full details."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, applicant_name, business_summary, annual_revenue,
+                       naics_primary_title, naics_primary_code,
+                       submission_status as status,
+                       bullet_point_summary, nist_controls_summary,
+                       hazard_override, control_overrides, default_retroactive_date,
+                       ai_recommendation, ai_guideline_citations,
+                       decision_tag, decision_reason, decided_at, decided_by,
+                       cyber_exposures, nist_controls,
+                       website, broker_email,
+                       created_at
+                FROM submissions
+                WHERE id = %s
+            """, (submission_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Submission not found")
+            return row
+
+
+class SubmissionUpdate(BaseModel):
+    # Company info
+    applicant_name: Optional[str] = None
+    website: Optional[str] = None
+    broker_email: Optional[str] = None
+    # Financial
+    annual_revenue: Optional[int] = None
+    naics_primary_title: Optional[str] = None
+    # Rating overrides
+    hazard_override: Optional[int] = None
+    control_overrides: Optional[dict] = None
+    default_retroactive_date: Optional[str] = None
+    # Decision fields
+    decision_tag: Optional[str] = None
+    decision_reason: Optional[str] = None
+
+
+@app.patch("/api/submissions/{submission_id}")
+def update_submission(submission_id: str, data: SubmissionUpdate):
+    """Update a submission."""
+    from datetime import datetime
+
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Auto-set decided_at when decision_tag is provided
+    # Note: decided_by is a UUID foreign key, so we skip it for now (no auth)
+    if "decision_tag" in updates:
+        updates["decided_at"] = datetime.utcnow()
+
+    set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
+    values = list(updates.values()) + [submission_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE submissions SET {set_clause} WHERE id = %s RETURNING id",
+                values
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Submission not found")
+            conn.commit()
+    return {"status": "updated"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Quote Options Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/quotes")
+def list_quotes(submission_id: str):
+    """List quote options for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, quote_name, tower_json, primary_retention, position,
+                       technical_premium, risk_adjusted_premium, sold_premium,
+                       policy_form, is_bound, retroactive_date, created_at
+                FROM insurance_towers
+                WHERE submission_id = %s
+                ORDER BY created_at DESC
+            """, (submission_id,))
+            return cur.fetchall()
+
+
+@app.get("/api/quotes/{quote_id}")
+def get_quote(quote_id: str):
+    """Get a single quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, submission_id, quote_name, tower_json, primary_retention,
+                       position, technical_premium, risk_adjusted_premium, sold_premium,
+                       policy_form, coverages, sublimits, is_bound, retroactive_date,
+                       created_at
+                FROM insurance_towers
+                WHERE id = %s
+            """, (quote_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Quote not found")
+            return row
+
+
+class QuoteCreate(BaseModel):
+    quote_name: str
+    primary_retention: Optional[int] = 25000
+    policy_form: Optional[str] = "claims_made"
+    tower_json: Optional[list] = None
+    coverages: Optional[dict] = None
+
+
+class QuoteUpdate(BaseModel):
+    quote_name: Optional[str] = None
+    sold_premium: Optional[int] = None
+    retroactive_date: Optional[str] = None
+    is_bound: Optional[bool] = None
+    primary_retention: Optional[int] = None
+    policy_form: Optional[str] = None
+    tower_json: Optional[list] = None
+    coverages: Optional[dict] = None
+
+
+@app.post("/api/submissions/{submission_id}/quotes")
+def create_quote(submission_id: str, data: QuoteCreate):
+    """Create a new quote option."""
+    import json
+
+    # Default tower structure if not provided
+    tower_json = data.tower_json or [
+        {"carrier": "CMAI", "limit": 1000000, "attachment": 0, "premium": None}
+    ]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Verify submission exists
+            cur.execute("SELECT id FROM submissions WHERE id = %s", (submission_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            cur.execute("""
+                INSERT INTO insurance_towers (
+                    submission_id, quote_name, primary_retention, policy_form,
+                    tower_json, coverages, position
+                ) VALUES (%s, %s, %s, %s, %s, %s, 'primary')
+                RETURNING id, quote_name, created_at
+            """, (
+                submission_id,
+                data.quote_name,
+                data.primary_retention,
+                data.policy_form,
+                json.dumps(tower_json),
+                json.dumps(data.coverages or {}),
+            ))
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": row["id"], "quote_name": row["quote_name"], "created_at": row["created_at"]}
+
+
+@app.patch("/api/quotes/{quote_id}")
+def update_quote(quote_id: str, data: QuoteUpdate):
+    """Update a quote option."""
+    import json
+
+    updates = {}
+    for k, v in data.model_dump().items():
+        if v is not None:
+            # Convert dict/list to JSON string for JSONB columns
+            if k in ('tower_json', 'coverages') and v is not None:
+                updates[k] = json.dumps(v)
+            else:
+                updates[k] = v
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
+    values = list(updates.values()) + [quote_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE insurance_towers SET {set_clause}, updated_at = NOW() WHERE id = %s RETURNING id",
+                values
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Quote not found")
+            conn.commit()
+    return {"status": "updated"}
+
+
+@app.post("/api/quotes/{quote_id}/clone")
+def clone_quote(quote_id: str):
+    """Clone a quote option."""
+    import json
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get original quote
+            cur.execute("""
+                SELECT submission_id, quote_name, tower_json, primary_retention,
+                       policy_form, coverages, sublimits, position
+                FROM insurance_towers WHERE id = %s
+            """, (quote_id,))
+            original = cur.fetchone()
+            if not original:
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            # Create clone with modified name
+            new_name = f"{original['quote_name']} (Copy)"
+
+            # Serialize JSON fields
+            tower_json = json.dumps(original['tower_json']) if original['tower_json'] else None
+            coverages = json.dumps(original['coverages']) if original['coverages'] else None
+            sublimits = json.dumps(original['sublimits']) if original['sublimits'] else None
+
+            cur.execute("""
+                INSERT INTO insurance_towers (
+                    submission_id, quote_name, tower_json, primary_retention,
+                    policy_form, coverages, sublimits, position
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, quote_name, created_at
+            """, (
+                original['submission_id'],
+                new_name,
+                tower_json,
+                original['primary_retention'],
+                original['policy_form'],
+                coverages,
+                sublimits,
+                original['position'],
+            ))
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": row["id"], "quote_name": row["quote_name"], "created_at": row["created_at"]}
+
+
+@app.post("/api/quotes/{quote_id}/bind")
+def bind_quote(quote_id: str):
+    """Bind a quote option (and unbind others for the same submission)."""
+    from datetime import datetime
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get submission_id for this quote
+            cur.execute("SELECT submission_id FROM insurance_towers WHERE id = %s", (quote_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            submission_id = row["submission_id"]
+
+            # Unbind all other quotes for this submission
+            cur.execute("""
+                UPDATE insurance_towers
+                SET is_bound = false, bound_at = NULL
+                WHERE submission_id = %s AND id != %s
+            """, (submission_id, quote_id))
+
+            # Bind this quote
+            cur.execute("""
+                UPDATE insurance_towers
+                SET is_bound = true, bound_at = %s
+                WHERE id = %s
+                RETURNING id
+            """, (datetime.utcnow(), quote_id))
+
+            conn.commit()
+            return {"status": "bound", "quote_id": quote_id}
+
+
+@app.post("/api/quotes/{quote_id}/unbind")
+def unbind_quote(quote_id: str):
+    """Unbind a quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE insurance_towers
+                SET is_bound = false, bound_at = NULL
+                WHERE id = %s
+                RETURNING id
+            """, (quote_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Quote not found")
+            conn.commit()
+            return {"status": "unbound", "quote_id": quote_id}
+
+
+# ─────────────────────────────────────────────────────────────
+# Comparables Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/comparables")
+def get_comparables(
+    submission_id: str,
+    layer: str = "primary",
+    months: int = 24,
+    revenue_tolerance: float = 0.5,
+    limit: int = 30
+):
+    """Get comparable submissions for benchmarking."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get current submission's revenue for filtering
+            cur.execute(
+                "SELECT annual_revenue FROM submissions WHERE id = %s",
+                (submission_id,)
+            )
+            current = cur.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            current_revenue = float(current.get("annual_revenue") or 0)
+
+            # Calculate revenue bounds
+            if revenue_tolerance > 0 and current_revenue > 0:
+                min_rev = current_revenue * (1 - revenue_tolerance)
+                max_rev = current_revenue * (1 + revenue_tolerance)
+                revenue_clause = "AND s.annual_revenue BETWEEN %s AND %s"
+                revenue_params = [min_rev, max_rev]
+            else:
+                revenue_clause = ""
+                revenue_params = []
+
+            # Layer filter (primary = attachment 0, excess = attachment > 0)
+            if layer == "excess":
+                layer_clause = "AND COALESCE((t.tower_json->0->>'attachment')::numeric, 0) > 0"
+            else:
+                layer_clause = "AND COALESCE((t.tower_json->0->>'attachment')::numeric, 0) = 0"
+
+            query = f"""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.annual_revenue,
+                    s.naics_primary_title,
+                    s.submission_status,
+                    s.submission_outcome,
+                    s.effective_date,
+                    s.date_received,
+                    t.id as tower_id,
+                    t.tower_json,
+                    t.primary_retention,
+                    t.risk_adjusted_premium,
+                    t.sold_premium,
+                    t.is_bound,
+                    (t.tower_json->0->>'limit')::numeric as policy_limit,
+                    (t.tower_json->0->>'attachment')::numeric as attachment_point,
+                    (t.tower_json->0->>'carrier') as carrier
+                FROM submissions s
+                LEFT JOIN insurance_towers t ON t.submission_id = s.id
+                WHERE s.id != %s
+                AND s.created_at >= NOW() - INTERVAL '%s months'
+                {revenue_clause}
+                {layer_clause}
+                ORDER BY s.created_at DESC
+                LIMIT %s
+            """
+
+            params = [submission_id, months] + revenue_params + [limit]
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+            # Process rows to add computed fields
+            comparables = []
+            for row in rows:
+                row_dict = dict(row)
+                # Compute rate per million
+                premium = row_dict.get("sold_premium") or row_dict.get("risk_adjusted_premium")
+                policy_limit = row_dict.get("policy_limit")
+                if premium and policy_limit and policy_limit > 0:
+                    row_dict["rate_per_mil"] = float(premium) / (float(policy_limit) / 1_000_000)
+                else:
+                    row_dict["rate_per_mil"] = None
+
+                # Format stage
+                status = (row_dict.get("submission_status") or "").lower()
+                outcome = (row_dict.get("submission_outcome") or "").lower()
+                if status == "declined":
+                    row_dict["stage"] = "Declined"
+                elif outcome == "bound":
+                    row_dict["stage"] = "Bound"
+                elif outcome == "lost":
+                    row_dict["stage"] = "Lost"
+                elif status == "quoted":
+                    row_dict["stage"] = "Quoted"
+                else:
+                    row_dict["stage"] = "Received"
+
+                comparables.append(row_dict)
+
+            return comparables
+
+
+@app.get("/api/submissions/{submission_id}/comparables/metrics")
+def get_comparables_metrics(submission_id: str):
+    """Get aggregate metrics for comparables."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get current submission's revenue
+            cur.execute(
+                "SELECT annual_revenue FROM submissions WHERE id = %s",
+                (submission_id,)
+            )
+            current = cur.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            current_revenue = float(current.get("annual_revenue") or 0)
+            min_rev = current_revenue * 0.5 if current_revenue > 0 else 0
+            max_rev = current_revenue * 1.5 if current_revenue > 0 else float('inf')
+
+            # Get metrics from bound comparables
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total_count,
+                    COUNT(*) FILTER (WHERE t.is_bound = true) as bound_count,
+                    AVG(
+                        CASE WHEN t.is_bound = true AND (t.tower_json->0->>'limit')::numeric > 0
+                        THEN COALESCE(t.sold_premium, t.risk_adjusted_premium)::numeric /
+                             ((t.tower_json->0->>'limit')::numeric / 1000000)
+                        END
+                    ) as avg_rpm_bound,
+                    AVG(
+                        CASE WHEN (t.tower_json->0->>'limit')::numeric > 0
+                        THEN COALESCE(t.sold_premium, t.risk_adjusted_premium)::numeric /
+                             ((t.tower_json->0->>'limit')::numeric / 1000000)
+                        END
+                    ) as avg_rpm_all,
+                    MIN(
+                        CASE WHEN t.is_bound = true AND (t.tower_json->0->>'limit')::numeric > 0
+                        THEN COALESCE(t.sold_premium, t.risk_adjusted_premium)::numeric /
+                             ((t.tower_json->0->>'limit')::numeric / 1000000)
+                        END
+                    ) as min_rpm_bound,
+                    MAX(
+                        CASE WHEN t.is_bound = true AND (t.tower_json->0->>'limit')::numeric > 0
+                        THEN COALESCE(t.sold_premium, t.risk_adjusted_premium)::numeric /
+                             ((t.tower_json->0->>'limit')::numeric / 1000000)
+                        END
+                    ) as max_rpm_bound
+                FROM submissions s
+                JOIN insurance_towers t ON t.submission_id = s.id
+                WHERE s.id != %s
+                AND s.created_at >= NOW() - INTERVAL '24 months'
+                AND (s.annual_revenue IS NULL OR s.annual_revenue BETWEEN %s AND %s)
+            """, (submission_id, min_rev, max_rev))
+
+            row = cur.fetchone()
+            return {
+                "count": row.get("total_count") or 0,
+                "bound_count": row.get("bound_count") or 0,
+                "avg_rpm_bound": float(row["avg_rpm_bound"]) if row.get("avg_rpm_bound") else None,
+                "avg_rpm_all": float(row["avg_rpm_all"]) if row.get("avg_rpm_all") else None,
+                "rate_range": [
+                    float(row["min_rpm_bound"]) if row.get("min_rpm_bound") else None,
+                    float(row["max_rpm_bound"]) if row.get("max_rpm_bound") else None
+                ] if row.get("min_rpm_bound") else None
+            }
+
+
+# ─────────────────────────────────────────────────────────────
+# Policy Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/policy")
+def get_policy_data(submission_id: str):
+    """Get policy data for a submission including bound option and documents."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get submission info
+            cur.execute("""
+                SELECT id, applicant_name, effective_date, expiration_date,
+                       submission_status, submission_outcome
+                FROM submissions
+                WHERE id = %s
+            """, (submission_id,))
+            submission = cur.fetchone()
+            if not submission:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            # Get bound option
+            cur.execute("""
+                SELECT id, quote_name, tower_json, primary_retention,
+                       risk_adjusted_premium, sold_premium, policy_form,
+                       is_bound, retroactive_date, coverages, sublimits
+                FROM insurance_towers
+                WHERE submission_id = %s AND is_bound = true
+                LIMIT 1
+            """, (submission_id,))
+            bound_option = cur.fetchone()
+
+            # Get policy documents from policy_documents table
+            cur.execute("""
+                SELECT id, document_type, document_number, pdf_url, created_at
+                FROM policy_documents
+                WHERE submission_id = %s
+                AND status != 'void'
+                ORDER BY created_at DESC
+            """, (submission_id,))
+            documents = cur.fetchall()
+
+            # Subjectivities and endorsements tables may not exist yet
+            # Return empty arrays for now - these can be added when tables are created
+            subjectivities = []
+            endorsements = []
+
+            # Compute effective premium
+            base_premium = 0
+            if bound_option:
+                base_premium = float(bound_option.get("sold_premium") or bound_option.get("risk_adjusted_premium") or 0)
+
+            return {
+                "submission": dict(submission) if submission else None,
+                "bound_option": dict(bound_option) if bound_option else None,
+                "documents": [dict(d) for d in documents] if documents else [],
+                "subjectivities": subjectivities,
+                "endorsements": endorsements,
+                "effective_premium": base_premium,
+                "is_issued": any(d.get("document_type") == "policy" for d in (documents or []))
+            }
+
+
+# ─────────────────────────────────────────────────────────────
+# Rating / Premium Calculation
+# ─────────────────────────────────────────────────────────────
+
+class PremiumRequest(BaseModel):
+    limit: int
+    retention: int
+    hazard_override: Optional[int] = None
+    control_adjustment: Optional[float] = 0
+
+
+@app.post("/api/submissions/{submission_id}/calculate-premium")
+def calculate_premium_endpoint(submission_id: str, data: PremiumRequest):
+    """Calculate premium for a submission with given parameters."""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from rating_engine.premium_calculator import calculate_premium
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get submission data
+            cur.execute("""
+                SELECT annual_revenue, naics_primary_title, hazard_override, control_overrides
+                FROM submissions
+                WHERE id = %s
+            """, (submission_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            revenue = row.get("annual_revenue")
+            industry = row.get("naics_primary_title") or "Technology"
+
+            if not revenue:
+                return {
+                    "error": "No revenue set - add on Account tab",
+                    "technical_premium": 0,
+                    "risk_adjusted_premium": 0,
+                    "rate_per_mil": 0
+                }
+
+            # Use request hazard_override if provided, else use submission's stored override
+            effective_hazard = data.hazard_override
+            if effective_hazard is None:
+                effective_hazard = row.get("hazard_override")
+
+            # Parse control adjustment from request or from stored control_overrides
+            control_adj = data.control_adjustment or 0
+            if control_adj == 0 and row.get("control_overrides"):
+                import json
+                try:
+                    overrides = row["control_overrides"]
+                    if isinstance(overrides, str):
+                        overrides = json.loads(overrides)
+                    control_adj = overrides.get("overall", 0)
+                except:
+                    pass
+
+            # Calculate premium
+            result = calculate_premium(
+                revenue=float(revenue),
+                limit=data.limit,
+                retention=data.retention,
+                industry=industry,
+                hazard_override=effective_hazard,
+                control_adjustment=control_adj,
+            )
+
+            # Add rate per million
+            if result.get("risk_adjusted_premium") and data.limit > 0:
+                result["rate_per_mil"] = result["risk_adjusted_premium"] / (data.limit / 1_000_000)
+            else:
+                result["rate_per_mil"] = 0
+
+            return result
+
+
+@app.post("/api/submissions/{submission_id}/calculate-premium-grid")
+def calculate_premium_grid(submission_id: str):
+    """Calculate premium for multiple limits at once (for the rating grid)."""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from rating_engine.premium_calculator import calculate_premium
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get submission data
+            cur.execute("""
+                SELECT annual_revenue, naics_primary_title, hazard_override, control_overrides
+                FROM submissions
+                WHERE id = %s
+            """, (submission_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            revenue = row.get("annual_revenue")
+            industry = row.get("naics_primary_title") or "Technology"
+
+            if not revenue:
+                return {
+                    "error": "No revenue set - add on Account tab",
+                    "grid": []
+                }
+
+            hazard_override = row.get("hazard_override")
+            control_adj = 0
+            if row.get("control_overrides"):
+                import json
+                try:
+                    overrides = row["control_overrides"]
+                    if isinstance(overrides, str):
+                        overrides = json.loads(overrides)
+                    control_adj = overrides.get("overall", 0)
+                except:
+                    pass
+
+            # Calculate for standard limits
+            limits = [1_000_000, 2_000_000, 3_000_000, 5_000_000]
+            retentions = [25_000, 50_000, 100_000]
+            default_retention = 25_000
+
+            grid = []
+            for limit in limits:
+                result = calculate_premium(
+                    revenue=float(revenue),
+                    limit=limit,
+                    retention=default_retention,
+                    industry=industry,
+                    hazard_override=hazard_override,
+                    control_adjustment=control_adj,
+                )
+                grid.append({
+                    "limit": limit,
+                    "retention": default_retention,
+                    "technical_premium": result.get("technical_premium", 0),
+                    "risk_adjusted_premium": result.get("risk_adjusted_premium", 0),
+                    "rate_per_mil": result.get("risk_adjusted_premium", 0) / (limit / 1_000_000) if result.get("risk_adjusted_premium") else 0
+                })
+
+            return {
+                "grid": grid,
+                "hazard_class": grid[0].get("breakdown", {}).get("hazard_class") if grid else None,
+                "industry_slug": grid[0].get("breakdown", {}).get("industry_slug") if grid else None
+            }
+
+
+# ─────────────────────────────────────────────────────────────
+# Document Generation
+# ─────────────────────────────────────────────────────────────
+
+@app.post("/api/quotes/{quote_id}/generate-document")
+def generate_quote_document(quote_id: str):
+    """Generate a quote document (PDF) for a quote option."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.document_generator import generate_document
+
+        # Get submission_id for this quote
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT submission_id, position FROM insurance_towers WHERE id = %s",
+                    (quote_id,)
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Quote not found")
+                submission_id = row["submission_id"]
+                position = row.get("position", "primary")
+
+        # Determine doc type based on position
+        doc_type = "quote_excess" if position == "excess" else "quote_primary"
+
+        # Generate the document
+        result = generate_document(
+            submission_id=str(submission_id),
+            quote_option_id=quote_id,
+            doc_type=doc_type,
+            created_by="api"
+        )
+
+        return result
+
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=f"Document generation failed: {str(e)}")
+
+
+@app.post("/api/quotes/{quote_id}/generate-binder")
+def generate_binder_document(quote_id: str):
+    """Generate a binder document (PDF) for a bound quote."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.document_generator import generate_document
+
+        # Get submission_id and check if bound
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT submission_id, is_bound FROM insurance_towers WHERE id = %s",
+                    (quote_id,)
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Quote not found")
+                if not row.get("is_bound"):
+                    raise HTTPException(status_code=400, detail="Quote must be bound to generate binder")
+                submission_id = row["submission_id"]
+
+        # Generate the binder
+        result = generate_document(
+            submission_id=str(submission_id),
+            quote_option_id=quote_id,
+            doc_type="binder",
+            created_by="api"
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=f"Binder generation failed: {str(e)}")
+
+
+@app.post("/api/quotes/{quote_id}/generate-policy")
+def generate_policy_document(quote_id: str):
+    """Generate a policy document (PDF) for issuance."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.document_generator import generate_document
+
+        # Get submission_id and check if bound
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT submission_id, is_bound FROM insurance_towers WHERE id = %s",
+                    (quote_id,)
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Quote not found")
+                if not row.get("is_bound"):
+                    raise HTTPException(status_code=400, detail="Quote must be bound to issue policy")
+                submission_id = row["submission_id"]
+
+        # Generate the policy
+        result = generate_document(
+            submission_id=str(submission_id),
+            quote_option_id=quote_id,
+            doc_type="policy",
+            created_by="api"
+        )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=f"Policy generation failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Health Check
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/health")
+def health_check():
+    """Health check endpoint."""
+    return {"status": "ok"}

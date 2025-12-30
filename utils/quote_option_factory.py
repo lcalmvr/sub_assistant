@@ -20,6 +20,7 @@ def create_primary_quote_option(
     policy_form: str = None,
     coverages: dict = None,
     clone_from_quote_id: str = None,
+    retroactive_date: str = None,
 ) -> str:
     """
     Create and save a new primary quote option.
@@ -32,11 +33,12 @@ def create_primary_quote_option(
         policy_form: Optional policy form override
         coverages: Optional coverages override
         clone_from_quote_id: If provided, clone settings from this quote
+        retroactive_date: Optional retroactive date override (defaults to submission default)
 
     Returns:
         ID of the created quote option
     """
-    from pages_components.tower_db import save_tower, get_quote_by_id
+    from pages_components.tower_db import save_tower, get_quote_by_id, get_conn
     from pages_components.coverages_panel import build_coverages_from_rating
     from rating_engine.coverage_config import get_default_policy_form
     from rating_engine.premium_calculator import calculate_premium_for_submission
@@ -53,6 +55,8 @@ def create_primary_quote_option(
                 policy_form = source_quote.get("policy_form")
             if coverages is None:
                 coverages = source_quote.get("coverages")
+            if retroactive_date is None:
+                retroactive_date = source_quote.get("retroactive_date")
 
     # Calculate premium from rating engine
     technical_premium = None
@@ -87,6 +91,17 @@ def create_primary_quote_option(
     if coverages is None:
         coverages = build_coverages_from_rating(sub_id, limit)
 
+    # Fetch submission default retroactive date if not provided
+    if retroactive_date is None:
+        with get_conn().cursor() as cur:
+            cur.execute(
+                "SELECT default_retroactive_date FROM submissions WHERE id = %s",
+                (sub_id,)
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                retroactive_date = row[0]
+
     # Save to database with rater premium as starting point
     new_id = save_tower(
         submission_id=sub_id,
@@ -99,6 +114,7 @@ def create_primary_quote_option(
         technical_premium=technical_premium,
         risk_adjusted_premium=risk_adjusted_premium,
         sold_premium=risk_adjusted_premium,
+        retroactive_date=retroactive_date,
     )
 
     return new_id
@@ -112,6 +128,7 @@ def create_excess_quote_option(
     underlying_carrier: str = "Primary Carrier",
     existing_quote_names: list = None,
     policy_form: str = None,
+    retroactive_date: str = None,
 ) -> str:
     """
     Create and save a new excess quote option.
@@ -124,11 +141,12 @@ def create_excess_quote_option(
         underlying_carrier: Name of underlying carrier
         existing_quote_names: List of existing quote names (for deduplication)
         policy_form: Optional policy form override
+        retroactive_date: Optional retroactive date override (defaults to submission default)
 
     Returns:
         ID of the created quote option
     """
-    from pages_components.tower_db import save_tower
+    from pages_components.tower_db import save_tower, get_conn
     from rating_engine.coverage_config import get_default_policy_form
     from rating_engine.premium_calculator import calculate_premium_for_submission
 
@@ -188,6 +206,17 @@ def create_excess_quote_option(
     if policy_form is None:
         policy_form = st.session_state.get(f"policy_form_{sub_id}", get_default_policy_form())
 
+    # Fetch submission default retroactive date if not provided
+    if retroactive_date is None:
+        with get_conn().cursor() as cur:
+            cur.execute(
+                "SELECT default_retroactive_date FROM submissions WHERE id = %s",
+                (sub_id,)
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                retroactive_date = row[0]
+
     # Save to database
     new_id = save_tower(
         submission_id=sub_id,
@@ -199,6 +228,7 @@ def create_excess_quote_option(
         technical_premium=technical_premium,
         risk_adjusted_premium=risk_adjusted_premium,
         sold_premium=risk_adjusted_premium,
+        retroactive_date=retroactive_date,
     )
 
     return new_id

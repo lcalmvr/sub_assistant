@@ -1230,6 +1230,62 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                             )
                         # No explicit rerun needed - premiums already use session state values
 
+                # Retroactive Date (submission default - applies to all quote options)
+                retro_col1, retro_col2 = st.columns([1, 2])
+
+                with retro_col1:
+                    # Fetch current value
+                    current_retro = None
+                    with get_conn().cursor() as cur:
+                        cur.execute(
+                            "SELECT default_retroactive_date FROM submissions WHERE id = %s",
+                            (sub_id,)
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            current_retro = row[0]
+
+                    presets = ["", "Full Prior Acts", "Inception"]
+                    is_custom = current_retro and current_retro not in presets
+
+                    dropdown_options = presets + ["Custom..."]
+                    if is_custom:
+                        default_idx = len(presets)  # "Custom..."
+                    elif current_retro in presets:
+                        default_idx = presets.index(current_retro)
+                    else:
+                        default_idx = 0
+
+                    selected_retro = st.selectbox(
+                        "Retroactive Date",
+                        options=dropdown_options,
+                        index=default_idx,
+                        key=f"retro_select_{sub_id}",
+                        on_change=on_change_stay_on_rating,
+                        help="Applies to all quote options"
+                    )
+
+                with retro_col2:
+                    if selected_retro == "Custom...":
+                        custom_retro = st.text_input(
+                            "Custom Retro",
+                            value=current_retro if is_custom else "",
+                            key=f"retro_text_{sub_id}",
+                            placeholder="e.g., 1/1/2020, Inception for Tech E&O",
+                        )
+                        final_retro = custom_retro.strip() if custom_retro else None
+                    else:
+                        final_retro = selected_retro if selected_retro else None
+                        st.text("")  # Spacer
+
+                # Save if changed
+                if final_retro != current_retro:
+                    with get_conn().cursor() as cur:
+                        cur.execute(
+                            "UPDATE submissions SET default_retroactive_date = %s WHERE id = %s",
+                            (final_retro, sub_id)
+                        )
+
                 # ─────────────────────────────────────────────────────────────
                 # Rating Factors Summary (concise, universal)
                 # ─────────────────────────────────────────────────────────────

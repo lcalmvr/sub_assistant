@@ -1,0 +1,44 @@
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: '/api',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Submissions
+export const getSubmissions = () => api.get('/submissions');
+export const getSubmission = (id) => api.get(`/submissions/${id}`);
+export const updateSubmission = (id, data) => api.patch(`/submissions/${id}`, data);
+
+// Quote Options
+export const getQuoteOptions = (submissionId) => api.get(`/submissions/${submissionId}/quotes`);
+export const getQuoteOption = (id) => api.get(`/quotes/${id}`);
+export const createQuoteOption = (submissionId, data) => api.post(`/submissions/${submissionId}/quotes`, data);
+export const updateQuoteOption = (id, data) => api.patch(`/quotes/${id}`, data);
+export const deleteQuoteOption = (id) => api.delete(`/quotes/${id}`);
+export const cloneQuoteOption = (id) => api.post(`/quotes/${id}/clone`);
+export const bindQuoteOption = (id) => api.post(`/quotes/${id}/bind`);
+export const unbindQuoteOption = (id) => api.post(`/quotes/${id}/unbind`);
+
+// Documents
+export const generateQuoteDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-document`);
+export const generateBinderDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-binder`);
+export const generatePolicyDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-policy`);
+
+// Rating
+export const calculatePremium = (submissionId, params) => api.post(`/submissions/${submissionId}/calculate-premium`, params);
+export const calculatePremiumGrid = (submissionId) => api.post(`/submissions/${submissionId}/calculate-premium-grid`);
+
+// Comparables
+export const getComparables = (submissionId, params = {}) => {
+  const queryParams = new URLSearchParams(params).toString();
+  return api.get(`/submissions/${submissionId}/comparables${queryParams ? `?${queryParams}` : ''}`);
+};
+export const getComparablesMetrics = (submissionId) => api.get(`/submissions/${submissionId}/comparables/metrics`);
+
+// Policy
+export const getPolicyData = (submissionId) => api.get(`/submissions/${submissionId}/policy`);
+
+export default api;

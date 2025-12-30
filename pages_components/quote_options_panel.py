@@ -19,7 +19,7 @@ from core.bound_option import bind_option, unbind_option, get_bound_option, has_
 # Import shared premium calculator - single source of truth for premium calculations
 from rating_engine.premium_calculator import calculate_premium_for_submission
 from utils.quote_formatting import format_currency, generate_quote_name
-from utils.tab_state import rerun_on_quote_tab
+from utils.tab_state import rerun_on_quote_tab, on_change_stay_on_quote
 
 
 def _format_premium(amount: float) -> str:
@@ -154,9 +154,11 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                 format_func=lambda x: quote_options[x]["label"] if x in quote_options else x,
                 index=list(quote_options.keys()).index(viewing_quote_id) if viewing_quote_id and viewing_quote_id in quote_options else 0,
                 key="saved_quote_selector_override",
+                on_change=on_change_stay_on_quote,
             )
             if selected_id and selected_id != viewing_quote_id:
                 _view_quote(selected_id)
+                viewing_quote_id = selected_id  # Update local var to match
     else:
         # Full edit mode: Two rows - buttons on top, dropdown below
         # Row 1: Action buttons (Add, Delete, Quote, Bind)
@@ -218,11 +220,13 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
             index=default_idx,
             key="saved_quote_selector",
             label_visibility="collapsed",
+            on_change=on_change_stay_on_quote,
         )
 
-        # Auto-load when selection changes
+        # Auto-load when selection changes (happens during natural rerun after on_change)
         if selected_id and selected_id != viewing_quote_id:
             _view_quote(selected_id)
+            viewing_quote_id = selected_id  # Update local var to match
 
         # Handle dialogs (outside columns)
         if st.session_state.get(f"show_excess_dialog_{sub_id}"):
@@ -239,6 +243,7 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
 def _update_quote_limit_retention(quote_id: str, quote_data: dict, new_limit: int, new_retention: int):
     """
     Update the quote's limit, retention, regenerate quote name, and recalculate premiums.
+    No explicit rerun - caller's widget should have on_change callback for tab state.
     """
     import json
     from pages_components.tower_db import get_conn
@@ -298,6 +303,7 @@ def _update_quote_limit_retention(quote_id: str, quote_data: dict, new_limit: in
     st.session_state.primary_retention = new_retention
     st.session_state.quote_name = new_name
 
+    # Explicit rerun needed to show fresh data (DB was updated mid-render)
     _rerun_on_quote_tab()
 
 
@@ -575,10 +581,11 @@ def _render_primary_premium_row1(quote_id: str, quote_data: dict, tower_json: li
                 options=limit_labels,
                 index=limit_default_idx,
                 key=f"view_limit_{quote_id}",
+                on_change=on_change_stay_on_quote,
             )
             selected_limit = limit_values[selected_limit_label]
 
-            # Auto-save limit change
+            # Auto-save limit change (happens during natural rerun after on_change)
             if selected_limit != current_limit:
                 _update_quote_limit_retention(quote_id, quote_data, selected_limit, current_retention)
 
@@ -591,10 +598,11 @@ def _render_primary_premium_row1(quote_id: str, quote_data: dict, tower_json: li
                 options=retention_labels,
                 index=retention_default_idx,
                 key=f"view_retention_{quote_id}",
+                on_change=on_change_stay_on_quote,
             )
             selected_retention = retention_values[selected_retention_label]
 
-            # Auto-save retention change
+            # Auto-save retention change (happens during natural rerun after on_change)
             if selected_retention != current_retention:
                 _update_quote_limit_retention(quote_id, quote_data, current_limit, selected_retention)
 
@@ -625,7 +633,8 @@ def _render_sold_premium_input(quote_id: str, sold_premium: float):
     new_sold_str = st.text_input(
         "Sold Premium",
         key=widget_key,
-        placeholder="$0"
+        placeholder="$0",
+        on_change=on_change_stay_on_quote,
     )
     new_sold = _parse_currency(new_sold_str)
 
@@ -638,10 +647,11 @@ def _view_quote(quote_id: str):
     """
     Load a saved quote for VIEWING (read-only comparison).
     This populates the tower display but does NOT enable editing.
+    No explicit rerun - caller's widget should have on_change callback for tab state.
     """
     from utils.quote_option_factory import load_quote_into_session
     load_quote_into_session(quote_id)
-    _rerun_on_quote_tab()
+    # No explicit rerun - selectbox on_change already set tab state
 
 
 
