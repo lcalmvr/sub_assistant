@@ -9,6 +9,7 @@ import {
   cloneQuoteOption,
   bindQuoteOption,
   unbindQuoteOption,
+  generateQuoteDocument,
 } from '../api/client';
 
 // Format currency
@@ -192,7 +193,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
   const updateMutation = useMutation({
     mutationFn: (data) => updateQuoteOption(quote.id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries(['quotes', submission.id]);
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
     },
   });
 
@@ -200,8 +201,8 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
   const bindMutation = useMutation({
     mutationFn: () => bindQuoteOption(quote.id),
     onSuccess: () => {
-      queryClient.invalidateQueries(['quotes', submission.id]);
-      queryClient.invalidateQueries(['policy', submission.id]);
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['policy', submission.id] });
     },
   });
 
@@ -209,8 +210,8 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
   const unbindMutation = useMutation({
     mutationFn: () => unbindQuoteOption(quote.id),
     onSuccess: () => {
-      queryClient.invalidateQueries(['quotes', submission.id]);
-      queryClient.invalidateQueries(['policy', submission.id]);
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['policy', submission.id] });
     },
   });
 
@@ -218,7 +219,19 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
   const cloneMutation = useMutation({
     mutationFn: () => cloneQuoteOption(quote.id),
     onSuccess: () => {
-      queryClient.invalidateQueries(['quotes', submission.id]);
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+    },
+  });
+
+  // Generate quote document mutation
+  const generateDocMutation = useMutation({
+    mutationFn: () => generateQuoteDocument(quote.id),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      // Open the PDF in a new tab if available
+      if (data.data?.pdf_url) {
+        window.open(data.data.pdf_url, '_blank');
+      }
     },
   });
 
@@ -402,8 +415,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
       <div className="card">
         <h4 className="form-section-title">Actions</h4>
         <div className="flex gap-3 flex-wrap">
-          <button className="btn btn-primary" disabled>
-            Generate Quote Document
+          <button
+            className="btn btn-primary"
+            onClick={() => generateDocMutation.mutate()}
+            disabled={generateDocMutation.isPending}
+          >
+            {generateDocMutation.isPending ? 'Generating...' : 'Generate Quote Document'}
           </button>
           {quote.is_bound ? (
             <button
@@ -439,6 +456,14 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
         {cloneMutation.isSuccess && (
           <p className="text-sm text-blue-600 mt-2">Quote cloned!</p>
         )}
+        {generateDocMutation.isSuccess && (
+          <p className="text-sm text-green-600 mt-2">Quote document generated!</p>
+        )}
+        {generateDocMutation.isError && (
+          <p className="text-sm text-red-600 mt-2">
+            Error: {generateDocMutation.error?.response?.data?.detail || 'Failed to generate document'}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -464,7 +489,7 @@ export default function QuotePage() {
   const createMutation = useMutation({
     mutationFn: (data) => createQuoteOption(submissionId, data),
     onSuccess: (response) => {
-      queryClient.invalidateQueries(['quotes', submissionId]);
+      queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
       setShowCreateModal(false);
       // Select the newly created quote
       if (response.data?.id) {
