@@ -298,110 +298,6 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="card">
-        <h4 className="form-section-title">Actions</h4>
-        <div className="flex gap-3 flex-wrap">
-          <button
-            className="btn btn-primary"
-            onClick={() => generateDocMutation.mutate()}
-            disabled={generateDocMutation.isPending}
-          >
-            {generateDocMutation.isPending ? 'Generating...' : 'Generate Quote Document'}
-          </button>
-          {quote.is_bound ? (
-            <button
-              className="btn bg-red-100 text-red-700 hover:bg-red-200"
-              onClick={() => unbindMutation.mutate()}
-              disabled={unbindMutation.isPending}
-            >
-              {unbindMutation.isPending ? 'Unbinding...' : 'Unbind Quote'}
-            </button>
-          ) : (
-            <button
-              className="btn bg-green-600 text-white hover:bg-green-700"
-              onClick={() => bindMutation.mutate()}
-              disabled={bindMutation.isPending}
-            >
-              {bindMutation.isPending ? 'Binding...' : 'Bind Quote'}
-            </button>
-          )}
-          <button
-            className="btn btn-outline"
-            onClick={() => cloneMutation.mutate()}
-            disabled={cloneMutation.isPending}
-          >
-            {cloneMutation.isPending ? 'Cloning...' : 'Clone Option'}
-          </button>
-        </div>
-        {bindMutation.isSuccess && (
-          <p className="text-sm text-green-600 mt-2">Quote bound successfully!</p>
-        )}
-        {unbindMutation.isSuccess && (
-          <p className="text-sm text-yellow-600 mt-2">Quote unbound.</p>
-        )}
-        {cloneMutation.isSuccess && (
-          <p className="text-sm text-blue-600 mt-2">Quote cloned!</p>
-        )}
-        {generateDocMutation.isSuccess && (
-          <p className="text-sm text-green-600 mt-2">Quote document generated!</p>
-        )}
-        {generateDocMutation.isError && (
-          <p className="text-sm text-red-600 mt-2">
-            Error: {generateDocMutation.error?.response?.data?.detail || 'Failed to generate document'}
-          </p>
-        )}
-      </div>
-
-      {/* Quote Documents */}
-      {quoteDocuments && quoteDocuments.length > 0 && (
-        <div className="card">
-          <h4 className="form-section-title">Quote Documents</h4>
-          <div className="overflow-hidden rounded-lg border border-gray-200">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="table-header">Document</th>
-                  <th className="table-header">Date</th>
-                  <th className="table-header">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {quoteDocuments.map((doc) => (
-                  <tr key={doc.id} className="hover:bg-gray-50">
-                    <td className="table-cell">
-                      <span className="font-medium text-gray-900">
-                        {getDocTypeLabel(doc.document_type)}
-                      </span>
-                      {doc.document_number && (
-                        <span className="text-gray-500 text-sm ml-2">({doc.document_number})</span>
-                      )}
-                    </td>
-                    <td className="table-cell text-gray-600">
-                      {formatDate(doc.created_at)}
-                    </td>
-                    <td className="table-cell">
-                      {doc.pdf_url ? (
-                        <a
-                          href={doc.pdf_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-purple-600 hover:text-purple-800 font-medium"
-                        >
-                          View PDF
-                        </a>
-                      ) : (
-                        <span className="text-gray-400">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {/* Premium Summary */}
       <div className="card">
         <h4 className="form-section-title">Premium Summary</h4>
@@ -543,6 +439,109 @@ function QuoteDetailPanel({ quote, submission, onRefresh }) {
         </div>
       )}
 
+      {/* Actions */}
+      <div className="card">
+        <h4 className="form-section-title">Actions</h4>
+        <div className="flex gap-3 flex-wrap">
+          <button
+            className="btn btn-primary"
+            onClick={() => generateDocMutation.mutate()}
+            disabled={generateDocMutation.isPending}
+          >
+            {generateDocMutation.isPending ? 'Generating...' : 'Generate Quote Document'}
+          </button>
+          {quote.is_bound ? (
+            <button
+              className="btn bg-red-100 text-red-700 hover:bg-red-200"
+              onClick={() => unbindMutation.mutate()}
+              disabled={unbindMutation.isPending}
+            >
+              {unbindMutation.isPending ? 'Unbinding...' : 'Unbind Quote'}
+            </button>
+          ) : (
+            <button
+              className="btn bg-green-600 text-white hover:bg-green-700"
+              onClick={() => bindMutation.mutate()}
+              disabled={bindMutation.isPending}
+            >
+              {bindMutation.isPending ? 'Binding...' : 'Bind Quote'}
+            </button>
+          )}
+          <button
+            className="btn btn-outline"
+            onClick={() => cloneMutation.mutate()}
+            disabled={cloneMutation.isPending}
+          >
+            {cloneMutation.isPending ? 'Cloning...' : 'Clone Option'}
+          </button>
+        </div>
+        {bindMutation.isSuccess && (
+          <p className="text-sm text-green-600 mt-2">Quote bound successfully!</p>
+        )}
+        {unbindMutation.isSuccess && (
+          <p className="text-sm text-yellow-600 mt-2">Quote unbound.</p>
+        )}
+        {cloneMutation.isSuccess && (
+          <p className="text-sm text-blue-600 mt-2">Quote cloned!</p>
+        )}
+        {generateDocMutation.isSuccess && (
+          <p className="text-sm text-green-600 mt-2">Quote document generated!</p>
+        )}
+        {generateDocMutation.isError && (
+          <p className="text-sm text-red-600 mt-2">
+            Error: {generateDocMutation.error?.response?.data?.detail || 'Failed to generate document'}
+          </p>
+        )}
+      </div>
+
+      {/* Quote Documents */}
+      {quoteDocuments && quoteDocuments.length > 0 && (
+        <div className="card">
+          <h4 className="form-section-title">Quote Documents</h4>
+          <div className="overflow-hidden rounded-lg border border-gray-200">
+            <table className="w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="table-header">Document</th>
+                  <th className="table-header">Date</th>
+                  <th className="table-header">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {quoteDocuments.map((doc) => (
+                  <tr key={doc.id} className="hover:bg-gray-50">
+                    <td className="table-cell">
+                      <span className="font-medium text-gray-900">
+                        {getDocTypeLabel(doc.document_type)}
+                      </span>
+                      {doc.document_number && (
+                        <span className="text-gray-500 text-sm ml-2">({doc.document_number})</span>
+                      )}
+                    </td>
+                    <td className="table-cell text-gray-600">
+                      {formatDate(doc.created_at)}
+                    </td>
+                    <td className="table-cell">
+                      {doc.pdf_url ? (
+                        <a
+                          href={doc.pdf_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-purple-600 hover:text-purple-800 font-medium"
+                        >
+                          View PDF
+                        </a>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
