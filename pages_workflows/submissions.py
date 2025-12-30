@@ -1114,17 +1114,10 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                 # Format retention for display
                 ret_label = f"${selected_retention // 1000}K"
 
-                # Show success message if option was just created (use toast for persistence across reruns)
-                success_key = f"_create_option_success_{sub_id}"
-                if success_key in st.session_state:
-                    created_name = st.session_state.pop(success_key)
-                    st.toast(f"✓ Created: {created_name}", icon="✅")
-
                 # Display premium metrics with create option buttons
                 col1, col2, col3, col4 = st.columns(4)
                 cols = [col1, col2, col3, col4]
 
-                # Import on_click callback to prevent tab bouncing when button triggers rerun
                 from utils.tab_state import on_change_stay_on_rating
                 for i, (col, limit_label, limit, premium) in enumerate(zip(cols, limit_labels, limits, premiums)):
                     with col:
@@ -1132,7 +1125,7 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                             label=f"{limit_label} / {ret_label}",
                             value=f"${premium:,.0f}" if premium > 0 else "N/A"
                         )
-                        # Create Quote Option button
+                        # Create Quote Option button - on_click for tab state, but NO explicit rerun
                         if premium > 0:
                             if st.button("+ Create Option", key=f"create_opt_{limit}_{selected_retention}_{sub_id}", use_container_width=True, on_click=on_change_stay_on_rating):
                                 from pages_components.tower_db import save_tower, list_quotes_for_submission
@@ -1178,11 +1171,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                     policy_form=policy_form,
                                     coverages=coverages,
                                 )
-                                # Store success message to show after rerun
-                                st.session_state[f"_create_option_success_{sub_id}"] = quote_name
-                                # Use tab-aware rerun - clears caches and stays on Rating tab
-                                from utils.tab_state import save_and_rerun_on_rating_tab
-                                save_and_rerun_on_rating_tab()
+                                # Show success - no rerun so message displays reliably
+                                st.success(f"✓ Created: {quote_name}")
 
                 # Rating Parameters (Retention, Hazard Class, Control Adjustment)
                 # Import on_change callback to prevent tab bouncing on widget change
@@ -1217,8 +1207,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 "UPDATE submissions SET hazard_override = %s WHERE id = %s",
                                 (new_hazard, sub_id)
                             )
-                        from utils.tab_state import save_and_rerun_on_rating_tab
-                        save_and_rerun_on_rating_tab()
+                        # No explicit rerun needed - premiums already use session state values
+                        # and natural Streamlit rerun handles the rest
 
                 with col_adj:
                     adj_options = [-0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15]
@@ -1238,8 +1228,7 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 "UPDATE submissions SET control_overrides = %s WHERE id = %s",
                                 (json_mod.dumps({"overall": new_adj}), sub_id)
                             )
-                        from utils.tab_state import save_and_rerun_on_rating_tab
-                        save_and_rerun_on_rating_tab()
+                        # No explicit rerun needed - premiums already use session state values
 
                 # ─────────────────────────────────────────────────────────────
                 # Rating Factors Summary (concise, universal)
