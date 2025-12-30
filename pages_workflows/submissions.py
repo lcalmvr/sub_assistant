@@ -582,7 +582,8 @@ def _render_policy_period_section(sub_id: str):
         with col_btn:
             if st.button("Edit", key=f"edit_period_btn_{sub_id}", type="secondary"):
                 st.session_state[edit_key] = True
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
     else:
         # Edit mode
         new_effective = st.date_input("Effective Date", value=effective_date, key=f"eff_{sub_id}")
@@ -610,13 +611,14 @@ def _render_policy_period_section(sub_id: str):
             if st.button("Save", key=f"save_period_{sub_id}", type="primary"):
                 with conn.cursor() as cur:
                     cur.execute("UPDATE submissions SET effective_date = %s, expiration_date = %s, updated_at = now() WHERE id = %s", (new_effective, new_expiration, sub_id))
-                clear_submission_caches()
                 st.session_state[edit_key] = False
-                st.rerun()
+                from utils.tab_state import save_and_rerun_on_account_tab
+                save_and_rerun_on_account_tab()
         with c2:
             if st.button("Cancel", key=f"cancel_period_{sub_id}"):
                 st.session_state[edit_key] = False
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
 
 
 def _render_broker_section(sub_id: str):
@@ -646,7 +648,8 @@ def _render_broker_section(sub_id: str):
             btn_label = "Change" if current else "Assign"
             if st.button(btn_label, key=f"edit_broker_btn_{sub_id}", type="secondary"):
                 st.session_state[edit_key] = True
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
     else:
         # Edit mode
         employments = get_all_broker_employments()
@@ -672,19 +675,21 @@ def _render_broker_section(sub_id: str):
                                     SET broker_org_id = %s, broker_employment_id = %s, updated_at = now()
                                     WHERE id = %s
                                 """, (emp["org_id"], emp["id"], sub_id))
-                            clear_submission_caches()
                             st.session_state[edit_key] = False
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_account_tab
+                            save_and_rerun_on_account_tab()
                             break
             with c2:
                 if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
                     st.session_state[edit_key] = False
-                    st.rerun()
+                    from utils.tab_state import rerun_on_account_tab
+                    rerun_on_account_tab()
         else:
             st.caption("No brokers available")
             if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
                 st.session_state[edit_key] = False
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
 
 
 # ─────────────────────── UI starts ──────────────────────────
@@ -1206,8 +1211,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 "UPDATE submissions SET hazard_override = %s WHERE id = %s",
                                 (new_hazard, sub_id)
                             )
-                        clear_submission_caches()
-                        st.rerun()
+                        from utils.tab_state import save_and_rerun_on_rating_tab
+                        save_and_rerun_on_rating_tab()
 
                 with col_adj:
                     adj_options = [-0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15]
@@ -1226,8 +1231,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 "UPDATE submissions SET control_overrides = %s WHERE id = %s",
                                 (json_mod.dumps({"overall": new_adj}), sub_id)
                             )
-                        clear_submission_caches()
-                        st.rerun()
+                        from utils.tab_state import save_and_rerun_on_rating_tab
+                        save_and_rerun_on_rating_tab()
 
                 # ─────────────────────────────────────────────────────────────
                 # Rating Factors Summary (concise, universal)
@@ -1572,14 +1577,15 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 comment="Updated business_summary",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_biz_{sub_id}"] = False
                             st.success("✅ Business summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_biz_{sub_id}"):
                             st.session_state[f"editing_biz_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(biz_sum or "No business summary available")
         
@@ -1615,14 +1621,15 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                     (edited_rev if edited_rev > 0 else None, sub_id)
                                 )
                                 conn.commit()
-                            clear_submission_caches()
                             st.session_state[f"editing_rev_{sub_id}"] = False
                             st.success("Revenue saved!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_rev_{sub_id}"):
                             st.session_state[f"editing_rev_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
 
                 # Industry Classification
                 industry_lines = []
@@ -1669,14 +1676,15 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 comment="Updated cyber_exposures",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_exp_{sub_id}"] = False
                             st.success("✅ Exposure summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_exp_{sub_id}"):
                             st.session_state[f"editing_exp_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(exp_sum or "No exposure summary available")
     
@@ -1713,14 +1721,15 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 comment="Updated nist_controls_summary",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_ctrl_{sub_id}"] = False
                             st.success("✅ NIST controls summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_ctrl_{sub_id}"):
                             st.session_state[f"editing_ctrl_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(ctrl_sum or "No NIST controls summary available")
     
@@ -1757,14 +1766,15 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                 comment="Updated bullet_point_summary",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_bullet_{sub_id}"] = False
                             st.success("✅ Bullet point summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_bullet_{sub_id}"):
                             st.session_state[f"editing_bullet_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(bullet_sum or "No bullet point summary available")
     
@@ -1855,11 +1865,13 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                     
                             st.session_state[f"editing_underwriter_{sub_id}"] = False
                             st.success("✅ Underwriter decision saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_underwriter_{sub_id}"):
                             st.session_state[f"editing_underwriter_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     # Display current decision (like other sections display their content)
                     uw_decision = st.session_state.get(f"underwriter_decision_{sub_id}")
@@ -1895,7 +1907,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                         for citation in result["citations"]:
                                             st.markdown(f"- {citation}")
                                     st.success("✅ AI recommendation generated!")
-                                    st.rerun()
+                                    from utils.tab_state import rerun_on_uw_tab
+                                    rerun_on_uw_tab()
                             else:
                                 st.info("No data available for AI recommendation")
                         except Exception as e:
@@ -1931,9 +1944,10 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         except Exception as e:
                             error_msg = f"❌ Error getting AI response: {e}"
                             st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
-            
+
                     # Rerun to refresh the display
-                    st.rerun()
+                    from utils.tab_state import rerun_on_uw_tab
+                    rerun_on_uw_tab()
         
                 # Display chat history in reverse order (most recent at top)
                 if st.session_state.chat_history:
@@ -2018,11 +2032,12 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                             )
                     
                             st.success(f"✅ Uploaded: {uploaded_file.name}")
-                    
+
                         except Exception as e:
                             st.error(f"❌ Error uploading {uploaded_file.name}: {str(e)}")
-            
-                    st.rerun()
+
+                    from utils.tab_state import save_and_rerun_on_uw_tab
+                    save_and_rerun_on_uw_tab()
 
             # Display existing documents
             docs = load_documents(sub_id)
