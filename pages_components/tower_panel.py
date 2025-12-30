@@ -8,13 +8,13 @@ import re
 from typing import Optional
 import pandas as pd
 import streamlit as st
+from utils.tab_state import rerun_on_quote_tab
 
 
 # ─────────────────────── Formatting Helpers ───────────────────────
 
 def _rerun_on_quote_tab() -> None:
-    st.session_state["_active_tab"] = "Quote"
-    st.rerun()
+    rerun_on_quote_tab()
 
 
 def _parse_amount(val) -> float:

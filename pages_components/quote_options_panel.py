@@ -19,6 +19,7 @@ from core.bound_option import bind_option, unbind_option, get_bound_option, has_
 # Import shared premium calculator - single source of truth for premium calculations
 from rating_engine.premium_calculator import calculate_premium_for_submission
 from utils.quote_formatting import format_currency, generate_quote_name
+from utils.tab_state import rerun_on_quote_tab
 
 
 def _format_premium(amount: float) -> str:
@@ -52,8 +53,7 @@ def _parse_currency(val) -> float:
 
 
 def _rerun_on_quote_tab() -> None:
-    st.session_state["_active_tab"] = "Quote"
-    st.rerun()
+    rerun_on_quote_tab()
 
 
 
@@ -197,7 +197,9 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
             else:
                 if st.button("Bind", key="bind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
                     if viewing_quote_id:
-                        bind_option(viewing_quote_id, bound_by="user")
+                        # Get subjectivities from session state for migration to DB
+                        session_subjectivities = st.session_state.get(f"subjectivities_{sub_id}", [])
+                        bind_option(viewing_quote_id, bound_by="user", subjectivities=session_subjectivities)
                         st.success("Option bound!")
                         _rerun_on_quote_tab()
 

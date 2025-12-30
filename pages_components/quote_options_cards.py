@@ -9,11 +9,11 @@ import streamlit as st
 from typing import Optional
 from pages_components.tower_db import save_tower
 from utils.quote_formatting import format_currency, generate_quote_name
+from utils.tab_state import rerun_on_quote_tab
 
 
 def _rerun_on_quote_tab() -> None:
-    st.session_state["_active_tab"] = "Quote"
-    st.rerun()
+    rerun_on_quote_tab()
 
 
 def _calculate_premium(sub_id: str, limit: int, retention: int, get_conn_func) -> Optional[int]:

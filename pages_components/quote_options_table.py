@@ -17,6 +17,7 @@ from pages_components.tower_db import (
     update_quote_limit,
 )
 from utils.quote_formatting import format_currency, generate_quote_name
+from utils.tab_state import rerun_on_quote_tab
 
 
 def _parse_currency(val) -> Optional[float]:
@@ -40,7 +41,7 @@ def _parse_currency(val) -> Optional[float]:
 
 def _rerun_on_quote_tab() -> None:
     st.session_state["_active_tab"] = "Quote"
-    st.rerun()
+    rerun_on_quote_tab()
 
 
 def _get_cmai_limit(tower_json: list) -> Optional[float]:

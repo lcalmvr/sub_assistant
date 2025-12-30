@@ -18,17 +18,20 @@ spec.loader.exec_module(db)
 get_conn = db.get_conn
 
 
-def bind_option(tower_id: str, bound_by: str = "system") -> bool:
+def bind_option(tower_id: str, bound_by: str = "system", subjectivities: list[dict] = None) -> bool:
     """
     Mark a quote option as bound.
 
     Automatically unbinds any other bound option for the same submission.
     Uses database constraint to ensure only one bound option per submission.
     Also initializes broker history tracking for BOR changes.
+    Migrates any session-state subjectivities to the database.
 
     Args:
         tower_id: UUID of the insurance_tower to bind
         bound_by: User who bound the option
+        subjectivities: Optional list of subjectivity dicts from session state
+                       [{id, text}, ...] to migrate to database
 
     Returns:
         True if successful
@@ -70,6 +73,18 @@ def bind_option(tower_id: str, bound_by: str = "system") -> bool:
         })
 
         conn.commit()
+
+        # Migrate subjectivities from session state to database
+        if subjectivities:
+            try:
+                from core.subjectivity_management import migrate_from_session_state
+                migrate_from_session_state(
+                    submission_id=str(submission_id),
+                    session_items=subjectivities,
+                    created_by=bound_by
+                )
+            except Exception:
+                pass  # Don't fail bind if subjectivity migration fails
 
         # Initialize broker history tracking
         if broker_id:

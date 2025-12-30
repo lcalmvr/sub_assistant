@@ -11,6 +11,35 @@ import pandas as pd
 from datetime import date
 
 
+@st.fragment
+def _render_pending_subjectivities(submission_id: str):
+    """Render inline UI to manage pending subjectivities. Uses @st.fragment for partial rerun."""
+    from core import subjectivity_management as subj_mgmt
+
+    pending = subj_mgmt.get_subjectivities(submission_id, status="pending")
+    if not pending:
+        st.success("All subjectivities resolved. Ready to issue policy.")
+        if st.button("Refresh to Issue", type="primary"):
+            st.rerun(scope="app")  # Full app rerun to show Issue Policy button
+        return
+
+    for subj in pending:
+        subj_id = subj["id"]
+        text = subj["text"]
+
+        col1, col2, col3 = st.columns([4, 1, 1])
+        with col1:
+            st.markdown(f"• {text}")
+        with col2:
+            if st.button("Received", key=f"recv_{subj_id}", use_container_width=True):
+                subj_mgmt.mark_received(subj_id, received_by="user")
+                st.rerun(scope="fragment")
+        with col3:
+            if st.button("Waive", key=f"waive_{subj_id}", use_container_width=True):
+                subj_mgmt.waive_subjectivity(subj_id, waived_by="user", reason="Waived by user")
+                st.rerun(scope="fragment")
+
+
 def render_policy_panel(
     submission_id: str,
     show_sidebar: bool = True,
@@ -104,24 +133,24 @@ def render_policy_panel(
                 policy_form=policy_form,
             )
         with col2:
-            if st.button("Unbind Policy", key=f"unbind_{submission_id}"):
-                st.session_state[f"confirm_unbind_{submission_id}"] = True
-
-        if st.session_state.get(f"confirm_unbind_{submission_id}"):
-            st.warning("This will remove the bound status and delete associated binder documents. Endorsements will also be removed.")
-            c1, c2, _ = st.columns([1, 1, 4])
-            with c1:
-                if st.button("Confirm Unbind", key=f"confirm_unbind_btn_{submission_id}", type="primary"):
-                    from core.bound_option import unbind_option
-                    tower_id = bound_option.get("id")
-                    if tower_id:
-                        unbind_option(tower_id)
-                        st.session_state.pop(f"confirm_unbind_{submission_id}", None)
+            @st.dialog("Unbind Policy")
+            def _confirm_unbind():
+                st.warning("This will remove the bound status and delete associated binder documents. Endorsements will also be removed.")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Confirm Unbind", type="primary", use_container_width=True):
+                        from core.bound_option import unbind_option
+                        tower_id = bound_option.get("id")
+                        if tower_id:
+                            unbind_option(tower_id)
+                        st.session_state["_return_to_policy_tab"] = True
                         st.rerun()
-            with c2:
-                if st.button("Cancel", key=f"cancel_unbind_{submission_id}"):
-                    st.session_state.pop(f"confirm_unbind_{submission_id}", None)
-                    st.rerun()
+                with c2:
+                    if st.button("Cancel", use_container_width=True):
+                        st.rerun()  # Just close the dialog
+
+            if st.button("Unbind Policy", key=f"unbind_{submission_id}"):
+                _confirm_unbind()
 
         st.divider()
 
@@ -209,6 +238,7 @@ def render_policy_panel(
                     try:
                         result = issue_policy(submission_id, issued_by="user")
                         st.success(f"Policy issued: {result['policy_number']}")
+                        st.session_state["_return_to_policy_tab"] = True
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to issue policy: {e}")
@@ -221,7 +251,10 @@ def render_policy_panel(
                 count = status["pending_subjectivities"]
                 suffix = "y" if count == 1 else "ies"
                 st.warning(f"Cannot issue policy: {count} subjectivit{suffix} pending")
-                st.caption("Resolve all subjectivities (mark received or waive) before issuing.")
+
+                # Inline subjectivity management
+                _render_pending_subjectivities(submission_id)
+
             elif status.get("issue_blocker"):
                 st.warning(f"Cannot issue policy: {status['issue_blocker']}")
 

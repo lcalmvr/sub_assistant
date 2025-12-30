@@ -7,6 +7,7 @@ Knows the current submission context for streamlined commands.
 from __future__ import annotations
 
 import streamlit as st
+from utils.tab_state import rerun_on_policy_tab
 from ai.admin_agent import (
     process_command,
     execute_action,
@@ -53,7 +54,7 @@ def render_admin_agent_sidebar(
         # Clear after showing
         if st.sidebar.button("Dismiss", key=f"dismiss_result_{submission_id}"):
             del st.session_state[result_key]
-            st.rerun()
+            rerun_on_policy_tab()
         return
 
     # If we have a pending preview, show confirmation
@@ -89,7 +90,7 @@ def render_admin_agent_sidebar(
         with cols[1]:
             if st.button("Mark Subj", key=f"quick_subj_{submission_id}", use_container_width=True):
                 st.session_state[f"admin_mode_{submission_id}"] = "subjectivity_select"
-                st.rerun()
+                rerun_on_policy_tab()
 
     # Subjectivity selection mode
     if st.session_state.get(f"admin_mode_{submission_id}") == "subjectivity_select":
@@ -123,7 +124,7 @@ def render_admin_agent_sidebar(
             if preview:
                 st.session_state[preview_key] = preview
                 st.session_state[cmd_counter_key] += 1
-                st.rerun()
+                rerun_on_policy_tab()
 
     # Help text
     with st.sidebar.expander("Examples", expanded=False):
@@ -174,12 +175,12 @@ def _render_confirmation_card(
             st.session_state["_return_to_policy_tab"] = True
             st.session_state["_active_tab"] = "Policy"
             del st.session_state[preview_key]
-            st.rerun()
+            rerun_on_policy_tab()
 
     with col2:
         if st.button("Cancel", key=f"cancel_{submission_id}", use_container_width=True):
             del st.session_state[preview_key]
-            st.rerun()
+            rerun_on_policy_tab()
 
 
 def _process_quick_action(
@@ -192,7 +193,7 @@ def _process_quick_action(
     preview = get_action_for_policy(intent, submission_id, entities)
     if preview:
         st.session_state[preview_key] = preview
-        st.rerun()
+        rerun_on_policy_tab()
     else:
         st.sidebar.error("Could not create action preview")
 
@@ -209,7 +210,7 @@ def _render_subjectivity_selector(submission_id: str, preview_key: str):
         st.sidebar.info("No pending subjectivities")
         if st.sidebar.button("Back", key=f"subj_back_{submission_id}"):
             del st.session_state[f"admin_mode_{submission_id}"]
-            st.rerun()
+            rerun_on_policy_tab()
         return
 
     # Create options
@@ -236,12 +237,12 @@ def _render_subjectivity_selector(submission_id: str, preview_key: str):
                 if preview:
                     st.session_state[preview_key] = preview
                     del st.session_state[f"admin_mode_{submission_id}"]
-                    st.rerun()
+                    rerun_on_policy_tab()
 
     with col2:
         if st.button("Cancel", key=f"subj_cancel_{submission_id}", use_container_width=True):
             del st.session_state[f"admin_mode_{submission_id}"]
-            st.rerun()
+            rerun_on_policy_tab()
 
 
 def render_admin_agent_minimal(submission_id: str, applicant_name: str):
@@ -261,7 +262,7 @@ def render_admin_agent_minimal(submission_id: str, applicant_name: str):
             st.error(result["message"])
         if st.button("OK", key=f"min_dismiss_{submission_id}"):
             del st.session_state[result_key]
-            st.rerun()
+            rerun_on_policy_tab()
         return
 
     # Show confirmation
@@ -274,11 +275,11 @@ def render_admin_agent_minimal(submission_id: str, applicant_name: str):
                 result = execute_action(preview)
                 st.session_state[result_key] = {"success": result.success, "message": result.message}
                 del st.session_state[preview_key]
-                st.rerun()
+                rerun_on_policy_tab()
         with col2:
             if st.button("Cancel", key=f"min_cancel_{submission_id}"):
                 del st.session_state[preview_key]
-                st.rerun()
+                rerun_on_policy_tab()
         return
 
     # Command input
@@ -296,6 +297,6 @@ def render_admin_agent_minimal(submission_id: str, applicant_name: str):
                 parsed, matches, preview = process_command(cmd, submission_id)
                 if preview:
                     st.session_state[preview_key] = preview
-                    st.rerun()
+                    rerun_on_policy_tab()
                 elif parsed.intent == AdminIntent.UNKNOWN:
                     st.error("Command not understood")

@@ -11,6 +11,7 @@ from __future__ import annotations
 import streamlit as st
 from datetime import date, datetime
 from typing import Callable
+from utils.tab_state import rerun_on_review_tab
 
 from core.conflict_service import (
     ConflictService,
@@ -91,7 +92,7 @@ def render_review_queue_panel(
                 result = service.calculate_credibility_from_stored_data(submission_id)
                 if result:
                     st.success(f"Score updated: {result.total_score:.0f} ({result.label})")
-                    st.rerun()
+                    rerun_on_review_tab()
                 else:
                     st.warning("No application data found for this submission")
             st.markdown("")
@@ -105,7 +106,7 @@ def render_review_queue_panel(
                     result = service.calculate_credibility_from_stored_data(submission_id)
                     if result:
                         st.success(f"Score: {result.total_score:.0f} ({result.label})")
-                        st.rerun()
+                        rerun_on_review_tab()
                     else:
                         st.warning("No application data found")
             st.markdown("")
@@ -120,7 +121,7 @@ def render_review_queue_panel(
         with col2:
             if st.button("Refresh", key=f"review_refresh_{submission_id}"):
                 service.force_refresh(submission_id)
-                st.rerun()
+                rerun_on_review_tab()
 
         if not deduplicated_items:
             st.success("All items have been reviewed.")
@@ -163,7 +164,7 @@ def render_review_queue_panel(
                     if resolved_now:
                         if on_resolve:
                             on_resolve(item["id"])
-                        st.rerun()
+                        rerun_on_review_tab()
                     # Add spacing between cards
                     st.markdown("")
                 
@@ -185,7 +186,7 @@ def render_review_queue_panel(
                 if resolved_now:
                     if on_resolve:
                         on_resolve(item["id"])
-                    st.rerun()
+                    rerun_on_review_tab()
                 # Add spacing between verification cards
                 st.markdown("")
 
@@ -206,7 +207,7 @@ def render_review_queue_panel(
                 if resolved_now:
                     if on_resolve:
                         on_resolve(conflict["id"])
-                    st.rerun()
+                    rerun_on_review_tab()
                 st.markdown("")
 
         # Show resolved items if requested
@@ -412,7 +413,7 @@ def _render_verification_card(
         with col_secondary:
             if st.button("Edit", key=f"edit_verify_{item_id}"):
                 st.session_state[f"editing_{item_id}"] = True
-                st.rerun()
+                rerun_on_review_tab()
 
         with col_tertiary:
             if st.button("Defer", key=f"defer_verify_{item_id}"):
@@ -446,7 +447,7 @@ def _render_verification_card(
             with ecol2:
                 if st.button("Cancel", key=f"cancel_edit_{item_id}"):
                     st.session_state[f"editing_{item_id}"] = False
-                    st.rerun()
+                    rerun_on_review_tab()
 
     return False
 
@@ -670,7 +671,7 @@ def _render_low_confidence_ui(
     with col_secondary:
         if st.button("Edit", key=f"edit_{item_id}"):
             st.session_state[f"editing_{item_id}"] = True
-            st.rerun()
+            rerun_on_review_tab()
 
     with col_tertiary:
         if st.button("Defer", key=f"defer_{item_id}"):
@@ -700,7 +701,7 @@ def _render_low_confidence_ui(
         with ecol2:
             if st.button("Cancel", key=f"cancel_{item_id}"):
                 st.session_state[f"editing_{item_id}"] = False
-                st.rerun()
+                rerun_on_review_tab()
 
     return False
 
@@ -873,7 +874,7 @@ def _render_outlier_ui(
     with col_secondary:
         if st.button("Edit", key=f"edit_{item_id}"):
             st.session_state[f"editing_{item_id}"] = True
-            st.rerun()
+            rerun_on_review_tab()
 
     with col_tertiary:
         if st.button("Defer", key=f"defer_{item_id}"):
@@ -902,7 +903,7 @@ def _render_outlier_ui(
         with ecol2:
             if st.button("Cancel", key=f"cancel_{item_id}"):
                 st.session_state[f"editing_{item_id}"] = False
-                st.rerun()
+                rerun_on_review_tab()
 
     return False
 
