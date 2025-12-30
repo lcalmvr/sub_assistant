@@ -359,6 +359,8 @@ export default function AdminPage() {
             <span className="nav-link-active">Admin</span>
             <Link to="/compliance" className="nav-link">Compliance</Link>
             <Link to="/uw-guide" className="nav-link">UW Guide</Link>
+            <Link to="/brokers" className="nav-link">Brokers</Link>
+            <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
           </nav>
         </div>
       </header>

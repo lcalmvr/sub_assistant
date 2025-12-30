@@ -92,4 +92,92 @@ export const getMarketNews = (params = {}) => {
 export const createMarketNews = (data) => api.post('/uw-guide/market-news', data);
 export const deleteMarketNews = (id) => api.delete(`/uw-guide/market-news/${id}`);
 
+// Brokers (brkr_* schema)
+// Organizations
+export const getBrkrOrganizations = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.search) query.append('search', params.search);
+  if (params.org_type) query.append('org_type', params.org_type);
+  const queryStr = query.toString();
+  return api.get(`/brkr/organizations${queryStr ? `?${queryStr}` : ''}`);
+};
+export const createBrkrOrganization = (data) => api.post('/brkr/organizations', data);
+export const updateBrkrOrganization = (orgId, data) => api.patch(`/brkr/organizations/${orgId}`, data);
+
+// Offices
+export const getBrkrOffices = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_id) query.append('org_id', params.org_id);
+  if (params.search) query.append('search', params.search);
+  const queryStr = query.toString();
+  return api.get(`/brkr/offices${queryStr ? `?${queryStr}` : ''}`);
+};
+export const createBrkrOffice = (data) => api.post('/brkr/offices', data);
+export const updateBrkrOffice = (officeId, data) => api.patch(`/brkr/offices/${officeId}`, data);
+
+// People
+export const getBrkrPeople = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.search) query.append('search', params.search);
+  if (params.org_id) query.append('org_id', params.org_id);
+  const queryStr = query.toString();
+  return api.get(`/brkr/people${queryStr ? `?${queryStr}` : ''}`);
+};
+export const createBrkrPerson = (data) => api.post('/brkr/people', data);
+export const updateBrkrPerson = (personId, data) => api.patch(`/brkr/people/${personId}`, data);
+
+// Employments
+export const getBrkrEmployments = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_id) query.append('org_id', params.org_id);
+  if (params.office_id) query.append('office_id', params.office_id);
+  if (params.active_only !== undefined) query.append('active_only', params.active_only);
+  const queryStr = query.toString();
+  return api.get(`/brkr/employments${queryStr ? `?${queryStr}` : ''}`);
+};
+export const createBrkrEmployment = (data) => api.post('/brkr/employments', data);
+export const updateBrkrEmployment = (employmentId, data) => api.patch(`/brkr/employments/${employmentId}`, data);
+
+// Teams
+export const getBrkrTeams = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_id) query.append('org_id', params.org_id);
+  if (params.search) query.append('search', params.search);
+  const queryStr = query.toString();
+  return api.get(`/brkr/teams${queryStr ? `?${queryStr}` : ''}`);
+};
+export const createBrkrTeam = (data) => api.post('/brkr/teams', data);
+export const getBrkrTeamMembers = (teamId) => api.get(`/brkr/teams/${teamId}/members`);
+export const addBrkrTeamMember = (teamId, data) => api.post(`/brkr/teams/${teamId}/members`, data);
+
+// DBAs
+export const getBrkrDbas = (orgId = null) => {
+  const params = orgId ? `?org_id=${orgId}` : '';
+  return api.get(`/brkr/dbas${params}`);
+};
+export const createBrkrDba = (data) => api.post('/brkr/dbas', data);
+
+// Addresses
+export const getBrkrAddresses = (orgId = null) => {
+  const params = orgId ? `?org_id=${orgId}` : '';
+  return api.get(`/brkr/addresses${params}`);
+};
+export const createBrkrAddress = (data) => api.post('/brkr/addresses', data);
+
+// Coverage Catalog
+export const getCoverageCatalogStats = () => api.get('/coverage-catalog/stats');
+export const getCoverageStandardTags = () => api.get('/coverage-catalog/tags');
+export const getCoveragePendingReviews = () => api.get('/coverage-catalog/pending');
+export const getCoverageCarriers = () => api.get('/coverage-catalog/carriers');
+export const getCoverageByCarrier = (carrierName, approvedOnly = false) =>
+  api.get(`/coverage-catalog/carrier/${encodeURIComponent(carrierName)}?approved_only=${approvedOnly}`);
+export const lookupCoverageMapping = (carrierName, coverageOriginal) =>
+  api.get(`/coverage-catalog/lookup?carrier_name=${encodeURIComponent(carrierName)}&coverage_original=${encodeURIComponent(coverageOriginal)}`);
+export const approveCoverageMapping = (id) => api.post(`/coverage-catalog/${id}/approve`);
+export const rejectCoverageMapping = (id) => api.post(`/coverage-catalog/${id}/reject`);
+export const resetCoverageMapping = (id) => api.post(`/coverage-catalog/${id}/reset`);
+export const updateCoverageTags = (id, tags) => api.patch(`/coverage-catalog/${id}/tags`, { coverage_normalized: tags });
+export const deleteCoverageMapping = (id) => api.delete(`/coverage-catalog/${id}`);
+export const deleteRejectedCoverages = () => api.delete('/coverage-catalog/rejected');
+
 export default api;

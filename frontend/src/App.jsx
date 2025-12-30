@@ -7,6 +7,8 @@ import StatsPage from './pages/StatsPage';
 import AdminPage from './pages/AdminPage';
 import CompliancePage from './pages/CompliancePage';
 import UWGuidePage from './pages/UWGuidePage';
+import BrokersPage from './pages/BrokersPage';
+import CoverageCatalogPage from './pages/CoverageCatalogPage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import UWPage from './pages/UWPage';
@@ -43,6 +45,12 @@ function App() {
 
           {/* UW Guide */}
           <Route path="/uw-guide" element={<UWGuidePage />} />
+
+          {/* Brokers */}
+          <Route path="/brokers" element={<BrokersPage />} />
+
+          {/* Coverage Catalog */}
+          <Route path="/coverage-catalog" element={<CoverageCatalogPage />} />
 
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>

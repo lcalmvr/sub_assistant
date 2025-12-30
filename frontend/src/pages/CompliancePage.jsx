@@ -511,6 +511,8 @@ export default function CompliancePage() {
             <Link to="/admin" className="nav-link">Admin</Link>
             <span className="nav-link-active">Compliance</span>
             <Link to="/uw-guide" className="nav-link">UW Guide</Link>
+            <Link to="/brokers" className="nav-link">Brokers</Link>
+            <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
           </nav>
         </div>
       </header>

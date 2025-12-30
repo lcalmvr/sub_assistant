@@ -1324,6 +1324,687 @@ def delete_market_news(article_id: str):
 
 
 # ─────────────────────────────────────────────────────────────
+# Brokers (brkr_* schema)
+# ─────────────────────────────────────────────────────────────
+
+# Organizations
+@app.get("/api/brkr/organizations")
+def get_brkr_organizations(search: str = None, org_type: str = None):
+    """Get all broker organizations with counts."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                    o.org_id, o.name, o.org_type,
+                    COUNT(DISTINCT off.office_id) as office_count,
+                    COUNT(DISTINCT e.employment_id) as people_count,
+                    o.created_at
+                FROM brkr_organizations o
+                LEFT JOIN brkr_offices off ON o.org_id = off.org_id
+                LEFT JOIN brkr_employments e ON o.org_id = e.org_id AND e.active = true
+                WHERE 1=1
+            """
+            params = []
+            if search:
+                query += " AND LOWER(o.name) LIKE LOWER(%s)"
+                params.append(f"%{search}%")
+            if org_type:
+                query += " AND o.org_type = %s"
+                params.append(org_type)
+            query += """
+                GROUP BY o.org_id, o.name, o.org_type, o.created_at
+                ORDER BY o.name
+            """
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/organizations")
+def create_brkr_organization(data: dict):
+    """Create a new organization."""
+    name = data.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO brkr_organizations (name, org_type)
+                VALUES (%s, %s)
+                RETURNING org_id
+            """, (name, data.get("org_type", "brokerage")))
+            row = cur.fetchone()
+            conn.commit()
+            return {"org_id": str(row["org_id"]), "message": "Organization created"}
+
+
+@app.patch("/api/brkr/organizations/{org_id}")
+def update_brkr_organization(org_id: str, data: dict):
+    """Update an organization."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE brkr_organizations
+                SET name = COALESCE(%s, name),
+                    org_type = COALESCE(%s, org_type),
+                    updated_at = now()
+                WHERE org_id = %s
+            """, (data.get("name"), data.get("org_type"), org_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Organization not found")
+            conn.commit()
+            return {"message": "Organization updated"}
+
+
+# Offices
+@app.get("/api/brkr/offices")
+def get_brkr_offices(org_id: str = None, search: str = None):
+    """Get offices, optionally filtered by org."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                    off.office_id, off.org_id, off.office_name, off.status,
+                    o.name as org_name,
+                    addr.line1, addr.city, addr.state, addr.postal_code
+                FROM brkr_offices off
+                JOIN brkr_organizations o ON off.org_id = o.org_id
+                LEFT JOIN brkr_org_addresses addr ON off.default_address_id = addr.address_id
+                WHERE 1=1
+            """
+            params = []
+            if org_id:
+                query += " AND off.org_id = %s"
+                params.append(org_id)
+            if search:
+                query += " AND (LOWER(off.office_name) LIKE LOWER(%s) OR LOWER(o.name) LIKE LOWER(%s))"
+                params.extend([f"%{search}%", f"%{search}%"])
+            query += " ORDER BY o.name, off.office_name"
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/offices")
+def create_brkr_office(data: dict):
+    """Create a new office."""
+    org_id = data.get("org_id")
+    office_name = data.get("office_name", "").strip()
+    if not org_id or not office_name:
+        raise HTTPException(status_code=400, detail="org_id and office_name are required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO brkr_offices (org_id, office_name, status)
+                VALUES (%s, %s, %s)
+                RETURNING office_id
+            """, (org_id, office_name, data.get("status", "active")))
+            row = cur.fetchone()
+            conn.commit()
+            return {"office_id": str(row["office_id"]), "message": "Office created"}
+
+
+@app.patch("/api/brkr/offices/{office_id}")
+def update_brkr_office(office_id: str, data: dict):
+    """Update an office."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE brkr_offices
+                SET office_name = COALESCE(%s, office_name),
+                    status = COALESCE(%s, status),
+                    updated_at = now()
+                WHERE office_id = %s
+            """, (data.get("office_name"), data.get("status"), office_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Office not found")
+            conn.commit()
+            return {"message": "Office updated"}
+
+
+# People
+@app.get("/api/brkr/people")
+def get_brkr_people(search: str = None, org_id: str = None):
+    """Get people with their active employment info."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                    p.person_id, p.first_name, p.last_name,
+                    e.employment_id, e.email, e.phone, e.active,
+                    o.org_id, o.name as org_name,
+                    off.office_id, off.office_name
+                FROM brkr_people p
+                LEFT JOIN brkr_employments e ON p.person_id = e.person_id AND e.active = true
+                LEFT JOIN brkr_organizations o ON e.org_id = o.org_id
+                LEFT JOIN brkr_offices off ON e.office_id = off.office_id
+                WHERE 1=1
+            """
+            params = []
+            if search:
+                query += " AND (LOWER(p.first_name || ' ' || p.last_name) LIKE LOWER(%s) OR LOWER(e.email) LIKE LOWER(%s))"
+                params.extend([f"%{search}%", f"%{search}%"])
+            if org_id:
+                query += " AND e.org_id = %s"
+                params.append(org_id)
+            query += " ORDER BY p.last_name, p.first_name"
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/people")
+def create_brkr_person(data: dict):
+    """Create a new person."""
+    first_name = data.get("first_name", "").strip()
+    last_name = data.get("last_name", "").strip()
+    if not first_name or not last_name:
+        raise HTTPException(status_code=400, detail="first_name and last_name are required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO brkr_people (first_name, last_name)
+                VALUES (%s, %s)
+                RETURNING person_id
+            """, (first_name, last_name))
+            row = cur.fetchone()
+            conn.commit()
+            return {"person_id": str(row["person_id"]), "message": "Person created"}
+
+
+@app.patch("/api/brkr/people/{person_id}")
+def update_brkr_person(person_id: str, data: dict):
+    """Update a person."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE brkr_people
+                SET first_name = COALESCE(%s, first_name),
+                    last_name = COALESCE(%s, last_name),
+                    updated_at = now()
+                WHERE person_id = %s
+            """, (data.get("first_name"), data.get("last_name"), person_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Person not found")
+            conn.commit()
+            return {"message": "Person updated"}
+
+
+# Employments
+@app.get("/api/brkr/employments")
+def get_brkr_employments(org_id: str = None, office_id: str = None, active_only: bool = True):
+    """Get employments with full details."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                    e.employment_id, e.person_id, e.org_id, e.office_id,
+                    e.email, e.phone, e.active,
+                    p.first_name, p.last_name,
+                    o.name as org_name,
+                    off.office_name
+                FROM brkr_employments e
+                JOIN brkr_people p ON e.person_id = p.person_id
+                JOIN brkr_organizations o ON e.org_id = o.org_id
+                LEFT JOIN brkr_offices off ON e.office_id = off.office_id
+                WHERE 1=1
+            """
+            params = []
+            if active_only:
+                query += " AND e.active = true"
+            if org_id:
+                query += " AND e.org_id = %s"
+                params.append(org_id)
+            if office_id:
+                query += " AND e.office_id = %s"
+                params.append(office_id)
+            query += " ORDER BY p.last_name, p.first_name"
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/employments")
+def create_brkr_employment(data: dict):
+    """Create a new employment record."""
+    person_id = data.get("person_id")
+    org_id = data.get("org_id")
+    office_id = data.get("office_id")
+    if not person_id or not org_id or not office_id:
+        raise HTTPException(status_code=400, detail="person_id, org_id, and office_id are required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Deactivate existing active employments for this person
+            cur.execute("""
+                UPDATE brkr_employments SET active = false WHERE person_id = %s AND active = true
+            """, (person_id,))
+
+            cur.execute("""
+                INSERT INTO brkr_employments (person_id, org_id, office_id, email, phone, active)
+                VALUES (%s, %s, %s, %s, %s, true)
+                RETURNING employment_id
+            """, (person_id, org_id, office_id, data.get("email"), data.get("phone")))
+            row = cur.fetchone()
+            conn.commit()
+            return {"employment_id": str(row["employment_id"]), "message": "Employment created"}
+
+
+@app.patch("/api/brkr/employments/{employment_id}")
+def update_brkr_employment(employment_id: str, data: dict):
+    """Update an employment record."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE brkr_employments
+                SET email = COALESCE(%s, email),
+                    phone = COALESCE(%s, phone),
+                    active = COALESCE(%s, active),
+                    updated_at = now()
+                WHERE employment_id = %s
+            """, (data.get("email"), data.get("phone"), data.get("active"), employment_id))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Employment not found")
+            conn.commit()
+            return {"message": "Employment updated"}
+
+
+# Teams
+@app.get("/api/brkr/teams")
+def get_brkr_teams(org_id: str = None, search: str = None):
+    """Get teams with member counts."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                    t.team_id, t.team_name, t.org_id, t.status, t.description,
+                    o.name as org_name,
+                    COUNT(DISTINCT tm.person_id) FILTER (WHERE tm.active = true) as member_count
+                FROM brkr_teams t
+                LEFT JOIN brkr_organizations o ON t.org_id = o.org_id
+                LEFT JOIN brkr_team_memberships tm ON t.team_id = tm.team_id
+                WHERE 1=1
+            """
+            params = []
+            if org_id:
+                query += " AND t.org_id = %s"
+                params.append(org_id)
+            if search:
+                query += " AND LOWER(t.team_name) LIKE LOWER(%s)"
+                params.append(f"%{search}%")
+            query += " GROUP BY t.team_id, t.team_name, t.org_id, t.status, t.description, o.name ORDER BY t.team_name"
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/teams")
+def create_brkr_team(data: dict):
+    """Create a new team."""
+    team_name = data.get("team_name", "").strip()
+    if not team_name:
+        raise HTTPException(status_code=400, detail="team_name is required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO brkr_teams (team_name, org_id, status, description)
+                VALUES (%s, %s, %s, %s)
+                RETURNING team_id
+            """, (team_name, data.get("org_id"), data.get("status", "active"), data.get("description")))
+            row = cur.fetchone()
+            conn.commit()
+            return {"team_id": str(row["team_id"]), "message": "Team created"}
+
+
+@app.get("/api/brkr/teams/{team_id}/members")
+def get_brkr_team_members(team_id: str):
+    """Get team members."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    tm.team_membership_id, tm.person_id, tm.active, tm.role_label,
+                    p.first_name, p.last_name,
+                    e.email, e.phone
+                FROM brkr_team_memberships tm
+                JOIN brkr_people p ON tm.person_id = p.person_id
+                LEFT JOIN brkr_employments e ON p.person_id = e.person_id AND e.active = true
+                WHERE tm.team_id = %s
+                ORDER BY p.last_name, p.first_name
+            """, (team_id,))
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/teams/{team_id}/members")
+def add_brkr_team_member(team_id: str, data: dict):
+    """Add a person to a team."""
+    person_id = data.get("person_id")
+    if not person_id:
+        raise HTTPException(status_code=400, detail="person_id is required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO brkr_team_memberships (team_id, person_id, active, role_label)
+                VALUES (%s, %s, true, %s)
+                ON CONFLICT (team_id, person_id) DO UPDATE SET active = true, role_label = EXCLUDED.role_label
+                RETURNING team_membership_id
+            """, (team_id, person_id, data.get("role_label")))
+            row = cur.fetchone()
+            conn.commit()
+            return {"team_membership_id": str(row["team_membership_id"]), "message": "Member added"}
+
+
+# DBA Names
+@app.get("/api/brkr/dbas")
+def get_brkr_dbas(org_id: str = None):
+    """Get DBA names for organizations."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT d.dba_id, d.org_id, d.name, d.normalized, o.name as org_name
+                FROM brkr_dba_names d
+                JOIN brkr_organizations o ON d.org_id = o.org_id
+                WHERE 1=1
+            """
+            params = []
+            if org_id:
+                query += " AND d.org_id = %s"
+                params.append(org_id)
+            query += " ORDER BY o.name, d.name"
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/dbas")
+def create_brkr_dba(data: dict):
+    """Create a DBA name for an organization."""
+    org_id = data.get("org_id")
+    name = data.get("name", "").strip()
+    if not org_id or not name:
+        raise HTTPException(status_code=400, detail="org_id and name are required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            normalized = name.lower().strip()
+            cur.execute("""
+                INSERT INTO brkr_dba_names (org_id, name, normalized)
+                VALUES (%s, %s, %s)
+                RETURNING dba_id
+            """, (org_id, name, normalized))
+            row = cur.fetchone()
+            conn.commit()
+            return {"dba_id": str(row["dba_id"]), "message": "DBA created"}
+
+
+# Addresses
+@app.get("/api/brkr/addresses")
+def get_brkr_addresses(org_id: str = None):
+    """Get addresses for organizations."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT a.address_id, a.org_id, a.line1, a.line2, a.city, a.state,
+                       a.postal_code, a.country, o.name as org_name
+                FROM brkr_org_addresses a
+                JOIN brkr_organizations o ON a.org_id = o.org_id
+                WHERE 1=1
+            """
+            params = []
+            if org_id:
+                query += " AND a.org_id = %s"
+                params.append(org_id)
+            query += " ORDER BY o.name, a.city"
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.post("/api/brkr/addresses")
+def create_brkr_address(data: dict):
+    """Create an address for an organization."""
+    org_id = data.get("org_id")
+    line1 = data.get("line1", "").strip()
+    city = data.get("city", "").strip()
+    state = data.get("state", "").strip()
+    postal_code = data.get("postal_code", "").strip()
+    if not org_id or not line1 or not city or not state or not postal_code:
+        raise HTTPException(status_code=400, detail="org_id, line1, city, state, postal_code are required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            normalized = f"{line1} {city} {state} {postal_code}".lower()
+            cur.execute("""
+                INSERT INTO brkr_org_addresses (org_id, line1, line2, city, state, postal_code, country, normalized)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING address_id
+            """, (org_id, line1, data.get("line2"), city, state, postal_code, data.get("country", "US"), normalized))
+            row = cur.fetchone()
+            conn.commit()
+            return {"address_id": str(row["address_id"]), "message": "Address created"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Coverage Catalog
+# ─────────────────────────────────────────────────────────────
+
+# Standard normalized tags
+COVERAGE_STANDARD_TAGS = [
+    "Network Security Liability",
+    "Privacy Liability",
+    "Privacy Regulatory Defense",
+    "Privacy Regulatory Penalties",
+    "PCI DSS Assessment",
+    "Media Liability",
+    "Business Interruption",
+    "System Failure (Non-Malicious BI)",
+    "Dependent BI - IT Providers",
+    "Dependent BI - Non-IT Providers",
+    "Cyber Extortion / Ransomware",
+    "Data Recovery / Restoration",
+    "Reputational Harm",
+    "Crisis Management / PR",
+    "Technology E&O",
+    "Social Engineering",
+    "Invoice Manipulation",
+    "Funds Transfer Fraud",
+    "Telecommunications Fraud",
+    "Breach Response / Notification",
+    "Forensics",
+    "Credit Monitoring",
+    "Cryptojacking",
+    "Betterment",
+    "Bricking",
+    "Other",
+]
+
+
+@app.get("/api/coverage-catalog/stats")
+def get_coverage_catalog_stats():
+    """Get summary statistics for the coverage catalog."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                    COUNT(*) FILTER (WHERE status = 'approved') as approved,
+                    COUNT(*) FILTER (WHERE status = 'rejected') as rejected,
+                    COUNT(DISTINCT carrier_name) as carriers,
+                    COUNT(DISTINCT coverage_normalized) as unique_tags
+                FROM coverage_catalog
+            """)
+            row = cur.fetchone()
+            return {
+                "total": row["total"],
+                "pending": row["pending"],
+                "approved": row["approved"],
+                "rejected": row["rejected"],
+                "carriers": row["carriers"],
+                "unique_tags": row["unique_tags"],
+            }
+
+
+@app.get("/api/coverage-catalog/tags")
+def get_coverage_standard_tags():
+    """Get the list of standard normalized tags."""
+    return COVERAGE_STANDARD_TAGS
+
+
+@app.get("/api/coverage-catalog/pending")
+def get_coverage_pending_reviews():
+    """Get all coverage mappings pending review."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM coverage_catalog
+                WHERE status = 'pending'
+                ORDER BY submitted_at DESC
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/coverage-catalog/carriers")
+def get_coverage_carriers():
+    """Get list of all carriers in the catalog."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT carrier_name
+                FROM coverage_catalog
+                ORDER BY carrier_name
+            """)
+            return [row["carrier_name"] for row in cur.fetchall()]
+
+
+@app.get("/api/coverage-catalog/carrier/{carrier_name}")
+def get_coverage_by_carrier(carrier_name: str, approved_only: bool = False):
+    """Get all coverage mappings for a specific carrier."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT * FROM coverage_catalog
+                WHERE carrier_name = %s
+            """
+            params = [carrier_name]
+            if approved_only:
+                query += " AND status = 'approved'"
+            query += " ORDER BY policy_form, coverage_original"
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.get("/api/coverage-catalog/lookup")
+def lookup_coverage_mapping(carrier_name: str, coverage_original: str, approved_only: bool = False):
+    """Look up a specific coverage mapping."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT * FROM coverage_catalog
+                WHERE carrier_name = %s
+                AND coverage_original = %s
+            """
+            params = [carrier_name, coverage_original]
+            if approved_only:
+                query += " AND status = 'approved'"
+            query += " ORDER BY status = 'approved' DESC LIMIT 1"
+            cur.execute(query, params)
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+@app.post("/api/coverage-catalog/{catalog_id}/approve")
+def approve_coverage_mapping(catalog_id: str, data: dict = None):
+    """Approve a coverage mapping."""
+    data = data or {}
+    review_notes = data.get("review_notes")
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE coverage_catalog
+                SET status = 'approved',
+                    reviewed_by = 'api',
+                    reviewed_at = now(),
+                    review_notes = %s
+                WHERE id = %s
+            """, (review_notes, catalog_id))
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+@app.post("/api/coverage-catalog/{catalog_id}/reject")
+def reject_coverage_mapping(catalog_id: str, data: dict = None):
+    """Reject a coverage mapping."""
+    data = data or {}
+    review_notes = data.get("review_notes")
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE coverage_catalog
+                SET status = 'rejected',
+                    reviewed_by = 'api',
+                    reviewed_at = now(),
+                    review_notes = %s
+                WHERE id = %s
+            """, (review_notes, catalog_id))
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+@app.post("/api/coverage-catalog/{catalog_id}/reset")
+def reset_coverage_mapping(catalog_id: str):
+    """Reset a coverage mapping back to pending status."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE coverage_catalog
+                SET status = 'pending',
+                    reviewed_by = NULL,
+                    reviewed_at = NULL,
+                    review_notes = NULL
+                WHERE id = %s
+            """, (catalog_id,))
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+@app.patch("/api/coverage-catalog/{catalog_id}/tags")
+def update_coverage_tags(catalog_id: str, data: dict):
+    """Update the normalized tags for a coverage mapping."""
+    tags = data.get("coverage_normalized", [])
+    if isinstance(tags, str):
+        tags = [tags] if tags else []
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE coverage_catalog
+                SET coverage_normalized = %s
+                WHERE id = %s
+            """, (tags, catalog_id))
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+@app.delete("/api/coverage-catalog/{catalog_id}")
+def delete_coverage_mapping(catalog_id: str):
+    """Delete a coverage mapping from the catalog."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM coverage_catalog WHERE id = %s", (catalog_id,))
+            conn.commit()
+            return {"success": cur.rowcount > 0}
+
+
+@app.delete("/api/coverage-catalog/rejected")
+def delete_rejected_coverages():
+    """Delete all rejected coverage mappings."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM coverage_catalog WHERE status = 'rejected'")
+            count = cur.rowcount
+            conn.commit()
+            return {"deleted": count}
+
+
+# ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
 
