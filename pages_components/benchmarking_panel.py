@@ -193,6 +193,32 @@ def _select_tower_layer(tower_json: list) -> dict:
     return min(tower_json, key=lambda layer: float(layer.get("attachment") or 0))
 
 
+def _select_tower_layer_data(
+    tower_json: list,
+    tower_premium: float | None,
+    primary_retention: float | None,
+) -> dict:
+    layer = _select_tower_layer(tower_json)
+    if not layer:
+        return {}
+    limit = layer.get("limit")
+    attachment = layer.get("attachment")
+    retention = primary_retention or layer.get("retention")
+    premium = layer.get("premium")
+    if premium is None and tower_premium and len(tower_json) == 1:
+        premium = tower_premium
+    rpm = None
+    if premium and limit:
+        rpm = float(premium) / (float(limit) / 1_000_000)
+    return {
+        "limit": limit,
+        "attachment": attachment,
+        "retention": retention,
+        "premium": premium,
+        "rpm": rpm,
+    }
+
+
 def _build_tower_summary(tower_json: list, tower_premium: float | None = None) -> list[dict]:
     if not tower_json:
         return []
@@ -749,27 +775,16 @@ def _render_comparison_detail(
     current_tower = get_best_tower(submission_id, get_conn)
     comparable_tower = get_best_tower(comparable["id"], get_conn)
 
-    tower_layer = _select_tower_layer(current_tower.get("tower_json", []))
-    tower_limit = tower_layer.get("limit") if tower_layer else None
-    tower_premium = tower_layer.get("premium") if tower_layer else None
-    if tower_premium is None:
-        tower_premium = current_tower.get("tower_premium")
-    tower_retention = current_tower.get("primary_retention") or tower_layer.get("retention") if tower_layer else None
-    if tower_limit and tower_premium:
-        tower_rpm = float(tower_premium) / (float(tower_limit) / 1_000_000)
-    else:
-        tower_rpm = None
-
-    comp_layer = _select_tower_layer(comparable_tower.get("tower_json", []))
-    comp_limit = comp_layer.get("limit") if comp_layer else None
-    comp_premium = comp_layer.get("premium") if comp_layer else None
-    if comp_premium is None:
-        comp_premium = comparable_tower.get("tower_premium")
-    comp_retention = comparable_tower.get("primary_retention") or comp_layer.get("retention") if comp_layer else None
-    if comp_limit and comp_premium:
-        comp_rpm = float(comp_premium) / (float(comp_limit) / 1_000_000)
-    else:
-        comp_rpm = None
+    current_layer = _select_tower_layer_data(
+        current_tower.get("tower_json", []),
+        current_tower.get("tower_premium"),
+        current_tower.get("primary_retention"),
+    )
+    comp_layer = _select_tower_layer_data(
+        comparable_tower.get("tower_json", []),
+        comparable_tower.get("tower_premium"),
+        comparable_tower.get("primary_retention"),
+    )
 
     st.markdown(f"#### Compare: Current vs {comparable['applicant_name']}")
 
@@ -819,10 +834,10 @@ def _render_comparison_detail(
                 status_text=cur_text,
                 date_label=current_date_label,
                 industry_tags=current.get("industry_tags"),
-                limit=tower_limit or current.get("limit"),
-                retention=tower_retention or current.get("retention"),
-                premium=tower_premium or current.get("premium"),
-                rate_per_mil=tower_rpm or current.get("rate_per_mil"),
+                limit=current_layer.get("limit") or current.get("limit"),
+                retention=current_layer.get("retention") or current.get("retention"),
+                premium=current_layer.get("premium") or current.get("premium"),
+                rate_per_mil=current_layer.get("rpm") or current.get("rate_per_mil"),
                 loss_signal=cur_loss_signal,
                 claims_count=current.get("claims_count") if current_is_bound else None,
                 claims_paid=current.get("claims_paid") if current_is_bound else None,
@@ -846,10 +861,10 @@ def _render_comparison_detail(
                 status_text=outcome_text,
                 date_label=comp_date_label,
                 industry_tags=comparable.get("industry_tags"),
-                limit=comp_limit or comparable.get("limit"),
-                retention=comp_retention or comparable.get("retention"),
-                premium=comp_premium or comparable.get("premium"),
-                rate_per_mil=comp_rpm or comparable.get("rate_per_mil"),
+                limit=comp_layer.get("limit") or comparable.get("limit"),
+                retention=comp_layer.get("retention") or comparable.get("retention"),
+                premium=comp_layer.get("premium") or comparable.get("premium"),
+                rate_per_mil=comp_layer.get("rpm") or comparable.get("rate_per_mil"),
                 loss_signal=comp_loss_signal,
                 claims_count=comparable.get("claims_count") if comparable.get("is_bound") else None,
                 claims_paid=comparable.get("claims_paid") if comparable.get("is_bound") else None,
@@ -936,7 +951,7 @@ def _render_comparison_detail(
                 hide_index=True,
                 height=min(len(flag_rows) * 35 + 38, 240),
             )
-            st.caption("Narratives are generated separately and may not match the flags above.")
+            st.caption("Flags above are used for comparison. Narratives are generated separately and may differ.")
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**Current**")
