@@ -5,6 +5,7 @@ import SubmissionLayout from './layouts/SubmissionLayout';
 import SubmissionsListPage from './pages/SubmissionsListPage';
 import StatsPage from './pages/StatsPage';
 import AdminPage from './pages/AdminPage';
+import CompliancePage from './pages/CompliancePage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import UWPage from './pages/UWPage';
@@ -35,6 +36,9 @@ function App() {
 
           {/* Admin */}
           <Route path="/admin" element={<AdminPage />} />
+
+          {/* Compliance */}
+          <Route path="/compliance" element={<CompliancePage />} />
 
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>

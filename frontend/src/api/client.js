@@ -58,4 +58,18 @@ export const markSubjectivityReceived = (id) => api.post(`/admin/subjectivities/
 export const waiveSubjectivity = (id) => api.post(`/admin/subjectivities/${id}/waive`);
 export const searchPolicies = (q) => api.get(`/admin/search-policies?q=${encodeURIComponent(q)}`);
 
+// Compliance
+export const getComplianceStats = () => api.get('/compliance/stats');
+export const getComplianceRules = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.category) query.append('category', params.category);
+  if (params.state) query.append('state', params.state);
+  if (params.product) query.append('product', params.product);
+  if (params.search) query.append('search', params.search);
+  if (params.status) query.append('status', params.status);
+  const queryStr = query.toString();
+  return api.get(`/compliance/rules${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getComplianceRule = (code) => api.get(`/compliance/rules/${encodeURIComponent(code)}`);
+
 export default api;

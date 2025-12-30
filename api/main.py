@@ -1057,6 +1057,138 @@ def search_policies(q: str):
 
 
 # ─────────────────────────────────────────────────────────────
+# Compliance Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/compliance/stats")
+def get_compliance_stats():
+    """Get compliance rules statistics."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Check if table exists first
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'compliance_rules'
+                )
+            """)
+            if not cur.fetchone()["exists"]:
+                return {
+                    "total": 0,
+                    "active": 0,
+                    "ofac_count": 0,
+                    "nyftz_count": 0,
+                    "state_rule_count": 0,
+                    "table_exists": False
+                }
+
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE status = 'active') as active,
+                    COUNT(*) FILTER (WHERE category = 'ofac') as ofac_count,
+                    COUNT(*) FILTER (WHERE category = 'nyftz') as nyftz_count,
+                    COUNT(*) FILTER (WHERE category = 'state_rule') as state_rule_count,
+                    COUNT(*) FILTER (WHERE category = 'notice_stamping') as notice_stamping_count,
+                    COUNT(*) FILTER (WHERE category = 'service_of_suit') as sos_count
+                FROM compliance_rules
+            """)
+            row = cur.fetchone()
+            return {
+                "total": row["total"] or 0,
+                "active": row["active"] or 0,
+                "ofac_count": row["ofac_count"] or 0,
+                "nyftz_count": row["nyftz_count"] or 0,
+                "state_rule_count": (row["state_rule_count"] or 0) + (row["notice_stamping_count"] or 0),
+                "sos_count": row["sos_count"] or 0,
+                "table_exists": True
+            }
+
+
+@app.get("/api/compliance/rules")
+def get_compliance_rules(
+    category: str = None,
+    state: str = None,
+    product: str = None,
+    search: str = None,
+    status: str = "active"
+):
+    """Get compliance rules with optional filters."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Check if table exists
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'compliance_rules'
+                )
+            """)
+            if not cur.fetchone()["exists"]:
+                return []
+
+            query = """
+                SELECT
+                    id, code, title, category, subcategory, rule_type,
+                    applies_to_states, applies_to_jurisdictions,
+                    applies_to_products, description, requirements, procedures,
+                    legal_reference, source_url, requires_endorsement,
+                    required_endorsement_code, requires_notice, notice_text,
+                    requires_stamping, stamping_office, priority, status
+                FROM compliance_rules
+                WHERE 1=1
+            """
+            params = []
+
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+
+            if category:
+                query += " AND category = %s"
+                params.append(category)
+
+            if state:
+                query += " AND (applies_to_states IS NULL OR %s = ANY(applies_to_states))"
+                params.append(state)
+
+            if product:
+                query += " AND (applies_to_products IS NULL OR %s = ANY(applies_to_products) OR 'both' = ANY(applies_to_products))"
+                params.append(product)
+
+            if search:
+                query += " AND (LOWER(code) LIKE LOWER(%s) OR LOWER(title) LIKE LOWER(%s) OR LOWER(description) LIKE LOWER(%s))"
+                search_term = f"%{search}%"
+                params.extend([search_term, search_term, search_term])
+
+            query += " ORDER BY priority DESC, category, title"
+
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.get("/api/compliance/rules/{code}")
+def get_compliance_rule(code: str):
+    """Get a specific compliance rule by code."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id, code, title, category, subcategory, rule_type,
+                    applies_to_states, applies_to_jurisdictions,
+                    applies_to_products, description, requirements, procedures,
+                    legal_reference, source_url, check_config, requires_endorsement,
+                    required_endorsement_code, requires_notice, notice_text,
+                    requires_stamping, stamping_office, priority, status
+                FROM compliance_rules
+                WHERE code = %s
+            """, (code,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Rule not found")
+            return row
+
+
+# ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
 

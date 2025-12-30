@@ -393,6 +393,7 @@ export default function StatsPage() {
             <Link to="/" className="nav-link">Submissions</Link>
             <span className="nav-link-active">Statistics</span>
             <Link to="/admin" className="nav-link">Admin</Link>
+            <Link to="/compliance" className="nav-link">Compliance</Link>
           </nav>
         </div>
       </header>
