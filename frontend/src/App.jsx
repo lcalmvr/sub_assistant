@@ -9,6 +9,7 @@ import CompliancePage from './pages/CompliancePage';
 import UWGuidePage from './pages/UWGuidePage';
 import BrokersPage from './pages/BrokersPage';
 import CoverageCatalogPage from './pages/CoverageCatalogPage';
+import AccountDashboardPage from './pages/AccountDashboardPage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import UWPage from './pages/UWPage';
@@ -51,6 +52,9 @@ function App() {
 
           {/* Coverage Catalog */}
           <Route path="/coverage-catalog" element={<CoverageCatalogPage />} />
+
+          {/* Account Dashboard */}
+          <Route path="/accounts" element={<AccountDashboardPage />} />
 
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>

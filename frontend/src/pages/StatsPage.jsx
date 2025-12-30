@@ -397,6 +397,7 @@ export default function StatsPage() {
             <Link to="/uw-guide" className="nav-link">UW Guide</Link>
             <Link to="/brokers" className="nav-link">Brokers</Link>
             <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
+            <Link to="/accounts" className="nav-link">Accounts</Link>
           </nav>
         </div>
       </header>

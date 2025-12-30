@@ -1016,6 +1016,7 @@ export default function UWGuidePage() {
             <span className="nav-link-active">UW Guide</span>
             <Link to="/brokers" className="nav-link">Brokers</Link>
             <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
+            <Link to="/accounts" className="nav-link">Accounts</Link>
           </nav>
         </div>
       </header>

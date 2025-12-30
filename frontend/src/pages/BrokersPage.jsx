@@ -1608,6 +1608,7 @@ export default function BrokersPage() {
             <Link to="/uw-guide" className="nav-link">UW Guide</Link>
             <span className="nav-link-active">Brokers</span>
             <Link to="/coverage-catalog" className="nav-link">Coverage Catalog</Link>
+            <Link to="/accounts" className="nav-link">Accounts</Link>
           </nav>
         </div>
       </header>

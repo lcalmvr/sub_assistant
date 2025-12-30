@@ -2005,6 +2005,164 @@ def delete_rejected_coverages():
 
 
 # ─────────────────────────────────────────────────────────────
+# Account Dashboard
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/dashboard/submission-status-counts")
+def get_submission_status_counts(days: int = 30):
+    """Get submission status counts for the last N days."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT submission_status, COUNT(*)::int
+                FROM submissions
+                WHERE COALESCE(date_received, created_at) >= (now() - (%s || ' days')::interval)
+                GROUP BY submission_status
+            """, (days,))
+            rows = cur.fetchall()
+            return {str(row["submission_status"] or "unknown"): row["count"] for row in rows}
+
+
+@app.get("/api/dashboard/recent-submissions")
+def get_recent_submissions(search: str = None, status: str = None, outcome: str = None, limit: int = 50):
+    """Get recent submissions with optional filters."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            where_clauses = ["TRUE"]
+            params = [limit]
+
+            if search:
+                where_clauses.append("LOWER(s.applicant_name) LIKE LOWER(%s)")
+                params.insert(0, f"%{search.strip()}%")
+            if status and status != "all":
+                where_clauses.append("s.submission_status = %s")
+                params.insert(-1, status)
+            if outcome and outcome != "all":
+                where_clauses.append("s.submission_outcome = %s")
+                params.insert(-1, outcome)
+
+            query = f"""
+                SELECT
+                    s.id,
+                    COALESCE(s.date_received, s.created_at)::date AS date_received,
+                    s.applicant_name,
+                    a.name AS account_name,
+                    s.submission_status,
+                    s.submission_outcome,
+                    s.annual_revenue,
+                    s.naics_primary_title
+                FROM submissions s
+                LEFT JOIN accounts a ON a.id = s.account_id
+                WHERE {" AND ".join(where_clauses)}
+                ORDER BY COALESCE(s.date_received, s.created_at) DESC
+                LIMIT %s
+            """
+            cur.execute(query, params)
+            return cur.fetchall()
+
+
+@app.get("/api/accounts")
+def get_accounts_list(search: str = None, limit: int = 50, offset: int = 0):
+    """Get accounts list with optional search."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if search:
+                cur.execute("""
+                    SELECT id, name, website, industry, naics_title, created_at
+                    FROM accounts
+                    WHERE LOWER(name) LIKE LOWER(%s)
+                       OR LOWER(website) LIKE LOWER(%s)
+                    ORDER BY name
+                    LIMIT %s OFFSET %s
+                """, (f"%{search}%", f"%{search}%", limit, offset))
+            else:
+                cur.execute("""
+                    SELECT id, name, website, industry, naics_title, created_at
+                    FROM accounts
+                    ORDER BY name
+                    LIMIT %s OFFSET %s
+                """, (limit, offset))
+            return cur.fetchall()
+
+
+@app.get("/api/accounts/recent")
+def get_recent_accounts(limit: int = 10):
+    """Get recently active accounts."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    a.id,
+                    a.name,
+                    a.website,
+                    MAX(COALESCE(s.date_received, s.created_at)) AS last_activity,
+                    COUNT(s.id)::int AS submission_count
+                FROM accounts a
+                LEFT JOIN submissions s ON s.account_id = a.id
+                GROUP BY a.id, a.name, a.website
+                ORDER BY last_activity DESC NULLS LAST, a.updated_at DESC
+                LIMIT %s
+            """, (limit,))
+            return cur.fetchall()
+
+
+@app.get("/api/accounts/{account_id}")
+def get_account_details(account_id: str):
+    """Get account details by ID."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, normalized_name, website, industry, naics_code, naics_title, notes,
+                       address_street, address_street2, address_city, address_state, address_zip, address_country,
+                       created_at, updated_at
+                FROM accounts
+                WHERE id = %s
+            """, (account_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Account not found")
+            return dict(row)
+
+
+@app.get("/api/accounts/{account_id}/written-premium")
+def get_account_written_premium(account_id: str):
+    """Get total written (bound) premium for an account."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COALESCE(SUM(COALESCE(t.sold_premium, 0)), 0)::float AS total_premium
+                FROM submissions s
+                LEFT JOIN insurance_towers t
+                  ON t.submission_id = s.id
+                 AND t.is_bound = TRUE
+                WHERE s.account_id = %s
+            """, (account_id,))
+            row = cur.fetchone()
+            return {"written_premium": float(row["total_premium"] or 0)}
+
+
+@app.get("/api/accounts/{account_id}/submissions")
+def get_account_submissions(account_id: str):
+    """Get all submissions for an account."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    s.id,
+                    COALESCE(s.date_received, s.created_at)::date AS date_received,
+                    s.applicant_name,
+                    s.submission_status,
+                    s.submission_outcome,
+                    s.annual_revenue,
+                    s.naics_primary_title
+                FROM submissions s
+                WHERE s.account_id = %s
+                ORDER BY COALESCE(s.date_received, s.created_at) DESC
+            """, (account_id,))
+            return cur.fetchall()
+
+
+# ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
 

@@ -164,6 +164,30 @@ export const getBrkrAddresses = (orgId = null) => {
 };
 export const createBrkrAddress = (data) => api.post('/brkr/addresses', data);
 
+// Account Dashboard
+export const getSubmissionStatusCounts = (days = 30) => api.get(`/dashboard/submission-status-counts?days=${days}`);
+export const getDashboardSubmissions = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.search) query.append('search', params.search);
+  if (params.status) query.append('status', params.status);
+  if (params.outcome) query.append('outcome', params.outcome);
+  if (params.limit) query.append('limit', params.limit);
+  const queryStr = query.toString();
+  return api.get(`/dashboard/recent-submissions${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getAccountsList = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.search) query.append('search', params.search);
+  if (params.limit) query.append('limit', params.limit);
+  if (params.offset) query.append('offset', params.offset);
+  const queryStr = query.toString();
+  return api.get(`/accounts${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getRecentAccounts = (limit = 10) => api.get(`/accounts/recent?limit=${limit}`);
+export const getAccountDetails = (accountId) => api.get(`/accounts/${accountId}`);
+export const getAccountWrittenPremium = (accountId) => api.get(`/accounts/${accountId}/written-premium`);
+export const getAccountSubmissions = (accountId) => api.get(`/accounts/${accountId}/submissions`);
+
 // Coverage Catalog
 export const getCoverageCatalogStats = () => api.get('/coverage-catalog/stats');
 export const getCoverageStandardTags = () => api.get('/coverage-catalog/tags');
