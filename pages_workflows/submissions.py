@@ -986,62 +986,38 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
         render_status_header(sub_id, get_conn=get_conn, show_change_button=False)
         _render_submission_context(sub_id)
 
-        # Check if we should return to Policy tab (after endorsement/admin action)
-        target_tab = None
-        inject_tab_js = False  # Only inject JS once per request
+        # ------------------- TAB STATE -------------------
+        # Determine which tab to show (using Streamlit's native default parameter)
+        tab_labels = ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Comps", "📊 Rating", "💰 Quote", "📑 Policy"]
+        tab_name_to_label = {
+            "Account": "📋 Account",
+            "Review": "⚠️ Review",
+            "UW": "🔍 UW",
+            "Comps": "📈 Comps",
+            "Rating": "📊 Rating",
+            "Quote": "💰 Quote",
+            "Policy": "📑 Policy",
+        }
+
+        # Check for tab state and determine default
+        default_tab_label = None
+        if st.session_state.pop("_return_to_policy_tab", False):
+            default_tab_label = "📑 Policy"
+        elif st.session_state.get("_active_tab"):
+            target = st.session_state.pop("_active_tab", None)
+            default_tab_label = tab_name_to_label.get(target)
+            # Clean up related state
+            st.session_state.pop("_active_tab_request_id", None)
+            st.session_state.pop("_active_tab_injected", None)
 
         # Clean up old state keys from previous implementation
         st.session_state.pop("_active_tab_use_count", None)
 
-        if st.session_state.pop("_return_to_policy_tab", False):
-            target_tab = "Policy"
-            # Only inject JS if we haven't already for this request
-            if not st.session_state.get("_active_tab_injected", False):
-                inject_tab_js = True
-                st.session_state["_active_tab_injected"] = True
-        elif st.session_state.get("_active_tab"):
-            target_tab = st.session_state.get("_active_tab")
-            # Only inject JS if we haven't already for this request
-            if not st.session_state.get("_active_tab_injected", False):
-                inject_tab_js = True
-                st.session_state["_active_tab_injected"] = True
-            else:
-                # Already injected - clear state for next time
-                st.session_state.pop("_active_tab", None)
-                st.session_state.pop("_active_tab_request_id", None)
-                st.session_state.pop("_active_tab_injected", None)
-
-
         # ------------------- TABS -------------------
-        # Ensure all tabs are visible (counteract any leftover opacity:0 from previous renders)
-        st.markdown(
-            "<style>div[data-testid='stTabs']{opacity:1 !important;}</style>",
-            unsafe_allow_html=True,
-        )
         tab_details, tab_review, tab_uw, tab_benchmark, tab_rating, tab_quote, tab_policy = st.tabs(
-            ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Comps", "📊 Rating", "💰 Quote", "📑 Policy"]
+            tab_labels,
+            default=default_tab_label,  # Native Streamlit parameter - no JS hack needed!
         )
-
-        # If we need to switch to a specific tab, inject JavaScript to click it
-        if inject_tab_js and target_tab:
-            tab_index = {"Account": 0, "Review": 1, "UW": 2, "Comps": 3, "Rating": 4, "Quote": 5, "Policy": 6}.get(target_tab, 0)
-            import streamlit.components.v1 as components
-            components.html(f"""
-                <script>
-                    // Wait for tabs to render then click the target tab
-                    function clickTab() {{
-                        const root = window.parent.document;
-                        const tabs = root.querySelectorAll('[data-baseweb="tab"]');
-                        if (tabs && tabs.length > {tab_index}) {{
-                            tabs[{tab_index}].click();
-                        }} else {{
-                            // Retry if tabs aren't rendered yet
-                            setTimeout(clickTab, 50);
-                        }}
-                    }}
-                    setTimeout(clickTab, 0);
-                </script>
-            """, height=0)
 
         # Define quote_helpers up front for use in Quote tab
         quote_helpers = {

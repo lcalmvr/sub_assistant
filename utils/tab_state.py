@@ -22,15 +22,12 @@ def _clear_caches():
 def rerun_on_tab(tab_name: str):
     """
     Trigger a rerun while preserving the current tab.
+    Uses Streamlit's native st.tabs(default=...) parameter.
 
     Args:
         tab_name: One of "Account", "Review", "UW", "Comps", "Rating", "Quote", "Policy"
     """
-    import uuid
     st.session_state["_active_tab"] = tab_name
-    # Use unique request ID so we can track this specific request across reruns
-    st.session_state["_active_tab_request_id"] = str(uuid.uuid4())[:8]
-    st.session_state["_active_tab_injected"] = False
     st.rerun()
 
 
@@ -41,10 +38,7 @@ def rerun_on_quote_tab():
 
 def rerun_on_policy_tab():
     """Rerun and return to Policy tab."""
-    import uuid
     st.session_state["_return_to_policy_tab"] = True
-    st.session_state["_active_tab_request_id"] = str(uuid.uuid4())[:8]
-    st.session_state["_active_tab_injected"] = False
     st.rerun()
 
 
@@ -126,10 +120,7 @@ def save_and_rerun_on_comps_tab():
 
 def _set_tab_state(tab_name: str):
     """Set tab state without triggering rerun. For use in on_change callbacks."""
-    import uuid
     st.session_state["_active_tab"] = tab_name
-    st.session_state["_active_tab_request_id"] = str(uuid.uuid4())[:8]
-    st.session_state["_active_tab_injected"] = False
 
 
 def on_change_stay_on_rating():
