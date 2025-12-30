@@ -11,6 +11,11 @@ from pages_components.tower_db import save_tower
 from utils.quote_formatting import format_currency, generate_quote_name
 
 
+def _rerun_on_quote_tab() -> None:
+    st.session_state["_active_tab"] = "Quote"
+    st.rerun()
+
+
 def _calculate_premium(sub_id: str, limit: int, retention: int, get_conn_func) -> Optional[int]:
     """Calculate premium using rating engine."""
     try:
@@ -155,7 +160,7 @@ def render_quote_options_cards(sub_id: str, get_conn_func, position: str = "prim
                 use_container_width=True
             ):
                 _create_quote_from_option(sub_id, option, position)
-                st.rerun()
+                _rerun_on_quote_tab()
 
     # Show more options on new rows if > 4
     if len(options) > num_cols:
@@ -176,7 +181,7 @@ def render_quote_options_cards(sub_id: str, get_conn_func, position: str = "prim
                     key=f"create_quote_{sub_id}_{idx}",
                 ):
                     _create_quote_from_option(sub_id, option, position)
-                    st.rerun()
+                    _rerun_on_quote_tab()
 
     return None
 

@@ -51,6 +51,12 @@ def _parse_currency(val) -> float:
         return None
 
 
+def _rerun_on_quote_tab() -> None:
+    st.session_state["_active_tab"] = "Quote"
+    st.rerun()
+
+
+
 def render_quote_options_panel(sub_id: str, readonly: bool = False):
     """
     Render saved quote options as a dropdown selector with action buttons.
@@ -162,7 +168,7 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                     _create_primary_option(sub_id, all_quotes, viewing_quote_id)
                 if st.button("Excess", key=f"add_excess_{sub_id}", use_container_width=True):
                     st.session_state[f"show_excess_dialog_{sub_id}"] = True
-                    st.rerun()
+                    _rerun_on_quote_tab()
 
         with col_delete:
             delete_disabled = not viewing_quote_id
@@ -187,13 +193,13 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                     if viewing_quote_id:
                         unbind_option(viewing_quote_id)
                         st.success("Option unbound")
-                        st.rerun()
+                        _rerun_on_quote_tab()
             else:
                 if st.button("Bind", key="bind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
                     if viewing_quote_id:
                         bind_option(viewing_quote_id, bound_by="user")
                         st.success("Option bound!")
-                        st.rerun()
+                        _rerun_on_quote_tab()
 
         # Row 2: Dropdown selector
         option_ids = list(quote_options.keys())
@@ -290,7 +296,7 @@ def _update_quote_limit_retention(quote_id: str, quote_data: dict, new_limit: in
     st.session_state.primary_retention = new_retention
     st.session_state.quote_name = new_name
 
-    st.rerun()
+    _rerun_on_quote_tab()
 
 
 def _calculate_premium_for_quote(sub_id: str, limit: int, retention: int) -> dict:
@@ -612,7 +618,7 @@ def _render_sold_premium_input(quote_id: str, sold_premium: float):
                 if parsed != sold_premium:
                     update_quote_field(quote_id, "sold_premium", parsed)
                 st.session_state[widget_key] = expected
-                st.rerun()
+                _rerun_on_quote_tab()
 
     new_sold_str = st.text_input(
         "Sold Premium",
@@ -633,7 +639,7 @@ def _view_quote(quote_id: str):
     """
     from utils.quote_option_factory import load_quote_into_session
     load_quote_into_session(quote_id)
-    st.rerun()
+    _rerun_on_quote_tab()
 
 
 
@@ -650,7 +656,7 @@ def _delete_quote(quote_id: str, viewing_quote_id: str):
             st.session_state._viewing_saved_option = False
 
         st.success("Quote deleted.")
-        st.rerun()
+        _rerun_on_quote_tab()
     except Exception as e:
         st.error(f"Error deleting: {e}")
 
@@ -726,7 +732,7 @@ def _render_generate_dialog(sub_id: str, quote_id: str):
         with col_cancel:
             if st.button("Cancel", key=f"gen_cancel_{quote_id}", use_container_width=True):
                 st.session_state[f"show_generate_dialog_{sub_id}"] = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
         with col_generate:
             btn_label = "Generate Quote" if package_type == "quote_only" else "Generate Package"
@@ -751,7 +757,7 @@ def _render_generate_dialog(sub_id: str, quote_id: str):
                             )
                     st.session_state[f"show_generate_dialog_{sub_id}"] = False
                     st.success(f"Generated: {result['document_number']}")
-                    st.rerun()
+                    _rerun_on_quote_tab()
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -1049,7 +1055,7 @@ def _render_quote_detail_modal(sub_id: str, quote_id: str):
                     from pages_components.coverage_editor import reset_coverage_editor
                     reset_coverage_editor(f"quote_{sub_id}")
                     st.session_state[f"view_quote_modal_{sub_id}"] = None
-                    st.rerun()
+                    _rerun_on_quote_tab()
             with col_save:
                 if st.button("Save Changes & Revise Binder", key=f"save_{quote_id}", type="primary", use_container_width=True):
                     # Save coverages to quote
@@ -1070,14 +1076,14 @@ def _render_quote_detail_modal(sub_id: str, quote_id: str):
                         )
                         st.session_state[f"view_quote_modal_{sub_id}"] = None
                         st.success(f"Coverages updated. Revised binder created: {result.get('document_number', 'N/A')}")
-                        st.rerun()
+                        _rerun_on_quote_tab()
                     except Exception as e:
                         st.error(f"Coverages updated, but binder generation failed: {e}")
         else:
             # Close button for non-bound quotes
             if st.button("Close", key=f"close_modal_{quote_id}", use_container_width=True):
                 st.session_state[f"view_quote_modal_{sub_id}"] = None
-                st.rerun()
+                _rerun_on_quote_tab()
 
     show_modal()
 
@@ -1108,7 +1114,7 @@ def _create_primary_option(sub_id: str, all_quotes: list, clone_from_quote_id: s
     load_quote_into_session(new_id)
     quote_data = get_quote_by_id(new_id)
     st.success(f"Created: {quote_data.get('quote_name', 'New Option')}")
-    st.rerun()
+    _rerun_on_quote_tab()
 
 
 def _render_excess_option_dialog(sub_id: str, all_quotes: list):
@@ -1166,7 +1172,7 @@ def _render_excess_option_dialog(sub_id: str, all_quotes: list):
         with col_cancel:
             if st.button("Cancel", key=f"excess_cancel_{sub_id}", use_container_width=True):
                 st.session_state[f"show_excess_dialog_{sub_id}"] = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
         with col_create:
             if st.button("Create Excess Option", key=f"excess_create_{sub_id}", type="primary", use_container_width=True):
@@ -1235,7 +1241,7 @@ def _create_excess_option(
     load_quote_into_session(new_id)
     quote_data = get_quote_by_id(new_id)
     st.success(f"Created: {quote_data.get('quote_name', 'New Option')}")
-    st.rerun()
+    _rerun_on_quote_tab()
 
 
 def get_current_quote_position(sub_id: str) -> str:

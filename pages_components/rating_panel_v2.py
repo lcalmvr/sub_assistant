@@ -856,6 +856,7 @@ def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get
                 pdf_path.unlink()
 
                 # Trigger rerun to refresh the saved quotes list
+                st.session_state["_active_tab"] = "Rating"
                 st.rerun()
                 
             except Exception as e:

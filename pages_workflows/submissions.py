@@ -989,6 +989,11 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
             target_tab = st.session_state.pop("_active_tab", None)
 
         # ------------------- TABS -------------------
+        if target_tab:
+            st.markdown(
+                "<style>div[data-testid='stTabs']{opacity:0;}</style>",
+                unsafe_allow_html=True,
+            )
         tab_details, tab_review, tab_uw, tab_benchmark, tab_rating, tab_quote, tab_policy = st.tabs(
             ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Comps", "📊 Rating", "💰 Quote", "📑 Policy"]
         )
@@ -1001,15 +1006,20 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                 <script>
                     // Wait for tabs to render then click the target tab
                     function clickTab() {{
-                        const tabs = window.parent.document.querySelectorAll('[data-baseweb="tab"]');
+                        const root = window.parent.document;
+                        const tabs = root.querySelectorAll('[data-baseweb="tab"]');
+                        const tabsRoot = root.querySelector('[data-testid="stTabs"]');
                         if (tabs && tabs.length > {tab_index}) {{
                             tabs[{tab_index}].click();
+                            if (tabsRoot) {{
+                                tabsRoot.style.opacity = '1';
+                            }}
                         }} else {{
                             // Retry if tabs aren't rendered yet
                             setTimeout(clickTab, 50);
                         }}
                     }}
-                    setTimeout(clickTab, 100);
+                    setTimeout(clickTab, 0);
                 </script>
             """, height=0)
 
@@ -1164,6 +1174,7 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                                     coverages=coverages,
                                 )
                                 st.success(f"Created: {quote_name}")
+                                st.session_state["_active_tab"] = "Rating"
                                 st.rerun()
 
                 # Rating Parameters (Retention, Hazard Class, Control Adjustment)
