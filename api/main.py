@@ -1189,6 +1189,141 @@ def get_compliance_rule(code: str):
 
 
 # ─────────────────────────────────────────────────────────────
+# UW Guide
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/uw-guide/conflict-rules")
+def get_conflict_rules(
+    category: str = None,
+    severity: str = None,
+    source: str = None,
+):
+    """Get conflict rules with optional filters."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            where_clauses = ["is_active = true"]
+            params = []
+
+            if category:
+                where_clauses.append("category = %s")
+                params.append(category)
+            if severity:
+                where_clauses.append("severity = %s")
+                params.append(severity)
+            if source:
+                where_clauses.append("source = %s")
+                params.append(source)
+
+            where_sql = " AND ".join(where_clauses)
+
+            cur.execute(f"""
+                SELECT
+                    id, rule_name, category, severity, title, description,
+                    detection_pattern, example_bad, example_explanation,
+                    times_detected, times_confirmed, times_dismissed,
+                    source, is_active, requires_review,
+                    created_at, updated_at, last_detected_at
+                FROM conflict_rules
+                WHERE {where_sql}
+                ORDER BY
+                    CASE severity
+                        WHEN 'critical' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        ELSE 4
+                    END,
+                    times_detected DESC,
+                    rule_name
+            """, params)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/market-news")
+def get_market_news(
+    search: str = None,
+    category: str = None,
+    limit: int = 100,
+):
+    """Get market news articles."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            where_clauses = ["TRUE"]
+            params = []
+
+            if search:
+                where_clauses.append("(title ILIKE %s OR COALESCE(source,'') ILIKE %s OR COALESCE(summary,'') ILIKE %s)")
+                search_term = f"%{search}%"
+                params.extend([search_term, search_term, search_term])
+            if category and category != "all":
+                where_clauses.append("category = %s")
+                params.append(category)
+
+            params.append(limit)
+            where_sql = " AND ".join(where_clauses)
+
+            cur.execute(f"""
+                SELECT id, title, url, source, category, published_at, tags,
+                       summary, internal_notes, created_by, created_at, updated_at
+                FROM market_news
+                WHERE {where_sql}
+                ORDER BY COALESCE(published_at, created_at::date) DESC, created_at DESC
+                LIMIT %s
+            """, params)
+            return cur.fetchall()
+
+
+@app.post("/api/uw-guide/market-news")
+def create_market_news(data: dict):
+    """Create a new market news article."""
+    title = data.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    category = data.get("category", "cyber_insurance")
+    if category not in ("cyber_insurance", "cybersecurity"):
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+    tags = data.get("tags", [])
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO market_news (
+                    title, url, source, category, published_at, tags, summary, internal_notes, created_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                title,
+                data.get("url") or None,
+                data.get("source") or None,
+                category,
+                data.get("published_at") or None,
+                json.dumps(tags),
+                data.get("summary") or None,
+                data.get("internal_notes") or None,
+                data.get("created_by") or "api",
+            ))
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": str(row["id"]), "message": "Article created"}
+
+
+@app.delete("/api/uw-guide/market-news/{article_id}")
+def delete_market_news(article_id: str):
+    """Delete a market news article."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM market_news WHERE id = %s", (article_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Article not found")
+            conn.commit()
+            return {"message": "Article deleted"}
+
+
+# ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
 

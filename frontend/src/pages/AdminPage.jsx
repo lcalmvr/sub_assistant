@@ -358,6 +358,7 @@ export default function AdminPage() {
             <Link to="/stats" className="nav-link">Statistics</Link>
             <span className="nav-link-active">Admin</span>
             <Link to="/compliance" className="nav-link">Compliance</Link>
+            <Link to="/uw-guide" className="nav-link">UW Guide</Link>
           </nav>
         </div>
       </header>

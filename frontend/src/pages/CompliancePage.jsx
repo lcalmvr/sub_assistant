@@ -510,6 +510,7 @@ export default function CompliancePage() {
             <Link to="/stats" className="nav-link">Statistics</Link>
             <Link to="/admin" className="nav-link">Admin</Link>
             <span className="nav-link-active">Compliance</span>
+            <Link to="/uw-guide" className="nav-link">UW Guide</Link>
           </nav>
         </div>
       </header>

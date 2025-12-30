@@ -6,6 +6,7 @@ import SubmissionsListPage from './pages/SubmissionsListPage';
 import StatsPage from './pages/StatsPage';
 import AdminPage from './pages/AdminPage';
 import CompliancePage from './pages/CompliancePage';
+import UWGuidePage from './pages/UWGuidePage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import UWPage from './pages/UWPage';
@@ -39,6 +40,9 @@ function App() {
 
           {/* Compliance */}
           <Route path="/compliance" element={<CompliancePage />} />
+
+          {/* UW Guide */}
+          <Route path="/uw-guide" element={<UWGuidePage />} />
 
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>

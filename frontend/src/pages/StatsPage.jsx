@@ -394,6 +394,7 @@ export default function StatsPage() {
             <span className="nav-link-active">Statistics</span>
             <Link to="/admin" className="nav-link">Admin</Link>
             <Link to="/compliance" className="nav-link">Compliance</Link>
+            <Link to="/uw-guide" className="nav-link">UW Guide</Link>
           </nav>
         </div>
       </header>

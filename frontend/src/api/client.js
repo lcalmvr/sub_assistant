@@ -72,4 +72,24 @@ export const getComplianceRules = (params = {}) => {
 };
 export const getComplianceRule = (code) => api.get(`/compliance/rules/${encodeURIComponent(code)}`);
 
+// UW Guide
+export const getConflictRules = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.category) query.append('category', params.category);
+  if (params.severity) query.append('severity', params.severity);
+  if (params.source) query.append('source', params.source);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/conflict-rules${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getMarketNews = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.search) query.append('search', params.search);
+  if (params.category) query.append('category', params.category);
+  if (params.limit) query.append('limit', params.limit);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/market-news${queryStr ? `?${queryStr}` : ''}`);
+};
+export const createMarketNews = (data) => api.post('/uw-guide/market-news', data);
+export const deleteMarketNews = (id) => api.delete(`/uw-guide/market-news/${id}`);
+
 export default api;

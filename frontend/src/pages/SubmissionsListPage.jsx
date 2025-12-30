@@ -112,6 +112,7 @@ export default function SubmissionsListPage() {
             <Link to="/stats" className="nav-link">Statistics</Link>
             <Link to="/admin" className="nav-link">Admin</Link>
             <Link to="/compliance" className="nav-link">Compliance</Link>
+            <Link to="/uw-guide" className="nav-link">UW Guide</Link>
           </nav>
         </div>
       </header>
