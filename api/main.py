@@ -910,6 +910,153 @@ def get_retention_metrics():
 
 
 # ─────────────────────────────────────────────────────────────
+# Admin Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/admin/bound-policies")
+def get_bound_policies(search: str = None):
+    """Get recently bound policies with optional search."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if search:
+                cur.execute("""
+                    SELECT
+                        s.id,
+                        s.applicant_name,
+                        s.effective_date,
+                        s.expiration_date,
+                        t.bound_at,
+                        t.sold_premium,
+                        t.quote_name
+                    FROM submissions s
+                    JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = TRUE
+                    WHERE LOWER(s.applicant_name) LIKE LOWER(%s)
+                    ORDER BY t.bound_at DESC NULLS LAST
+                    LIMIT 50
+                """, (f"%{search}%",))
+            else:
+                cur.execute("""
+                    SELECT
+                        s.id,
+                        s.applicant_name,
+                        s.effective_date,
+                        s.expiration_date,
+                        t.bound_at,
+                        t.sold_premium,
+                        t.quote_name
+                    FROM submissions s
+                    JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = TRUE
+                    ORDER BY t.bound_at DESC NULLS LAST
+                    LIMIT 50
+                """)
+            return cur.fetchall()
+
+
+@app.get("/api/admin/pending-subjectivities")
+def get_pending_subjectivities():
+    """Get policies with pending subjectivities."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    s.id as submission_id,
+                    s.applicant_name,
+                    ps.id as subjectivity_id,
+                    ps.text,
+                    ps.status,
+                    ps.created_at
+                FROM submissions s
+                JOIN policy_subjectivities ps ON ps.submission_id = s.id
+                WHERE ps.status = 'pending'
+                ORDER BY s.applicant_name, ps.created_at
+                LIMIT 100
+            """)
+            rows = cur.fetchall()
+
+            # Group by submission
+            grouped = {}
+            for row in rows:
+                sub_id = str(row["submission_id"])
+                if sub_id not in grouped:
+                    grouped[sub_id] = {
+                        "submission_id": sub_id,
+                        "applicant_name": row["applicant_name"],
+                        "subjectivities": []
+                    }
+                grouped[sub_id]["subjectivities"].append({
+                    "id": str(row["subjectivity_id"]),
+                    "text": row["text"],
+                    "status": row["status"],
+                    "created_at": row["created_at"]
+                })
+
+            return list(grouped.values())
+
+
+@app.post("/api/admin/subjectivities/{subjectivity_id}/received")
+def mark_subjectivity_received(subjectivity_id: str):
+    """Mark a subjectivity as received."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE policy_subjectivities
+                SET status = 'received',
+                    received_at = NOW(),
+                    received_by = 'admin'
+                WHERE id = %s
+                RETURNING id
+            """, (subjectivity_id,))
+            result = cur.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Subjectivity not found")
+            conn.commit()
+            return {"status": "received", "id": subjectivity_id}
+
+
+@app.post("/api/admin/subjectivities/{subjectivity_id}/waive")
+def waive_subjectivity(subjectivity_id: str):
+    """Waive a subjectivity."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE policy_subjectivities
+                SET status = 'waived',
+                    waived_at = NOW(),
+                    waived_by = 'admin'
+                WHERE id = %s
+                RETURNING id
+            """, (subjectivity_id,))
+            result = cur.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Subjectivity not found")
+            conn.commit()
+            return {"status": "waived", "id": subjectivity_id}
+
+
+@app.get("/api/admin/search-policies")
+def search_policies(q: str):
+    """Search for policies by name."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.effective_date,
+                    s.expiration_date,
+                    s.submission_status,
+                    COALESCE(t.is_bound, false) as is_bound,
+                    t.sold_premium
+                FROM submissions s
+                LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = TRUE
+                WHERE LOWER(s.applicant_name) LIKE LOWER(%s)
+                ORDER BY s.created_at DESC
+                LIMIT 20
+            """, (f"%{q}%",))
+            return cur.fetchall()
+
+
+# ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
 

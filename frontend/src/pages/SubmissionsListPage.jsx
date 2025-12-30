@@ -110,7 +110,7 @@ export default function SubmissionsListPage() {
           <nav className="flex items-center gap-6">
             <Link to="/" className="nav-link-active">Submissions</Link>
             <Link to="/stats" className="nav-link">Statistics</Link>
-            <span className="nav-link">Settings</span>
+            <Link to="/admin" className="nav-link">Admin</Link>
           </nav>
         </div>
       </header>

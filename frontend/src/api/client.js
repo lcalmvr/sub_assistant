@@ -48,4 +48,14 @@ export const getUpcomingRenewals = (days = 90) => api.get(`/stats/upcoming-renew
 export const getRenewalsNotReceived = () => api.get('/stats/renewals-not-received');
 export const getRetentionMetrics = () => api.get('/stats/retention-metrics');
 
+// Admin
+export const getBoundPolicies = (search = '') => {
+  const params = search ? `?search=${encodeURIComponent(search)}` : '';
+  return api.get(`/admin/bound-policies${params}`);
+};
+export const getPendingSubjectivities = () => api.get('/admin/pending-subjectivities');
+export const markSubjectivityReceived = (id) => api.post(`/admin/subjectivities/${id}/received`);
+export const waiveSubjectivity = (id) => api.post(`/admin/subjectivities/${id}/waive`);
+export const searchPolicies = (q) => api.get(`/admin/search-policies?q=${encodeURIComponent(q)}`);
+
 export default api;

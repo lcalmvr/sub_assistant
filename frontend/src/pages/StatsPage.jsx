@@ -392,7 +392,7 @@ export default function StatsPage() {
           <nav className="flex items-center gap-6">
             <Link to="/" className="nav-link">Submissions</Link>
             <span className="nav-link-active">Statistics</span>
-            <span className="nav-link">Settings</span>
+            <Link to="/admin" className="nav-link">Admin</Link>
           </nav>
         </div>
       </header>
