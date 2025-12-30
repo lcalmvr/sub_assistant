@@ -119,31 +119,63 @@ rerun_on_policy_tab()  # Stays on Policy tab
 - Navigation between submissions
 - Binding/unbinding (changes entire page state)
 
-**How it works:**
+**How it works (Streamlit 1.41+):**
 1. Sets `st.session_state["_active_tab"] = "TabName"`
-2. Sets `st.session_state["_active_tab_request_id"]` (unique ID for this request)
-3. Sets `st.session_state["_active_tab_injected"] = False`
-4. Calls `st.rerun()`
-5. In `submissions.py`, JavaScript clicks the correct tab after render
-6. The JS click triggers another Streamlit rerun - the `_active_tab_injected` flag
-   prevents re-injecting JavaScript on subsequent reruns for the same request
+2. Calls `st.rerun()`
+3. In `submissions.py`, the `_active_tab` value is consumed and passed to `st.tabs(default=...)`
+4. Streamlit natively renders the correct tab - no JavaScript hack needed!
+
+### 4. `on_change` Callbacks - Best for Widget Interactions (NEW)
+
+When widgets like selectboxes trigger natural Streamlit reruns, use `on_change` callbacks to set tab state BEFORE the rerun:
+
+```python
+from utils.tab_state import on_change_stay_on_rating
+
+# Selectbox that stays on Rating tab after change
+selected = st.selectbox(
+    "Select Option",
+    options=["A", "B", "C"],
+    on_change=on_change_stay_on_rating,
+)
+```
+
+**Available callbacks in `utils/tab_state.py`:**
+- `on_change_stay_on_rating()`
+- `on_change_stay_on_quote()`
+- `on_change_stay_on_policy()`
+- `on_change_stay_on_uw()`
+- `on_change_stay_on_account()`
+
+**When to use:**
+- Selectboxes, radio buttons, checkboxes on any tab
+- Any widget where you want to prevent tab bouncing without explicit rerun
+
+**Why this works:**
+- `on_change` callbacks fire BEFORE Streamlit's natural rerun
+- Tab state is set preemptively, so when page re-renders, `st.tabs(default=...)` picks it up
 
 ## Decision Tree
 
 ```
-Is the interaction isolated to a small section?
-├── YES → Use @st.fragment
-│         - Wrap the section in a fragment function
-│         - Use st.rerun(scope="fragment")
+Is this a widget (selectbox, radio, checkbox) interaction?
+├── YES → Use on_change callback
+│         - Add on_change=on_change_stay_on_X() to widget
+│         - No explicit rerun needed
 │
-└── NO → Does it need a confirmation step?
-         ├── YES → Use @st.dialog
-         │         - Define dialog function with @st.dialog decorator
-         │         - Call it when button is clicked
+└── NO → Is the interaction isolated to a small section?
+         ├── YES → Use @st.fragment
+         │         - Wrap the section in a fragment function
+         │         - Use st.rerun(scope="fragment")
          │
-         └── NO → Use tab-aware rerun
-                  - Import from utils.tab_state
-                  - Call rerun_on_X_tab() instead of st.rerun()
+         └── NO → Does it need a confirmation step?
+                  ├── YES → Use @st.dialog
+                  │         - Define dialog function with @st.dialog decorator
+                  │         - Call it when button is clicked
+                  │
+                  └── NO → Use tab-aware rerun
+                           - Import from utils.tab_state
+                           - Call rerun_on_X_tab() instead of st.rerun()
 ```
 
 ## Performance Comparison
@@ -152,8 +184,9 @@ Is the interaction isolated to a small section?
 |---------|-------|---------------|----------|
 | `@st.fragment` | Instant | Yes | Isolated CRUD operations |
 | `@st.dialog` | Instant | Yes | Confirmations, forms |
-| Tab-aware rerun | Slow (full reload) | Yes (with flicker) | Cross-page state changes |
-| Raw `st.rerun()` | Slow | NO | Never use directly |
+| `on_change` callback | Fast (natural rerun) | Yes | Widget interactions (selectbox, radio) |
+| Tab-aware rerun | Full reload | Yes | Cross-page state changes |
+| Raw `st.rerun()` | Full reload | NO | Never use directly |
 
 ## Common Mistakes
 
@@ -197,7 +230,17 @@ def _my_fragment():
         st.rerun(scope="fragment")  # GOOD - stays in fragment
 ```
 
-### 4. Using fragments for form controls that need state reset
+### 4. Forgetting on_change for widgets
+```python
+# BAD - selectbox changes bounce to Account tab
+selected = st.selectbox("Option", ["A", "B", "C"])
+
+# GOOD - stays on current tab
+from utils.tab_state import on_change_stay_on_rating
+selected = st.selectbox("Option", ["A", "B", "C"], on_change=on_change_stay_on_rating)
+```
+
+### 5. Using fragments for form controls that need state reset
 
 When a widget change requires resetting other state (e.g., radio button changing coverage defaults), wrap the entire section in a fragment:
 
@@ -264,6 +307,7 @@ When creating a new component:
 1. **Identify interaction patterns** - What buttons/inputs will trigger updates?
 
 2. **Choose the right pattern:**
+   - Widget interaction (selectbox, radio) → `on_change` callback
    - List with add/edit/delete → `@st.fragment`
    - Destructive action needing confirm → `@st.dialog`
    - Must refresh whole page → Tab-aware rerun
@@ -271,6 +315,9 @@ When creating a new component:
 3. **Import the right helpers:**
    ```python
    # For fragments - no import needed, just use @st.fragment
+
+   # For on_change callbacks:
+   from utils.tab_state import on_change_stay_on_rating  # or appropriate tab
 
    # For tab-aware reruns:
    from utils.tab_state import rerun_on_quote_tab  # or appropriate tab
@@ -289,5 +336,5 @@ If users report being bounced to Account tab:
 
 ## Related Files
 
-- `utils/tab_state.py` - Tab state helper functions
-- `pages_workflows/submissions.py` - Tab rendering and JavaScript tab-click injection (lines ~984-1024)
+- `utils/tab_state.py` - Tab state helper functions and on_change callbacks
+- `pages_workflows/submissions.py` - Tab rendering with native `st.tabs(default=...)` parameter

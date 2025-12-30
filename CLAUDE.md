@@ -94,3 +94,4 @@ See `docs/` folder for detailed guides:
 - `tab-state-and-performance.md` - Tab state management patterns
 - `architecture.md` - System architecture overview
 - `developer-guide.md` - Development setup and conventions
+- `product-philosophy.md` - Product vision, audience, and design principles
