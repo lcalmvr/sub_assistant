@@ -70,7 +70,9 @@ def render_coverage_summary_panel(
     from pages_components.coverage_editor import render_coverage_editor, reset_coverage_editor
     from pages_components.coverages_panel import build_coverages_from_rating
 
-    with st.expander("Coverage Schedule", expanded=True):
+    @st.fragment
+    def _render_coverage_content():
+        """Fragment for coverage form and editor - allows isolated reruns."""
         # Policy form radio buttons with Edit button inline
         radio_col, btn_col = st.columns([4, 1])
 
@@ -118,7 +120,8 @@ def render_coverage_summary_panel(
 
             # Update prev_form to current
             st.session_state[prev_form_key] = selected_form
-            st.rerun()
+            # Fragment-scoped rerun to refresh with new form settings
+            st.rerun(scope="fragment")
 
         # Build coverages dict from current session state
         rating_coverages = build_coverages_from_rating(sub_id, aggregate_limit)
@@ -145,9 +148,12 @@ def render_coverage_summary_panel(
             show_header=False,
         )
 
-    # Build final coverage config
+    with st.expander("Coverage Schedule", expanded=True):
+        _render_coverage_content()
+
+    # Build final coverage config - read from session state (updated by fragment)
     final_coverages = {
-        "policy_form": selected_form,
+        "policy_form": st.session_state.get(session_key, default_form),
         "aggregate_overrides": st.session_state[agg_override_key],
         "sublimit_defaults": st.session_state[sublimit_key],
     }
