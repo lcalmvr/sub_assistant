@@ -2,6 +2,14 @@
 
 This file provides context for Claude Code sessions working on this project.
 
+## Product Philosophy
+
+**Audience**: Internal underwriting tool for commercial insurance.
+
+**AI-first approach**: AI proposes, human disposes. AI extracts data, suggests conflicts, drafts documents - humans review and approve. Don't build elaborate manual UI for things AI should just do.
+
+**Streamlit limitations accepted**: Every interaction = server round-trip (~200-500ms). This is fine for a review dashboard. If we need Excel-like responsiveness for high-frequency manual work, React is the future - but ship and validate in Streamlit first.
+
 ## Tech Stack
 
 - **Frontend**: Streamlit 1.50+ (Python-based reactive web framework)
@@ -88,10 +96,9 @@ The primary workflow is in `pages_workflows/submissions.py` which renders:
 3. **Tab state**: For any widget on a tab that triggers rerun, use the appropriate `on_change_stay_on_*` callback from `utils/tab_state.py`
 4. **Testing changes**: After Streamlit UI changes, verify no tab bouncing and messages display correctly
 
-## Project-Specific Documentation
+## Additional Documentation
 
-See `docs/` folder for detailed guides:
-- `tab-state-and-performance.md` - Tab state management patterns
+See `docs/` folder for detailed guides (read as needed, not every session):
 - `architecture.md` - System architecture overview
 - `developer-guide.md` - Development setup and conventions
-- `product-philosophy.md` - Product vision, audience, and design principles
+- `product-philosophy.md` - Full product vision and design principles
