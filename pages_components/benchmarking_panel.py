@@ -628,7 +628,7 @@ def _render_comparables_table(
     )
     df["industry"] = df["naics_title"].apply(lambda x: x or "—")
     df["date_label"] = df["benchmark_date"].apply(
-        lambda d: d.strftime("%b %d, %y") if d else "—"
+        lambda d: d.strftime("%b %d, %y") if pd.notna(d) else "—"
     )
     df["carrier_fmt"] = df["carrier"].apply(lambda x: x or "—")
     df["underlying_fmt"] = df["underlying_carrier"].apply(lambda x: x or "—")
