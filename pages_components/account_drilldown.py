@@ -496,9 +496,10 @@ def _get_loss_summary(subs: list) -> dict:
 
 def _select_display_date(row: pd.Series) -> str:
     date_val = row.get("effective_date") or row.get("date_received")
-    if isinstance(date_val, datetime):
+    # Check for NaT (Not a Time) which passes isinstance but fails strftime
+    if pd.notna(date_val) and isinstance(date_val, datetime):
         return date_val.strftime("%m/%d/%y")
-    if date_val:
+    if pd.notna(date_val) and date_val:
         return str(date_val)
     return "—"
 
