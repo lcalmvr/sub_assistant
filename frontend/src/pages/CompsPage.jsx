@@ -64,6 +64,10 @@ export default function CompsPage() {
   const [industrySearch, setIndustrySearch] = useState('');
   const [simMin, setSimMin] = useState(null); // Exposure similarity threshold
   const [controlsMin, setControlsMin] = useState(null); // Controls similarity threshold
+  const [attachmentRange, setAttachmentRange] = useState('any'); // For excess layer filtering
+  const [customAttachMin, setCustomAttachMin] = useState(10); // Custom min in millions
+  const [customAttachMax, setCustomAttachMax] = useState(20); // Custom max in millions
+  const [showAdvanced, setShowAdvanced] = useState(false); // Advanced filters toggle
 
   // Selection state
   const [selectedCompId, setSelectedCompId] = useState(null);
@@ -78,13 +82,72 @@ export default function CompsPage() {
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
+  // Attachment range presets (in millions)
+  const attachmentRangeOptions = [
+    { value: 'any', label: 'Any', min: null, max: null },
+    { value: '0-5', label: '0-5M', min: 0, max: 5 },
+    { value: '5-10', label: '5-10M', min: 5, max: 10 },
+    { value: '10-20', label: '10-20M', min: 10, max: 20 },
+    { value: '20-30', label: '20-30M', min: 20, max: 30 },
+    { value: '30-50', label: '30-50M', min: 30, max: 50 },
+    { value: '50-75', label: '50-75M', min: 50, max: 75 },
+    { value: '75-100', label: '75-100M', min: 75, max: 100 },
+    { value: '100-150', label: '100-150M', min: 100, max: 150 },
+    { value: '150-200', label: '150-200M', min: 150, max: 200 },
+    { value: '200-300', label: '200-300M', min: 200, max: 300 },
+    { value: '300-500', label: '300-500M', min: 300, max: 500 },
+    { value: 'custom', label: 'Custom...', min: null, max: null },
+  ];
+
+  // Get attachment bounds from selected range (use custom values if custom selected)
+  const getAttachmentBounds = () => {
+    if (attachmentRange === 'any') return { min: null, max: null };
+    if (attachmentRange === 'custom') {
+      const minVal = customAttachMin > 0 ? customAttachMin * 1_000_000 : null;
+      const maxVal = customAttachMax > 0 ? customAttachMax * 1_000_000 : null;
+      return { min: minVal, max: maxVal };
+    }
+    const preset = attachmentRangeOptions.find(o => o.value === attachmentRange);
+    return {
+      min: preset?.min ? preset.min * 1_000_000 : null,
+      max: preset?.max ? preset.max * 1_000_000 : null,
+    };
+  };
+  const { min: attachmentMin, max: attachmentMax } = getAttachmentBounds();
+
+  // When preset selected, update custom values to match
+  const handleAttachmentRangeChange = (value) => {
+    setAttachmentRange(value);
+    const preset = attachmentRangeOptions.find(o => o.value === value);
+    if (preset?.min !== null && preset?.max !== null) {
+      setCustomAttachMin(preset.min);
+      setCustomAttachMax(preset.max);
+    }
+  };
+
+  // When custom values change, switch to custom mode
+  const handleCustomMinChange = (value) => {
+    setCustomAttachMin(Number(value) || 0);
+    if (attachmentRange !== 'custom' && attachmentRange !== 'any') {
+      setAttachmentRange('custom');
+    }
+  };
+  const handleCustomMaxChange = (value) => {
+    setCustomAttachMax(Number(value) || 0);
+    if (attachmentRange !== 'custom' && attachmentRange !== 'any') {
+      setAttachmentRange('custom');
+    }
+  };
+
   // Get comparables with filters
   const { data: comparables, isLoading } = useQuery({
-    queryKey: ['comparables', submissionId, layer, months, revenueTolerance],
+    queryKey: ['comparables', submissionId, layer, months, revenueTolerance, attachmentRange, customAttachMin, customAttachMax],
     queryFn: () => getComparables(submissionId, {
       layer,
       months,
       revenue_tolerance: revenueTolerance,
+      ...(layer === 'excess' && attachmentMin !== null && { attachment_min: attachmentMin }),
+      ...(layer === 'excess' && attachmentMax !== null && { attachment_max: attachmentMax }),
     }).then(res => res.data),
   });
 
@@ -231,15 +294,32 @@ export default function CompsPage() {
         <div className="grid grid-cols-4 gap-4 mb-4">
           <div>
             <label className="form-label">Layer</label>
-            <select
-              className="form-select"
-              value={layer}
-              onChange={(e) => setLayer(e.target.value)}
-            >
-              {layerOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <div className="flex gap-2">
+              <select
+                className="form-select"
+                value={layer}
+                onChange={(e) => {
+                  setLayer(e.target.value);
+                  if (e.target.value === 'primary') setAttachmentRange('any');
+                }}
+              >
+                {layerOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              {layer === 'excess' && (
+                <select
+                  className="form-select"
+                  value={attachmentRange}
+                  onChange={(e) => handleAttachmentRangeChange(e.target.value)}
+                  title="Attachment Range"
+                >
+                  {attachmentRangeOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
 
           <div>
@@ -280,48 +360,95 @@ export default function CompsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-4">
-          <div>
-            <label className="form-label">Exposure Similarity</label>
-            <select
-              className="form-select"
-              value={simMin ?? ''}
-              onChange={(e) => setSimMin(e.target.value === '' ? null : Number(e.target.value))}
-            >
-              {similarityOptions.map(opt => (
-                <option key={opt.value ?? 'any'} value={opt.value ?? ''}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+        {/* Advanced filters toggle */}
+        <button
+          type="button"
+          className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 mt-3"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+        >
+          <span className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▶</span>
+          Advanced {showAdvanced ? '' : `(${[simMin, controlsMin, stageFilter !== 'all'].filter(Boolean).length} active)`}
+        </button>
 
-          <div>
-            <label className="form-label">Controls Similarity</label>
-            <select
-              className="form-select"
-              value={controlsMin ?? ''}
-              onChange={(e) => setControlsMin(e.target.value === '' ? null : Number(e.target.value))}
-            >
-              {similarityOptions.map(opt => (
-                <option key={opt.value ?? 'any'} value={opt.value ?? ''}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+        {/* Advanced filters - collapsible */}
+        {showAdvanced && (
+          <>
+            <div className="grid grid-cols-4 gap-4 mt-3">
+              <div>
+                <label className="form-label">Exposure Similarity</label>
+                <select
+                  className="form-select"
+                  value={simMin ?? ''}
+                  onChange={(e) => setSimMin(e.target.value === '' ? null : Number(e.target.value))}
+                >
+                  {similarityOptions.map(opt => (
+                    <option key={opt.value ?? 'any'} value={opt.value ?? ''}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
 
-          <div>
-            <label className="form-label">Stage</label>
-            <select
-              className="form-select"
-              value={stageFilter}
-              onChange={(e) => setStageFilter(e.target.value)}
-            >
-              {stageOptions.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+              <div>
+                <label className="form-label">Controls Similarity</label>
+                <select
+                  className="form-select"
+                  value={controlsMin ?? ''}
+                  onChange={(e) => setControlsMin(e.target.value === '' ? null : Number(e.target.value))}
+                >
+                  {similarityOptions.map(opt => (
+                    <option key={opt.value ?? 'any'} value={opt.value ?? ''}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
 
-          <div></div>
-        </div>
+              <div>
+                <label className="form-label">Stage</label>
+                <select
+                  className="form-select"
+                  value={stageFilter}
+                  onChange={(e) => setStageFilter(e.target.value)}
+                >
+                  {stageOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div></div>
+            </div>
+
+            {/* Custom attachment range inputs for excess */}
+            {layer === 'excess' && (
+              <div className="grid grid-cols-4 gap-4 mt-4">
+                <div>
+                  <label className="form-label">Attachment Min (M)</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={customAttachMin}
+                    onChange={(e) => handleCustomMinChange(e.target.value)}
+                    min={0}
+                    step={1}
+                    disabled={attachmentRange === 'any'}
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Attachment Max (M)</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={customAttachMax}
+                    onChange={(e) => handleCustomMaxChange(e.target.value)}
+                    min={0}
+                    step={1}
+                    disabled={attachmentRange === 'any'}
+                  />
+                </div>
+                <div></div>
+                <div></div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Metrics */}

@@ -560,6 +560,8 @@ def get_comparables_endpoint(
     layer: str = "primary",
     months: int = 24,
     revenue_tolerance: float = 0.5,
+    attachment_min: float = None,
+    attachment_max: float = None,
     limit: int = 60
 ):
     """Get comparable submissions for benchmarking with vector similarity."""
@@ -574,6 +576,8 @@ def get_comparables_endpoint(
         stage_filter=None,
         date_window_months=months,
         layer_filter=layer,
+        attachment_min=attachment_min,
+        attachment_max=attachment_max,
         limit=limit,
     )
 
