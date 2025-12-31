@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getComparables, getComparablesMetrics, getSubmission } from '../api/client';
+import { getComparables, getSubmission } from '../api/client';
 
 // Format compact currency
 function formatCompact(value) {
@@ -82,10 +82,10 @@ export default function CompsPage() {
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
-  // Attachment range presets (in millions)
+  // Attachment range presets (in millions) - min starts at 1 to ensure we're looking at excess layers
   const attachmentRangeOptions = [
     { value: 'any', label: 'Any', min: null, max: null },
-    { value: '0-5', label: '0-5M', min: 0, max: 5 },
+    { value: '1-5', label: '1-5M', min: 1, max: 5 },
     { value: '5-10', label: '5-10M', min: 5, max: 10 },
     { value: '10-20', label: '10-20M', min: 10, max: 20 },
     { value: '20-30', label: '20-30M', min: 20, max: 30 },
@@ -149,12 +149,6 @@ export default function CompsPage() {
       ...(layer === 'excess' && attachmentMin !== null && { attachment_min: attachmentMin }),
       ...(layer === 'excess' && attachmentMax !== null && { attachment_max: attachmentMax }),
     }).then(res => res.data),
-  });
-
-  // Get metrics
-  const { data: metrics } = useQuery({
-    queryKey: ['comparables-metrics', submissionId],
-    queryFn: () => getComparablesMetrics(submissionId).then(res => res.data),
   });
 
   // Apply client-side filters
@@ -226,6 +220,23 @@ export default function CompsPage() {
     if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
     return 0;
   });
+
+  // Calculate metrics from filtered results
+  const metrics = (() => {
+    const all = filteredComps;
+    const bound = all.filter(c => c.stage?.toLowerCase() === 'bound');
+
+    const rpms = all.map(c => c.rate_per_mil).filter(r => r != null && r > 0);
+    const boundRpms = bound.map(c => c.rate_per_mil).filter(r => r != null && r > 0);
+
+    return {
+      count: all.length,
+      bound_count: bound.length,
+      avg_rpm_all: rpms.length > 0 ? rpms.reduce((a, b) => a + b, 0) / rpms.length : null,
+      avg_rpm_bound: boundRpms.length > 0 ? boundRpms.reduce((a, b) => a + b, 0) / boundRpms.length : null,
+      rate_range: boundRpms.length > 0 ? [Math.min(...boundRpms), Math.max(...boundRpms)] : null,
+    };
+  })();
 
   // Handle column header click for sorting
   const handleSort = (column) => {
