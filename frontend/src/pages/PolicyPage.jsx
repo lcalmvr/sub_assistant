@@ -18,11 +18,20 @@ const ENDORSEMENT_TYPES = [
   { value: 'extension', label: 'Policy Extension' },
   { value: 'name_change', label: 'Named Insured Change' },
   { value: 'address_change', label: 'Address Change', disabled: true },
-  { value: 'cancellation', label: 'Cancellation', disabled: true },
+  { value: 'cancellation', label: 'Cancellation' },
   { value: 'reinstatement', label: 'Reinstatement' },
   { value: 'erp', label: 'Extended Reporting Period', disabled: true },
   { value: 'coverage_change', label: 'Coverage Change', disabled: true },
   { value: 'bor_change', label: 'Broker of Record Change', disabled: true },
+  { value: 'other', label: 'Other' },
+];
+
+// Cancellation reasons
+const CANCELLATION_REASONS = [
+  { value: 'insured_request', label: 'Insured Request' },
+  { value: 'non_payment', label: 'Non-Payment of Premium' },
+  { value: 'underwriting', label: 'Underwriting Reasons' },
+  { value: 'material_change', label: 'Material Change in Risk' },
   { value: 'other', label: 'Other' },
 ];
 
@@ -260,6 +269,7 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
   const [newName, setNewName] = useState('');
   const [lapseDays, setLapseDays] = useState(0);
   const [description, setDescription] = useState('');
+  const [cancellationReason, setCancellationReason] = useState('insured_request');
 
   // Get base premium from bound option
   const basePremium = parseFloat(boundOption?.sold_premium || boundOption?.risk_adjusted_premium || 0);
@@ -281,12 +291,17 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
   const daysRemaining = calculateDaysRemaining();
 
   // Calculate pro-rata premium (always calculated for reference, no decimals)
+  // For cancellation, this is a return premium (negative)
   const proRataPremium = daysRemaining > 0
     ? Math.round(annualRate * (daysRemaining / 365))
     : 0;
 
+  // For cancellation, premium is negative (return premium)
+  const isCancellation = endorsementType === 'cancellation';
+  const calculatedPremium = isCancellation ? -proRataPremium : proRataPremium;
+
   // Final premium based on method
-  const premiumChange = premiumMethod === 'pro_rata' ? proRataPremium : flatAmount;
+  const premiumChange = premiumMethod === 'pro_rata' ? calculatedPremium : (isCancellation ? -Math.abs(flatAmount) : flatAmount);
 
   // Set defaults when modal opens
   const resetForm = () => {
@@ -312,6 +327,7 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
     setNewName('');
     setLapseDays(0);
     setDescription('');
+    setCancellationReason('insured_request');
     setError(null);
   };
 
@@ -393,6 +409,16 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
         desc = lapseDays > 0
           ? `Policy reinstatement (${lapseDays} day lapse)`
           : 'Policy reinstatement';
+        break;
+
+      case 'cancellation':
+        changeDetails = {
+          cancellation_reason: cancellationReason,
+          cancellation_date: effectiveDate,
+          original_expiration_date: submission?.expiration_date,
+        };
+        const reasonLabel = CANCELLATION_REASONS.find(r => r.value === cancellationReason)?.label || cancellationReason;
+        desc = `Policy cancelled - ${reasonLabel}`;
         break;
 
       case 'other':
@@ -542,6 +568,58 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
               onChange={(e) => setLapseDays(parseInt(e.target.value) || 0)}
               min={0}
             />
+          </div>
+        )}
+
+        {endorsementType === 'cancellation' && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+            <h4 className="font-medium text-gray-900 mb-3">Cancellation Details</h4>
+            <div className="space-y-4">
+              <div>
+                <label className="form-label">Reason *</label>
+                <select
+                  className="form-select"
+                  value={cancellationReason}
+                  onChange={(e) => setCancellationReason(e.target.value)}
+                >
+                  {CANCELLATION_REASONS.map((reason) => (
+                    <option key={reason.value} value={reason.value}>
+                      {reason.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="form-label text-gray-500">Current Expiration</label>
+                  <div className="form-input bg-gray-100 text-gray-700">
+                    {submission?.expiration_date ? formatDate(submission.expiration_date) : '—'}
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label">New Expiration *</label>
+                  <input
+                    type="date"
+                    className="form-input"
+                    style={{ colorScheme: 'light' }}
+                    value={effectiveDate}
+                    onChange={(e) => setEffectiveDate(e.target.value)}
+                    max={submission?.expiration_date || ''}
+                  />
+                </div>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-red-800 font-medium">Return Premium</span>
+                  <span className="text-red-700 font-bold text-lg">
+                    {formatCurrency(Math.abs(proRataPremium))}
+                  </span>
+                </div>
+                <p className="text-xs text-red-600 mt-1">
+                  {daysRemaining} days remaining · {formatNumber(annualRate)} x {daysRemaining} / 365 = {formatNumber(proRataPremium)}
+                </p>
+              </div>
+            </div>
           </div>
         )}
 

@@ -13,7 +13,7 @@ function formatCompact(value) {
 
 // Parse markdown-like text into formatted sections
 function FormattedText({ text }) {
-  if (!text) return <p className="text-gray-500 italic">No data available</p>;
+  if (!text || typeof text !== 'string') return <p className="text-gray-500 italic">No data available</p>;
 
   const lines = text.split('\n');
 

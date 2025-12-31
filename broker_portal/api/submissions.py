@@ -301,11 +301,11 @@ async def get_submission(
             date_received=row[6],
             status_updated_at=row[7],
             business_summary=row[8],
-            premium=float(row[11]) if row[11] else None,
-            policy_limit=float(row[12]) if row[12] else None,
-            retention=float(row[13]) if row[13] else None,
-            effective_date=row[14].isoformat() if row[14] else None,
-            expiration_date=row[15].isoformat() if row[15] else None,
+            premium=float(row[10]) if row[10] else None,
+            policy_limit=float(row[11]) if row[11] else None,
+            retention=float(row[12]) if row[12] else None,
+            effective_date=row[13].isoformat() if row[13] else None,
+            expiration_date=row[14].isoformat() if row[14] else None,
             status_history=status_history
         )
 

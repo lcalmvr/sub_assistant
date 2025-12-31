@@ -18,7 +18,7 @@ function DecisionBadge({ decision }) {
 
 // Parse markdown-like text into formatted sections
 function FormattedText({ text }) {
-  if (!text) return <p className="text-gray-500 italic">No content available</p>;
+  if (!text || typeof text !== 'string') return <p className="text-gray-500 italic">No content available</p>;
 
   // Split by headers and format
   const lines = text.split('\n');
