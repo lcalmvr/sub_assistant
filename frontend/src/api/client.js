@@ -35,6 +35,7 @@ export const createEndorsement = (submissionId, data) => api.post(`/submissions/
 export const issueEndorsement = (endorsementId) => api.post(`/endorsements/${endorsementId}/issue`);
 export const voidEndorsement = (endorsementId) => api.post(`/endorsements/${endorsementId}/void`);
 export const reinstateEndorsement = (endorsementId) => api.post(`/endorsements/${endorsementId}/reinstate`);
+export const deleteEndorsement = (endorsementId) => api.delete(`/endorsements/${endorsementId}`);
 
 // Package Builder
 export const getPackageDocuments = (position = 'primary') => api.get(`/package-documents/${position}`);

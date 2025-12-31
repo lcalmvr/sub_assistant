@@ -934,6 +934,35 @@ def void_endorsement_endpoint(endorsement_id: str):
         cur.close()
 
 
+@app.delete("/api/endorsements/{endorsement_id}")
+def delete_endorsement_endpoint(endorsement_id: str):
+    """Delete a draft endorsement."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        # Get current status
+        cur.execute("SELECT status FROM policy_endorsements WHERE id = %s", (endorsement_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Endorsement not found")
+
+        current_status = row['status']
+        if current_status != 'draft':
+            raise HTTPException(status_code=400, detail="Only draft endorsements can be deleted")
+
+        # Delete the endorsement
+        cur.execute("DELETE FROM policy_endorsements WHERE id = %s", (endorsement_id,))
+        conn.commit()
+        return {"status": "deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+
+
 @app.post("/api/endorsements/{endorsement_id}/reinstate")
 def reinstate_endorsement_endpoint(endorsement_id: str):
     """Reinstate a voided endorsement back to issued status."""

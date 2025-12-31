@@ -10,6 +10,7 @@ import {
   issueEndorsement,
   voidEndorsement,
   reinstateEndorsement,
+  deleteEndorsement,
 } from '../api/client';
 
 // Endorsement type definitions
@@ -83,7 +84,7 @@ function SubjectivityBadge({ status }) {
 }
 
 // Endorsement status dropdown - clickable badge with status options
-function EndorsementStatusDropdown({ endorsement, onIssue, onVoid, onReinstate, isLoading }) {
+function EndorsementStatusDropdown({ endorsement, onIssue, onVoid, onReinstate, onDelete, isLoading }) {
   const [isOpen, setIsOpen] = useState(false);
   const [showVoidConfirm, setShowVoidConfirm] = useState(false);
 
@@ -102,6 +103,7 @@ function EndorsementStatusDropdown({ endorsement, onIssue, onVoid, onReinstate, 
       case 'draft':
         return [
           { label: 'Issue', action: onIssue, class: 'text-green-600 hover:bg-green-50' },
+          { label: 'Delete', action: onDelete, class: 'text-red-600 hover:bg-red-50' },
         ];
       case 'issued':
         return [
@@ -747,6 +749,18 @@ export default function PolicyPage() {
     },
   });
 
+  // Delete endorsement mutation
+  const deleteMutation = useMutation({
+    mutationFn: (endorsementId) => deleteEndorsement(endorsementId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['policy', submissionId] });
+    },
+    onError: (error) => {
+      console.error('Delete error:', error);
+      alert('Failed to delete endorsement: ' + (error.response?.data?.detail || error.message));
+    },
+  });
+
   if (isLoading) {
     return <div className="text-gray-500">Loading policy data...</div>;
   }
@@ -1124,7 +1138,8 @@ export default function PolicyPage() {
                         onIssue={() => issueMutation.mutate(endorsement.id)}
                         onVoid={() => voidMutation.mutate(endorsement.id)}
                         onReinstate={() => reinstateMutation.mutate(endorsement.id)}
-                        isLoading={issueMutation.isPending || voidMutation.isPending || reinstateMutation.isPending}
+                        onDelete={() => deleteMutation.mutate(endorsement.id)}
+                        isLoading={issueMutation.isPending || voidMutation.isPending || reinstateMutation.isPending || deleteMutation.isPending}
                       />
                     </td>
                     <td className="table-cell">
