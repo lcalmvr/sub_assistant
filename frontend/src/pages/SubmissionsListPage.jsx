@@ -63,6 +63,7 @@ function formatDate(dateString) {
 }
 
 export default function SubmissionsListPage() {
+  const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [boundFilter, setBoundFilter] = useState('');
 
@@ -73,6 +74,13 @@ export default function SubmissionsListPage() {
 
   // Filter submissions
   const filteredSubmissions = submissions?.filter(sub => {
+    // Search filter - check applicant name and industry
+    if (searchTerm) {
+      const search = searchTerm.toLowerCase();
+      const nameMatch = sub.applicant_name?.toLowerCase().includes(search);
+      const industryMatch = sub.naics_primary_title?.toLowerCase().includes(search);
+      if (!nameMatch && !industryMatch) return false;
+    }
     if (statusFilter && sub.status !== statusFilter) return false;
     if (boundFilter === 'bound' && !sub.has_bound_quote) return false;
     if (boundFilter === 'unbound' && sub.has_bound_quote) return false;
@@ -126,12 +134,24 @@ export default function SubmissionsListPage() {
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-900">Submissions</h2>
           <div className="text-sm text-gray-500">
-            {submissions?.length || 0} total, {boundCount} bound
+            {filteredSubmissions?.length !== submissions?.length
+              ? `${filteredSubmissions?.length || 0} of ${submissions?.length || 0} submissions`
+              : `${submissions?.length || 0} submissions`}
+            {boundCount > 0 && ` · ${boundCount} bound`}
           </div>
         </div>
 
-        {/* Filters */}
+        {/* Search and Filters */}
         <div className="card mb-6">
+          <div className="mb-4">
+            <input
+              type="text"
+              className="form-input w-full text-lg"
+              placeholder="Search by account name or industry..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="form-label">Status</label>
