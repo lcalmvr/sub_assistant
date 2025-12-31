@@ -149,7 +149,7 @@ def list_quotes(submission_id: str):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, quote_name, tower_json, primary_retention, position,
+                SELECT id, quote_name, option_descriptor, tower_json, primary_retention, position,
                        technical_premium, risk_adjusted_premium, sold_premium,
                        policy_form, coverages, is_bound, retroactive_date, created_at
                 FROM insurance_towers
@@ -165,7 +165,7 @@ def get_quote(quote_id: str):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, submission_id, quote_name, tower_json, primary_retention,
+                SELECT id, submission_id, quote_name, option_descriptor, tower_json, primary_retention,
                        position, technical_premium, risk_adjusted_premium, sold_premium,
                        policy_form, coverages, sublimits, is_bound, retroactive_date,
                        created_at
@@ -265,6 +265,7 @@ class QuoteCreate(BaseModel):
 
 class QuoteUpdate(BaseModel):
     quote_name: Optional[str] = None
+    option_descriptor: Optional[str] = None
     sold_premium: Optional[int] = None
     retroactive_date: Optional[str] = None
     is_bound: Optional[bool] = None

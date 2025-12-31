@@ -61,6 +61,33 @@ function getTowerLimit(quote) {
   return cmaiLayer?.limit;
 }
 
+// Generate auto option name from tower structure
+// Format: Primary = "$1M x $25K", Excess = "$1M xs $6M x $25K"
+function generateOptionName(quote) {
+  const tower = quote.tower_json || [];
+  const cmaiIdx = tower.findIndex(l => l.carrier === 'CMAI');
+  const cmaiLayer = cmaiIdx >= 0 ? tower[cmaiIdx] : tower[0];
+
+  if (!cmaiLayer) return 'Option';
+
+  const limit = cmaiLayer.limit || 0;
+  const limitStr = formatCompact(limit);
+
+  // Get retention from primary layer (index 0 if not CMAI primary)
+  const primaryLayer = tower[0];
+  const retention = primaryLayer?.retention || quote.primary_retention || 25000;
+  const retentionStr = formatCompact(retention);
+
+  if (quote.position === 'excess' && cmaiIdx >= 0) {
+    // Calculate CMAI's attachment using the tower structure
+    const attachment = calculateAttachment(tower, cmaiIdx);
+    const attachStr = formatCompact(attachment);
+    return `${limitStr} xs ${attachStr} x ${retentionStr}`;
+  }
+
+  return `${limitStr} x ${retentionStr}`;
+}
+
 // Calculate attachment for a specific layer index
 // Handles quota share: consecutive layers with same quota_share (full layer size) are ONE layer
 // All carriers in a QS group share the same attachment point
@@ -765,6 +792,12 @@ function QuoteOptionTab({ quote, isSelected, onSelect }) {
   const isBound = quote.is_bound;
   const isExcess = quote.position === 'excess';
 
+  // Auto-generate name from tower, append descriptor if set
+  const autoName = generateOptionName(quote);
+  const displayName = quote.option_descriptor
+    ? `${autoName} - ${quote.option_descriptor}`
+    : autoName;
+
   return (
     <button
       onClick={onSelect}
@@ -779,7 +812,7 @@ function QuoteOptionTab({ quote, isSelected, onSelect }) {
       <div className="flex items-center gap-2">
         {isBound && <span className="text-green-600">✓</span>}
         <span className={`font-medium ${isSelected ? 'text-gray-900' : 'text-gray-700'}`}>
-          {quote.quote_name || 'Option'}
+          {displayName}
         </span>
         {isExcess && (
           <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">XS</span>
@@ -1014,6 +1047,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const queryClient = useQueryClient();
   const [editedRetention, setEditedRetention] = useState(quote.primary_retention);
   const [editedSoldPremium, setEditedSoldPremium] = useState(quote.sold_premium || '');
+  const [editedDescriptor, setEditedDescriptor] = useState(quote.option_descriptor || '');
   const [packageType, setPackageType] = useState('quote_only');
   const [selectedDocuments, setSelectedDocuments] = useState([]);
   const [showPackageOptions, setShowPackageOptions] = useState(false);
@@ -1025,10 +1059,11 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const hasAnyQs = (quote.tower_json || []).some(l => l.quota_share);
   const [showQsColumn, setShowQsColumn] = useState(hasAnyQs);
 
-  // Reset tower layers when quote changes
+  // Reset state when quote changes
   useEffect(() => {
     setTowerLayers(quote.tower_json || []);
     setEditingTower(false);
+    setEditedDescriptor(quote.option_descriptor || '');
     // Auto-show QS column if any layer has quota share
     setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
   }, [quote.id]);
@@ -1158,11 +1193,29 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     editedRetention !== quote.primary_retention ||
     (editedSoldPremium && Number(editedSoldPremium) !== quote.sold_premium);
 
+  // Auto-generated name from current tower state (uses local towerLayers for live updates)
+  const currentQuoteWithTower = { ...quote, tower_json: towerLayers, primary_retention: editedRetention };
+  const autoName = generateOptionName(currentQuoteWithTower);
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-xl font-bold text-gray-900">{quote.quote_name}</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-xl font-bold text-gray-900 whitespace-nowrap">{autoName}</h3>
+          <input
+            type="text"
+            className="form-input text-sm py-1 px-2 w-32 border-transparent hover:border-gray-300 focus:border-purple-500"
+            placeholder="descriptor"
+            value={editedDescriptor}
+            onChange={(e) => setEditedDescriptor(e.target.value)}
+            onBlur={() => {
+              if (editedDescriptor !== (quote.option_descriptor || '')) {
+                updateMutation.mutate({ option_descriptor: editedDescriptor || null });
+              }
+            }}
+          />
+        </div>
         <div className="flex gap-2">
           {quote.is_bound ? (
             <span className="badge badge-bound">BOUND</span>
