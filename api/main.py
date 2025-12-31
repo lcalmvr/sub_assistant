@@ -770,7 +770,7 @@ def get_policy_data(submission_id: str):
             except Exception:
                 conn.rollback()  # Reset transaction state
 
-            # Get endorsements
+            # Get endorsements (include void for audit trail)
             endorsements = []
             cur.execute("""
                 SELECT id, endorsement_number, endorsement_type, effective_date,
@@ -778,7 +778,6 @@ def get_policy_data(submission_id: str):
                        formal_title, change_details
                 FROM policy_endorsements
                 WHERE submission_id = %s
-                AND status != 'void'
                 ORDER BY endorsement_number
             """, (submission_id,))
             endorsements = [dict(row) for row in cur.fetchall()]
@@ -901,6 +900,70 @@ def issue_endorsement_endpoint(endorsement_id: str):
         return {"status": "issued"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/endorsements/{endorsement_id}/void")
+def void_endorsement_endpoint(endorsement_id: str):
+    """Void an issued endorsement."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        # Get current status
+        cur.execute("SELECT status FROM policy_endorsements WHERE id = %s", (endorsement_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Endorsement not found")
+
+        current_status = row['status']
+        if current_status == 'void':
+            raise HTTPException(status_code=400, detail="Endorsement is already void")
+
+        # Update status to void
+        cur.execute(
+            "UPDATE policy_endorsements SET status = 'void' WHERE id = %s",
+            (endorsement_id,)
+        )
+        conn.commit()
+        return {"status": "void"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+
+
+@app.post("/api/endorsements/{endorsement_id}/reinstate")
+def reinstate_endorsement_endpoint(endorsement_id: str):
+    """Reinstate a voided endorsement back to issued status."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        # Get current status
+        cur.execute("SELECT status FROM policy_endorsements WHERE id = %s", (endorsement_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Endorsement not found")
+
+        current_status = row['status']
+        if current_status != 'void':
+            raise HTTPException(status_code=400, detail="Only voided endorsements can be reinstated")
+
+        # Update status back to issued
+        cur.execute(
+            "UPDATE policy_endorsements SET status = 'issued' WHERE id = %s",
+            (endorsement_id,)
+        )
+        conn.commit()
+        return {"status": "issued"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
 
 
 # ─────────────────────────────────────────────────────────────

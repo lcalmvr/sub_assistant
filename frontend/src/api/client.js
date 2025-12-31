@@ -33,6 +33,8 @@ export const generatePolicyDocument = (quoteId) => api.post(`/quotes/${quoteId}/
 // Endorsements
 export const createEndorsement = (submissionId, data) => api.post(`/submissions/${submissionId}/endorsements`, data);
 export const issueEndorsement = (endorsementId) => api.post(`/endorsements/${endorsementId}/issue`);
+export const voidEndorsement = (endorsementId) => api.post(`/endorsements/${endorsementId}/void`);
+export const reinstateEndorsement = (endorsementId) => api.post(`/endorsements/${endorsementId}/reinstate`);
 
 // Package Builder
 export const getPackageDocuments = (position = 'primary') => api.get(`/package-documents/${position}`);

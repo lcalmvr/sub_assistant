@@ -8,6 +8,8 @@ import {
   generatePolicyDocument,
   createEndorsement,
   issueEndorsement,
+  voidEndorsement,
+  reinstateEndorsement,
 } from '../api/client';
 
 // Endorsement type definitions
@@ -78,6 +80,122 @@ function SubjectivityBadge({ status }) {
   };
   const { label, class: badgeClass } = config[status] || config.pending;
   return <span className={`badge ${badgeClass} text-xs`}>{label}</span>;
+}
+
+// Endorsement status dropdown - clickable badge with status options
+function EndorsementStatusDropdown({ endorsement, onIssue, onVoid, onReinstate, isLoading }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [showVoidConfirm, setShowVoidConfirm] = useState(false);
+
+  const statusConfig = {
+    draft: { label: 'draft', class: 'badge-pending' },
+    issued: { label: 'issued', class: 'badge-quoted' },
+    void: { label: 'voided', class: 'badge-declined' },
+  };
+
+  const status = endorsement.status || 'draft';
+  const config = statusConfig[status] || statusConfig.draft;
+
+  // Determine available actions based on current status
+  const getActions = () => {
+    switch (status) {
+      case 'draft':
+        return [
+          { label: 'Issue', action: onIssue, class: 'text-green-600 hover:bg-green-50' },
+        ];
+      case 'issued':
+        return [
+          { label: 'Void', action: () => setShowVoidConfirm(true), class: 'text-red-600 hover:bg-red-50' },
+        ];
+      case 'void':
+        return [
+          { label: 'Reinstate', action: onReinstate, class: 'text-purple-600 hover:bg-purple-50' },
+        ];
+      default:
+        return [];
+    }
+  };
+
+  const actions = getActions();
+
+  // If no actions available, just show the badge
+  if (actions.length === 0) {
+    return (
+      <span className={`badge ${config.class}`}>
+        {config.label}
+      </span>
+    );
+  }
+
+  return (
+    <>
+      {/* Void Confirmation Modal */}
+      {showVoidConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">Void Endorsement?</h3>
+            <p className="text-gray-600 mb-6">
+              This will void the endorsement and reverse its premium impact. The record will be kept for audit purposes.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                className="btn bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                onClick={() => setShowVoidConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn bg-red-600 text-white hover:bg-red-700"
+                onClick={() => {
+                  onVoid();
+                  setShowVoidConfirm(false);
+                }}
+              >
+                Void Endorsement
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="relative inline-block">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          disabled={isLoading}
+          className={`badge ${config.class} cursor-pointer`}
+        >
+          {config.label}
+          <span className="ml-1 text-xs opacity-50">▾</span>
+        </button>
+
+        {isOpen && (
+          <>
+            {/* Backdrop to close dropdown */}
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setIsOpen(false)}
+            />
+            {/* Dropdown menu - opens upward */}
+            <div className="absolute left-0 bottom-full mb-1 w-24 bg-white rounded-lg shadow-lg border border-gray-200 z-20">
+              {actions.map((action) => (
+                <button
+                  key={action.label}
+                  onClick={() => {
+                    action.action();
+                    setIsOpen(false);
+                  }}
+                  disabled={isLoading}
+                  className={`w-full px-3 py-2 text-left text-sm font-medium ${action.class} first:rounded-t-lg last:rounded-b-lg`}
+                >
+                  {isLoading ? '...' : action.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
 }
 
 // Document type label
@@ -597,6 +715,38 @@ export default function PolicyPage() {
     },
   });
 
+  // Issue endorsement mutation
+  const issueMutation = useMutation({
+    mutationFn: (endorsementId) => issueEndorsement(endorsementId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['policy', submissionId] });
+    },
+  });
+
+  // Void endorsement mutation
+  const voidMutation = useMutation({
+    mutationFn: (endorsementId) => voidEndorsement(endorsementId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['policy', submissionId] });
+    },
+    onError: (error) => {
+      console.error('Void error:', error);
+      alert('Failed to void endorsement: ' + (error.response?.data?.detail || error.message));
+    },
+  });
+
+  // Reinstate endorsement mutation
+  const reinstateMutation = useMutation({
+    mutationFn: (endorsementId) => reinstateEndorsement(endorsementId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['policy', submissionId] });
+    },
+    onError: (error) => {
+      console.error('Reinstate error:', error);
+      alert('Failed to reinstate endorsement: ' + (error.response?.data?.detail || error.message));
+    },
+  });
+
   if (isLoading) {
     return <div className="text-gray-500">Loading policy data...</div>;
   }
@@ -942,20 +1092,25 @@ export default function PolicyPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {endorsements.map((endorsement) => (
-                  <tr key={endorsement.id} className="hover:bg-gray-50">
-                    <td className="table-cell font-medium text-gray-900">
+                {endorsements.map((endorsement) => {
+                  const isVoided = endorsement.status === 'void';
+                  return (
+                  <tr key={endorsement.id} className={`hover:bg-gray-50 ${isVoided ? 'opacity-60' : ''}`}>
+                    <td className={`table-cell font-medium ${isVoided ? 'text-gray-400' : 'text-gray-900'}`}>
                       {endorsement.endorsement_number || '—'}
                     </td>
-                    <td className="table-cell text-gray-600">
+                    <td className={`table-cell ${isVoided ? 'text-gray-400 line-through' : 'text-gray-600'}`}>
                       {endorsement.formal_title || endorsement.description || '—'}
                     </td>
-                    <td className="table-cell text-gray-600">
+                    <td className={`table-cell ${isVoided ? 'text-gray-400' : 'text-gray-600'}`}>
                       {formatDate(endorsement.effective_date)}
                     </td>
                     <td className="table-cell">
                       {endorsement.premium_change ? (
-                        <span className={endorsement.premium_change > 0 ? 'text-green-600' : 'text-red-600'}>
+                        <span className={isVoided
+                          ? 'text-gray-400 line-through'
+                          : (endorsement.premium_change > 0 ? 'text-green-600' : 'text-red-600')
+                        }>
                           {endorsement.premium_change > 0 ? '+' : ''}
                           {formatCurrency(endorsement.premium_change)}
                         </span>
@@ -964,12 +1119,13 @@ export default function PolicyPage() {
                       )}
                     </td>
                     <td className="table-cell">
-                      <span className={`badge ${
-                        endorsement.status === 'issued' ? 'badge-quoted' :
-                        endorsement.status === 'draft' ? 'badge-pending' : 'badge-received'
-                      }`}>
-                        {endorsement.status || 'draft'}
-                      </span>
+                      <EndorsementStatusDropdown
+                        endorsement={endorsement}
+                        onIssue={() => issueMutation.mutate(endorsement.id)}
+                        onVoid={() => voidMutation.mutate(endorsement.id)}
+                        onReinstate={() => reinstateMutation.mutate(endorsement.id)}
+                        isLoading={issueMutation.isPending || voidMutation.isPending || reinstateMutation.isPending}
+                      />
                     </td>
                     <td className="table-cell">
                       {endorsement.document_url ? (
@@ -977,7 +1133,7 @@ export default function PolicyPage() {
                           href={endorsement.document_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-purple-600 hover:text-purple-800 font-medium"
+                          className={isVoided ? 'text-gray-400' : 'text-purple-600 hover:text-purple-800 font-medium'}
                         >
                           View PDF
                         </a>
@@ -986,7 +1142,8 @@ export default function PolicyPage() {
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
