@@ -213,7 +213,8 @@ def generate_package(
     doc_type: str,
     package_type: str = "quote_only",
     selected_documents: list[str] = None,
-    created_by: str = "user"
+    created_by: str = "user",
+    include_specimen: bool = False
 ) -> dict:
     """
     Generate a document package.
@@ -225,6 +226,7 @@ def generate_package(
         package_type: 'quote_only' or 'full_package'
         selected_documents: List of library entry IDs to include
         created_by: User generating the package
+        include_specimen: Include the policy specimen form
 
     Returns:
         dict with id, pdf_url, document_number, manifest
@@ -269,11 +271,12 @@ def generate_package(
         ))
 
     # Render combined HTML
-    if library_docs:
+    if library_docs or include_specimen:
         html_content = render_package_html(
             doc_config["template"],
             context,
-            library_docs
+            library_docs,
+            include_specimen=include_specimen
         )
     else:
         # Just render the quote
@@ -312,7 +315,8 @@ def generate_package(
 def render_package_html(
     quote_template: str,
     context: dict,
-    library_documents: list[dict]
+    library_documents: list[dict],
+    include_specimen: bool = False
 ) -> str:
     """
     Render combined HTML for a package with quote + library documents.
@@ -321,6 +325,7 @@ def render_package_html(
         quote_template: Template name for the quote
         context: Quote context data
         library_documents: List of library document dicts
+        include_specimen: Include the policy specimen form
 
     Returns:
         Combined HTML string
@@ -346,6 +351,13 @@ def render_package_html(
     # Add library document styles
     library_styles = _get_library_document_styles()
 
+    # Add policy specimen form if requested
+    if include_specimen:
+        specimen_html = _render_policy_specimen(context)
+        if specimen_html:
+            parts.append('<div class="page-break"></div>')
+            parts.append(specimen_html)
+
     # Add each library document with page break
     for doc in library_documents:
         parts.append('<div class="page-break"></div>')
@@ -365,6 +377,41 @@ def render_package_html(
         combined = combined.replace('</head>', '<style>' + library_styles + '</style>\n</head>')
 
     return combined
+
+
+def _render_policy_specimen(context: dict) -> str:
+    """
+    Render the policy specimen form based on the quote's policy_form.
+
+    Args:
+        context: Quote context data (must include policy_form)
+
+    Returns:
+        Rendered HTML for the policy form, or empty string if not found
+    """
+    from rating_engine.coverage_config import get_default_policy_form
+
+    policy_form = context.get("policy_form") or get_default_policy_form()
+
+    # Map policy form to template
+    form_templates = {
+        "cyber": "policy_forms/cyber_form.html",
+        "cyber_tech": "policy_forms/cyber_tech_form.html",
+        "tech": "policy_forms/tech_form.html",
+    }
+
+    template_name = form_templates.get(policy_form)
+    if not template_name:
+        # Default to cyber form
+        template_name = "policy_forms/cyber_form.html"
+
+    try:
+        form_template = TEMPLATE_ENV.get_template(template_name)
+        return form_template.render(**context)
+    except Exception as e:
+        # Template not found or render error - return empty
+        print(f"Warning: Could not render policy specimen: {e}")
+        return ""
 
 
 def _render_library_document_html(doc: dict, context: dict) -> str:
@@ -601,6 +648,19 @@ def _save_document(
             serializable_json[key] = str(value) if value is not None else None
 
     with get_conn() as conn:
+        # Void any existing documents of the same type for this quote option
+        conn.execute(text("""
+            UPDATE policy_documents
+            SET status = 'void'
+            WHERE quote_option_id = :quote_option_id
+            AND document_type = :doc_type
+            AND status != 'void'
+        """), {
+            "quote_option_id": quote_option_id,
+            "doc_type": doc_type,
+        })
+
+        # Insert the new document
         result = conn.execute(text("""
             INSERT INTO policy_documents (
                 submission_id, quote_option_id, document_type,

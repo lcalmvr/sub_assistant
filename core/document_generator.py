@@ -637,6 +637,19 @@ def _save_document(
             serializable_json[key] = str(value) if value is not None else None
 
     with get_conn() as conn:
+        # Void any existing documents of the same type for this quote option
+        conn.execute(text("""
+            UPDATE policy_documents
+            SET status = 'void'
+            WHERE quote_option_id = :quote_option_id
+            AND document_type = :doc_type
+            AND status != 'void'
+        """), {
+            "quote_option_id": quote_option_id,
+            "doc_type": doc_type,
+        })
+
+        # Insert the new document
         result = conn.execute(text("""
             INSERT INTO policy_documents (
                 submission_id, quote_option_id, document_type,

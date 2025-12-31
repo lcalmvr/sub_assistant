@@ -16,6 +16,8 @@ export const updateSubmission = (id, data) => api.patch(`/submissions/${id}`, da
 export const getQuoteOptions = (submissionId) => api.get(`/submissions/${submissionId}/quotes`);
 export const getQuoteOption = (id) => api.get(`/quotes/${id}`);
 export const getQuoteDocuments = (id) => api.get(`/quotes/${id}/documents`);
+export const getLatestDocument = (submissionId) => api.get(`/submissions/${submissionId}/latest-document`);
+export const getSubmissionDocuments = (submissionId) => api.get(`/submissions/${submissionId}/documents`);
 export const createQuoteOption = (submissionId, data) => api.post(`/submissions/${submissionId}/quotes`, data);
 export const updateQuoteOption = (id, data) => api.patch(`/quotes/${id}`, data);
 export const deleteQuoteOption = (id) => api.delete(`/quotes/${id}`);
@@ -27,6 +29,11 @@ export const unbindQuoteOption = (id) => api.post(`/quotes/${id}/unbind`);
 export const generateQuoteDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-document`);
 export const generateBinderDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-binder`);
 export const generatePolicyDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-policy`);
+
+// Package Builder
+export const getPackageDocuments = (position = 'primary') => api.get(`/package-documents/${position}`);
+export const getQuoteEndorsements = (quoteId) => api.get(`/quotes/${quoteId}/endorsements`);
+export const generateQuotePackage = (quoteId, data) => api.post(`/quotes/${quoteId}/generate-package`, data);
 
 // Rating
 export const calculatePremium = (submissionId, params) => api.post(`/submissions/${submissionId}/calculate-premium`, params);

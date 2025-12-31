@@ -151,7 +151,7 @@ def list_quotes(submission_id: str):
             cur.execute("""
                 SELECT id, quote_name, tower_json, primary_retention, position,
                        technical_premium, risk_adjusted_premium, sold_premium,
-                       policy_form, is_bound, retroactive_date, created_at
+                       policy_form, coverages, is_bound, retroactive_date, created_at
                 FROM insurance_towers
                 WHERE submission_id = %s
                 ORDER BY created_at DESC
@@ -184,13 +184,71 @@ def get_quote_documents(quote_id: str):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, document_type, document_number, pdf_url, created_at
-                FROM policy_documents
-                WHERE quote_option_id = %s
-                AND document_type IN ('quote_primary', 'quote_excess')
-                AND status != 'void'
-                ORDER BY created_at DESC
+                SELECT
+                    pd.id,
+                    pd.document_type,
+                    pd.document_number,
+                    pd.pdf_url,
+                    pd.created_at,
+                    t.quote_name
+                FROM policy_documents pd
+                LEFT JOIN insurance_towers t ON pd.quote_option_id = t.id
+                WHERE pd.quote_option_id = %s
+                AND pd.document_type IN ('quote_primary', 'quote_excess')
+                AND pd.status != 'void'
+                ORDER BY pd.created_at DESC
             """, (quote_id,))
+            return cur.fetchall()
+
+
+@app.get("/api/submissions/{submission_id}/latest-document")
+def get_latest_quote_document(submission_id: str):
+    """Get the most recent quote document for a submission (across all options)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    pd.id,
+                    pd.document_type,
+                    pd.document_number,
+                    pd.pdf_url,
+                    pd.created_at,
+                    t.quote_name,
+                    t.id as quote_option_id
+                FROM policy_documents pd
+                LEFT JOIN insurance_towers t ON pd.quote_option_id = t.id
+                WHERE pd.submission_id = %s
+                AND pd.document_type IN ('quote_primary', 'quote_excess')
+                AND pd.status != 'void'
+                ORDER BY pd.created_at DESC
+                LIMIT 1
+            """, (submission_id,))
+            row = cur.fetchone()
+            return row if row else None
+
+
+@app.get("/api/submissions/{submission_id}/documents")
+def get_submission_documents(submission_id: str):
+    """Get all quote documents for a submission (across all options)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    pd.id,
+                    pd.document_type,
+                    pd.document_number,
+                    pd.pdf_url,
+                    pd.created_at,
+                    t.quote_name,
+                    t.position,
+                    t.id as quote_option_id
+                FROM policy_documents pd
+                LEFT JOIN insurance_towers t ON pd.quote_option_id = t.id
+                WHERE pd.submission_id = %s
+                AND pd.document_type IN ('quote_primary', 'quote_excess')
+                AND pd.status != 'void'
+                ORDER BY pd.created_at DESC
+            """, (submission_id,))
             return cur.fetchall()
 
 
@@ -198,8 +256,11 @@ class QuoteCreate(BaseModel):
     quote_name: str
     primary_retention: Optional[int] = 25000
     policy_form: Optional[str] = "claims_made"
+    position: Optional[str] = "primary"
     tower_json: Optional[list] = None
     coverages: Optional[dict] = None
+    # Excess quote specific fields
+    underlying_carrier: Optional[str] = "Primary Carrier"
 
 
 class QuoteUpdate(BaseModel):
@@ -215,13 +276,10 @@ class QuoteUpdate(BaseModel):
 
 @app.post("/api/submissions/{submission_id}/quotes")
 def create_quote(submission_id: str, data: QuoteCreate):
-    """Create a new quote option."""
+    """Create a new quote option (primary or excess)."""
     import json
-
-    # Default tower structure if not provided
-    tower_json = data.tower_json or [
-        {"carrier": "CMAI", "limit": 1000000, "attachment": 0, "premium": None}
-    ]
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -230,11 +288,93 @@ def create_quote(submission_id: str, data: QuoteCreate):
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Submission not found")
 
+    position = data.position or 'primary'
+    technical_premium = None
+    risk_adjusted_premium = None
+
+    if position == 'excess':
+        # Excess quote: Use ILF approach for premium calculation
+        from rating_engine.premium_calculator import calculate_premium_for_submission
+
+        # Extract limit and attachment from tower_json
+        tower_json = data.tower_json or []
+        cmai_layer = next((l for l in tower_json if l.get('carrier') == 'CMAI'), None)
+
+        if cmai_layer:
+            our_limit = cmai_layer.get('limit', 1000000)
+            our_attachment = cmai_layer.get('attachment', 0)
+
+            # Calculate premium for full tower (underlying + excess)
+            total_limit = our_attachment + our_limit
+            total_result = calculate_premium_for_submission(
+                submission_id, total_limit, data.primary_retention
+            )
+
+            if total_result and "error" not in total_result:
+                total_risk_adj = total_result.get("risk_adjusted_premium") or 0
+                total_technical = total_result.get("technical_premium") or 0
+
+                # Calculate premium for just underlying
+                underlying_result = calculate_premium_for_submission(
+                    submission_id, our_attachment, data.primary_retention
+                )
+
+                if underlying_result and "error" not in underlying_result:
+                    underlying_risk_adj = underlying_result.get("risk_adjusted_premium") or 0
+                    underlying_technical = underlying_result.get("technical_premium") or 0
+
+                    # Excess premium = full tower - underlying (ILF approach)
+                    risk_adjusted_premium = max(0, total_risk_adj - underlying_risk_adj)
+                    technical_premium = max(0, total_technical - underlying_technical)
+
+                    # Update CMAI layer premium in tower_json
+                    cmai_layer['premium'] = risk_adjusted_premium
+
+            # Build proper excess tower structure if not fully specified
+            if our_attachment > 0:
+                # Ensure underlying layer exists
+                underlying_layer = next(
+                    (l for l in tower_json if l.get('carrier') != 'CMAI'),
+                    None
+                )
+                if not underlying_layer:
+                    tower_json = [
+                        {
+                            "carrier": data.underlying_carrier or "Primary Carrier",
+                            "limit": our_attachment,
+                            "attachment": 0,
+                            "retention": data.primary_retention,
+                            "premium": None,
+                        },
+                        cmai_layer
+                    ]
+    else:
+        # Primary quote: Standard premium calculation
+        from rating_engine.premium_calculator import calculate_premium_for_submission
+
+        tower_json = data.tower_json or [
+            {"carrier": "CMAI", "limit": 1000000, "attachment": 0, "premium": None}
+        ]
+
+        cmai_layer = tower_json[0] if tower_json else None
+        if cmai_layer:
+            limit = cmai_layer.get('limit', 1000000)
+            result = calculate_premium_for_submission(
+                submission_id, limit, data.primary_retention
+            )
+            if result and "error" not in result:
+                technical_premium = result.get("technical_premium")
+                risk_adjusted_premium = result.get("risk_adjusted_premium")
+                cmai_layer['premium'] = risk_adjusted_premium
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO insurance_towers (
                     submission_id, quote_name, primary_retention, policy_form,
-                    tower_json, coverages, position
-                ) VALUES (%s, %s, %s, %s, %s, %s, 'primary')
+                    tower_json, coverages, position,
+                    technical_premium, risk_adjusted_premium, sold_premium
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, quote_name, created_at
             """, (
                 submission_id,
@@ -243,10 +383,20 @@ def create_quote(submission_id: str, data: QuoteCreate):
                 data.policy_form,
                 json.dumps(tower_json),
                 json.dumps(data.coverages or {}),
+                position,
+                technical_premium,
+                risk_adjusted_premium,
+                risk_adjusted_premium,  # sold_premium defaults to risk_adjusted
             ))
             row = cur.fetchone()
             conn.commit()
-            return {"id": row["id"], "quote_name": row["quote_name"], "created_at": row["created_at"]}
+            return {
+                "id": row["id"],
+                "quote_name": row["quote_name"],
+                "created_at": row["created_at"],
+                "technical_premium": technical_premium,
+                "risk_adjusted_premium": risk_adjusted_premium,
+            }
 
 
 @app.patch("/api/quotes/{quote_id}")
@@ -2568,6 +2718,187 @@ def generate_policy_document(quote_id: str):
     except Exception as e:
         import traceback
         raise HTTPException(status_code=500, detail=f"Policy generation failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Package Builder
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/package-documents/{position}")
+def get_package_documents(position: str = "primary"):
+    """
+    Get available documents for package building, grouped by type.
+    Returns claims sheets, marketing materials, and specimen forms.
+    Endorsements are NOT included here - they come from the quote option.
+    """
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.document_library import get_entries_for_package, DOCUMENT_TYPES
+
+        # Get active documents for this position, excluding endorsements
+        # (endorsements come from the quote option itself)
+        all_docs = get_entries_for_package(
+            position=position,
+            document_types=["claims_sheet", "marketing", "specimen"]
+        )
+
+        # Group by document type
+        docs_by_type = {}
+        for doc in all_docs:
+            dtype = doc.get("document_type", "other")
+            if dtype not in docs_by_type:
+                docs_by_type[dtype] = []
+            docs_by_type[dtype].append({
+                "id": doc["id"],
+                "code": doc["code"],
+                "title": doc["title"],
+                "category": doc.get("category"),
+                "default_sort_order": doc.get("default_sort_order", 100),
+                "midterm_only": doc.get("midterm_only", False),
+            })
+
+        # Filter document types to only include the ones we're returning
+        filtered_types = {k: v for k, v in DOCUMENT_TYPES.items()
+                        if k in ["claims_sheet", "marketing", "specimen"]}
+
+        return {
+            "position": position,
+            "document_types": filtered_types,
+            "documents": docs_by_type,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/quotes/{quote_id}/endorsements")
+def get_quote_endorsements(quote_id: str):
+    """
+    Get endorsements attached to a quote option.
+    Returns endorsement names and matched library document IDs for rich formatting.
+    """
+    import json
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT endorsements, position FROM insurance_towers WHERE id = %s",
+                (quote_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            endorsements = row.get("endorsements", [])
+            if isinstance(endorsements, str):
+                endorsements = json.loads(endorsements)
+
+            position = row.get("position", "primary")
+
+    # Match endorsement names to library documents
+    matched_library_ids = []
+    if endorsements:
+        try:
+            from core.document_library import get_library_entries
+
+            # Get all endorsements from library for this position
+            library_endorsements = get_library_entries(
+                document_type="endorsement",
+                position=position,
+                status="active"
+            )
+
+            # Try to match by title or code (case-insensitive partial match)
+            for name in endorsements:
+                name_lower = name.lower().strip()
+                for lib_doc in library_endorsements:
+                    title_lower = lib_doc.get('title', '').lower()
+                    code_lower = lib_doc.get('code', '').lower()
+
+                    # Check for matches
+                    if (name_lower in title_lower or
+                        title_lower in name_lower or
+                        name_lower in code_lower or
+                        name_lower.replace(' ', '') in title_lower.replace(' ', '')):
+                        if lib_doc['id'] not in matched_library_ids:
+                            matched_library_ids.append(lib_doc['id'])
+                        break
+        except Exception:
+            pass  # If matching fails, just return names without library IDs
+
+    return {
+        "endorsements": endorsements or [],
+        "matched_library_ids": matched_library_ids,
+    }
+
+
+class PackageGenerateRequest(BaseModel):
+    package_type: str = "quote_only"  # "quote_only" or "full_package"
+    selected_documents: list = []  # List of document library IDs
+    include_specimen: bool = False  # Include policy specimen form
+
+
+@app.post("/api/quotes/{quote_id}/generate-package")
+def generate_quote_package(quote_id: str, request: PackageGenerateRequest):
+    """
+    Generate a quote document package with optional library documents.
+
+    package_type: "quote_only" or "full_package"
+    selected_documents: List of document library entry IDs to include
+    include_specimen: Include policy specimen form (rendered from template)
+    """
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.package_generator import generate_package
+        from core.document_generator import generate_document
+
+        # Get submission_id for this quote
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT submission_id, position FROM insurance_towers WHERE id = %s",
+                    (quote_id,)
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Quote not found")
+                submission_id = row["submission_id"]
+                position = row.get("position", "primary")
+
+        # Determine doc type based on position
+        doc_type = "quote_excess" if position == "excess" else "quote_primary"
+
+        if request.package_type == "full_package" or request.include_specimen:
+            # Generate full package with library documents and/or specimen
+            result = generate_package(
+                submission_id=str(submission_id),
+                quote_option_id=quote_id,
+                doc_type=doc_type,
+                package_type="full_package",
+                selected_documents=request.selected_documents,
+                created_by="api",
+                include_specimen=request.include_specimen
+            )
+        else:
+            # Generate quote only
+            result = generate_document(
+                submission_id=str(submission_id),
+                quote_option_id=quote_id,
+                doc_type=doc_type,
+                created_by="api"
+            )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=f"Package generation failed: {str(e)}")
 
 
 # ─────────────────────────────────────────────────────────────
