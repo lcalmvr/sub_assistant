@@ -20,10 +20,21 @@ const ENDORSEMENT_TYPES = [
   { value: 'address_change', label: 'Address Change' },
   { value: 'cancellation', label: 'Cancellation' },
   { value: 'reinstatement', label: 'Reinstatement' },
-  { value: 'erp', label: 'Extended Reporting Period', disabled: true },
+  { value: 'erp', label: 'Extended Reporting Period' },
   { value: 'coverage_change', label: 'Coverage Change', disabled: true },
   { value: 'bor_change', label: 'Broker of Record Change', disabled: true },
   { value: 'other', label: 'Other' },
+];
+
+// ERP duration options with suggested premium percentages
+const ERP_DURATIONS = [
+  { value: '1_year', label: '1 Year', years: 1, suggestedPct: 75 },
+  { value: '2_year', label: '2 Years', years: 2, suggestedPct: 100 },
+  { value: '3_year', label: '3 Years', years: 3, suggestedPct: 150 },
+  { value: '4_year', label: '4 Years', years: 4, suggestedPct: 175 },
+  { value: '5_year', label: '5 Years', years: 5, suggestedPct: 200 },
+  { value: '6_year', label: '6 Years', years: 6, suggestedPct: 225 },
+  { value: 'unlimited', label: 'Unlimited (Tail)', years: null, suggestedPct: 250 },
 ];
 
 // Cancellation reasons
@@ -54,9 +65,14 @@ function formatCompact(value) {
   return `$${value}`;
 }
 
-// Format date
+// Format date (handles YYYY-MM-DD without timezone shift)
 function formatDate(dateStr) {
   if (!dateStr) return '—';
+  // Parse YYYY-MM-DD directly to avoid timezone issues
+  if (typeof dateStr === 'string' && dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    const [year, month, day] = dateStr.split('-');
+    return `${month}/${day}/${year}`;
+  }
   const date = new Date(dateStr);
   return date.toLocaleDateString('en-US', {
     month: '2-digit',
@@ -229,7 +245,7 @@ const PREMIUM_METHODS = [
 ];
 
 // Types that handle premium differently (no standard premium section)
-const NO_PREMIUM_TYPES = ['bor_change', 'cancellation', 'address_change'];
+const NO_PREMIUM_TYPES = ['bor_change', 'cancellation', 'address_change', 'erp'];
 
 // Calculate days between two dates
 function daysBetween(date1, date2) {
@@ -273,6 +289,11 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
   // Address change fields
   const [oldAddress, setOldAddress] = useState({ street: '', city: '', state: '', zip: '' });
   const [newAddress, setNewAddress] = useState({ street: '', city: '', state: '', zip: '' });
+  // ERP fields
+  const [erpDuration, setErpDuration] = useState('1_year');
+  const [erpPercentage, setErpPercentage] = useState(75);
+  const [erpIncludeCancellation, setErpIncludeCancellation] = useState(false);
+  const [erpCancellationDate, setErpCancellationDate] = useState('');
 
   // Get base premium from bound option
   const basePremium = parseFloat(boundOption?.sold_premium || boundOption?.risk_adjusted_premium || 0);
@@ -301,10 +322,16 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
 
   // For cancellation, premium is negative (return premium)
   const isCancellation = endorsementType === 'cancellation';
+  const isErp = endorsementType === 'erp';
   const calculatedPremium = isCancellation ? -proRataPremium : proRataPremium;
 
-  // Final premium based on method
-  const premiumChange = premiumMethod === 'pro_rata' ? calculatedPremium : (isCancellation ? -Math.abs(flatAmount) : flatAmount);
+  // ERP premium is percentage-based
+  const erpPremium = Math.round(annualRate * erpPercentage / 100);
+
+  // Final premium based on type and method
+  const premiumChange = isErp
+    ? erpPremium
+    : (premiumMethod === 'pro_rata' ? calculatedPremium : (isCancellation ? -Math.abs(flatAmount) : flatAmount));
 
   // Set defaults when modal opens
   const resetForm = () => {
@@ -333,11 +360,15 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
     setCancellationReason('insured_request');
     setOldAddress({ street: '', city: '', state: '', zip: '' });
     setNewAddress({ street: '', city: '', state: '', zip: '' });
+    setErpDuration('1_year');
+    setErpPercentage(75);
+    setErpIncludeCancellation(false);
+    setErpCancellationDate('');
     setError(null);
   };
 
   // Types that should auto-populate annual premium
-  const autoPopulatePremiumTypes = ['extension', 'cancellation'];
+  const autoPopulatePremiumTypes = ['extension', 'cancellation', 'erp'];
 
   // Set old values when type changes
   const handleTypeChange = (type) => {
@@ -352,6 +383,13 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
         state: submission?.mailing_state || submission?.state || '',
         zip: submission?.mailing_zip || submission?.zip || '',
       });
+    }
+    if (type === 'erp') {
+      // Default to 1 year / 75%
+      setErpDuration('1_year');
+      setErpPercentage(75);
+      setErpIncludeCancellation(false);
+      setErpCancellationDate(submission?.expiration_date || '');
     }
     // Set default new expiration date for extension (30 days after current)
     if (type === 'extension' && submission?.expiration_date) {
@@ -445,6 +483,27 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
         };
         const reasonLabel = CANCELLATION_REASONS.find(r => r.value === cancellationReason)?.label || cancellationReason;
         desc = `Policy cancelled - ${reasonLabel}`;
+        break;
+
+      case 'erp':
+        const erpOption = ERP_DURATIONS.find(d => d.value === erpDuration);
+        // Calculate return premium if cancellation is before original expiration
+        const erpCancellationDays = erpIncludeCancellation && effectiveDate && submission?.expiration_date
+          ? daysBetween(effectiveDate, submission.expiration_date)
+          : 0;
+        const erpReturnPremium = erpCancellationDays > 0
+          ? Math.round(annualRate * (erpCancellationDays / 365))
+          : 0;
+        changeDetails = {
+          erp_duration: erpDuration,
+          erp_years: erpOption?.years,
+          erp_percentage: erpPercentage,
+          include_cancellation: erpIncludeCancellation,
+          cancellation_date: erpIncludeCancellation ? effectiveDate : null,
+          cancellation_return_premium: erpReturnPremium,
+          original_expiration_date: submission?.expiration_date,
+        };
+        desc = `Extended Reporting Period - ${erpOption?.label || erpDuration} (${erpPercentage}%)`;
         break;
 
       case 'other':
@@ -693,7 +752,6 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
                     style={{ colorScheme: 'light' }}
                     value={effectiveDate}
                     onChange={(e) => setEffectiveDate(e.target.value)}
-                    max={submission?.expiration_date || ''}
                   />
                 </div>
               </div>
@@ -707,6 +765,127 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
                 <p className="text-xs text-red-600 mt-1">
                   {daysRemaining} days remaining · {formatNumber(annualRate)} x {daysRemaining} / 365 = {formatNumber(proRataPremium)}
                 </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {endorsementType === 'erp' && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+            <h4 className="font-medium text-gray-900 mb-3">Extended Reporting Period</h4>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="form-label">Duration *</label>
+                  <select
+                    className="form-select"
+                    value={erpDuration}
+                    onChange={(e) => {
+                      setErpDuration(e.target.value);
+                      // Set suggested percentage when duration changes
+                      const option = ERP_DURATIONS.find(d => d.value === e.target.value);
+                      if (option) setErpPercentage(option.suggestedPct);
+                    }}
+                  >
+                    {ERP_DURATIONS.map((duration) => (
+                      <option key={duration.value} value={duration.value}>
+                        {duration.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Premium % of Annual</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      className="form-input text-right flex-1 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      value={erpPercentage}
+                      onChange={(e) => setErpPercentage(parseInt(e.target.value) || 0)}
+                      min={0}
+                      max={500}
+                    />
+                    <span className="text-gray-500 font-medium">%</span>
+                  </div>
+                </div>
+              </div>
+              {/* Date layout: ERP Effective → ERP End, then Original Expiration below */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="form-label text-gray-500">ERP Effective</label>
+                  <div className="form-input bg-gray-100 text-gray-700">
+                    {formatDate(effectiveDate)}
+                  </div>
+                </div>
+                <div>
+                  <label className="form-label text-gray-500">ERP End Date</label>
+                  <div className="form-input bg-gray-100 text-gray-700">
+                    {(() => {
+                      const erpOption = ERP_DURATIONS.find(d => d.value === erpDuration);
+                      if (!effectiveDate || !erpOption?.years) {
+                        return erpOption?.years === null ? 'Unlimited' : '—';
+                      }
+                      const [y, m, d] = effectiveDate.split('-').map(Number);
+                      const endDate = new Date(y + erpOption.years, m - 1, d);
+                      return formatDate(endDate.toISOString().split('T')[0]);
+                    })()}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="form-label text-gray-500">Original Policy Expiration</label>
+                <div className="form-input bg-gray-100 text-gray-700 w-1/2">
+                  {submission?.expiration_date ? formatDate(submission.expiration_date) : '—'}
+                </div>
+              </div>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-blue-800 font-medium">ERP Premium</span>
+                  <span className="text-blue-700 font-bold text-lg">
+                    {formatCurrency(Math.round(annualRate * erpPercentage / 100))}
+                  </span>
+                </div>
+                <p className="text-xs text-blue-600 mt-1">
+                  {erpPercentage}% of {formatCurrency(annualRate)} annual premium
+                </p>
+              </div>
+              {/* Optional cancellation */}
+              <div className="border-t border-gray-200 pt-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={erpIncludeCancellation}
+                    onChange={(e) => setErpIncludeCancellation(e.target.checked)}
+                    className="rounded text-purple-600"
+                  />
+                  <span className="text-sm text-gray-700">Also process cancellation endorsement</span>
+                </label>
+                {erpIncludeCancellation && (
+                  <div className="mt-3 ml-6 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <span className="text-red-800 font-medium">Return Premium</span>
+                        <p className="text-xs text-red-600 mt-1">
+                          {(() => {
+                            if (!effectiveDate || !submission?.expiration_date) return 'Unable to calculate';
+                            const days = daysBetween(effectiveDate, submission.expiration_date);
+                            if (days <= 0) return 'Flat cancellation at expiration - no return premium';
+                            return `Pro-rata: ${days} days from ${formatDate(effectiveDate)} to ${formatDate(submission.expiration_date)}`;
+                          })()}
+                        </p>
+                      </div>
+                      <span className="text-red-700 font-bold text-lg">
+                        {(() => {
+                          if (!effectiveDate || !submission?.expiration_date) return '—';
+                          const days = daysBetween(effectiveDate, submission.expiration_date);
+                          if (days <= 0) return '$0';
+                          const returnPremium = Math.round(annualRate * (days / 365));
+                          return formatCurrency(returnPremium);
+                        })()}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
