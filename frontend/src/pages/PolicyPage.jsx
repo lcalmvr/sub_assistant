@@ -11,7 +11,9 @@ import {
   voidEndorsement,
   reinstateEndorsement,
   deleteEndorsement,
+  calculatePremium,
 } from '../api/client';
+import CoverageEditor, { AGGREGATE_COVERAGES, SUBLIMIT_COVERAGES, AGGREGATE_LIMIT_OPTIONS } from '../components/CoverageEditor';
 
 // Endorsement type definitions
 const ENDORSEMENT_TYPES = [
@@ -21,10 +23,13 @@ const ENDORSEMENT_TYPES = [
   { value: 'cancellation', label: 'Cancellation' },
   { value: 'reinstatement', label: 'Reinstatement' },
   { value: 'erp', label: 'Extended Reporting Period' },
-  { value: 'coverage_change', label: 'Coverage Change', disabled: true },
+  { value: 'coverage_change', label: 'Coverage Change' },
   { value: 'bor_change', label: 'Broker of Record Change', disabled: true },
   { value: 'other', label: 'Other' },
 ];
+
+// Retention options
+const RETENTION_OPTIONS = [25_000, 50_000, 100_000, 150_000, 250_000, 500_000];
 
 // ERP duration options with suggested premium percentages
 const ERP_DURATIONS = [
@@ -294,9 +299,25 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
   const [erpPercentage, setErpPercentage] = useState(75);
   const [erpIncludeCancellation, setErpIncludeCancellation] = useState(false);
   const [erpCancellationDate, setErpCancellationDate] = useState('');
+  // Coverage change fields
+  const [newAggregateLimit, setNewAggregateLimit] = useState(0);
+  const [newRetention, setNewRetention] = useState(0);
+  const [endorsementCoverages, setEndorsementCoverages] = useState({
+    aggregate_coverages: {},
+    sublimit_coverages: {},
+  });
+  // Pricing guidance
+  const [suggestedPremium, setSuggestedPremium] = useState(null);
+  const [isCalculatingPremium, setIsCalculatingPremium] = useState(false);
+  const [pricingError, setPricingError] = useState(null);
 
   // Get base premium from bound option
   const basePremium = parseFloat(boundOption?.sold_premium || boundOption?.risk_adjusted_premium || 0);
+
+  // Get current coverage state from bound option
+  const currentTower = boundOption?.tower_json || [];
+  const currentAggregateLimit = currentTower[0]?.limit || 0;
+  const currentRetention = boundOption?.primary_retention || 0;
 
   // Calculate days remaining based on type and dates
   const calculateDaysRemaining = () => {
@@ -364,10 +385,70 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
     setErpPercentage(75);
     setErpIncludeCancellation(false);
     setErpCancellationDate('');
+    // Reset coverage change fields
+    setNewAggregateLimit(currentAggregateLimit);
+    setNewRetention(currentRetention);
+    // Initialize endorsement coverages from bound option
+    setEndorsementCoverages(boundOption?.coverages || {
+      aggregate_coverages: {},
+      sublimit_coverages: {},
+    });
+    // Reset pricing guidance
+    setSuggestedPremium(null);
+    setPricingError(null);
     setError(null);
   };
 
-  // Types that should auto-populate annual premium
+  // Calculate pricing guidance for coverage change
+  const calculatePricingGuidance = async () => {
+    if (!submission?.id) return;
+
+    setIsCalculatingPremium(true);
+    setPricingError(null);
+
+    try {
+      // Get hazard override and control adjustment from submission if available
+      const hazardOverride = submission?.hazard_override || null;
+      const controlAdj = submission?.control_overrides?.overall || 0;
+
+      // Calculate premium for new configuration
+      const newPremiumRes = await calculatePremium(submission.id, {
+        limit: newAggregateLimit,
+        retention: newRetention,
+        hazard_override: hazardOverride,
+        control_adjustment: controlAdj,
+      });
+
+      // Calculate premium for old configuration
+      const oldPremiumRes = await calculatePremium(submission.id, {
+        limit: currentAggregateLimit,
+        retention: currentRetention,
+        hazard_override: hazardOverride,
+        control_adjustment: controlAdj,
+      });
+
+      const newPremium = newPremiumRes.data?.risk_adjusted_premium || newPremiumRes.data?.premium || 0;
+      const oldPremium = oldPremiumRes.data?.risk_adjusted_premium || oldPremiumRes.data?.premium || 0;
+
+      // Incremental premium is the difference
+      const incrementalPremium = newPremium - oldPremium;
+
+      setSuggestedPremium({
+        oldPremium,
+        newPremium,
+        incrementalPremium: Math.max(0, incrementalPremium), // Don't suggest negative
+        isDecrease: incrementalPremium < 0,
+      });
+    } catch (err) {
+      console.error('Pricing calculation error:', err);
+      setPricingError(err.response?.data?.detail || 'Failed to calculate pricing guidance');
+    } finally {
+      setIsCalculatingPremium(false);
+    }
+  };
+
+  // Types that should auto-populate annual premium (from existing policy premium)
+  // Note: coverage_change is NOT included - UW must enter the incremental premium for the coverage change
   const autoPopulatePremiumTypes = ['extension', 'cancellation', 'erp'];
 
   // Set old values when type changes
@@ -390,6 +471,16 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
       setErpPercentage(75);
       setErpIncludeCancellation(false);
       setErpCancellationDate(submission?.expiration_date || '');
+    }
+    if (type === 'coverage_change') {
+      // Initialize with current values (user can change them)
+      setNewAggregateLimit(currentAggregateLimit);
+      setNewRetention(currentRetention);
+      // Initialize endorsement coverages from bound option
+      setEndorsementCoverages(boundOption?.coverages || {
+        aggregate_coverages: {},
+        sublimit_coverages: {},
+      });
     }
     // Set default new expiration date for extension (30 days after current)
     if (type === 'extension' && submission?.expiration_date) {
@@ -504,6 +595,47 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
           original_expiration_date: submission?.expiration_date,
         };
         desc = `Extended Reporting Period - ${erpOption?.label || erpDuration} (${erpPercentage}%)`;
+        break;
+
+      case 'coverage_change':
+        // Build description based on what changed
+        const changes = [];
+        if (newAggregateLimit !== currentAggregateLimit) {
+          changes.push(`Aggregate: ${formatCompact(currentAggregateLimit)} → ${formatCompact(newAggregateLimit)}`);
+        }
+        if (newRetention !== currentRetention) {
+          changes.push(`Retention: ${formatCompact(currentRetention)} → ${formatCompact(newRetention)}`);
+        }
+        // Compare coverage changes
+        const origCoverages = boundOption?.coverages || { aggregate_coverages: {}, sublimit_coverages: {} };
+        Object.entries(endorsementCoverages.aggregate_coverages || {}).forEach(([key, val]) => {
+          if (origCoverages.aggregate_coverages?.[key] !== val) {
+            const cov = AGGREGATE_COVERAGES.find(c => c.id === key);
+            changes.push(`${cov?.label || key}: ${formatCompact(val)}`);
+          }
+        });
+        Object.entries(endorsementCoverages.sublimit_coverages || {}).forEach(([key, val]) => {
+          if (origCoverages.sublimit_coverages?.[key] !== val) {
+            const cov = SUBLIMIT_COVERAGES.find(c => c.id === key);
+            changes.push(`${cov?.label || key}: ${formatCompact(val)}`);
+          }
+        });
+
+        if (changes.length === 0) {
+          setError('No coverage changes detected');
+          setIsSubmitting(false);
+          return;
+        }
+
+        changeDetails = {
+          old_aggregate_limit: currentAggregateLimit,
+          new_aggregate_limit: newAggregateLimit,
+          old_retention: currentRetention,
+          new_retention: newRetention,
+          old_coverages: origCoverages,
+          new_coverages: endorsementCoverages,
+        };
+        desc = `Coverage Change: ${changes.slice(0, 2).join(', ')}${changes.length > 2 ? ` (+${changes.length - 2} more)` : ''}`;
         break;
 
       case 'other':
@@ -891,6 +1023,153 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
           </div>
         )}
 
+        {endorsementType === 'coverage_change' && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+            <h4 className="font-medium text-gray-900 mb-3">Coverage Change</h4>
+            <div className="space-y-4">
+              {/* Current Policy Summary */}
+              <div className="bg-white rounded-lg p-3 border border-gray-200">
+                <div className="text-xs text-gray-500 mb-2">Current Policy</div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Aggregate Limit</span>
+                    <span className="font-medium text-gray-900">{formatCompact(currentAggregateLimit)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Retention</span>
+                    <span className="font-medium text-gray-900">{formatCompact(currentRetention)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Aggregate Limit and Retention Selectors */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="form-label">New Aggregate Limit</label>
+                  <select
+                    className="form-select"
+                    value={newAggregateLimit}
+                    onChange={(e) => {
+                      setNewAggregateLimit(Number(e.target.value));
+                      setSuggestedPremium(null); // Clear pricing when limit changes
+                    }}
+                  >
+                    {AGGREGATE_LIMIT_OPTIONS.map((limit) => (
+                      <option key={limit} value={limit}>
+                        {formatCompact(limit)}
+                        {limit === currentAggregateLimit && ' (current)'}
+                      </option>
+                    ))}
+                  </select>
+                  {newAggregateLimit !== currentAggregateLimit && (
+                    <p className="text-xs text-purple-600 mt-1">
+                      {formatCompact(currentAggregateLimit)} → {formatCompact(newAggregateLimit)}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="form-label">New Retention</label>
+                  <select
+                    className="form-select"
+                    value={newRetention}
+                    onChange={(e) => {
+                      setNewRetention(Number(e.target.value));
+                      setSuggestedPremium(null); // Clear pricing when retention changes
+                    }}
+                  >
+                    {RETENTION_OPTIONS.map((ret) => (
+                      <option key={ret} value={ret}>
+                        {formatCompact(ret)}
+                        {ret === currentRetention && ' (current)'}
+                      </option>
+                    ))}
+                  </select>
+                  {newRetention !== currentRetention && (
+                    <p className="text-xs text-purple-600 mt-1">
+                      {formatCompact(currentRetention)} → {formatCompact(newRetention)}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {(newAggregateLimit !== currentAggregateLimit) && (
+                <p className="text-xs text-purple-600">
+                  Full Limit coverages will update automatically with aggregate change
+                </p>
+              )}
+
+              {/* Coverage Schedule Editor */}
+              <CoverageEditor
+                coverages={endorsementCoverages}
+                aggregateLimit={currentAggregateLimit}
+                newAggregateLimit={newAggregateLimit !== currentAggregateLimit ? newAggregateLimit : null}
+                originalCoverages={boundOption?.coverages}
+                mode="endorsement"
+                showBatchEdit={false}
+                onSave={(updated) => setEndorsementCoverages(updated)}
+              />
+
+              {/* Pricing Guidance */}
+              <div className="rounded-lg p-3 border bg-blue-50 border-blue-200">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-blue-800 font-medium">Pricing Guidance</span>
+                  <button
+                    type="button"
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                    onClick={calculatePricingGuidance}
+                    disabled={isCalculatingPremium || (newAggregateLimit === currentAggregateLimit && newRetention === currentRetention)}
+                  >
+                    {isCalculatingPremium ? 'Calculating...' : 'Calculate Suggested Premium'}
+                  </button>
+                </div>
+
+                {pricingError && (
+                  <p className="text-xs text-red-600 mb-2">{pricingError}</p>
+                )}
+
+                {suggestedPremium && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="bg-white rounded p-2 border border-blue-200">
+                        <div className="text-gray-500">Old Config</div>
+                        <div className="font-medium text-gray-900">{formatCurrency(suggestedPremium.oldPremium)}</div>
+                      </div>
+                      <div className="bg-white rounded p-2 border border-blue-200">
+                        <div className="text-gray-500">New Config</div>
+                        <div className="font-medium text-gray-900">{formatCurrency(suggestedPremium.newPremium)}</div>
+                      </div>
+                      <div className={`rounded p-2 border ${suggestedPremium.isDecrease ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+                        <div className="text-gray-500">{suggestedPremium.isDecrease ? 'Return' : 'Additional'}</div>
+                        <div className={`font-medium ${suggestedPremium.isDecrease ? 'text-red-700' : 'text-green-700'}`}>
+                          {formatCurrency(Math.abs(suggestedPremium.newPremium - suggestedPremium.oldPremium))}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-xs text-blue-600 hover:text-blue-800 underline"
+                      onClick={() => setAnnualRate(Math.abs(suggestedPremium.newPremium - suggestedPremium.oldPremium))}
+                    >
+                      Apply {formatCurrency(Math.abs(suggestedPremium.newPremium - suggestedPremium.oldPremium))} as annual premium
+                    </button>
+                  </div>
+                )}
+
+                {!suggestedPremium && !pricingError && (
+                  <p className="text-xs text-gray-500">
+                    {newAggregateLimit === currentAggregateLimit && newRetention === currentRetention
+                      ? 'Change limit or retention to enable pricing guidance'
+                      : `Click to calculate suggested premium for ${formatCompact(currentAggregateLimit)} → ${formatCompact(newAggregateLimit)}`}
+                  </p>
+                )}
+
+                <p className="text-xs text-gray-400 mt-2">
+                  {daysRemaining} days remaining · Pro-rata will be calculated below
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {endorsementType === 'other' && (
           <div className="mb-4 p-4 bg-gray-50 rounded-lg">
             <h4 className="font-medium text-gray-900 mb-3">Details</h4>
@@ -914,7 +1193,7 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
             <div className="grid grid-cols-2 gap-4 mb-3">
               <div>
                 <label className={`form-label ${autoPopulatePremiumTypes.includes(endorsementType) ? 'text-gray-500' : ''}`}>
-                  Annual Rate
+                  {endorsementType === 'coverage_change' ? 'Annual Premium for Change' : 'Annual Rate'}
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
@@ -928,9 +1207,15 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
                       className="form-input pl-8 text-right"
                       value={formatNumber(annualRate)}
                       onChange={(e) => setAnnualRate(parseNumber(e.target.value))}
+                      placeholder={endorsementType === 'coverage_change' ? 'Enter incremental premium' : ''}
                     />
                   )}
                 </div>
+                {endorsementType === 'coverage_change' && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Annual premium for the incremental coverage (e.g., $4M xs $1M layer)
+                  </p>
+                )}
               </div>
               <div>
                 <label className="form-label text-gray-500">Pro-Rata Premium</label>
