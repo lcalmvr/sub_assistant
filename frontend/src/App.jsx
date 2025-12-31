@@ -1,5 +1,51 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { Component } from 'react';
+
+// Error boundary for catching render errors
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+          <div className="bg-white p-8 rounded-lg shadow-lg max-w-md">
+            <h1 className="text-xl font-bold text-red-600 mb-4">Something went wrong</h1>
+            <p className="text-gray-600 mb-4">{this.state.error?.message || 'Unknown error'}</p>
+            <button
+              onClick={() => window.location.href = '/'}
+              className="btn btn-primary"
+            >
+              Go to Home
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Fallback for unmatched routes
+function NotFoundPage() {
+  return (
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+      <div className="bg-white p-8 rounded-lg shadow-lg max-w-md text-center">
+        <h1 className="text-2xl font-bold text-gray-900 mb-4">Page Not Found</h1>
+        <p className="text-gray-600 mb-6">The page you're looking for doesn't exist.</p>
+        <Link to="/" className="btn btn-primary">Go to Submissions</Link>
+      </div>
+    </div>
+  );
+}
 
 import SubmissionLayout from './layouts/SubmissionLayout';
 import SubmissionsListPage from './pages/SubmissionsListPage';
@@ -30,9 +76,10 @@ const queryClient = new QueryClient({
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <Routes>
           {/* Submissions List */}
           <Route path="/" element={<SubmissionsListPage />} />
 
@@ -71,9 +118,13 @@ function App() {
             <Route path="quote" element={<QuotePage />} />
             <Route path="policy" element={<PolicyPage />} />
           </Route>
+
+          {/* Catch-all for unmatched routes */}
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
-      </BrowserRouter>
-    </QueryClientProvider>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
