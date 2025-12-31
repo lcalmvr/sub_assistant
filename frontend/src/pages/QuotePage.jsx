@@ -6,6 +6,7 @@ import {
   getSubmission,
   createQuoteOption,
   updateQuoteOption,
+  deleteQuoteOption,
   cloneQuoteOption,
   bindQuoteOption,
   unbindQuoteOption,
@@ -1043,7 +1044,7 @@ function getDocTypeLabel(type) {
 }
 
 // Quote detail panel
-function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
+function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes, onDelete }) {
   const queryClient = useQueryClient();
   const [editedRetention, setEditedRetention] = useState(quote.primary_retention);
   const [editedSoldPremium, setEditedSoldPremium] = useState(quote.sold_premium || '');
@@ -1122,6 +1123,15 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     mutationFn: () => cloneQuoteOption(quote.id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+    },
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteQuoteOption(quote.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      onDelete?.();
     },
   });
 
@@ -1899,6 +1909,17 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           >
             {cloneMutation.isPending ? 'Cloning...' : 'Clone Option'}
           </button>
+          <button
+            className="btn bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
+            onClick={() => {
+              if (window.confirm(`Delete "${autoName}"? This cannot be undone.`)) {
+                deleteMutation.mutate();
+              }
+            }}
+            disabled={deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+          </button>
         </div>
         {bindMutation.isSuccess && (
           <p className="text-sm text-green-600 mt-2">Quote bound successfully!</p>
@@ -2025,6 +2046,7 @@ export default function QuotePage() {
               quote={selectedQuote}
               submission={submission}
               allQuotes={quotes}
+              onDelete={() => setSelectedQuoteId(null)}
             />
           )}
 

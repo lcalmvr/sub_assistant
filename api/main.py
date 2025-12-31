@@ -405,14 +405,15 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     """Update a quote option."""
     import json
 
+    # Use exclude_unset to only get fields that were explicitly provided
+    # This allows sending null to clear fields like option_descriptor
     updates = {}
-    for k, v in data.model_dump().items():
-        if v is not None:
-            # Convert dict/list to JSON string for JSONB columns
-            if k in ('tower_json', 'coverages') and v is not None:
-                updates[k] = json.dumps(v)
-            else:
-                updates[k] = v
+    for k, v in data.model_dump(exclude_unset=True).items():
+        # Convert dict/list to JSON string for JSONB columns
+        if k in ('tower_json', 'coverages') and v is not None:
+            updates[k] = json.dumps(v)
+        else:
+            updates[k] = v
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -430,6 +431,18 @@ def update_quote(quote_id: str, data: QuoteUpdate):
                 raise HTTPException(status_code=404, detail="Quote not found")
             conn.commit()
     return {"status": "updated"}
+
+
+@app.delete("/api/quotes/{quote_id}")
+def delete_quote(quote_id: str):
+    """Delete a quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM insurance_towers WHERE id = %s RETURNING id", (quote_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Quote not found")
+            conn.commit()
+    return {"status": "deleted"}
 
 
 @app.post("/api/quotes/{quote_id}/clone")
