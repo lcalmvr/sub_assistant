@@ -393,7 +393,13 @@ def outreach_recommendations_people(*, limit: int = 30) -> list[dict[str, Any]]:
         rows = conn.execute(
             text(
                 """
-                WITH sub AS (
+                WITH endorsement_premium AS (
+                  SELECT pe.submission_id, COALESCE(SUM(pe.premium_change), 0) AS total_endorsement_premium
+                  FROM policy_endorsements pe
+                  WHERE pe.status = 'issued'
+                  GROUP BY pe.submission_id
+                ),
+                sub AS (
                   SELECT
                     e.person_id,
                     COUNT(*) FILTER (WHERE COALESCE(s.date_received, s.created_at) >= now() - interval '90 days') AS subs_90d,
@@ -401,7 +407,7 @@ def outreach_recommendations_people(*, limit: int = 30) -> list[dict[str, Any]]:
                     MAX(COALESCE(s.date_received, s.created_at)) AS last_submission_at,
                     COUNT(*) FILTER (WHERE s.submission_status = 'quoted' AND COALESCE(s.date_received, s.created_at) >= now() - interval '365 days') AS quoted_365d,
                     COUNT(*) FILTER (WHERE t.is_bound = TRUE AND COALESCE(s.date_received, s.created_at) >= now() - interval '365 days') AS bound_365d,
-                    COALESCE(SUM(COALESCE(t.sold_premium, 0)) FILTER (WHERE t.is_bound = TRUE AND COALESCE(s.date_received, s.created_at) >= now() - interval '365 days'), 0) AS written_premium_365d
+                    COALESCE(SUM(COALESCE(t.sold_premium, 0) + COALESCE(ep.total_endorsement_premium, 0)) FILTER (WHERE t.is_bound = TRUE AND COALESCE(s.date_received, s.created_at) >= now() - interval '365 days'), 0) AS written_premium_365d
                   FROM submissions s
                   JOIN brkr_employments e ON (
                     CASE
@@ -411,6 +417,7 @@ def outreach_recommendations_people(*, limit: int = 30) -> list[dict[str, Any]]:
                     END
                   ) = e.employment_id
                   LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = TRUE
+                  LEFT JOIN endorsement_premium ep ON ep.submission_id = s.id
                   GROUP BY e.person_id
                 ),
                 touch AS (

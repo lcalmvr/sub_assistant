@@ -782,10 +782,29 @@ def get_policy_data(submission_id: str):
             """, (submission_id,))
             endorsements = [dict(row) for row in cur.fetchall()]
 
-            # Compute effective premium
+            # Compute premium breakdown
             base_premium = 0
             if bound_option:
                 base_premium = float(bound_option.get("sold_premium") or bound_option.get("risk_adjusted_premium") or 0)
+
+            # Calculate endorsement totals (only issued, not void)
+            endorsement_total = 0
+            annual_adjustment = 0  # Adjustments that affect the annual rate (coverage_change)
+            for e in endorsements:
+                if e.get("status") == "issued":
+                    premium_change = float(e.get("premium_change") or 0)
+                    endorsement_total += premium_change
+                    # Coverage changes affect the annual rate
+                    if e.get("endorsement_type") == "coverage_change":
+                        # The premium_change is pro-rated, need to annualize it
+                        change_details = e.get("change_details") or {}
+                        annual_rate = change_details.get("annual_premium_rate", 0)
+                        if annual_rate:
+                            annual_adjustment += float(annual_rate)
+
+            effective_premium = base_premium + endorsement_total
+            # Current annual rate = base + annual adjustments from coverage changes
+            current_annual_rate = base_premium + annual_adjustment
 
             return {
                 "submission": dict(submission) if submission else None,
@@ -793,7 +812,10 @@ def get_policy_data(submission_id: str):
                 "documents": [dict(d) for d in documents] if documents else [],
                 "subjectivities": subjectivities,
                 "endorsements": endorsements,
-                "effective_premium": base_premium,
+                "effective_premium": effective_premium,
+                "base_premium": base_premium,
+                "endorsement_total": endorsement_total,
+                "current_annual_rate": current_annual_rate if current_annual_rate != base_premium else None,
                 "is_issued": any(d.get("document_type") == "policy" for d in (documents or []))
             }
 
@@ -2507,19 +2529,38 @@ def get_account_details(account_id: str):
 
 @app.get("/api/accounts/{account_id}/written-premium")
 def get_account_written_premium(account_id: str):
-    """Get total written (bound) premium for an account."""
+    """Get total written (bound) premium for an account, including endorsement adjustments."""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Get bound tower premiums + issued endorsement premium changes
             cur.execute("""
-                SELECT COALESCE(SUM(COALESCE(t.sold_premium, 0)), 0)::float AS total_premium
-                FROM submissions s
-                LEFT JOIN insurance_towers t
-                  ON t.submission_id = s.id
-                 AND t.is_bound = TRUE
-                WHERE s.account_id = %s
-            """, (account_id,))
+                WITH bound_premium AS (
+                    SELECT COALESCE(SUM(COALESCE(t.sold_premium, 0)), 0) AS base_premium
+                    FROM submissions s
+                    LEFT JOIN insurance_towers t
+                      ON t.submission_id = s.id
+                     AND t.is_bound = TRUE
+                    WHERE s.account_id = %s
+                ),
+                endorsement_premium AS (
+                    SELECT COALESCE(SUM(COALESCE(pe.premium_change, 0)), 0) AS endorsement_total
+                    FROM submissions s
+                    LEFT JOIN policy_endorsements pe
+                      ON pe.submission_id = s.id
+                     AND pe.status = 'issued'
+                    WHERE s.account_id = %s
+                )
+                SELECT
+                    (SELECT base_premium FROM bound_premium)::float AS base_premium,
+                    (SELECT endorsement_total FROM endorsement_premium)::float AS endorsement_total,
+                    ((SELECT base_premium FROM bound_premium) + (SELECT endorsement_total FROM endorsement_premium))::float AS total_premium
+            """, (account_id, account_id))
             row = cur.fetchone()
-            return {"written_premium": float(row["total_premium"] or 0)}
+            return {
+                "written_premium": float(row["total_premium"] or 0),
+                "base_premium": float(row["base_premium"] or 0),
+                "endorsement_premium": float(row["endorsement_total"] or 0),
+            }
 
 
 @app.get("/api/accounts/{account_id}/submissions")

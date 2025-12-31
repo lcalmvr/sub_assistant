@@ -634,6 +634,7 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
           new_retention: newRetention,
           old_coverages: origCoverages,
           new_coverages: endorsementCoverages,
+          annual_premium_rate: annualRate, // The annual difference for renewal pricing
         };
         desc = `Coverage Change: ${changes.slice(0, 2).join(', ')}${changes.length > 2 ? ` (+${changes.length - 2} more)` : ''}`;
         break;
@@ -1403,6 +1404,9 @@ export default function PolicyPage() {
     subjectivities,
     endorsements,
     effective_premium: effectivePremium,
+    base_premium: basePremium,
+    endorsement_total: endorsementTotal,
+    current_annual_rate: currentAnnualRate,
     is_issued: isIssued,
   } = policyData || {};
 
@@ -1528,29 +1532,41 @@ export default function PolicyPage() {
                 {policyForm?.replace(/_/g, ' ') || '—'}
               </span>
             </div>
-            <div className="border-t border-gray-200 pt-3 mt-3">
+          </div>
+
+          {/* Right: Premium breakdown + Actions */}
+          <div className="space-y-4">
+            {/* Premium breakdown card */}
+            <div className="bg-gray-50 rounded-lg p-4 space-y-2">
               <div className="flex justify-between">
-                <span className="text-gray-900 font-semibold">Effective Premium</span>
+                <span className="text-gray-600">Bound Premium</span>
+                <span className="font-medium text-gray-900">
+                  {formatCurrency(basePremium)}
+                </span>
+              </div>
+              {endorsementTotal !== 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-600">+ Endorsements</span>
+                  <span className={`font-medium ${endorsementTotal > 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                    {endorsementTotal > 0 ? '+' : ''}{formatCurrency(endorsementTotal)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between pt-2 border-t border-gray-200">
+                <span className="text-gray-900 font-semibold">Total Written</span>
                 <span className="font-bold text-green-600 text-lg">
                   {formatCurrency(effectivePremium)}
                 </span>
               </div>
+              {currentAnnualRate && (
+                <div className="flex justify-between pt-2 border-t border-dashed border-gray-200">
+                  <span className="text-gray-500 text-sm">Post-Midterm Annual</span>
+                  <span className="font-medium text-gray-700 text-sm">
+                    {formatCurrency(currentAnnualRate)}/yr
+                  </span>
+                </div>
+              )}
             </div>
-          </div>
-
-          {/* Right: Actions */}
-          <div className="space-y-4">
-            <div className="bg-purple-50 rounded-lg p-4">
-              <h4 className="font-medium text-purple-900 mb-2">Named Insured</h4>
-              <p className="text-purple-800">{submission?.applicant_name || '—'}</p>
-            </div>
-
-            {boundOption?.quote_name && (
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h4 className="font-medium text-gray-700 mb-2">Bound Option</h4>
-                <p className="text-gray-900">{boundOption.quote_name}</p>
-              </div>
-            )}
 
             <div className="flex gap-2">
               <button
