@@ -119,50 +119,6 @@
     </tbody>
 </table>
 
-{# Underlying Coverage Requirements #}
-{% set underlying_layers = [] %}
-{% for layer in tower %}
-    {% if "CMAI" not in layer.carrier %}
-        {% set _ = underlying_layers.append(layer) %}
-    {% endif %}
-{% endfor %}
-
-{% if underlying_layers %}
-<div class="section-header">Underlying Coverage Requirements</div>
-<div class="info-box" style="background: #fff3cd; border-color: #ffc107;">
-    <p class="text-small mb-2" style="color: #856404;">
-        <strong>Important:</strong> This excess policy requires the following underlying coverage to be in place:
-    </p>
-    <table>
-        <thead>
-            <tr>
-                <th>Carrier</th>
-                <th class="text-right">Limit</th>
-                <th class="text-right">Attachment</th>
-                <th class="text-center">Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for layer in underlying_layers %}
-            <tr>
-                <td style="font-size: 12px;">{{ layer.carrier }}</td>
-                <td class="text-right currency" style="font-size: 12px;">${{ layer.limit | format_limit }}</td>
-                <td class="text-right currency" style="font-size: 12px;">
-                    {% if layer.attachment == 0 %}
-                        Primary
-                    {% else %}
-                        ${{ layer.attachment | format_limit }}
-                    {% endif %}
-                </td>
-                <td class="text-center" style="font-size: 12px;">
-                    <span class="badge badge-draft">Required</span>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endif %}
 
 {# Drop-Down Sublimits (if applicable) #}
 {% if has_dropdown_sublimits and sublimit_coverages %}

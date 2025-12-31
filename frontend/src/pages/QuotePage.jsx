@@ -52,11 +52,94 @@ function formatCompact(value) {
   return `$${value}`;
 }
 
-// Get limit from tower_json
+// Get limit from tower_json (returns CMAI's participation - always the limit field)
+// With new model: limit = participation, quota_share = full layer size (when QS)
 function getTowerLimit(quote) {
   if (!quote.tower_json || !quote.tower_json.length) return null;
   const cmaiLayer = quote.tower_json.find(l => l.carrier === 'CMAI') || quote.tower_json[0];
+  // Always return limit (the carrier's participation/written amount)
   return cmaiLayer?.limit;
+}
+
+// Calculate attachment for a specific layer index
+// Handles quota share: consecutive layers with same quota_share (full layer size) are ONE layer
+// All carriers in a QS group share the same attachment point
+// Data model: limit = participation, quota_share = full layer size (when QS)
+function calculateAttachment(layers, targetIdx) {
+  if (!layers || layers.length === 0 || targetIdx <= 0) return 0;
+
+  // If this layer is part of a QS group, find the first layer of the group
+  // All layers in a QS group should have the same attachment
+  let effectiveIdx = targetIdx;
+  const targetLayer = layers[targetIdx];
+
+  if (targetLayer?.quota_share) {
+    const qsFullLayer = targetLayer.quota_share;
+    // Walk backwards to find the start of this QS group (same quota_share value)
+    while (effectiveIdx > 0 &&
+           layers[effectiveIdx - 1]?.quota_share === qsFullLayer) {
+      effectiveIdx--;
+    }
+  }
+
+  // Now calculate attachment by summing layers below effectiveIdx
+  // Treat consecutive QS groups as single layers
+  let attachment = 0;
+  let i = 0;
+
+  while (i < effectiveIdx) {
+    const layer = layers[i];
+
+    if (layer.quota_share) {
+      // This is a QS layer - add the full layer size (quota_share) once
+      const qsFullLayer = layer.quota_share;
+      attachment += qsFullLayer;
+      // Skip all consecutive QS layers with the same quota_share
+      while (i < effectiveIdx && layers[i]?.quota_share === qsFullLayer) {
+        i++;
+      }
+    } else {
+      // Regular layer - add its limit (which is the full amount when not QS)
+      attachment += layer.limit || 0;
+      i++;
+    }
+  }
+
+  return attachment;
+}
+
+// Calculate QS layer fill status for a given layer
+// Returns { filled, total, gap, isComplete } or null if not a QS layer
+function getQsLayerStatus(layers, layerIdx) {
+  const layer = layers[layerIdx];
+  if (!layer?.quota_share) return null;
+
+  const qsTotal = layer.quota_share;
+
+  // Find all consecutive layers with the same quota_share value
+  // Look backwards and forwards from this layer
+  let startIdx = layerIdx;
+  let endIdx = layerIdx;
+
+  // Walk backwards
+  while (startIdx > 0 && layers[startIdx - 1]?.quota_share === qsTotal) {
+    startIdx--;
+  }
+  // Walk forwards
+  while (endIdx < layers.length - 1 && layers[endIdx + 1]?.quota_share === qsTotal) {
+    endIdx++;
+  }
+
+  // Sum all participations in this QS group
+  let filled = 0;
+  for (let i = startIdx; i <= endIdx; i++) {
+    filled += layers[i].limit || 0;
+  }
+
+  const gap = qsTotal - filled;
+  const isComplete = gap <= 0;
+
+  return { filled, total: qsTotal, gap, isComplete, startIdx, endIdx };
 }
 
 // Recalculate attachments for tower layers
@@ -65,10 +148,8 @@ function getTowerLimit(quote) {
 function recalculateAttachments(layers) {
   if (!layers || layers.length === 0) return layers;
 
-  let runningAttachment = 0;
   return layers.map((layer, idx) => {
-    const attachment = idx === 0 ? 0 : runningAttachment;
-    runningAttachment += layer.limit || 0;
+    const attachment = calculateAttachment(layers, idx);
     return { ...layer, attachment };
   });
 }
@@ -940,11 +1021,16 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const [includeSpecimen, setIncludeSpecimen] = useState(true);
   const [editingTower, setEditingTower] = useState(false);
   const [towerLayers, setTowerLayers] = useState(quote.tower_json || []);
+  // QS column shown if any layer has quota_share set
+  const hasAnyQs = (quote.tower_json || []).some(l => l.quota_share);
+  const [showQsColumn, setShowQsColumn] = useState(hasAnyQs);
 
   // Reset tower layers when quote changes
   useEffect(() => {
     setTowerLayers(quote.tower_json || []);
     setEditingTower(false);
+    // Auto-show QS column if any layer has quota share
+    setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
   }, [quote.id]);
 
   const limit = getTowerLimit(quote);
@@ -1121,7 +1207,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           <div className="grid grid-cols-2 gap-6">
             <div>
               <label className="form-label">Policy Limit</label>
-              <div className="form-input bg-gray-50 text-gray-700">{formatCompact(limit)}</div>
+              <input
+                type="text"
+                className="form-input bg-gray-50"
+                value={formatCompact(limit)}
+                readOnly
+              />
             </div>
             <div>
               <label className="form-label">Retention/Deductible</label>
@@ -1195,10 +1286,31 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
         {editingTower ? (
           <div className="space-y-3">
-            {/* Column Headers */}
-            <div className="grid grid-cols-7 gap-3 px-4 text-xs text-gray-500 font-medium">
+            {/* QS Toggle + Column Headers */}
+            <div className="flex items-center gap-4 px-4">
+              <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showQsColumn}
+                  onChange={(e) => {
+                    setShowQsColumn(e.target.checked);
+                    // Clear quota_share from all layers when hiding column
+                    if (!e.target.checked) {
+                      setTowerLayers(towerLayers.map(l => {
+                        const { quota_share, ...rest } = l;
+                        return rest;
+                      }));
+                    }
+                  }}
+                  className="rounded border-gray-300 text-purple-600 w-3 h-3"
+                />
+                Quota Share
+              </label>
+            </div>
+            <div className={`grid ${showQsColumn ? 'grid-cols-8' : 'grid-cols-7'} gap-3 px-4 text-xs text-gray-500 font-medium`}>
               <div>Carrier</div>
               <div>Limit</div>
+              {showQsColumn && <div>Part of</div>}
               <div>Ret/Attach</div>
               <div>Premium</div>
               <div>RPM</div>
@@ -1212,12 +1324,13 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
               const isCMAI = layer.carrier === 'CMAI';
               const isPrimary = actualIdx === 0; // First layer in array is primary (ground level)
 
-              // Calculate attachment for this layer (sum of all limits below it)
-              const calculatedAttachment = towerLayers
-                .slice(0, actualIdx)
-                .reduce((sum, l) => sum + (l.limit || 0), 0);
+              // Calculate attachment for this layer (handles quota share correctly)
+              const calculatedAttachment = calculateAttachment(towerLayers, actualIdx);
 
-              // Calculate RPM
+              // Calculate QS layer fill status (if this is a QS layer)
+              const qsStatus = getQsLayerStatus(towerLayers, actualIdx);
+
+              // Calculate RPM (use limit which is the carrier's participation)
               const rpm = layer.premium && layer.limit
                 ? layer.premium / (layer.limit / 1000000)
                 : null;
@@ -1243,7 +1356,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                     isCMAI ? 'border-purple-300 bg-purple-50' : 'border-gray-200 bg-gray-50'
                   }`}
                 >
-                  <div className="grid grid-cols-7 gap-3 items-center">
+                  <div className={`grid ${showQsColumn ? 'grid-cols-8' : 'grid-cols-7'} gap-3 items-center`}>
                     {/* Carrier */}
                     <div>
                       {isCMAI ? (
@@ -1266,7 +1379,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                       )}
                     </div>
 
-                    {/* Limit */}
+                    {/* Limit (carrier's participation) */}
                     <div>
                       <select
                         className="form-select text-sm py-1"
@@ -1279,13 +1392,49 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                       >
                         <option value={1000000}>$1M</option>
                         <option value={2000000}>$2M</option>
+                        <option value={2500000}>$2.5M</option>
                         <option value={3000000}>$3M</option>
                         <option value={5000000}>$5M</option>
+                        <option value={7500000}>$7.5M</option>
                         <option value={10000000}>$10M</option>
                         <option value={15000000}>$15M</option>
                         <option value={25000000}>$25M</option>
                       </select>
                     </div>
+
+                    {/* Part of (full layer size) - only when QS column shown */}
+                    {showQsColumn && (
+                      <div className="flex items-center gap-1">
+                        <select
+                          className={`form-select text-sm py-1 flex-1 ${qsStatus && !qsStatus.isComplete ? 'border-orange-400 bg-orange-50' : ''}`}
+                          value={layer.quota_share || ''}
+                          title={qsStatus ? `${formatCompact(qsStatus.filled)} of ${formatCompact(qsStatus.total)} filled${!qsStatus.isComplete ? ` (${formatCompact(qsStatus.gap)} gap)` : ''}` : ''}
+                          onChange={(e) => {
+                            const newLayers = [...towerLayers];
+                            const val = e.target.value ? Number(e.target.value) : null;
+                            if (val) {
+                              newLayers[actualIdx] = { ...newLayers[actualIdx], quota_share: val };
+                            } else {
+                              const { quota_share, ...rest } = newLayers[actualIdx];
+                              newLayers[actualIdx] = rest;
+                            }
+                            setTowerLayers(newLayers);
+                          }}
+                        >
+                          <option value="">—</option>
+                          <option value={5000000}>$5M</option>
+                          <option value={10000000}>$10M</option>
+                          <option value={15000000}>$15M</option>
+                          <option value={25000000}>$25M</option>
+                        </select>
+                        {/* Small indicator for incomplete QS */}
+                        {qsStatus && !qsStatus.isComplete && (
+                          <span className="text-orange-500 text-xs font-medium" title={`${formatCompact(qsStatus.gap)} remaining`}>
+                            !
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {/* Retention (primary) or Attachment (excess) */}
                     <div>
@@ -1366,14 +1515,30 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             <button
               className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-gray-400 hover:text-gray-600"
               onClick={() => {
-                // Find CMAI layer index
+                // Find CMAI layer index (new layer goes just below CMAI)
                 const cmaiIdx = towerLayers.findIndex(l => l.carrier === 'CMAI');
+
+                // Search for any incomplete QS layer in the stack (excluding CMAI)
+                // Start from the top (just below CMAI) and work down
+                let inheritedQs = null;
+                const searchStart = cmaiIdx > 0 ? cmaiIdx - 1 : towerLayers.length - 1;
+                for (let i = searchStart; i >= 0; i--) {
+                  const layer = towerLayers[i];
+                  if (layer?.quota_share) {
+                    const qsStatus = getQsLayerStatus(towerLayers, i);
+                    if (qsStatus && !qsStatus.isComplete) {
+                      inheritedQs = layer.quota_share;
+                      break; // Found the topmost incomplete QS
+                    }
+                  }
+                }
 
                 const newLayer = {
                   carrier: '',
                   limit: 5000000,
                   attachment: 0,
                   premium: null,
+                  ...(inheritedQs && { quota_share: inheritedQs }),
                 };
 
                 // Insert before CMAI (so CMAI stays at top)
@@ -1409,12 +1574,10 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                   const isCMAI = layer.carrier === 'CMAI';
                   const isPrimary = actualIdx === 0;
 
-                  // Calculate attachment
-                  const calculatedAttachment = towerLayers
-                    .slice(0, actualIdx)
-                    .reduce((sum, l) => sum + (l.limit || 0), 0);
+                  // Calculate attachment (handles quota share correctly)
+                  const calculatedAttachment = calculateAttachment(towerLayers, actualIdx);
 
-                  // Calculate RPM
+                  // Calculate RPM (use limit which is the carrier's participation)
                   const rpm = layer.premium && layer.limit
                     ? layer.premium / (layer.limit / 1000000)
                     : null;
@@ -1452,9 +1615,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                             </span>
                           )}
                         </div>
-                        {/* Limit */}
+                        {/* Limit - show participation, and "po X" if quota share */}
                         <div className="text-gray-600">
                           {formatCompact(layer.limit)}
+                          {layer.quota_share && (
+                            <span className="text-gray-400 text-xs ml-1">po {formatCompact(layer.quota_share)}</span>
+                          )}
                         </div>
                         {/* xs/ret label */}
                         <div className="text-gray-400 text-xs w-6">

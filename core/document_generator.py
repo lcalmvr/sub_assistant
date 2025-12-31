@@ -414,8 +414,10 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                 if drop_down_endorsement not in context["endorsements"]:
                     context["endorsements"].insert(0, drop_down_endorsement)
 
-            # Subjectivities (placeholder for now)
+            # Subjectivities
             context["subjectivities"] = []
+            if position == "excess":
+                context["subjectivities"].append("Underlying quotes and binders")
 
             # Terms text
             context["terms"] = """Coverage is subject to the terms, conditions, and exclusions of the policy. This quote is valid for 30 days from the date of issuance. Binding is subject to receipt of completed application, premium payment, and underwriter approval. Claims-made policy form applies; coverage is provided for claims first made during the policy period. Defense costs are included within the policy limit unless otherwise stated."""
