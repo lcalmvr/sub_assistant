@@ -62,6 +62,8 @@ export default function CompsPage() {
   const [revenueTolerance, setRevenueTolerance] = useState(0.5);
   const [stageFilter, setStageFilter] = useState('all');
   const [industrySearch, setIndustrySearch] = useState('');
+  const [simMin, setSimMin] = useState(null); // Exposure similarity threshold
+  const [controlsMin, setControlsMin] = useState(null); // Controls similarity threshold
 
   // Selection state
   const [selectedCompId, setSelectedCompId] = useState(null);
@@ -108,6 +110,20 @@ export default function CompsPage() {
     );
   }
 
+  // Exposure similarity threshold
+  if (simMin !== null) {
+    filteredComps = filteredComps.filter(c =>
+      c.similarity_score != null && c.similarity_score >= simMin
+    );
+  }
+
+  // Controls similarity threshold
+  if (controlsMin !== null) {
+    filteredComps = filteredComps.filter(c =>
+      c.controls_similarity != null && c.controls_similarity >= controlsMin
+    );
+  }
+
   // Sort
   filteredComps = [...filteredComps].sort((a, b) => {
     let aVal, bVal;
@@ -131,6 +147,14 @@ export default function CompsPage() {
       case 'limit':
         aVal = a.policy_limit || 0;
         bVal = b.policy_limit || 0;
+        break;
+      case 'sim':
+        aVal = a.similarity_score || 0;
+        bVal = b.similarity_score || 0;
+        break;
+      case 'controls':
+        aVal = a.controls_similarity || 0;
+        bVal = b.controls_similarity || 0;
         break;
       default:
         return 0;
@@ -190,12 +214,21 @@ export default function CompsPage() {
     { value: 'received', label: 'Received' },
   ];
 
+  const similarityOptions = [
+    { value: null, label: 'Any' },
+    { value: 0.9, label: '≥ 90%' },
+    { value: 0.8, label: '≥ 80%' },
+    { value: 0.7, label: '≥ 70%' },
+    { value: 0.6, label: '≥ 60%' },
+    { value: 0.5, label: '≥ 50%' },
+  ];
+
   return (
     <div className="space-y-6">
       {/* Filters */}
       <div className="card">
         <h3 className="form-section-title">Filters</h3>
-        <div className="grid grid-cols-5 gap-4">
+        <div className="grid grid-cols-4 gap-4 mb-4">
           <div>
             <label className="form-label">Layer</label>
             <select
@@ -236,6 +269,45 @@ export default function CompsPage() {
           </div>
 
           <div>
+            <label className="form-label">Industry</label>
+            <input
+              type="text"
+              className="form-input"
+              placeholder="Search industry..."
+              value={industrySearch}
+              onChange={(e) => setIndustrySearch(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-4">
+          <div>
+            <label className="form-label">Exposure Similarity</label>
+            <select
+              className="form-select"
+              value={simMin ?? ''}
+              onChange={(e) => setSimMin(e.target.value === '' ? null : Number(e.target.value))}
+            >
+              {similarityOptions.map(opt => (
+                <option key={opt.value ?? 'any'} value={opt.value ?? ''}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="form-label">Controls Similarity</label>
+            <select
+              className="form-select"
+              value={controlsMin ?? ''}
+              onChange={(e) => setControlsMin(e.target.value === '' ? null : Number(e.target.value))}
+            >
+              {similarityOptions.map(opt => (
+                <option key={opt.value ?? 'any'} value={opt.value ?? ''}>{opt.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
             <label className="form-label">Stage</label>
             <select
               className="form-select"
@@ -248,16 +320,7 @@ export default function CompsPage() {
             </select>
           </div>
 
-          <div>
-            <label className="form-label">Industry</label>
-            <input
-              type="text"
-              className="form-input"
-              placeholder="Search industry..."
-              value={industrySearch}
-              onChange={(e) => setIndustrySearch(e.target.value)}
-            />
-          </div>
+          <div></div>
         </div>
       </div>
 
@@ -338,6 +401,20 @@ export default function CompsPage() {
                     Revenue<SortIndicator column="revenue" />
                   </th>
                   <th className="table-header">Industry</th>
+                  <th
+                    className="table-header cursor-pointer hover:bg-gray-100"
+                    onClick={() => handleSort('sim')}
+                    title="Exposure Similarity"
+                  >
+                    Exp<SortIndicator column="sim" />
+                  </th>
+                  <th
+                    className="table-header cursor-pointer hover:bg-gray-100"
+                    onClick={() => handleSort('controls')}
+                    title="Controls Similarity"
+                  >
+                    Ctrl<SortIndicator column="controls" />
+                  </th>
                   <th className="table-header">{layer === 'excess' ? 'Carrier' : 'Primary'}</th>
                   <th
                     className="table-header cursor-pointer hover:bg-gray-100"
@@ -393,6 +470,16 @@ export default function CompsPage() {
                     </td>
                     <td className="table-cell text-gray-600 truncate max-w-[140px]">
                       {comp.naics_primary_title || '—'}
+                    </td>
+                    <td className="table-cell text-gray-600">
+                      {comp.similarity_score != null
+                        ? `${Math.round(comp.similarity_score * 100)}%`
+                        : '—'}
+                    </td>
+                    <td className="table-cell text-gray-600">
+                      {comp.controls_similarity != null
+                        ? `${Math.round(comp.controls_similarity * 100)}%`
+                        : '—'}
                     </td>
                     <td className="table-cell text-gray-600">
                       {comp.carrier || '—'}

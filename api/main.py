@@ -546,106 +546,75 @@ def unbind_quote(quote_id: str):
 # Comparables Endpoints
 # ─────────────────────────────────────────────────────────────
 
+def get_conn_raw():
+    """Get database connection without RealDictCursor (for modules expecting tuples)."""
+    from pgvector.psycopg2 import register_vector
+    conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+    register_vector(conn)
+    return conn
+
+
 @app.get("/api/submissions/{submission_id}/comparables")
-def get_comparables(
+def get_comparables_endpoint(
     submission_id: str,
     layer: str = "primary",
     months: int = 24,
     revenue_tolerance: float = 0.5,
-    limit: int = 30
+    limit: int = 60
 ):
-    """Get comparable submissions for benchmarking."""
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            # Get current submission's revenue for filtering
-            cur.execute(
-                "SELECT annual_revenue FROM submissions WHERE id = %s",
-                (submission_id,)
-            )
-            current = cur.fetchone()
-            if not current:
-                raise HTTPException(status_code=404, detail="Submission not found")
+    """Get comparable submissions for benchmarking with vector similarity."""
+    from core.benchmarking import get_comparables as get_comparables_core
 
-            current_revenue = float(current.get("annual_revenue") or 0)
+    comparables = get_comparables_core(
+        submission_id,
+        get_conn_raw,
+        similarity_mode="operations",
+        revenue_tolerance=revenue_tolerance if revenue_tolerance > 0 else 0,
+        same_industry=False,
+        stage_filter=None,
+        date_window_months=months,
+        layer_filter=layer,
+        limit=limit,
+    )
 
-            # Calculate revenue bounds
-            if revenue_tolerance > 0 and current_revenue > 0:
-                min_rev = current_revenue * (1 - revenue_tolerance)
-                max_rev = current_revenue * (1 + revenue_tolerance)
-                revenue_clause = "AND s.annual_revenue BETWEEN %s AND %s"
-                revenue_params = [min_rev, max_rev]
-            else:
-                revenue_clause = ""
-                revenue_params = []
+    # Transform field names to match frontend expectations
+    result = []
+    for comp in comparables:
+        result.append({
+            "id": comp.get("id"),
+            "applicant_name": comp.get("applicant_name"),
+            "annual_revenue": comp.get("annual_revenue"),
+            "naics_primary_title": comp.get("naics_title"),
+            "submission_status": comp.get("submission_status"),
+            "submission_outcome": comp.get("submission_outcome"),
+            "effective_date": comp.get("effective_date"),
+            "date_received": comp.get("date_received"),
+            "primary_retention": comp.get("retention"),
+            "policy_limit": comp.get("limit_amount"),
+            "attachment_point": comp.get("attachment_point"),
+            "carrier": comp.get("layer_carrier") or comp.get("underlying_carrier"),
+            "rate_per_mil": comp.get("rate_per_mil"),
+            "similarity_score": comp.get("similarity_score"),
+            "controls_similarity": comp.get("controls_similarity"),
+            "stage": _format_stage(comp.get("submission_status"), comp.get("submission_outcome")),
+            "is_bound": comp.get("is_bound"),
+        })
+    return result
 
-            # Layer filter (primary = attachment 0, excess = attachment > 0)
-            if layer == "excess":
-                layer_clause = "AND COALESCE((t.tower_json->0->>'attachment')::numeric, 0) > 0"
-            else:
-                layer_clause = "AND COALESCE((t.tower_json->0->>'attachment')::numeric, 0) = 0"
 
-            query = f"""
-                SELECT
-                    s.id,
-                    s.applicant_name,
-                    s.annual_revenue,
-                    s.naics_primary_title,
-                    s.submission_status,
-                    s.submission_outcome,
-                    s.effective_date,
-                    s.date_received,
-                    t.id as tower_id,
-                    t.tower_json,
-                    t.primary_retention,
-                    t.risk_adjusted_premium,
-                    t.sold_premium,
-                    t.is_bound,
-                    (t.tower_json->0->>'limit')::numeric as policy_limit,
-                    (t.tower_json->0->>'attachment')::numeric as attachment_point,
-                    (t.tower_json->0->>'carrier') as carrier
-                FROM submissions s
-                LEFT JOIN insurance_towers t ON t.submission_id = s.id
-                WHERE s.id != %s
-                AND s.created_at >= NOW() - INTERVAL '%s months'
-                {revenue_clause}
-                {layer_clause}
-                ORDER BY s.created_at DESC
-                LIMIT %s
-            """
-
-            params = [submission_id, months] + revenue_params + [limit]
-            cur.execute(query, params)
-            rows = cur.fetchall()
-
-            # Process rows to add computed fields
-            comparables = []
-            for row in rows:
-                row_dict = dict(row)
-                # Compute rate per million
-                premium = row_dict.get("sold_premium") or row_dict.get("risk_adjusted_premium")
-                policy_limit = row_dict.get("policy_limit")
-                if premium and policy_limit and policy_limit > 0:
-                    row_dict["rate_per_mil"] = float(premium) / (float(policy_limit) / 1_000_000)
-                else:
-                    row_dict["rate_per_mil"] = None
-
-                # Format stage
-                status = (row_dict.get("submission_status") or "").lower()
-                outcome = (row_dict.get("submission_outcome") or "").lower()
-                if status == "declined":
-                    row_dict["stage"] = "Declined"
-                elif outcome == "bound":
-                    row_dict["stage"] = "Bound"
-                elif outcome == "lost":
-                    row_dict["stage"] = "Lost"
-                elif status == "quoted":
-                    row_dict["stage"] = "Quoted"
-                else:
-                    row_dict["stage"] = "Received"
-
-                comparables.append(row_dict)
-
-            return comparables
+def _format_stage(status: str | None, outcome: str | None) -> str:
+    """Format stage from status/outcome."""
+    status = (status or "").lower()
+    outcome = (outcome or "").lower()
+    if status == "declined":
+        return "Declined"
+    elif outcome == "bound":
+        return "Bound"
+    elif outcome == "lost":
+        return "Lost"
+    elif status == "quoted":
+        return "Quoted"
+    return "Received"
 
 
 @app.get("/api/submissions/{submission_id}/comparables/metrics")
