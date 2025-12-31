@@ -17,7 +17,7 @@ import {
 const ENDORSEMENT_TYPES = [
   { value: 'extension', label: 'Policy Extension' },
   { value: 'name_change', label: 'Named Insured Change' },
-  { value: 'address_change', label: 'Address Change', disabled: true },
+  { value: 'address_change', label: 'Address Change' },
   { value: 'cancellation', label: 'Cancellation' },
   { value: 'reinstatement', label: 'Reinstatement' },
   { value: 'erp', label: 'Extended Reporting Period', disabled: true },
@@ -229,7 +229,7 @@ const PREMIUM_METHODS = [
 ];
 
 // Types that handle premium differently (no standard premium section)
-const NO_PREMIUM_TYPES = ['bor_change', 'cancellation'];
+const NO_PREMIUM_TYPES = ['bor_change', 'cancellation', 'address_change'];
 
 // Calculate days between two dates
 function daysBetween(date1, date2) {
@@ -270,6 +270,9 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
   const [lapseDays, setLapseDays] = useState(0);
   const [description, setDescription] = useState('');
   const [cancellationReason, setCancellationReason] = useState('insured_request');
+  // Address change fields
+  const [oldAddress, setOldAddress] = useState({ street: '', city: '', state: '', zip: '' });
+  const [newAddress, setNewAddress] = useState({ street: '', city: '', state: '', zip: '' });
 
   // Get base premium from bound option
   const basePremium = parseFloat(boundOption?.sold_premium || boundOption?.risk_adjusted_premium || 0);
@@ -328,17 +331,27 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
     setLapseDays(0);
     setDescription('');
     setCancellationReason('insured_request');
+    setOldAddress({ street: '', city: '', state: '', zip: '' });
+    setNewAddress({ street: '', city: '', state: '', zip: '' });
     setError(null);
   };
 
   // Types that should auto-populate annual premium
   const autoPopulatePremiumTypes = ['extension', 'cancellation'];
 
-  // Set old name when type changes to name_change
+  // Set old values when type changes
   const handleTypeChange = (type) => {
     setEndorsementType(type);
     if (type === 'name_change') {
       setOldName(submission?.applicant_name || '');
+    }
+    if (type === 'address_change') {
+      setOldAddress({
+        street: submission?.mailing_address || submission?.address || '',
+        city: submission?.mailing_city || submission?.city || '',
+        state: submission?.mailing_state || submission?.state || '',
+        zip: submission?.mailing_zip || submission?.zip || '',
+      });
     }
     // Set default new expiration date for extension (30 days after current)
     if (type === 'extension' && submission?.expiration_date) {
@@ -400,6 +413,19 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
           new_name: newName,
         };
         desc = `Named insured changed to ${newName}`;
+        break;
+
+      case 'address_change':
+        if (!newAddress.street || !newAddress.city || !newAddress.state || !newAddress.zip) {
+          setError('All new address fields are required');
+          setIsSubmitting(false);
+          return;
+        }
+        changeDetails = {
+          old_address: oldAddress,
+          new_address: newAddress,
+        };
+        desc = `Address changed to ${newAddress.street}, ${newAddress.city}, ${newAddress.state} ${newAddress.zip}`;
         break;
 
       case 'reinstatement':
@@ -553,6 +579,69 @@ function AddEndorsementModal({ isOpen, onClose, submission, boundOption, onSucce
                   placeholder="Enter new name"
                 />
               </div>
+            </div>
+          </div>
+        )}
+
+        {endorsementType === 'address_change' && (
+          <div className="mb-4 p-4 bg-gray-50 rounded-lg">
+            <h4 className="font-medium text-gray-900 mb-3">Address Change</h4>
+            <div className="space-y-4">
+              {/* Current Address - read only */}
+              <div>
+                <label className="form-label text-gray-500">Current Address</label>
+                <div className="form-input bg-gray-100 text-gray-700">
+                  {oldAddress.street || oldAddress.city || oldAddress.state || oldAddress.zip ? (
+                    <>
+                      {oldAddress.street && <div>{oldAddress.street}</div>}
+                      <div>
+                        {[oldAddress.city, oldAddress.state, oldAddress.zip].filter(Boolean).join(', ')}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-gray-400">No address on file</span>
+                  )}
+                </div>
+              </div>
+              {/* New Address */}
+              <div>
+                <label className="form-label">New Address *</label>
+                <div className="grid grid-cols-1 gap-2">
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={newAddress.street}
+                    onChange={(e) => setNewAddress({ ...newAddress, street: e.target.value })}
+                    placeholder="Street address"
+                  />
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={newAddress.city}
+                      onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })}
+                      placeholder="City"
+                    />
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={newAddress.state}
+                      onChange={(e) => setNewAddress({ ...newAddress, state: e.target.value })}
+                      placeholder="State"
+                      maxLength={2}
+                    />
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={newAddress.zip}
+                      onChange={(e) => setNewAddress({ ...newAddress, zip: e.target.value })}
+                      placeholder="ZIP"
+                      maxLength={10}
+                    />
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">No premium change for address endorsements</p>
             </div>
           </div>
         )}
