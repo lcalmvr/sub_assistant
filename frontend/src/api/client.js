@@ -30,6 +30,10 @@ export const generateQuoteDocument = (quoteId) => api.post(`/quotes/${quoteId}/g
 export const generateBinderDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-binder`);
 export const generatePolicyDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-policy`);
 
+// Endorsements
+export const createEndorsement = (submissionId, data) => api.post(`/submissions/${submissionId}/endorsements`, data);
+export const issueEndorsement = (endorsementId) => api.post(`/endorsements/${endorsementId}/issue`);
+
 // Package Builder
 export const getPackageDocuments = (position = 'primary') => api.get(`/package-documents/${position}`);
 export const getQuoteEndorsements = (quoteId) => api.get(`/quotes/${quoteId}/endorsements`);

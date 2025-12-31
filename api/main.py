@@ -757,10 +757,31 @@ def get_policy_data(submission_id: str):
             """, (submission_id,))
             documents = cur.fetchall()
 
-            # Subjectivities and endorsements tables may not exist yet
-            # Return empty arrays for now - these can be added when tables are created
+            # Get subjectivities (table may not exist)
             subjectivities = []
+            try:
+                cur.execute("""
+                    SELECT id, text, status
+                    FROM subjectivities
+                    WHERE submission_id = %s
+                    ORDER BY created_at
+                """, (submission_id,))
+                subjectivities = [dict(row) for row in cur.fetchall()]
+            except Exception:
+                conn.rollback()  # Reset transaction state
+
+            # Get endorsements
             endorsements = []
+            cur.execute("""
+                SELECT id, endorsement_number, endorsement_type, effective_date,
+                       description, premium_change, status, document_url,
+                       formal_title, change_details
+                FROM policy_endorsements
+                WHERE submission_id = %s
+                AND status != 'void'
+                ORDER BY endorsement_number
+            """, (submission_id,))
+            endorsements = [dict(row) for row in cur.fetchall()]
 
             # Compute effective premium
             base_premium = 0
@@ -776,6 +797,110 @@ def get_policy_data(submission_id: str):
                 "effective_premium": base_premium,
                 "is_issued": any(d.get("document_type") == "policy" for d in (documents or []))
             }
+
+
+# Endorsement types for validation
+ENDORSEMENT_TYPES = [
+    "extension", "name_change", "address_change", "cancellation",
+    "reinstatement", "erp", "coverage_change", "bor_change", "other"
+]
+
+
+class EndorsementCreate(BaseModel):
+    endorsement_type: str
+    effective_date: str  # ISO date string
+    description: Optional[str] = None
+    change_details: Optional[dict] = None
+    premium_change: Optional[float] = 0
+    notes: Optional[str] = None
+
+
+@app.post("/api/submissions/{submission_id}/endorsements")
+def create_endorsement_endpoint(submission_id: str, data: EndorsementCreate):
+    """Create a new draft endorsement for a submission."""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.endorsement_management import create_endorsement, ENDORSEMENT_TYPES as VALID_TYPES
+    from datetime import datetime
+
+    if data.endorsement_type not in VALID_TYPES:
+        raise HTTPException(status_code=400, detail=f"Invalid endorsement type: {data.endorsement_type}")
+
+    # Get bound option for the submission
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, sold_premium
+                FROM insurance_towers
+                WHERE submission_id = %s AND is_bound = true
+                LIMIT 1
+            """, (submission_id,))
+            bound = cur.fetchone()
+            if not bound:
+                raise HTTPException(status_code=400, detail="No bound policy found")
+
+    tower_id = bound["id"]
+    base_premium = float(bound.get("sold_premium") or 0)
+
+    # Parse effective date
+    try:
+        effective_date = datetime.strptime(data.effective_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    # Generate description if not provided
+    description = data.description
+    if not description:
+        type_labels = {
+            "extension": "Policy Extension",
+            "name_change": "Named Insured Change",
+            "address_change": "Address Change",
+            "cancellation": "Cancellation",
+            "reinstatement": "Reinstatement",
+            "erp": "Extended Reporting Period",
+            "coverage_change": "Coverage Change",
+            "bor_change": "Broker of Record Change",
+            "other": "Endorsement",
+        }
+        description = type_labels.get(data.endorsement_type, "Endorsement")
+        # Add details to description
+        if data.change_details:
+            if data.endorsement_type == "name_change" and data.change_details.get("new_name"):
+                description = f"Named insured changed to {data.change_details['new_name']}"
+            elif data.endorsement_type == "extension" and data.change_details.get("new_expiration_date"):
+                description = f"Policy extended to {data.change_details['new_expiration_date']}"
+
+    try:
+        endorsement_id = create_endorsement(
+            submission_id=submission_id,
+            tower_id=tower_id,
+            endorsement_type=data.endorsement_type,
+            effective_date=effective_date,
+            description=description,
+            change_details=data.change_details,
+            premium_method="flat",
+            premium_change=data.premium_change or 0,
+            original_annual_premium=base_premium,
+            notes=data.notes,
+            created_by="user"
+        )
+        return {"id": endorsement_id, "status": "created"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/endorsements/{endorsement_id}/issue")
+def issue_endorsement_endpoint(endorsement_id: str):
+    """Issue a draft endorsement."""
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.endorsement_management import issue_endorsement
+
+    try:
+        issue_endorsement(endorsement_id, issued_by="user")
+        return {"status": "issued"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─────────────────────────────────────────────────────────────
