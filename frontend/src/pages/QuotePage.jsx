@@ -12,6 +12,7 @@ import {
   getQuoteDocuments,
   getPackageDocuments,
   getQuoteEndorsements,
+  getQuoteAutoEndorsements,
   generateQuotePackage,
   getLatestDocument,
   getSubmissionDocuments,
@@ -618,6 +619,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
       position: position,
       status: 'active',
     }).then(res => res.data),
+  });
+
+  // Query for auto-attach endorsements based on quote data
+  const { data: autoEndorsementsData } = useQuery({
+    queryKey: ['autoEndorsements', quote.id],
+    queryFn: () => getQuoteAutoEndorsements(quote.id).then(res => res.data),
   });
 
   // Update mutation
@@ -1402,6 +1409,24 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           );
         })()}
 
+        {/* Auto-attached endorsements - based on quote rules */}
+        {autoEndorsementsData?.auto_endorsements?.length > 0 && (
+          <div className="mb-4">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Auto-Added (based on quote)</p>
+            <div className="space-y-1">
+              {autoEndorsementsData.auto_endorsements.map((e) => (
+                <div key={e.id} className="flex items-center gap-2 text-sm text-gray-600">
+                  <span className="text-amber-500">⚡</span>
+                  <span>{e.code} - {e.title}</span>
+                  {e.auto_reason && (
+                    <span className="text-xs text-gray-400 italic">({e.auto_reason})</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Add endorsement selector */}
         <div className="flex gap-2 mb-4">
           <select
@@ -1410,17 +1435,21 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             onChange={(e) => setSelectedEndorsement(e.target.value)}
           >
             <option value="">Select endorsement to add...</option>
-            {availableEndorsements && availableEndorsements
-              .filter(e =>
-                !REQUIRED_ENDORSEMENT_CODES.includes(e.code) &&
-                !endorsements.includes(e.title)
-              )
-              .map((e) => (
-                <option key={e.id} value={e.title}>
-                  {e.code} - {e.title}
-                  {e.category && ` [${ENDORSEMENT_CATEGORIES[e.category] || e.category}]`}
-                </option>
-              ))}
+            {availableEndorsements && (() => {
+              const autoTitles = (autoEndorsementsData?.auto_endorsements || []).map(e => e.title);
+              return availableEndorsements
+                .filter(e =>
+                  !REQUIRED_ENDORSEMENT_CODES.includes(e.code) &&
+                  !autoTitles.includes(e.title) &&
+                  !endorsements.includes(e.title)
+                )
+                .map((e) => (
+                  <option key={e.id} value={e.title}>
+                    {e.code} - {e.title}
+                    {e.category && ` [${ENDORSEMENT_CATEGORIES[e.category] || e.category}]`}
+                  </option>
+                ));
+            })()}
           </select>
           <button
             className="btn btn-outline"

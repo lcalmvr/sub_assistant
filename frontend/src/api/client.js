@@ -40,6 +40,7 @@ export const deleteEndorsement = (endorsementId) => api.delete(`/endorsements/${
 // Package Builder
 export const getPackageDocuments = (position = 'primary') => api.get(`/package-documents/${position}`);
 export const getQuoteEndorsements = (quoteId) => api.get(`/quotes/${quoteId}/endorsements`);
+export const getQuoteAutoEndorsements = (quoteId) => api.get(`/quotes/${quoteId}/auto-endorsements`);
 export const generateQuotePackage = (quoteId, data) => api.post(`/quotes/${quoteId}/generate-package`, data);
 
 // Rating

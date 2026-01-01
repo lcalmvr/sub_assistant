@@ -3262,6 +3262,84 @@ def get_quote_endorsements(quote_id: str):
     }
 
 
+@app.get("/api/quotes/{quote_id}/auto-endorsements")
+def get_quote_auto_endorsements(quote_id: str):
+    """
+    Get endorsements that should auto-attach based on quote data and endorsement rules.
+    Returns endorsements with auto_reason explaining why they were attached.
+    """
+    import json
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT tower_json, position, sublimits, coverages, primary_retention
+                FROM insurance_towers
+                WHERE id = %s
+            """, (quote_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            tower_json = row.get("tower_json", [])
+            if isinstance(tower_json, str):
+                tower_json = json.loads(tower_json)
+
+            position = row.get("position", "primary")
+            sublimits = row.get("sublimits", [])
+            if isinstance(sublimits, str):
+                sublimits = json.loads(sublimits)
+
+            coverages = row.get("coverages", {})
+            if isinstance(coverages, str):
+                coverages = json.loads(coverages)
+
+            # Calculate limit and retention from tower
+            limit = 0
+            retention = row.get("primary_retention", 25000)
+            if tower_json:
+                cmai_layer = next((l for l in tower_json if "CMAI" in (l.get("carrier") or "").upper()), tower_json[0] if tower_json else None)
+                if cmai_layer:
+                    limit = cmai_layer.get("limit", 0)
+                # Get retention from primary layer
+                if tower_json[0]:
+                    retention = tower_json[0].get("retention", retention)
+
+            # Build quote_data dict for auto-attach evaluation
+            quote_data = {
+                "sublimits": sublimits,
+                "limit": limit,
+                "retention": retention,
+                "coverages": coverages,
+                "follow_form": position != "primary",  # Excess quotes follow form
+            }
+
+    # Get auto-attach endorsements
+    try:
+        from core.document_library import get_auto_attach_endorsements
+
+        auto_endorsements = get_auto_attach_endorsements(quote_data, position)
+
+        # Return simplified data for frontend
+        return {
+            "auto_endorsements": [
+                {
+                    "id": e.get("id"),
+                    "code": e.get("code"),
+                    "title": e.get("title"),
+                    "category": e.get("category"),
+                    "auto_reason": e.get("auto_reason"),
+                }
+                for e in auto_endorsements
+            ]
+        }
+    except Exception as e:
+        # If auto-attach fails, return empty list
+        return {"auto_endorsements": [], "error": str(e)}
+
+
 class PackageGenerateRequest(BaseModel):
     package_type: str = "quote_only"  # "quote_only" or "full_package"
     selected_documents: list = []  # List of document library IDs
