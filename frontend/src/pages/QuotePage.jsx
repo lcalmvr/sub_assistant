@@ -1871,7 +1871,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           {/* Required endorsements */}
           {availableEndorsements?.filter(e => REQUIRED_ENDORSEMENT_CODES.includes(e.code)).map((e) => (
             <div key={e.id} className="flex items-center gap-2 py-1 text-sm text-gray-600">
-              <span className="w-5 text-center text-gray-300 text-xs">req</span>
+              <span className="w-5 text-center text-gray-400">🔒</span>
               <span className="flex-1">{e.code} - {e.title}</span>
             </div>
           ))}
@@ -1880,7 +1880,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           {autoEndorsementsData?.auto_endorsements?.map((e) => (
             <div key={e.id} className="py-1">
               <div className="flex items-center gap-2 text-sm text-gray-600">
-                <span className="w-5 text-center text-amber-400 text-xs">auto</span>
+                <span className="w-5 text-center text-amber-500">⚡</span>
                 <span className="flex-1">
                   {e.code} - {e.title}
                   {e.auto_reason && <span className="ml-1 text-xs text-gray-400">({e.auto_reason})</span>}
