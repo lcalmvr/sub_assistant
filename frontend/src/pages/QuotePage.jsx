@@ -78,7 +78,7 @@ function getTowerLimit(quote) {
 }
 
 // Generate auto option name from tower structure
-// Format: Primary = "$1M x $25K", Excess = "$1M xs $6M x $25K", QS Excess = "$5M po $10M xs $5M x $25K"
+// Format: Primary = "$1M x $25K", Excess = "$1M xs $6M", QS Excess = "$5M po $10M xs $5M"
 function generateOptionName(quote) {
   const tower = quote.tower_json || [];
   const cmaiIdx = tower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
@@ -93,18 +93,18 @@ function generateOptionName(quote) {
   const cmaiQs = cmaiLayer.quota_share;
   const qsStr = cmaiQs ? ` po ${formatCompact(cmaiQs)}` : '';
 
-  // Get retention from primary layer (index 0 if not CMAI primary)
-  const primaryLayer = tower[0];
-  const retention = primaryLayer?.retention || quote.primary_retention || 25000;
-  const retentionStr = formatCompact(retention);
-
   if (quote.position === 'excess' && cmaiIdx >= 0) {
     // Calculate CMAI's attachment using the tower structure
     const attachment = calculateAttachment(tower, cmaiIdx);
     const attachStr = formatCompact(attachment);
-    return `${limitStr}${qsStr} xs ${attachStr} x ${retentionStr}`;
+    // Excess: no retention (SIR is primary concept)
+    return `${limitStr}${qsStr} xs ${attachStr}`;
   }
 
+  // Primary: show retention
+  const primaryLayer = tower[0];
+  const retention = primaryLayer?.retention || quote.primary_retention || 25000;
+  const retentionStr = formatCompact(retention);
   return `${limitStr} x ${retentionStr}`;
 }
 
@@ -545,116 +545,88 @@ const ENDORSEMENT_CATEGORIES = {
 };
 
 // Subjectivity row with status and overflow menu
-function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange, openMenuId, setOpenMenuId, showOptions, allQuoteOptions, linkedQuoteIds, onToggleQuote }) {
-  const statusMenuId = `subj-${subj.id}-status`;
-  const actionsMenuId = `subj-${subj.id}-actions`;
-  const statusMenuOpen = openMenuId === statusMenuId;
-  const actionsMenuOpen = openMenuId === actionsMenuId;
+function SubjectivityRow({ subj, idx, position, onDelete, onStatusChange, showOptions, allQuoteOptions, linkedQuoteIds, onToggleQuote }) {
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
 
   // Status badge colors
   const statusColors = {
-    pending: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200',
-    received: 'bg-green-100 text-green-800 hover:bg-green-200',
-    waived: 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+    pending: 'bg-yellow-100 text-yellow-800',
+    received: 'bg-green-100 text-green-800',
+    waived: 'bg-gray-100 text-gray-600',
   };
 
   return (
-    <div className="flex items-center gap-2 p-2 bg-gray-50 rounded group relative">
-      <div className="flex-1 min-w-0">
-        <span className="text-sm text-gray-700">{subj.text}</span>
-        {showOptions && allQuoteOptions && allQuoteOptions.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {allQuoteOptions.map((opt) => {
-              const isLinked = linkedQuoteIds?.includes(opt.id);
-              return (
+    <div className="py-1">
+      <div className="flex items-start gap-2 text-sm">
+        <span className="w-5 text-center text-gray-300 mt-0.5 flex-shrink-0">+</span>
+        <div className="relative flex-shrink-0">
+          <button
+            className={`text-xs w-16 text-center py-0.5 rounded cursor-pointer transition-colors ${statusColors[subj.status] || statusColors.pending}`}
+            onClick={() => setShowStatusMenu(!showStatusMenu)}
+            onBlur={() => setTimeout(() => setShowStatusMenu(false), 150)}
+          >
+            {subj.status || 'pending'}
+          </button>
+          {showStatusMenu && (
+            <div className="absolute left-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[100px]">
+              {['pending', 'received', 'waived'].map(status => (
                 <button
-                  key={opt.id}
-                  className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
-                    isLinked
-                      ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                      : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                  }`}
-                  onClick={() => onToggleQuote(subj.id, opt.id, isLinked)}
-                  title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
+                  key={status}
+                  className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 ${subj.status === status ? 'text-purple-600 font-medium' : 'text-gray-700'}`}
+                  onClick={() => { onStatusChange(status); setShowStatusMenu(false); }}
                 >
-                  {opt.name}
+                  {status}
                 </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-      {/* Status badge (clickable) */}
-      <div className="relative">
-        <button
-          className={`text-xs px-2 py-0.5 rounded cursor-pointer transition-colors ${statusColors[subj.status] || statusColors.pending}`}
-          onClick={() => setOpenMenuId(statusMenuOpen ? null : statusMenuId)}
-          onBlur={() => setTimeout(() => { if (openMenuId === statusMenuId) setOpenMenuId(null); }, 150)}
-        >
-          {subj.status || 'pending'}
-        </button>
-        {statusMenuOpen && (
-          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[120px]">
-            {['pending', 'received', 'waived'].map(status => (
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <span className="text-gray-700">{subj.text}</span>
+          {showOptions && allQuoteOptions && allQuoteOptions.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {allQuoteOptions.map((opt) => {
+                const isLinked = linkedQuoteIds?.includes(opt.id);
+                return (
+                  <button
+                    key={opt.id}
+                    className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                      isLinked
+                        ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                    }`}
+                    onClick={() => onToggleQuote(subj.id, opt.id, isLinked)}
+                    title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
+                  >
+                    {opt.name}
+                  </button>
+                );
+              })}
+              {/* Delete all badge */}
               <button
-                key={status}
-                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 ${subj.status === status ? 'text-purple-600 font-medium' : 'text-gray-700'}`}
-                onClick={() => { onStatusChange(status); setOpenMenuId(null); }}
+                className="text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                onClick={() => {
+                  const displayText = subj.text.length > 50 ? `${subj.text.substring(0, 50)}...` : subj.text;
+                  if (window.confirm(`Remove "${displayText}" from all options?`)) {
+                    onDelete();
+                  }
+                }}
+                title="Remove from all options"
               >
-                {subj.status === status && '✓ '}{status}
+                × all
               </button>
-            ))}
-          </div>
-        )}
-      </div>
-      {/* Actions badge (clickable, same style) */}
-      <div className="relative">
-        <button
-          className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 cursor-pointer transition-colors"
-          onClick={() => setOpenMenuId(actionsMenuOpen ? null : actionsMenuId)}
-          onBlur={() => setTimeout(() => { if (openMenuId === actionsMenuId) setOpenMenuId(null); }, 150)}
-        >
-          ×
-        </button>
-        {actionsMenuOpen && (
-          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[200px]">
-            <button
-              className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-              onClick={() => { onUnlinkThis(); setOpenMenuId(null); }}
-            >
-              Remove from this option
-            </button>
-            <button
-              className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-              onClick={() => { onUnlinkPosition(); setOpenMenuId(null); }}
-            >
-              Remove from all {position}
-            </button>
-            <button
-              className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 border-t border-gray-100"
-              onClick={() => {
-                if (window.confirm('Delete this subjectivity from ALL quote options (primary and excess)?')) {
-                  onDelete();
-                  setOpenMenuId(null);
-                }
-              }}
-            >
-              Delete from submission
-            </button>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
 // Auto-added subjectivity row (from templates) - materializes on interaction
-function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, onCreate, onRefetch, openMenuId, setOpenMenuId, showOptions, allQuoteOptions }) {
-  const statusMenuId = `auto-${template.id}-status`;
-  const actionsMenuId = `auto-${template.id}-actions`;
-  const statusMenuOpen = openMenuId === statusMenuId;
-  const actionsMenuOpen = openMenuId === actionsMenuId;
+function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, onCreate, onRefetch, showOptions, allQuoteOptions }) {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
 
   // Create subjectivity with status and link to all quotes of same position
   const materializeWithStatus = async (status) => {
@@ -679,6 +651,8 @@ function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, o
   // "Delete" an auto-added means excluding it - we create it with status 'excluded'
   const excludeAutoSubjectivity = async () => {
     if (!submissionId || isProcessing) return;
+    const displayText = template.text.length > 50 ? `${template.text.substring(0, 50)}...` : template.text;
+    if (!window.confirm(`Remove "${displayText}" from all options?`)) return;
     setIsProcessing(true);
     try {
       const response = await fetch(`/api/submissions/${submissionId}/subjectivities`, {
@@ -697,82 +671,56 @@ function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, o
   };
 
   return (
-    <div className="flex items-center gap-2 p-2 bg-gray-50 rounded group relative">
-      <span className="text-yellow-500">⚡</span>
-      <div className="flex-1 min-w-0">
-        <span className="text-sm text-gray-700">{template.text}</span>
-        {showOptions && allQuoteOptions && allQuoteOptions.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {allQuoteOptions.map((opt) => (
-              <span
-                key={opt.id}
-                className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 opacity-60"
-                title="Will apply to all options when activated"
+    <div className="py-1">
+      <div className="flex items-start gap-2 text-sm">
+        <span className="w-5 text-center text-amber-500 mt-0.5 flex-shrink-0">⚡</span>
+        <div className="relative flex-shrink-0">
+          <button
+            className="text-xs w-16 text-center py-0.5 rounded bg-yellow-100 text-yellow-800 cursor-pointer transition-colors"
+            onClick={() => setShowStatusMenu(!showStatusMenu)}
+            onBlur={() => setTimeout(() => setShowStatusMenu(false), 150)}
+            disabled={isProcessing}
+          >
+            {isProcessing ? '...' : 'pending'}
+          </button>
+          {showStatusMenu && !isProcessing && (
+            <div className="absolute left-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[100px]">
+              {['pending', 'received', 'waived'].map(status => (
+                <button
+                  key={status}
+                  className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 ${status === 'pending' ? 'text-purple-600 font-medium' : 'text-gray-700'}`}
+                  onClick={() => { materializeWithStatus(status); setShowStatusMenu(false); }}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <span className="text-gray-600">{template.text}</span>
+          {showOptions && allQuoteOptions && allQuoteOptions.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {allQuoteOptions.map((opt) => (
+                <span
+                  key={opt.id}
+                  className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 opacity-60"
+                >
+                  {opt.name}
+                </span>
+              ))}
+              {/* Delete all badge */}
+              <button
+                className="text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                onClick={excludeAutoSubjectivity}
+                disabled={isProcessing}
+                title="Remove from all options"
               >
-                {opt.name}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-      {/* Status badge (clickable) */}
-      <div className="relative">
-        <button
-          className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 hover:bg-yellow-200 cursor-pointer transition-colors"
-          onClick={() => setOpenMenuId(statusMenuOpen ? null : statusMenuId)}
-          onBlur={() => setTimeout(() => { if (openMenuId === statusMenuId) setOpenMenuId(null); }, 150)}
-          disabled={isProcessing}
-        >
-          {isProcessing ? '...' : 'pending'}
-        </button>
-        {statusMenuOpen && !isProcessing && (
-          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[120px]">
-            <button
-              className="w-full text-left px-3 py-1.5 text-sm text-purple-600 font-medium hover:bg-gray-50"
-              onClick={() => setOpenMenuId(null)}
-            >
-              ✓ pending
-            </button>
-            <button
-              className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-              onClick={() => { materializeWithStatus('received'); setOpenMenuId(null); }}
-            >
-              received
-            </button>
-            <button
-              className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
-              onClick={() => { materializeWithStatus('waived'); setOpenMenuId(null); }}
-            >
-              waived
-            </button>
-          </div>
-        )}
-      </div>
-      {/* Actions badge (clickable, same style) */}
-      <div className="relative">
-        <button
-          className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 cursor-pointer transition-colors"
-          onClick={() => setOpenMenuId(actionsMenuOpen ? null : actionsMenuId)}
-          onBlur={() => setTimeout(() => { if (openMenuId === actionsMenuId) setOpenMenuId(null); }, 150)}
-        >
-          ×
-        </button>
-        {actionsMenuOpen && (
-          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[200px]">
-            <button
-              className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
-              onClick={() => {
-                if (window.confirm('Remove this auto-added subjectivity?')) {
-                  excludeAutoSubjectivity();
-                  setOpenMenuId(null);
-                }
-              }}
-              disabled={isProcessing}
-            >
-              Remove from this submission
-            </button>
-          </div>
-        )}
+                × all
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1701,90 +1649,63 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
       {/* Subjectivities */}
       <div className="card">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-4">
           <h4 className="form-section-title mb-0">Subjectivities</h4>
-          {allQuotes && allQuotes.length > 1 && (
-            <button
-              className={`text-xs px-2 py-1 rounded border transition-colors ${showSubjOptions ? 'bg-purple-100 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
-              onClick={() => setShowSubjOptions(!showSubjOptions)}
-              title={showSubjOptions ? 'Hide option assignments' : 'Show option assignments'}
-            >
-              Options {showSubjOptions ? 'ON' : 'OFF'}
-            </button>
-          )}
+          <button
+            className={`text-xs px-2 py-1 rounded border transition-colors ${showSubjOptions ? 'bg-purple-100 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+            onClick={() => setShowSubjOptions(!showSubjOptions)}
+          >
+            Options {showSubjOptions ? 'ON' : 'OFF'}
+          </button>
         </div>
 
-        {/* Auto-added subjectivities */}
-        {(() => {
-          // Get auto-apply templates that aren't already in quoteSubjectivities
-          const existingTexts = quoteSubjectivities.map(s => s.text);
-          const autoTemplates = subjectivityTemplates
-            .filter(t => t.auto_apply && !existingTexts.includes(t.text));
+        {/* Simple list of all subjectivities */}
+        <div className="space-y-1.5">
+          {/* Auto-added subjectivities */}
+          {(() => {
+            const existingTexts = quoteSubjectivities.map(s => s.text);
+            return subjectivityTemplates
+              .filter(t => t.auto_apply && !existingTexts.includes(t.text))
+              .map((t, idx) => (
+                <AutoSubjectivityRow
+                  key={t.id}
+                  template={t}
+                  idx={idx}
+                  position={position}
+                  submissionId={submission.id}
+                  quoteId={quote?.id}
+                  onCreate={(data) => createSubjectivityMutation.mutate(data)}
+                  onRefetch={() => {
+                    refetchSubjectivities();
+                    queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submission.id] });
+                    allQuotes?.forEach(q => {
+                      queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+                    });
+                  }}
+                  showOptions={showSubjOptions}
+                  allQuoteOptions={allQuoteOptions}
+                />
+              ));
+          })()}
 
-          return autoTemplates.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-                Auto-added (based on {position})
-              </p>
-              <div className="space-y-2">
-                {autoTemplates.map((t, idx) => (
-                  <AutoSubjectivityRow
-                    key={t.id}
-                    template={t}
-                    idx={idx}
-                    position={position}
-                    submissionId={submission.id}
-                    quoteId={quote?.id}
-                    onCreate={(data) => createSubjectivityMutation.mutate(data)}
-                    onRefetch={() => {
-                      refetchSubjectivities();
-                      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submission.id] });
-                      allQuotes?.forEach(q => {
-                        queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
-                      });
-                    }}
-                    openMenuId={openSubjMenu}
-                    setOpenMenuId={setOpenSubjMenu}
-                    showOptions={showSubjOptions}
-                    allQuoteOptions={allQuoteOptions}
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Manually added list */}
-        {(() => {
-          const visibleSubjectivities = quoteSubjectivities.filter(s => s.status !== 'excluded');
-          return visibleSubjectivities.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-                Added ({visibleSubjectivities.length})
-              </p>
-              <div className="space-y-2">
-                {visibleSubjectivities.map((subj, idx) => (
-                  <SubjectivityRow
-                    key={subj.id}
-                    subj={subj}
-                    idx={idx}
-                    position={position}
-                    onUnlinkThis={() => unlinkSubjectivityMutation.mutate(subj.id)}
-                    onUnlinkPosition={() => unlinkFromPositionMutation.mutate(subj.id)}
-                    onDelete={() => deleteSubjectivityMutation.mutate(subj.id)}
-                    onStatusChange={(status) => updateSubjectivityMutation.mutate({ id: subj.id, status })}
-                    openMenuId={openSubjMenu}
-                    setOpenMenuId={setOpenSubjMenu}
-                    showOptions={showSubjOptions}
-                    allQuoteOptions={allQuoteOptions}
-                    linkedQuoteIds={subjQuoteIdsMap[subj.text] || []}
-                    onToggleQuote={(subjId, quoteId, isLinked) => toggleSubjQuoteMutation.mutate({ subjectivityId: subjId, quoteId, isLinked })}
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })()}
+          {/* Manually added subjectivities */}
+          {quoteSubjectivities
+            .filter(s => s.status !== 'excluded')
+            .map((subj, idx) => (
+              <SubjectivityRow
+                key={subj.id}
+                subj={subj}
+                idx={idx}
+                position={position}
+                onDelete={() => deleteSubjectivityMutation.mutate(subj.id)}
+                onStatusChange={(status) => updateSubjectivityMutation.mutate({ id: subj.id, status })}
+                showOptions={showSubjOptions}
+                allQuoteOptions={allQuoteOptions}
+                linkedQuoteIds={subjQuoteIdsMap[subj.text] || []}
+                onToggleQuote={(subjId, quoteId, isLinked) => toggleSubjQuoteMutation.mutate({ subjectivityId: subjId, quoteId, isLinked })}
+              />
+            ))}
+        </div>
 
         {/* Add controls at bottom */}
         <div className="border-t border-gray-100 pt-4">
