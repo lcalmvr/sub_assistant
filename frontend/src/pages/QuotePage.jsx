@@ -24,6 +24,7 @@ import {
   createSubjectivity,
   updateSubjectivity,
   deleteSubjectivity,
+  linkSubjectivityToQuote,
   unlinkSubjectivityFromQuote,
   unlinkSubjectivityFromPosition,
 } from '../api/client';
@@ -541,7 +542,7 @@ const ENDORSEMENT_CATEGORIES = {
 };
 
 // Subjectivity row with status and overflow menu
-function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange, openMenuId, setOpenMenuId, showOptions, optionNames }) {
+function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange, openMenuId, setOpenMenuId, showOptions, allQuoteOptions, linkedQuoteIds, onToggleQuote }) {
   const statusMenuId = `subj-${subj.id}-status`;
   const actionsMenuId = `subj-${subj.id}-actions`;
   const statusMenuOpen = openMenuId === statusMenuId;
@@ -558,16 +559,25 @@ function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, 
     <div className="flex items-center gap-2 p-2 bg-gray-50 rounded group relative">
       <div className="flex-1 min-w-0">
         <span className="text-sm text-gray-700">{subj.text}</span>
-        {showOptions && optionNames && optionNames.length > 0 && (
-          <div className="flex flex-wrap gap-1 mt-0.5">
-            {optionNames.slice(0, 3).map((name, i) => (
-              <span key={i} className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">
-                {name}
-              </span>
-            ))}
-            {optionNames.length > 3 && (
-              <span className="text-xs text-gray-500">+{optionNames.length - 3}</span>
-            )}
+        {showOptions && allQuoteOptions && allQuoteOptions.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {allQuoteOptions.map((opt) => {
+              const isLinked = linkedQuoteIds?.includes(opt.id);
+              return (
+                <button
+                  key={opt.id}
+                  className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                    isLinked
+                      ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                      : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                  }`}
+                  onClick={() => onToggleQuote(subj.id, opt.id, isLinked)}
+                  title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
+                >
+                  {opt.name}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -636,7 +646,7 @@ function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, 
 }
 
 // Auto-added subjectivity row (from templates) - materializes on interaction
-function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, onCreate, onRefetch, openMenuId, setOpenMenuId }) {
+function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, onCreate, onRefetch, openMenuId, setOpenMenuId, showOptions, allQuoteOptions }) {
   const statusMenuId = `auto-${template.id}-status`;
   const actionsMenuId = `auto-${template.id}-actions`;
   const statusMenuOpen = openMenuId === statusMenuId;
@@ -688,6 +698,19 @@ function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, o
       <span className="text-yellow-500">⚡</span>
       <div className="flex-1 min-w-0">
         <span className="text-sm text-gray-700">{template.text}</span>
+        {showOptions && allQuoteOptions && allQuoteOptions.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {allQuoteOptions.map((opt) => (
+              <span
+                key={opt.id}
+                className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 opacity-60"
+                title="Will apply to all options when activated"
+              >
+                {opt.name}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       {/* Status badge (clickable) */}
       <div className="relative">
@@ -816,19 +839,23 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     enabled: showSubjOptions, // only fetch when toggle is on
   });
 
-  // Build a map of subjectivity text -> quote option names
-  const subjOptionMap = {};
-  if (showSubjOptions && submissionSubjectivities.length > 0 && allQuotes) {
-    const quoteNameMap = {};
-    allQuotes.forEach(q => { quoteNameMap[q.id] = q.quote_name || `Option ${q.id.slice(0,4)}`; });
+  // Build quote info for option badges
+  const allQuoteOptions = (allQuotes || []).map(q => ({
+    id: q.id,
+    // Strip date from name (e.g., "$5M x $50K - 12.29.25" -> "$5M x $50K")
+    name: (q.quote_name || `Option ${q.id.slice(0,4)}`).replace(/\s*-\s*\d{1,2}\.\d{1,2}\.\d{2,4}$/, ''),
+  }));
+
+  // Build a map of subjectivity text -> linked quote IDs
+  const subjQuoteIdsMap = {};
+  if (showSubjOptions && submissionSubjectivities.length > 0) {
     submissionSubjectivities.forEach(s => {
-      // quote_ids may come as array or need parsing
       let quoteIds = s.quote_ids || [];
       if (typeof quoteIds === 'string') {
-        try { quoteIds = JSON.parse(quoteIds); } catch { quoteIds = []; }
+        quoteIds = quoteIds.replace(/^\{|\}$/g, '').split(',').filter(Boolean);
       }
       if (!Array.isArray(quoteIds)) quoteIds = [];
-      subjOptionMap[s.text] = quoteIds.map(qid => quoteNameMap[qid]).filter(Boolean);
+      subjQuoteIdsMap[s.text] = quoteIds;
     });
   }
 
@@ -946,6 +973,21 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     onSuccess: () => {
       refetchSubjectivities();
       // Invalidate all quotes since this deletes from all
+      allQuotes?.forEach(q => {
+        queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+      });
+    },
+  });
+
+  // Toggle link between subjectivity and quote option
+  const toggleSubjQuoteMutation = useMutation({
+    mutationFn: ({ subjectivityId, quoteId, isLinked }) =>
+      isLinked
+        ? unlinkSubjectivityFromQuote(quoteId, subjectivityId)
+        : linkSubjectivityToQuote(quoteId, subjectivityId),
+    onSuccess: () => {
+      refetchSubjectivities();
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submission.id] });
       allQuotes?.forEach(q => {
         queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
       });
@@ -1663,12 +1705,15 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                     onCreate={(data) => createSubjectivityMutation.mutate(data)}
                     onRefetch={() => {
                       refetchSubjectivities();
+                      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submission.id] });
                       allQuotes?.forEach(q => {
                         queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
                       });
                     }}
                     openMenuId={openSubjMenu}
                     setOpenMenuId={setOpenSubjMenu}
+                    showOptions={showSubjOptions}
+                    allQuoteOptions={allQuoteOptions}
                   />
                 ))}
               </div>
@@ -1698,7 +1743,9 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                     openMenuId={openSubjMenu}
                     setOpenMenuId={setOpenSubjMenu}
                     showOptions={showSubjOptions}
-                    optionNames={subjOptionMap[subj.text] || []}
+                    allQuoteOptions={allQuoteOptions}
+                    linkedQuoteIds={subjQuoteIdsMap[subj.text] || []}
+                    onToggleQuote={(subjId, quoteId, isLinked) => toggleSubjQuoteMutation.mutate({ subjectivityId: subjId, quoteId, isLinked })}
                   />
                 ))}
               </div>
