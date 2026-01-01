@@ -1910,27 +1910,10 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             ?.map((e) => {
             const linkedQuoteIds = endorsementQuoteIdsMap[e.endorsement_id] || [];
             return (
-              <div key={e.endorsement_id} className="py-1 group">
+              <div key={e.endorsement_id} className="py-1">
                 <div className="flex items-center gap-2 text-sm text-gray-700">
                   <span className="w-5 text-center text-gray-300">+</span>
                   <span className="flex-1">{e.code} - {e.title}</span>
-                  <button
-                    className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                    onClick={async () => {
-                      // Remove from ALL quote options
-                      for (const q of allQuotes || []) {
-                        await unlinkEndorsementFromQuote(q.id, e.endorsement_id);
-                      }
-                      refetchEndorsements();
-                      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submission.id] });
-                      allQuotes?.forEach(q => {
-                        queryClient.invalidateQueries({ queryKey: ['quoteEndorsements', q.id] });
-                      });
-                    }}
-                    title="Remove from all options"
-                  >
-                    ×
-                  </button>
                 </div>
                 {showEndorsementOptions && allQuoteOptions.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1 ml-7">
@@ -1955,6 +1938,25 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                         </button>
                       );
                     })}
+                    {/* Delete all badge */}
+                    <button
+                      className="text-xs px-1.5 py-0.5 rounded bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+                      onClick={async () => {
+                        if (!window.confirm(`Remove "${e.code}" from all quote options?`)) return;
+                        // Remove from ALL quote options
+                        for (const q of allQuotes || []) {
+                          await unlinkEndorsementFromQuote(q.id, e.endorsement_id);
+                        }
+                        refetchEndorsements();
+                        queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submission.id] });
+                        allQuotes?.forEach(q => {
+                          queryClient.invalidateQueries({ queryKey: ['quoteEndorsements', q.id] });
+                        });
+                      }}
+                      title="Remove from all options"
+                    >
+                      × all
+                    </button>
                   </div>
                 )}
               </div>
