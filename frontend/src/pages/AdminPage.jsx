@@ -7,6 +7,10 @@ import {
   markSubjectivityReceived,
   waiveSubjectivity,
   searchPolicies,
+  getSubjectivityTemplates,
+  createSubjectivityTemplate,
+  updateSubjectivityTemplate,
+  deleteSubjectivityTemplate,
 } from '../api/client';
 
 // Format currency
@@ -338,6 +342,329 @@ function BoundPoliciesTab() {
   );
 }
 
+// Subjectivity Templates Tab
+function SubjectivityTemplatesTab() {
+  const queryClient = useQueryClient();
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newTemplate, setNewTemplate] = useState({
+    text: '',
+    position: '',
+    category: 'general',
+    display_order: 100,
+    auto_apply: false,
+  });
+
+  const { data: templates, isLoading } = useQuery({
+    queryKey: ['subjectivity-templates-admin'],
+    queryFn: () => getSubjectivityTemplates(null, true).then(res => res.data),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data) => createSubjectivityTemplate(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjectivity-templates-admin'] });
+      setShowAddForm(false);
+      setNewTemplate({ text: '', position: '', category: 'general', display_order: 100, auto_apply: false });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => updateSubjectivityTemplate(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjectivity-templates-admin'] });
+      setEditingId(null);
+      setEditForm({});
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => deleteSubjectivityTemplate(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['subjectivity-templates-admin'] });
+    },
+  });
+
+  const startEdit = (template) => {
+    setEditingId(template.id);
+    setEditForm({
+      text: template.text,
+      position: template.position || '',
+      category: template.category || 'general',
+      display_order: template.display_order || 100,
+      auto_apply: template.auto_apply || false,
+      is_active: template.is_active !== false,
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+  };
+
+  const saveEdit = () => {
+    updateMutation.mutate({
+      id: editingId,
+      data: {
+        ...editForm,
+        position: editForm.position || null,
+      },
+    });
+  };
+
+  const handleCreate = () => {
+    if (!newTemplate.text.trim()) return;
+    createMutation.mutate({
+      ...newTemplate,
+      position: newTemplate.position || null,
+    });
+  };
+
+  const positionLabel = (pos) => {
+    if (!pos) return 'All';
+    return pos.charAt(0).toUpperCase() + pos.slice(1);
+  };
+
+  if (isLoading) {
+    return <div className="text-gray-500">Loading templates...</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-gray-500">
+          {templates?.length || 0} subjectivity templates
+        </div>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="btn btn-primary btn-sm"
+        >
+          {showAddForm ? 'Cancel' : '+ Add Template'}
+        </button>
+      </div>
+
+      {/* Add Form */}
+      {showAddForm && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 space-y-3">
+          <div className="text-sm font-medium text-purple-900">New Template</div>
+          <div>
+            <textarea
+              className="form-input w-full text-sm"
+              rows={2}
+              placeholder="Subjectivity text..."
+              value={newTemplate.text}
+              onChange={(e) => setNewTemplate({ ...newTemplate, text: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Position</label>
+              <select
+                className="form-select text-sm w-full"
+                value={newTemplate.position}
+                onChange={(e) => setNewTemplate({ ...newTemplate, position: e.target.value })}
+              >
+                <option value="">All</option>
+                <option value="primary">Primary only</option>
+                <option value="excess">Excess only</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Category</label>
+              <select
+                className="form-select text-sm w-full"
+                value={newTemplate.category}
+                onChange={(e) => setNewTemplate({ ...newTemplate, category: e.target.value })}
+              >
+                <option value="general">General</option>
+                <option value="documentation">Documentation</option>
+                <option value="premium">Premium</option>
+                <option value="coverage">Coverage</option>
+                <option value="binding">Binding</option>
+                <option value="security">Security</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Order</label>
+              <input
+                type="number"
+                className="form-input text-sm w-full"
+                value={newTemplate.display_order}
+                onChange={(e) => setNewTemplate({ ...newTemplate, display_order: parseInt(e.target.value) || 100 })}
+              />
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={newTemplate.auto_apply}
+                  onChange={(e) => setNewTemplate({ ...newTemplate, auto_apply: e.target.checked })}
+                />
+                Auto-apply
+              </label>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleCreate}
+              disabled={!newTemplate.text.trim() || createMutation.isPending}
+              className="btn btn-primary btn-sm"
+            >
+              {createMutation.isPending ? 'Creating...' : 'Create'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Templates List */}
+      <div className="space-y-2">
+        {templates?.map((template) => (
+          <div
+            key={template.id}
+            className={`border rounded-lg p-4 ${
+              template.is_active === false ? 'bg-gray-50 border-gray-200 opacity-60' : 'bg-white border-gray-200'
+            }`}
+          >
+            {editingId === template.id ? (
+              /* Edit Mode */
+              <div className="space-y-3">
+                <textarea
+                  className="form-input w-full text-sm"
+                  rows={2}
+                  value={editForm.text}
+                  onChange={(e) => setEditForm({ ...editForm, text: e.target.value })}
+                />
+                <div className="grid grid-cols-5 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Position</label>
+                    <select
+                      className="form-select text-sm w-full"
+                      value={editForm.position}
+                      onChange={(e) => setEditForm({ ...editForm, position: e.target.value })}
+                    >
+                      <option value="">All</option>
+                      <option value="primary">Primary only</option>
+                      <option value="excess">Excess only</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Category</label>
+                    <select
+                      className="form-select text-sm w-full"
+                      value={editForm.category}
+                      onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                    >
+                      <option value="general">General</option>
+                      <option value="documentation">Documentation</option>
+                      <option value="premium">Premium</option>
+                      <option value="coverage">Coverage</option>
+                      <option value="binding">Binding</option>
+                      <option value="security">Security</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Order</label>
+                    <input
+                      type="number"
+                      className="form-input text-sm w-full"
+                      value={editForm.display_order}
+                      onChange={(e) => setEditForm({ ...editForm, display_order: parseInt(e.target.value) || 100 })}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={editForm.auto_apply}
+                        onChange={(e) => setEditForm({ ...editForm, auto_apply: e.target.checked })}
+                      />
+                      Auto-apply
+                    </label>
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={editForm.is_active}
+                        onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
+                      />
+                      Active
+                    </label>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={saveEdit}
+                    disabled={updateMutation.isPending}
+                    className="btn btn-primary btn-sm"
+                  >
+                    {updateMutation.isPending ? 'Saving...' : 'Save'}
+                  </button>
+                  <button onClick={cancelEdit} className="btn btn-outline btn-sm">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* View Mode */
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <p className="text-sm text-gray-900">{template.text}</p>
+                  <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                    <span className={`px-2 py-0.5 rounded ${
+                      !template.position ? 'bg-blue-100 text-blue-700' :
+                      template.position === 'primary' ? 'bg-green-100 text-green-700' :
+                      'bg-purple-100 text-purple-700'
+                    }`}>
+                      {positionLabel(template.position)}
+                    </span>
+                    <span className="text-gray-400">{template.category}</span>
+                    <span className="text-gray-400">Order: {template.display_order}</span>
+                    {template.auto_apply && (
+                      <span className="text-yellow-600 flex items-center gap-1">
+                        <span>⚡</span> Auto-apply
+                      </span>
+                    )}
+                    {template.is_active === false && (
+                      <span className="text-red-600">Inactive</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 ml-4">
+                  <button
+                    onClick={() => startEdit(template)}
+                    className="text-sm text-purple-600 hover:text-purple-800"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm('Delete this template?')) {
+                        deleteMutation.mutate(template.id);
+                      }
+                    }}
+                    disabled={deleteMutation.isPending}
+                    className="text-sm text-red-600 hover:text-red-800"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {(!templates || templates.length === 0) && (
+        <div className="bg-gray-50 rounded-lg p-6 text-center text-gray-500">
+          No subjectivity templates found
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
@@ -345,6 +672,7 @@ export default function AdminPage() {
     { id: 'search', label: 'Policy Search' },
     { id: 'subjectivities', label: 'Pending Subjectivities' },
     { id: 'bound', label: 'Bound Policies' },
+    { id: 'templates', label: 'Subjectivity Templates' },
   ];
 
   return (
@@ -393,6 +721,7 @@ export default function AdminPage() {
           {activeTab === 'search' && <PolicySearchTab />}
           {activeTab === 'subjectivities' && <PendingSubjectivitiesTab />}
           {activeTab === 'bound' && <BoundPoliciesTab />}
+          {activeTab === 'templates' && <SubjectivityTemplatesTab />}
         </div>
       </main>
     </div>

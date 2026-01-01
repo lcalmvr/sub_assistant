@@ -486,10 +486,31 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                 if drop_down_endorsement not in context["endorsements"]:
                     context["endorsements"].insert(0, drop_down_endorsement)
 
-            # Subjectivities
-            context["subjectivities"] = []
-            if position == "excess":
-                context["subjectivities"].append("Underlying quotes and binders")
+            # Subjectivities - fetch from junction table
+            subj_result = conn.execute(text("""
+                SELECT ss.text
+                FROM submission_subjectivities ss
+                JOIN quote_subjectivities qs ON qs.subjectivity_id = ss.id
+                WHERE qs.quote_id = :quote_id
+                ORDER BY ss.created_at
+            """), {"quote_id": quote_option_id})
+            manual_subjectivities = [row[0] for row in subj_result.fetchall()]
+
+            # Get auto-apply subjectivities from templates for this position
+            auto_result = conn.execute(text("""
+                SELECT text
+                FROM subjectivity_templates
+                WHERE is_active = true
+                  AND auto_apply = true
+                  AND (position IS NULL OR position = :position)
+                ORDER BY display_order
+            """), {"position": position})
+            auto_subjectivities = [row[0] for row in auto_result.fetchall()]
+
+            # Combine: auto-apply first, then manual (avoiding duplicates)
+            context["subjectivities"] = auto_subjectivities + [
+                s for s in manual_subjectivities if s not in auto_subjectivities
+            ]
 
             # Terms text
             context["terms"] = """Coverage is subject to the terms, conditions, and exclusions of the policy. This quote is valid for 30 days from the date of issuance. Binding is subject to receipt of completed application, premium payment, and underwriter approval. Claims-made policy form applies; coverage is provided for claims first made during the policy period. Defense costs are included within the policy limit unless otherwise stated."""

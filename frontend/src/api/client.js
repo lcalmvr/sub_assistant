@@ -74,6 +74,27 @@ export const markSubjectivityReceived = (id) => api.post(`/admin/subjectivities/
 export const waiveSubjectivity = (id) => api.post(`/admin/subjectivities/${id}/waive`);
 export const searchPolicies = (q) => api.get(`/admin/search-policies?q=${encodeURIComponent(q)}`);
 
+// Subjectivities (junction table architecture)
+export const getSubjectivityTemplates = (position = null, includeInactive = false) => {
+  const query = new URLSearchParams();
+  if (position) query.append('position', position);
+  if (includeInactive) query.append('include_inactive', 'true');
+  const queryStr = query.toString();
+  return api.get(`/subjectivity-templates${queryStr ? `?${queryStr}` : ''}`);
+};
+export const createSubjectivityTemplate = (data) => api.post('/subjectivity-templates', data);
+export const updateSubjectivityTemplate = (templateId, data) => api.patch(`/subjectivity-templates/${templateId}`, data);
+export const deleteSubjectivityTemplate = (templateId) => api.delete(`/subjectivity-templates/${templateId}`);
+export const getSubmissionSubjectivities = (submissionId) => api.get(`/submissions/${submissionId}/subjectivities`);
+export const getQuoteSubjectivities = (quoteId) => api.get(`/quotes/${quoteId}/subjectivities`);
+export const createSubjectivity = (submissionId, data) => api.post(`/submissions/${submissionId}/subjectivities`, data);
+export const updateSubjectivity = (subjectivityId, data) => api.patch(`/subjectivities/${subjectivityId}`, data);
+export const deleteSubjectivity = (subjectivityId) => api.delete(`/subjectivities/${subjectivityId}`);
+export const linkSubjectivityToQuote = (quoteId, subjectivityId) => api.post(`/quotes/${quoteId}/subjectivities/${subjectivityId}/link`);
+export const unlinkSubjectivityFromQuote = (quoteId, subjectivityId) => api.delete(`/quotes/${quoteId}/subjectivities/${subjectivityId}/link`);
+export const unlinkSubjectivityFromPosition = (subjectivityId, position) => api.delete(`/subjectivities/${subjectivityId}/position/${position}`);
+export const pullSubjectivitiesFromQuote = (quoteId, sourceQuoteId) => api.post(`/quotes/${quoteId}/subjectivities/pull/${sourceQuoteId}`);
+
 // Compliance
 export const getComplianceStats = () => api.get('/compliance/stats');
 export const getComplianceRules = (params = {}) => {

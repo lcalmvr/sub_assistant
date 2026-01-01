@@ -18,6 +18,14 @@ import {
   getLatestDocument,
   getSubmissionDocuments,
   getDocumentLibraryEntries,
+  getSubjectivityTemplates,
+  getQuoteSubjectivities,
+  getSubmissionSubjectivities,
+  createSubjectivity,
+  updateSubjectivity,
+  deleteSubjectivity,
+  unlinkSubjectivityFromQuote,
+  unlinkSubjectivityFromPosition,
 } from '../api/client';
 import CoverageEditor from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
@@ -514,21 +522,6 @@ function getDocTypeLabel(type) {
   return labels[type] || type;
 }
 
-// Stock subjectivities
-const STOCK_SUBJECTIVITIES = [
-  "Coverage is subject to policy terms and conditions",
-  "Premium subject to minimum retained premium",
-  "Rate subject to satisfactory inspection",
-  "Subject to completion of application",
-  "Subject to receipt of additional underwriting information",
-  "Coverage bound subject to company acceptance",
-  "Premium subject to audit",
-  "Policy subject to terrorism exclusion",
-  "Subject to cyber security questionnaire completion",
-  "Coverage subject to satisfactory financial review",
-  "Subject to underlying quotes and binders",
-];
-
 // Required endorsements - always included on every quote
 const REQUIRED_ENDORSEMENT_CODES = [
   "END-OFAC-001",  // OFAC Sanctions Compliance
@@ -546,6 +539,199 @@ const ENDORSEMENT_CATEGORIES = {
   administrative: "Administrative",
   cancellation: "Cancellation",
 };
+
+// Subjectivity row with status and overflow menu
+function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Status badge colors
+  const statusColors = {
+    pending: 'bg-yellow-100 text-yellow-800',
+    received: 'bg-green-100 text-green-800',
+    waived: 'bg-gray-100 text-gray-600',
+  };
+
+  return (
+    <div className="flex items-start gap-2 p-2 bg-gray-50 rounded group relative">
+      <span className="text-gray-400 text-sm">{idx + 1}.</span>
+      <div className="flex-1">
+        <span className="text-sm text-gray-700">{subj.text}</span>
+        {/* Status badge and controls */}
+        <div className="flex items-center gap-2 mt-1">
+          <span className={`text-xs px-2 py-0.5 rounded ${statusColors[subj.status] || statusColors.pending}`}>
+            {subj.status || 'pending'}
+          </span>
+          {subj.status === 'pending' && (
+            <>
+              <button
+                className="text-xs text-green-600 hover:text-green-800"
+                onClick={() => onStatusChange('received')}
+              >
+                Mark received
+              </button>
+              <span className="text-gray-300">|</span>
+              <button
+                className="text-xs text-gray-500 hover:text-gray-700"
+                onClick={() => onStatusChange('waived')}
+              >
+                Waive
+              </button>
+            </>
+          )}
+          {subj.status === 'received' && subj.received_at && (
+            <span className="text-xs text-gray-400">
+              {new Date(subj.received_at).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="relative">
+        <button
+          className="text-gray-400 hover:text-gray-600 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={() => setMenuOpen(!menuOpen)}
+          onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+        >
+          ⋮
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-10 min-w-[200px]">
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              onClick={() => {
+                onUnlinkThis();
+                setMenuOpen(false);
+              }}
+            >
+              Remove from this option
+            </button>
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+              onClick={() => {
+                onUnlinkPosition();
+                setMenuOpen(false);
+              }}
+            >
+              Remove from all {position}
+            </button>
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 border-t border-gray-100"
+              onClick={() => {
+                if (window.confirm('Delete this subjectivity from ALL quote options (primary and excess)?')) {
+                  onDelete();
+                  setMenuOpen(false);
+                }
+              }}
+            >
+              Delete from submission
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Auto-added subjectivity row (from templates) - materializes on interaction
+function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, onCreate, onRefetch }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Create subjectivity with status and link to all quotes of same position
+  const materializeWithStatus = async (status) => {
+    if (!submissionId || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      // Create subjectivity with the desired status
+      const response = await fetch(`/api/submissions/${submissionId}/subjectivities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: template.text, status }),
+      });
+      if (response.ok) {
+        onRefetch();
+      }
+    } catch (err) {
+      console.error('Failed to create subjectivity:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // "Delete" an auto-added means excluding it - we create it with status 'excluded'
+  const excludeAutoSubjectivity = async () => {
+    if (!submissionId || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      const response = await fetch(`/api/submissions/${submissionId}/subjectivities`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: template.text, status: 'excluded' }),
+      });
+      if (response.ok) {
+        onRefetch();
+      }
+    } catch (err) {
+      console.error('Failed to exclude subjectivity:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="flex items-start gap-2 p-2 bg-gray-50 rounded group relative">
+      <span className="text-yellow-500">⚡</span>
+      <div className="flex-1">
+        <span className="text-sm text-gray-700">{template.text}</span>
+        {/* Status controls */}
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">
+            pending
+          </span>
+          <button
+            className="text-xs text-green-600 hover:text-green-800"
+            onClick={() => materializeWithStatus('received')}
+            disabled={isProcessing}
+          >
+            Mark received
+          </button>
+          <span className="text-gray-300">|</span>
+          <button
+            className="text-xs text-gray-500 hover:text-gray-700"
+            onClick={() => materializeWithStatus('waived')}
+            disabled={isProcessing}
+          >
+            Waive
+          </button>
+        </div>
+      </div>
+      <div className="relative">
+        <button
+          className="text-gray-400 hover:text-gray-600 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={() => setMenuOpen(!menuOpen)}
+          onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+        >
+          ⋮
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-10 min-w-[200px]">
+            <button
+              className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+              onClick={() => {
+                if (window.confirm('Remove this auto-added subjectivity?')) {
+                  excludeAutoSubjectivity();
+                  setMenuOpen(false);
+                }
+              }}
+              disabled={isProcessing}
+            >
+              Remove from this submission
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // Quote detail panel
 function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
@@ -567,8 +753,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   // Dates state
   const [retroactiveDate, setRetroactiveDate] = useState(quote.retroactive_date || '');
 
-  // Subjectivities state
-  const [subjectivities, setSubjectivities] = useState(quote.subjectivities || []);
+  // Subjectivities UI state
   const [customSubjectivity, setCustomSubjectivity] = useState('');
   const [selectedStock, setSelectedStock] = useState('');
 
@@ -582,7 +767,6 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     setEditingTower(false);
     setEditedDescriptor(quote.option_descriptor || '');
     setRetroactiveDate(quote.retroactive_date || '');
-    setSubjectivities(quote.subjectivities || []);
     setEndorsements(quote.endorsements || []);
     setSelectedEndorsement('');
     // Auto-show QS column if any layer has quota share
@@ -591,6 +775,21 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
   const limit = getTowerLimit(quote);
   const position = quote.position || 'primary';
+
+  // Query for quote's linked subjectivities (junction table)
+  const { data: quoteSubjectivities = [], refetch: refetchSubjectivities } = useQuery({
+    queryKey: ['quoteSubjectivities', quote.id],
+    queryFn: () => getQuoteSubjectivities(quote.id).then(res => res.data),
+  });
+
+  // Query for subjectivity templates (filtered by position)
+  const { data: subjectivityTemplates = [] } = useQuery({
+    queryKey: ['subjectivityTemplates', position],
+    queryFn: () => getSubjectivityTemplates(position).then(res => res.data),
+  });
+
+  // Get subjectivity texts for display (from junction table data)
+  const subjectivities = quoteSubjectivities.map(s => s.text);
 
   // Query for quote documents
   const { data: quoteDocuments } = useQuery({
@@ -641,11 +840,83 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     mutationFn: (data) => applyToAllQuotes(quote.id, data),
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      // Invalidate subjectivities for all quotes in this submission
+      if (response.data?.subjectivities_applied) {
+        allQuotes?.forEach(q => {
+          queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+        });
+      }
       const count = response.data?.updated_count || 0;
       if (count > 0) {
-        // Show a brief success indicator (could use a toast library)
         console.log(`Applied to ${count} other option(s)`);
       }
+    },
+  });
+
+  // Create subjectivity mutation
+  // If template has position, links to that position only; otherwise links to all
+  const createSubjectivityMutation = useMutation({
+    mutationFn: ({ text, templatePosition }) => createSubjectivity(submission.id, {
+      text,
+      category: 'general',
+      position: templatePosition || null, // null = all options
+    }),
+    onSuccess: (_, { templatePosition }) => {
+      refetchSubjectivities();
+      // Invalidate relevant quotes' subjectivities
+      if (templatePosition) {
+        allQuotes?.filter(q => q.position === templatePosition).forEach(q => {
+          queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+        });
+      } else {
+        allQuotes?.forEach(q => {
+          queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+        });
+      }
+    },
+  });
+
+  // Remove subjectivity from this quote only
+  const unlinkSubjectivityMutation = useMutation({
+    mutationFn: (subjectivityId) => unlinkSubjectivityFromQuote(quote.id, subjectivityId),
+    onSuccess: () => {
+      refetchSubjectivities();
+    },
+  });
+
+  // Remove subjectivity from all quotes of this position (primary/excess)
+  const unlinkFromPositionMutation = useMutation({
+    mutationFn: (subjectivityId) => unlinkSubjectivityFromPosition(subjectivityId, position),
+    onSuccess: () => {
+      refetchSubjectivities();
+      // Invalidate same-position quotes
+      allQuotes?.filter(q => q.position === position).forEach(q => {
+        queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+      });
+    },
+  });
+
+  // Delete subjectivity entirely (removes from all quotes)
+  const deleteSubjectivityMutation = useMutation({
+    mutationFn: (subjectivityId) => deleteSubjectivity(subjectivityId),
+    onSuccess: () => {
+      refetchSubjectivities();
+      // Invalidate all quotes since this deletes from all
+      allQuotes?.forEach(q => {
+        queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+      });
+    },
+  });
+
+  // Update subjectivity status (received/waived)
+  const updateSubjectivityMutation = useMutation({
+    mutationFn: ({ id, status }) => updateSubjectivity(id, { status }),
+    onSuccess: () => {
+      refetchSubjectivities();
+      // Status is shared across all linked quotes
+      allQuotes?.forEach(q => {
+        queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+      });
     },
   });
 
@@ -1313,100 +1584,141 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
       <div className="card">
         <h4 className="form-section-title">Subjectivities</h4>
 
-        {/* Add from stock */}
-        <div className="flex gap-2 mb-3">
-          <select
-            className="form-select flex-1"
-            value={selectedStock}
-            onChange={(e) => setSelectedStock(e.target.value)}
-          >
-            <option value="">Select from stock subjectivities...</option>
-            {STOCK_SUBJECTIVITIES.filter(s => !subjectivities.includes(s)).map((s, i) => (
-              <option key={i} value={s}>{s}</option>
-            ))}
-          </select>
-          <button
-            className="btn btn-outline"
-            disabled={!selectedStock}
-            onClick={() => {
-              if (selectedStock && !subjectivities.includes(selectedStock)) {
-                const updated = [...subjectivities, selectedStock];
-                setSubjectivities(updated);
-                setSelectedStock('');
-                updateMutation.mutate({ subjectivities: updated });
-              }
-            }}
-          >
-            Add
-          </button>
-        </div>
+        {/* Auto-added subjectivities */}
+        {(() => {
+          // Get auto-apply templates that aren't already in quoteSubjectivities
+          const existingTexts = quoteSubjectivities.map(s => s.text);
+          const autoTemplates = subjectivityTemplates
+            .filter(t => t.auto_apply && !existingTexts.includes(t.text));
 
-        {/* Custom input */}
-        <div className="flex gap-2 mb-4">
-          <input
-            type="text"
-            className="form-input flex-1"
-            placeholder="Enter custom subjectivity..."
-            value={customSubjectivity}
-            onChange={(e) => setCustomSubjectivity(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && customSubjectivity.trim()) {
-                const updated = [...subjectivities, customSubjectivity.trim()];
-                setSubjectivities(updated);
-                setCustomSubjectivity('');
-                updateMutation.mutate({ subjectivities: updated });
-              }
-            }}
-          />
-          <button
-            className="btn btn-outline"
-            disabled={!customSubjectivity.trim()}
-            onClick={() => {
-              if (customSubjectivity.trim() && !subjectivities.includes(customSubjectivity.trim())) {
-                const updated = [...subjectivities, customSubjectivity.trim()];
-                setSubjectivities(updated);
-                setCustomSubjectivity('');
-                updateMutation.mutate({ subjectivities: updated });
-              }
-            }}
-          >
-            Add
-          </button>
-        </div>
-
-        {/* Current list */}
-        {subjectivities.length > 0 ? (
-          <div className="space-y-2">
-            {subjectivities.map((subj, idx) => (
-              <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
-                <span className="text-gray-400 text-sm">{idx + 1}.</span>
-                <span className="flex-1 text-sm text-gray-700">{subj}</span>
-                <button
-                  className="text-red-400 hover:text-red-600 text-sm"
-                  onClick={() => {
-                    const updated = subjectivities.filter((_, i) => i !== idx);
-                    setSubjectivities(updated);
-                    updateMutation.mutate({ subjectivities: updated });
-                  }}
-                >
-                  ×
-                </button>
+          return autoTemplates.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                Auto-added (based on {position})
+              </p>
+              <div className="space-y-2">
+                {autoTemplates.map((t, idx) => (
+                  <AutoSubjectivityRow
+                    key={t.id}
+                    template={t}
+                    idx={idx}
+                    position={position}
+                    submissionId={submission.id}
+                    quoteId={quote?.id}
+                    onCreate={(data) => createSubjectivityMutation.mutate(data)}
+                    onRefetch={() => {
+                      refetchSubjectivities();
+                      allQuotes?.forEach(q => {
+                        queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+                      });
+                    }}
+                  />
+                ))}
               </div>
-            ))}
+            </div>
+          );
+        })()}
+
+        {/* Manually added list */}
+        {(() => {
+          const visibleSubjectivities = quoteSubjectivities.filter(s => s.status !== 'excluded');
+          return visibleSubjectivities.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                Added ({visibleSubjectivities.length})
+              </p>
+              <div className="space-y-2">
+                {visibleSubjectivities.map((subj, idx) => (
+                  <SubjectivityRow
+                    key={subj.id}
+                    subj={subj}
+                    idx={idx}
+                    position={position}
+                    onUnlinkThis={() => unlinkSubjectivityMutation.mutate(subj.id)}
+                    onUnlinkPosition={() => unlinkFromPositionMutation.mutate(subj.id)}
+                    onDelete={() => deleteSubjectivityMutation.mutate(subj.id)}
+                    onStatusChange={(status) => updateSubjectivityMutation.mutate({ id: subj.id, status })}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Add controls at bottom */}
+        <div className="border-t border-gray-100 pt-4">
+          {/* Add from stock templates */}
+          <div className="flex gap-2 mb-3">
+            <select
+              className="form-select flex-1"
+              value={selectedStock}
+              onChange={(e) => setSelectedStock(e.target.value)}
+            >
+              <option value="">Select subjectivity to add...</option>
+              {subjectivityTemplates
+                .filter(t => !t.auto_apply && !subjectivities.includes(t.text))
+                .map((t) => (
+                  <option key={t.id} value={JSON.stringify({ text: t.text, position: t.position })}>
+                    {t.text}
+                  </option>
+                ))}
+            </select>
+            <button
+              className="btn btn-outline"
+              disabled={!selectedStock || createSubjectivityMutation.isPending}
+              onClick={() => {
+                if (selectedStock) {
+                  const { text, position: templatePosition } = JSON.parse(selectedStock);
+                  if (!subjectivities.includes(text)) {
+                    createSubjectivityMutation.mutate({ text, templatePosition });
+                    setSelectedStock('');
+                  }
+                }
+              }}
+            >
+              {createSubjectivityMutation.isPending ? '...' : 'Add'}
+            </button>
           </div>
-        ) : (
-          <p className="text-sm text-gray-500 italic">No subjectivities added</p>
-        )}
+
+          {/* Custom input */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="form-input flex-1"
+              placeholder="Enter custom subjectivity..."
+              value={customSubjectivity}
+              onChange={(e) => setCustomSubjectivity(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && customSubjectivity.trim() && !subjectivities.includes(customSubjectivity.trim())) {
+                  createSubjectivityMutation.mutate({ text: customSubjectivity.trim(), templatePosition: null });
+                  setCustomSubjectivity('');
+                }
+              }}
+            />
+            <button
+              className="btn btn-outline"
+              disabled={!customSubjectivity.trim() || createSubjectivityMutation.isPending}
+              onClick={() => {
+                if (customSubjectivity.trim() && !subjectivities.includes(customSubjectivity.trim())) {
+                  createSubjectivityMutation.mutate({ text: customSubjectivity.trim(), templatePosition: null });
+                  setCustomSubjectivity('');
+                }
+              }}
+            >
+              {createSubjectivityMutation.isPending ? '...' : 'Add'}
+            </button>
+          </div>
+        </div>
 
         {/* Apply to all options button */}
-        {allQuotes && allQuotes.length > 1 && (
+        {allQuotes && allQuotes.length > 1 && quoteSubjectivities.length > 0 && (
           <div className="mt-4 pt-3 border-t border-gray-100">
             <button
               className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1"
               disabled={applyToAllMutation.isPending}
               onClick={() => applyToAllMutation.mutate({ subjectivities: true })}
             >
-              {applyToAllMutation.isPending ? 'Applying...' : `Apply to all ${allQuotes.length - 1} other option(s)`}
+              {applyToAllMutation.isPending ? 'Applying...' : `Sync to all ${allQuotes.length - 1} other option(s)`}
             </button>
           </div>
         )}

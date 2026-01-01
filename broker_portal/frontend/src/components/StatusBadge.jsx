@@ -47,3 +47,5 @@ const StatusBadge = ({ status, type = 'status' }) => {
 
 export default StatusBadge
 
+
+
