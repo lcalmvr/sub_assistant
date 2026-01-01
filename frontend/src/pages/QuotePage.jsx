@@ -541,75 +541,67 @@ const ENDORSEMENT_CATEGORIES = {
 };
 
 // Subjectivity row with status and overflow menu
-function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange, openMenuId, setOpenMenuId }) {
+  const statusMenuId = `subj-${subj.id}-status`;
+  const actionsMenuId = `subj-${subj.id}-actions`;
+  const statusMenuOpen = openMenuId === statusMenuId;
+  const actionsMenuOpen = openMenuId === actionsMenuId;
 
   // Status badge colors
   const statusColors = {
-    pending: 'bg-yellow-100 text-yellow-800',
-    received: 'bg-green-100 text-green-800',
-    waived: 'bg-gray-100 text-gray-600',
+    pending: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200',
+    received: 'bg-green-100 text-green-800 hover:bg-green-200',
+    waived: 'bg-gray-100 text-gray-600 hover:bg-gray-200',
   };
 
   return (
-    <div className="flex items-start gap-2 p-2 bg-gray-50 rounded group relative">
-      <span className="text-gray-400 text-sm">{idx + 1}.</span>
-      <div className="flex-1">
+    <div className="flex items-center gap-2 p-2 bg-gray-50 rounded group relative">
+      <div className="flex-1 min-w-0">
         <span className="text-sm text-gray-700">{subj.text}</span>
-        {/* Status badge and controls */}
-        <div className="flex items-center gap-2 mt-1">
-          <span className={`text-xs px-2 py-0.5 rounded ${statusColors[subj.status] || statusColors.pending}`}>
-            {subj.status || 'pending'}
-          </span>
-          {subj.status === 'pending' && (
-            <>
-              <button
-                className="text-xs text-green-600 hover:text-green-800"
-                onClick={() => onStatusChange('received')}
-              >
-                Mark received
-              </button>
-              <span className="text-gray-300">|</span>
-              <button
-                className="text-xs text-gray-500 hover:text-gray-700"
-                onClick={() => onStatusChange('waived')}
-              >
-                Waive
-              </button>
-            </>
-          )}
-          {subj.status === 'received' && subj.received_at && (
-            <span className="text-xs text-gray-400">
-              {new Date(subj.received_at).toLocaleDateString()}
-            </span>
-          )}
-        </div>
       </div>
+      {/* Status badge (clickable) */}
       <div className="relative">
         <button
-          className="text-gray-400 hover:text-gray-600 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-          onClick={() => setMenuOpen(!menuOpen)}
-          onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+          className={`text-xs px-2 py-0.5 rounded cursor-pointer transition-colors ${statusColors[subj.status] || statusColors.pending}`}
+          onClick={() => setOpenMenuId(statusMenuOpen ? null : statusMenuId)}
+          onBlur={() => setTimeout(() => { if (openMenuId === statusMenuId) setOpenMenuId(null); }, 150)}
         >
-          ⋮
+          {subj.status || 'pending'}
         </button>
-        {menuOpen && (
-          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-10 min-w-[200px]">
+        {statusMenuOpen && (
+          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[120px]">
+            {['pending', 'received', 'waived'].map(status => (
+              <button
+                key={status}
+                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-gray-50 ${subj.status === status ? 'text-purple-600 font-medium' : 'text-gray-700'}`}
+                onClick={() => { onStatusChange(status); setOpenMenuId(null); }}
+              >
+                {subj.status === status && '✓ '}{status}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Actions badge (clickable, same style) */}
+      <div className="relative">
+        <button
+          className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 cursor-pointer transition-colors"
+          onClick={() => setOpenMenuId(actionsMenuOpen ? null : actionsMenuId)}
+          onBlur={() => setTimeout(() => { if (openMenuId === actionsMenuId) setOpenMenuId(null); }, 150)}
+        >
+          ×
+        </button>
+        {actionsMenuOpen && (
+          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[200px]">
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-              onClick={() => {
-                onUnlinkThis();
-                setMenuOpen(false);
-              }}
+              onClick={() => { onUnlinkThis(); setOpenMenuId(null); }}
             >
               Remove from this option
             </button>
             <button
               className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-              onClick={() => {
-                onUnlinkPosition();
-                setMenuOpen(false);
-              }}
+              onClick={() => { onUnlinkPosition(); setOpenMenuId(null); }}
             >
               Remove from all {position}
             </button>
@@ -618,7 +610,7 @@ function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, 
               onClick={() => {
                 if (window.confirm('Delete this subjectivity from ALL quote options (primary and excess)?')) {
                   onDelete();
-                  setMenuOpen(false);
+                  setOpenMenuId(null);
                 }
               }}
             >
@@ -632,8 +624,11 @@ function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, 
 }
 
 // Auto-added subjectivity row (from templates) - materializes on interaction
-function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, onCreate, onRefetch }) {
-  const [menuOpen, setMenuOpen] = useState(false);
+function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, onCreate, onRefetch, openMenuId, setOpenMenuId }) {
+  const statusMenuId = `auto-${template.id}-status`;
+  const actionsMenuId = `auto-${template.id}-actions`;
+  const statusMenuOpen = openMenuId === statusMenuId;
+  const actionsMenuOpen = openMenuId === actionsMenuId;
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Create subjectivity with status and link to all quotes of same position
@@ -641,7 +636,6 @@ function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, o
     if (!submissionId || isProcessing) return;
     setIsProcessing(true);
     try {
-      // Create subjectivity with the desired status
       const response = await fetch(`/api/submissions/${submissionId}/subjectivities`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -678,48 +672,61 @@ function AutoSubjectivityRow({ template, idx, position, submissionId, quoteId, o
   };
 
   return (
-    <div className="flex items-start gap-2 p-2 bg-gray-50 rounded group relative">
+    <div className="flex items-center gap-2 p-2 bg-gray-50 rounded group relative">
       <span className="text-yellow-500">⚡</span>
-      <div className="flex-1">
+      <div className="flex-1 min-w-0">
         <span className="text-sm text-gray-700">{template.text}</span>
-        {/* Status controls */}
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">
-            pending
-          </span>
-          <button
-            className="text-xs text-green-600 hover:text-green-800"
-            onClick={() => materializeWithStatus('received')}
-            disabled={isProcessing}
-          >
-            Mark received
-          </button>
-          <span className="text-gray-300">|</span>
-          <button
-            className="text-xs text-gray-500 hover:text-gray-700"
-            onClick={() => materializeWithStatus('waived')}
-            disabled={isProcessing}
-          >
-            Waive
-          </button>
-        </div>
       </div>
+      {/* Status badge (clickable) */}
       <div className="relative">
         <button
-          className="text-gray-400 hover:text-gray-600 px-1 opacity-0 group-hover:opacity-100 transition-opacity"
-          onClick={() => setMenuOpen(!menuOpen)}
-          onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
+          className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 hover:bg-yellow-200 cursor-pointer transition-colors"
+          onClick={() => setOpenMenuId(statusMenuOpen ? null : statusMenuId)}
+          onBlur={() => setTimeout(() => { if (openMenuId === statusMenuId) setOpenMenuId(null); }, 150)}
+          disabled={isProcessing}
         >
-          ⋮
+          {isProcessing ? '...' : 'pending'}
         </button>
-        {menuOpen && (
-          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-10 min-w-[200px]">
+        {statusMenuOpen && !isProcessing && (
+          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[120px]">
+            <button
+              className="w-full text-left px-3 py-1.5 text-sm text-purple-600 font-medium hover:bg-gray-50"
+              onClick={() => setOpenMenuId(null)}
+            >
+              ✓ pending
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+              onClick={() => { materializeWithStatus('received'); setOpenMenuId(null); }}
+            >
+              received
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+              onClick={() => { materializeWithStatus('waived'); setOpenMenuId(null); }}
+            >
+              waived
+            </button>
+          </div>
+        )}
+      </div>
+      {/* Actions badge (clickable, same style) */}
+      <div className="relative">
+        <button
+          className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 hover:bg-gray-200 cursor-pointer transition-colors"
+          onClick={() => setOpenMenuId(actionsMenuOpen ? null : actionsMenuId)}
+          onBlur={() => setTimeout(() => { if (openMenuId === actionsMenuId) setOpenMenuId(null); }, 150)}
+        >
+          ×
+        </button>
+        {actionsMenuOpen && (
+          <div className="absolute right-0 top-6 bg-white border border-gray-200 rounded shadow-lg py-1 z-20 min-w-[200px]">
             <button
               className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50"
               onClick={() => {
                 if (window.confirm('Remove this auto-added subjectivity?')) {
                   excludeAutoSubjectivity();
-                  setMenuOpen(false);
+                  setOpenMenuId(null);
                 }
               }}
               disabled={isProcessing}
@@ -756,6 +763,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   // Subjectivities UI state
   const [customSubjectivity, setCustomSubjectivity] = useState('');
   const [selectedStock, setSelectedStock] = useState('');
+  const [openSubjMenu, setOpenSubjMenu] = useState(null); // tracks which menu is open: 'auto-{idx}-status', 'subj-{id}-actions', etc.
 
   // Endorsements state
   const [endorsements, setEndorsements] = useState(quote.endorsements || []);
@@ -1612,6 +1620,8 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                         queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
                       });
                     }}
+                    openMenuId={openSubjMenu}
+                    setOpenMenuId={setOpenSubjMenu}
                   />
                 ))}
               </div>
@@ -1638,6 +1648,8 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                     onUnlinkPosition={() => unlinkFromPositionMutation.mutate(subj.id)}
                     onDelete={() => deleteSubjectivityMutation.mutate(subj.id)}
                     onStatusChange={(status) => updateSubjectivityMutation.mutate({ id: subj.id, status })}
+                    openMenuId={openSubjMenu}
+                    setOpenMenuId={setOpenSubjMenu}
                   />
                 ))}
               </div>

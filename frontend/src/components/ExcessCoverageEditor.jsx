@@ -141,6 +141,7 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
   const [expandedIdx, setExpandedIdx] = useState(null);
   const [extractedPreview, setExtractedPreview] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [showTags, setShowTags] = useState(false);
   const fileInputRef = useRef(null);
 
   const sublimits = propSublimits || [];
@@ -284,6 +285,13 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
         </div>
         {!readOnly && (
           <div className="flex items-center gap-2">
+            <button
+              className={`text-xs px-2 py-1 rounded border transition-colors ${showTags ? 'bg-purple-100 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+              onClick={() => setShowTags(!showTags)}
+              title={showTags ? 'Hide coverage tags' : 'Show coverage tags'}
+            >
+              Tags {showTags ? 'ON' : 'OFF'}
+            </button>
             <input ref={fileInputRef} type="file" accept=".pdf,.docx,.doc" onChange={handleFileSelect} className="hidden" />
             <button className="btn btn-secondary text-sm" onClick={() => fileInputRef.current?.click()} disabled={extractMutation.isPending}>
               {extractMutation.isPending ? 'Scanning...' : 'Scan Doc'}
@@ -389,7 +397,7 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
                       <span className={`truncate block ${isNoCoverage ? 'line-through' : 'text-gray-900'}`}>
                         {cov.coverage || 'Unnamed coverage'}
                       </span>
-                      {cov.coverage_normalized?.length > 0 && (
+                      {showTags && cov.coverage_normalized?.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-0.5">
                           {cov.coverage_normalized.slice(0, 3).map((tag, tidx) => (
                             <span key={tidx} className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">
