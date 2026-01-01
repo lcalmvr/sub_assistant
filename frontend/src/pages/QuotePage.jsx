@@ -8,6 +8,7 @@ import {
   updateQuoteOption,
   deleteQuoteOption,
   cloneQuoteOption,
+  applyToAllQuotes,
   generateQuoteDocument,
   getQuoteDocuments,
   getPackageDocuments,
@@ -632,6 +633,19 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     mutationFn: (data) => updateQuoteOption(quote.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+    },
+  });
+
+  // Apply to all quotes mutation
+  const applyToAllMutation = useMutation({
+    mutationFn: (data) => applyToAllQuotes(quote.id, data),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      const count = response.data?.updated_count || 0;
+      if (count > 0) {
+        // Show a brief success indicator (could use a toast library)
+        console.log(`Applied to ${count} other option(s)`);
+      }
     },
   });
 
@@ -1383,6 +1397,19 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
         ) : (
           <p className="text-sm text-gray-500 italic">No subjectivities added</p>
         )}
+
+        {/* Apply to all options button */}
+        {allQuotes && allQuotes.length > 1 && (
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <button
+              className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1"
+              disabled={applyToAllMutation.isPending}
+              onClick={() => applyToAllMutation.mutate({ subjectivities: true })}
+            >
+              {applyToAllMutation.isPending ? 'Applying...' : `Apply to all ${allQuotes.length - 1} other option(s)`}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Endorsements */}
@@ -1501,6 +1528,19 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           </div>
         ) : (
           <p className="text-sm text-gray-500 italic">No additional endorsements selected</p>
+        )}
+
+        {/* Apply to all options button */}
+        {allQuotes && allQuotes.length > 1 && (
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <button
+              className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1"
+              disabled={applyToAllMutation.isPending}
+              onClick={() => applyToAllMutation.mutate({ endorsements: true })}
+            >
+              {applyToAllMutation.isPending ? 'Applying...' : `Apply to all ${allQuotes.length - 1} other option(s)`}
+            </button>
+          </div>
         )}
       </div>
 

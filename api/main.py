@@ -438,6 +438,76 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     return {"status": "updated"}
 
 
+class ApplyToAllRequest(BaseModel):
+    endorsements: Optional[bool] = False
+    subjectivities: Optional[bool] = False
+
+
+@app.post("/api/quotes/{quote_id}/apply-to-all")
+def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
+    """
+    Apply endorsements and/or subjectivities from this quote to all other quotes
+    in the same submission.
+    """
+    import json
+
+    if not request.endorsements and not request.subjectivities:
+        raise HTTPException(status_code=400, detail="Must specify endorsements or subjectivities to apply")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get source quote's data and submission_id
+            cur.execute("""
+                SELECT submission_id, endorsements, subjectivities
+                FROM insurance_towers
+                WHERE id = %s
+            """, (quote_id,))
+            source = cur.fetchone()
+            if not source:
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            submission_id = source["submission_id"]
+            endorsements = source.get("endorsements") or []
+            subjectivities = source.get("subjectivities") or []
+
+            # Parse JSON if needed
+            if isinstance(endorsements, str):
+                endorsements = json.loads(endorsements)
+            if isinstance(subjectivities, str):
+                subjectivities = json.loads(subjectivities)
+
+            # Build update for other quotes
+            updates = []
+            params = []
+
+            if request.endorsements:
+                updates.append("endorsements = %s")
+                params.append(json.dumps(endorsements))
+            if request.subjectivities:
+                updates.append("subjectivities = %s")
+                params.append(json.dumps(subjectivities))
+
+            params.extend([submission_id, quote_id])
+
+            # Update all other quotes in the submission
+            cur.execute(f"""
+                UPDATE insurance_towers
+                SET {", ".join(updates)}, updated_at = NOW()
+                WHERE submission_id = %s AND id != %s
+                RETURNING id
+            """, params)
+
+            updated_count = cur.rowcount
+            conn.commit()
+
+    return {
+        "status": "applied",
+        "updated_count": updated_count,
+        "endorsements_applied": request.endorsements,
+        "subjectivities_applied": request.subjectivities,
+    }
+
+
 @app.delete("/api/quotes/{quote_id}")
 def delete_quote(quote_id: str):
     """Delete a quote option."""
