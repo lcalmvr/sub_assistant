@@ -447,7 +447,7 @@ class ApplyToAllRequest(BaseModel):
 def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
     """
     Apply endorsements and/or subjectivities from this quote to all other quotes
-    in the same submission.
+    in the same submission. Uses junction table for subjectivities.
     """
     import json
 
@@ -458,7 +458,7 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
         with conn.cursor() as cur:
             # Get source quote's data and submission_id
             cur.execute("""
-                SELECT submission_id, endorsements, subjectivities
+                SELECT submission_id, endorsements
                 FROM insurance_towers
                 WHERE id = %s
             """, (quote_id,))
@@ -468,36 +468,46 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
 
             submission_id = source["submission_id"]
             endorsements = source.get("endorsements") or []
-            subjectivities = source.get("subjectivities") or []
 
             # Parse JSON if needed
             if isinstance(endorsements, str):
                 endorsements = json.loads(endorsements)
-            if isinstance(subjectivities, str):
-                subjectivities = json.loads(subjectivities)
 
-            # Build update for other quotes
-            updates = []
-            params = []
+            updated_count = 0
+            subj_links_created = 0
 
-            if request.endorsements:
-                updates.append("endorsements = %s")
-                params.append(json.dumps(endorsements))
+            # Handle endorsements (still uses JSONB column)
+            if request.endorsements and endorsements:
+                cur.execute("""
+                    UPDATE insurance_towers
+                    SET endorsements = %s, updated_at = NOW()
+                    WHERE submission_id = %s AND id != %s
+                    RETURNING id
+                """, (json.dumps(endorsements), submission_id, quote_id))
+                updated_count = cur.rowcount
+
+            # Handle subjectivities (uses junction table)
             if request.subjectivities:
-                updates.append("subjectivities = %s")
-                params.append(json.dumps(subjectivities))
+                # Get all other quote IDs for this submission
+                cur.execute("""
+                    SELECT id FROM insurance_towers
+                    WHERE submission_id = %s AND id != %s
+                """, (submission_id, quote_id))
+                other_quotes = [row["id"] for row in cur.fetchall()]
 
-            params.extend([submission_id, quote_id])
+                # Copy subjectivity links from source to all other quotes
+                for other_quote_id in other_quotes:
+                    cur.execute("""
+                        INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                        SELECT %s, subjectivity_id
+                        FROM quote_subjectivities
+                        WHERE quote_id = %s
+                        ON CONFLICT DO NOTHING
+                    """, (other_quote_id, quote_id))
+                    subj_links_created += cur.rowcount
 
-            # Update all other quotes in the submission
-            cur.execute(f"""
-                UPDATE insurance_towers
-                SET {", ".join(updates)}, updated_at = NOW()
-                WHERE submission_id = %s AND id != %s
-                RETURNING id
-            """, params)
+                updated_count = max(updated_count, len(other_quotes))
 
-            updated_count = cur.rowcount
             conn.commit()
 
     return {
@@ -505,6 +515,7 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
         "updated_count": updated_count,
         "endorsements_applied": request.endorsements,
         "subjectivities_applied": request.subjectivities,
+        "subjectivity_links_created": subj_links_created if request.subjectivities else 0,
     }
 
 
@@ -570,13 +581,12 @@ def clone_quote(quote_id: str):
 def bind_quote(quote_id: str):
     """Bind a quote option (and unbind others for the same submission)."""
     from datetime import datetime
-    import json
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # Get submission_id and subjectivities for this quote
+            # Get submission_id for this quote
             cur.execute("""
-                SELECT submission_id, subjectivities
+                SELECT submission_id
                 FROM insurance_towers WHERE id = %s
             """, (quote_id,))
             row = cur.fetchone()
@@ -584,9 +594,6 @@ def bind_quote(quote_id: str):
                 raise HTTPException(status_code=404, detail="Quote not found")
 
             submission_id = row["submission_id"]
-            subjectivities = row.get("subjectivities") or []
-            if isinstance(subjectivities, str):
-                subjectivities = json.loads(subjectivities)
 
             # Unbind all other quotes for this submission
             cur.execute("""
@@ -603,29 +610,25 @@ def bind_quote(quote_id: str):
                 RETURNING id
             """, (datetime.utcnow(), quote_id))
 
-            # Sync subjectivities to policy_subjectivities table
-            # Uses UPSERT to avoid duplicates on rebind
-            for subj_text in subjectivities:
-                cur.execute("""
-                    INSERT INTO policy_subjectivities (
-                        submission_id, text, category, status, created_by
-                    ) VALUES (
-                        %s, %s, 'general', 'pending', 'system'
-                    )
-                    ON CONFLICT (submission_id, text) DO NOTHING
-                """, (submission_id, subj_text))
+            # Count linked subjectivities (for informational return)
+            cur.execute("""
+                SELECT COUNT(*) as count
+                FROM quote_subjectivities
+                WHERE quote_id = %s
+            """, (quote_id,))
+            subj_count = cur.fetchone()["count"]
 
             conn.commit()
             return {
                 "status": "bound",
                 "quote_id": quote_id,
-                "subjectivities_synced": len(subjectivities)
+                "linked_subjectivities": subj_count
             }
 
 
 @app.post("/api/quotes/{quote_id}/unbind")
 def unbind_quote(quote_id: str):
-    """Unbind a quote option. Removes pending subjectivities but keeps received/waived for audit."""
+    """Unbind a quote option. Subjectivity status is preserved (tracking is in submission_subjectivities)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Get submission_id
@@ -636,8 +639,6 @@ def unbind_quote(quote_id: str):
             if not row:
                 raise HTTPException(status_code=404, detail="Quote not found")
 
-            submission_id = row["submission_id"]
-
             # Unbind the quote
             cur.execute("""
                 UPDATE insurance_towers
@@ -646,18 +647,10 @@ def unbind_quote(quote_id: str):
                 RETURNING id
             """, (quote_id,))
 
-            # Delete pending subjectivities (keep received/waived for audit trail)
-            cur.execute("""
-                DELETE FROM policy_subjectivities
-                WHERE submission_id = %s AND status = 'pending'
-            """, (submission_id,))
-            deleted_count = cur.rowcount
-
             conn.commit()
             return {
                 "status": "unbound",
-                "quote_id": quote_id,
-                "pending_subjectivities_removed": deleted_count
+                "quote_id": quote_id
             }
 
 
@@ -1626,21 +1619,25 @@ def get_bound_policies(search: str = None):
 
 @app.get("/api/admin/pending-subjectivities")
 def get_pending_subjectivities():
-    """Get policies with pending subjectivities."""
+    """Get policies with pending subjectivities (for bound options only)."""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Use new table: get subjectivities linked to bound quote options
             cur.execute("""
                 SELECT
                     s.id as submission_id,
                     s.applicant_name,
-                    ps.id as subjectivity_id,
-                    ps.text,
-                    ps.status,
-                    ps.created_at
+                    ss.id as subjectivity_id,
+                    ss.text,
+                    ss.status,
+                    ss.due_date,
+                    ss.created_at
                 FROM submissions s
-                JOIN policy_subjectivities ps ON ps.submission_id = s.id
-                WHERE ps.status = 'pending'
-                ORDER BY s.applicant_name, ps.created_at
+                JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = true
+                JOIN quote_subjectivities qs ON qs.quote_id = t.id
+                JOIN submission_subjectivities ss ON ss.id = qs.subjectivity_id
+                WHERE ss.status = 'pending'
+                ORDER BY s.applicant_name, ss.created_at
                 LIMIT 100
             """)
             rows = cur.fetchall()
@@ -1659,6 +1656,7 @@ def get_pending_subjectivities():
                     "id": str(row["subjectivity_id"]),
                     "text": row["text"],
                     "status": row["status"],
+                    "due_date": row.get("due_date"),
                     "created_at": row["created_at"]
                 })
 
@@ -1670,8 +1668,9 @@ def mark_subjectivity_received(subjectivity_id: str):
     """Mark a subjectivity as received."""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Try new table first, fall back to old
             cur.execute("""
-                UPDATE policy_subjectivities
+                UPDATE submission_subjectivities
                 SET status = 'received',
                     received_at = NOW(),
                     received_by = 'admin'
@@ -1679,6 +1678,17 @@ def mark_subjectivity_received(subjectivity_id: str):
                 RETURNING id
             """, (subjectivity_id,))
             result = cur.fetchone()
+            if not result:
+                # Fall back to old table during transition
+                cur.execute("""
+                    UPDATE policy_subjectivities
+                    SET status = 'received',
+                        received_at = NOW(),
+                        received_by = 'admin'
+                    WHERE id = %s
+                    RETURNING id
+                """, (subjectivity_id,))
+                result = cur.fetchone()
             if not result:
                 raise HTTPException(status_code=404, detail="Subjectivity not found")
             conn.commit()
@@ -1690,8 +1700,9 @@ def waive_subjectivity(subjectivity_id: str):
     """Waive a subjectivity."""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Try new table first, fall back to old
             cur.execute("""
-                UPDATE policy_subjectivities
+                UPDATE submission_subjectivities
                 SET status = 'waived',
                     waived_at = NOW(),
                     waived_by = 'admin'
@@ -1700,9 +1711,374 @@ def waive_subjectivity(subjectivity_id: str):
             """, (subjectivity_id,))
             result = cur.fetchone()
             if not result:
+                # Fall back to old table during transition
+                cur.execute("""
+                    UPDATE policy_subjectivities
+                    SET status = 'waived',
+                        waived_at = NOW(),
+                        waived_by = 'admin'
+                    WHERE id = %s
+                    RETURNING id
+                """, (subjectivity_id,))
+                result = cur.fetchone()
+            if not result:
                 raise HTTPException(status_code=404, detail="Subjectivity not found")
             conn.commit()
             return {"status": "waived", "id": subjectivity_id}
+
+
+# ─────────────────────────────────────────────────────────────
+# Subjectivities Endpoints (new junction table architecture)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/subjectivities")
+def get_submission_subjectivities(submission_id: str):
+    """Get all subjectivities for a submission with their quote option links."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    ss.id,
+                    ss.text,
+                    ss.category,
+                    ss.status,
+                    ss.due_date,
+                    ss.received_at,
+                    ss.received_by,
+                    ss.waived_at,
+                    ss.waived_by,
+                    ss.waived_reason,
+                    ss.notes,
+                    ss.created_at,
+                    COALESCE(
+                        array_agg(qs.quote_id) FILTER (WHERE qs.quote_id IS NOT NULL),
+                        '{}'
+                    ) as quote_ids
+                FROM submission_subjectivities ss
+                LEFT JOIN quote_subjectivities qs ON qs.subjectivity_id = ss.id
+                WHERE ss.submission_id = %s
+                GROUP BY ss.id
+                ORDER BY ss.created_at
+            """, (submission_id,))
+            return cur.fetchall()
+
+
+@app.get("/api/quotes/{quote_id}/subjectivities")
+def get_quote_subjectivities(quote_id: str):
+    """Get subjectivities linked to a specific quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    ss.id,
+                    ss.text,
+                    ss.category,
+                    ss.status,
+                    ss.due_date,
+                    ss.received_at,
+                    ss.notes,
+                    ss.created_at,
+                    qs.linked_at
+                FROM submission_subjectivities ss
+                JOIN quote_subjectivities qs ON qs.subjectivity_id = ss.id
+                WHERE qs.quote_id = %s
+                ORDER BY ss.created_at
+            """, (quote_id,))
+            return cur.fetchall()
+
+
+class SubjectivityCreate(BaseModel):
+    text: str
+    category: Optional[str] = "general"
+    position: Optional[str] = None  # If set, only link to quotes with this position
+    quote_ids: Optional[List[str]] = None  # Or specify specific quotes
+
+
+@app.post("/api/submissions/{submission_id}/subjectivities")
+def create_subjectivity(submission_id: str, data: SubjectivityCreate):
+    """Create a new subjectivity and link to quote options.
+
+    If position is provided, links only to quotes with that position (e.g., 'primary' or 'excess').
+    Otherwise links to all quotes for the submission.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Create the subjectivity
+            cur.execute("""
+                INSERT INTO submission_subjectivities (submission_id, text, category)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (submission_id, text) DO UPDATE SET
+                    updated_at = NOW()
+                RETURNING id, text, category, status, created_at
+            """, (submission_id, data.text, data.category or 'general'))
+            subj = cur.fetchone()
+            subj_id = subj["id"]
+
+            # Determine which quotes to link
+            if data.quote_ids:
+                # Link to specific quotes
+                for qid in data.quote_ids:
+                    cur.execute("""
+                        INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                    """, (qid, subj_id))
+            elif data.position:
+                # Link to all quotes with the specified position
+                cur.execute("""
+                    INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                    SELECT id, %s FROM insurance_towers
+                    WHERE submission_id = %s AND position = %s
+                    ON CONFLICT DO NOTHING
+                """, (subj_id, submission_id, data.position))
+            else:
+                # Link to all quotes for this submission
+                cur.execute("""
+                    INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                    SELECT id, %s FROM insurance_towers WHERE submission_id = %s
+                    ON CONFLICT DO NOTHING
+                """, (subj_id, submission_id))
+
+            linked_count = cur.rowcount
+            conn.commit()
+
+            return {
+                **dict(subj),
+                "linked_to_quotes": linked_count,
+                "position": data.position
+            }
+
+
+class SubjectivityUpdate(BaseModel):
+    text: Optional[str] = None
+    category: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+@app.patch("/api/subjectivities/{subjectivity_id}")
+def update_subjectivity(subjectivity_id: str, data: SubjectivityUpdate):
+    """Update a subjectivity."""
+    updates = {}
+    for k, v in data.model_dump(exclude_unset=True).items():
+        updates[k] = v
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
+    values = list(updates.values()) + [subjectivity_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE submission_subjectivities SET {set_clause}, updated_at = NOW() WHERE id = %s RETURNING *",
+                values
+            )
+            result = cur.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Subjectivity not found")
+            conn.commit()
+            return result
+
+
+@app.delete("/api/subjectivities/{subjectivity_id}")
+def delete_subjectivity(subjectivity_id: str):
+    """Delete a subjectivity (cascades to junction table)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM submission_subjectivities
+                WHERE id = %s
+                RETURNING id
+            """, (subjectivity_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Subjectivity not found")
+            conn.commit()
+            return {"status": "deleted", "id": subjectivity_id}
+
+
+@app.post("/api/quotes/{quote_id}/subjectivities/{subjectivity_id}/link")
+def link_subjectivity_to_quote(quote_id: str, subjectivity_id: str):
+    """Link an existing subjectivity to a quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                RETURNING quote_id
+            """, (quote_id, subjectivity_id))
+            result = cur.fetchone()
+            conn.commit()
+            return {"status": "linked" if result else "already_linked"}
+
+
+@app.delete("/api/quotes/{quote_id}/subjectivities/{subjectivity_id}/link")
+def unlink_subjectivity_from_quote(quote_id: str, subjectivity_id: str):
+    """Unlink a subjectivity from a quote option (doesn't delete the subjectivity)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM quote_subjectivities
+                WHERE quote_id = %s AND subjectivity_id = %s
+                RETURNING quote_id
+            """, (quote_id, subjectivity_id))
+            result = cur.fetchone()
+            conn.commit()
+            if not result:
+                raise HTTPException(status_code=404, detail="Link not found")
+            return {"status": "unlinked"}
+
+
+@app.post("/api/quotes/{quote_id}/subjectivities/pull/{source_quote_id}")
+def pull_subjectivities_from_quote(quote_id: str, source_quote_id: str):
+    """Pull (copy) subjectivity links from another quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                SELECT %s, subjectivity_id
+                FROM quote_subjectivities
+                WHERE quote_id = %s
+                ON CONFLICT DO NOTHING
+            """, (quote_id, source_quote_id))
+            linked_count = cur.rowcount
+            conn.commit()
+            return {"status": "pulled", "linked_count": linked_count}
+
+
+@app.delete("/api/subjectivities/{subjectivity_id}/position/{position}")
+def unlink_subjectivity_from_position(subjectivity_id: str, position: str):
+    """Unlink a subjectivity from all quotes of a specific position (primary/excess)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM quote_subjectivities qs
+                USING insurance_towers t
+                WHERE qs.quote_id = t.id
+                  AND qs.subjectivity_id = %s
+                  AND t.position = %s
+                RETURNING qs.quote_id
+            """, (subjectivity_id, position))
+            unlinked_count = cur.rowcount
+            conn.commit()
+            return {"status": "unlinked", "position": position, "unlinked_count": unlinked_count}
+
+
+@app.get("/api/subjectivity-templates")
+def get_subjectivity_templates(position: str = None, include_inactive: bool = False):
+    """Get stock subjectivity templates, optionally filtered by position.
+
+    Position filter:
+    - None: returns all templates
+    - 'primary': returns templates where position is NULL or 'primary'
+    - 'excess': returns templates where position is NULL or 'excess'
+
+    Returns templates with auto_apply flag indicating if they should be auto-added.
+    Set include_inactive=true for admin view to see all templates.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            active_filter = "" if include_inactive else "WHERE is_active = true"
+            if position:
+                cur.execute(f"""
+                    SELECT id, text, position, category, display_order, auto_apply, is_active
+                    FROM subjectivity_templates
+                    WHERE (position IS NULL OR position = %s)
+                      {"AND is_active = true" if not include_inactive else ""}
+                    ORDER BY display_order, text
+                """, (position,))
+            else:
+                cur.execute(f"""
+                    SELECT id, text, position, category, display_order, auto_apply, is_active
+                    FROM subjectivity_templates
+                    {active_filter}
+                    ORDER BY display_order, text
+                """)
+            return cur.fetchall()
+
+
+@app.post("/api/subjectivity-templates")
+def create_subjectivity_template(data: dict):
+    """Create a new subjectivity template."""
+    text = data.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    position = data.get("position")  # NULL = all, 'primary', 'excess'
+    category = data.get("category", "general")
+    display_order = data.get("display_order", 100)
+    auto_apply = data.get("auto_apply", False)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO subjectivity_templates (text, position, category, display_order, auto_apply)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, text, position, category, display_order, auto_apply, is_active
+            """, (text, position, category, display_order, auto_apply))
+            conn.commit()
+            return cur.fetchone()
+
+
+@app.patch("/api/subjectivity-templates/{template_id}")
+def update_subjectivity_template(template_id: str, data: dict):
+    """Update a subjectivity template."""
+    updates = []
+    values = []
+
+    if "text" in data:
+        updates.append("text = %s")
+        values.append(data["text"].strip())
+    if "position" in data:
+        updates.append("position = %s")
+        values.append(data["position"])
+    if "category" in data:
+        updates.append("category = %s")
+        values.append(data["category"])
+    if "display_order" in data:
+        updates.append("display_order = %s")
+        values.append(data["display_order"])
+    if "auto_apply" in data:
+        updates.append("auto_apply = %s")
+        values.append(data["auto_apply"])
+    if "is_active" in data:
+        updates.append("is_active = %s")
+        values.append(data["is_active"])
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    updates.append("updated_at = NOW()")
+    values.append(template_id)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE subjectivity_templates
+                SET {", ".join(updates)}
+                WHERE id = %s
+                RETURNING id, text, position, category, display_order, auto_apply, is_active
+            """, values)
+            conn.commit()
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return row
+
+
+@app.delete("/api/subjectivity-templates/{template_id}")
+def delete_subjectivity_template(template_id: str):
+    """Delete a subjectivity template (hard delete)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM subjectivity_templates WHERE id = %s", (template_id,))
+            conn.commit()
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return {"status": "deleted"}
 
 
 @app.get("/api/admin/search-policies")
