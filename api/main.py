@@ -83,6 +83,7 @@ def get_submission(submission_id: str):
                        decision_tag, decision_reason, decided_at, decided_by,
                        cyber_exposures, nist_controls,
                        website, broker_email,
+                       effective_date, expiration_date,
                        created_at
                 FROM submissions
                 WHERE id = %s
@@ -151,7 +152,8 @@ def list_quotes(submission_id: str):
             cur.execute("""
                 SELECT id, quote_name, option_descriptor, tower_json, primary_retention, position,
                        technical_premium, risk_adjusted_premium, sold_premium,
-                       policy_form, coverages, sublimits, is_bound, retroactive_date, created_at
+                       policy_form, coverages, sublimits, endorsements, subjectivities,
+                       is_bound, retroactive_date, created_at
                 FROM insurance_towers
                 WHERE submission_id = %s
                 ORDER BY created_at DESC
@@ -167,8 +169,8 @@ def get_quote(quote_id: str):
             cur.execute("""
                 SELECT id, submission_id, quote_name, option_descriptor, tower_json, primary_retention,
                        position, technical_premium, risk_adjusted_premium, sold_premium,
-                       policy_form, coverages, sublimits, is_bound, retroactive_date,
-                       created_at
+                       policy_form, coverages, sublimits, endorsements, subjectivities,
+                       is_bound, retroactive_date, created_at
                 FROM insurance_towers
                 WHERE id = %s
             """, (quote_id,))
@@ -274,6 +276,8 @@ class QuoteUpdate(BaseModel):
     tower_json: Optional[list] = None
     coverages: Optional[dict] = None
     sublimits: Optional[list] = None  # Excess quote coverage schedule
+    endorsements: Optional[list] = None  # Endorsement names/titles
+    subjectivities: Optional[list] = None  # Subjectivity strings
 
 
 @app.post("/api/submissions/{submission_id}/quotes")

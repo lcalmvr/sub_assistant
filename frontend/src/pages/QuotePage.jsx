@@ -15,6 +15,7 @@ import {
   generateQuotePackage,
   getLatestDocument,
   getSubmissionDocuments,
+  getDocumentLibraryEntries,
 } from '../api/client';
 import CoverageEditor from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
@@ -511,6 +512,39 @@ function getDocTypeLabel(type) {
   return labels[type] || type;
 }
 
+// Stock subjectivities
+const STOCK_SUBJECTIVITIES = [
+  "Coverage is subject to policy terms and conditions",
+  "Premium subject to minimum retained premium",
+  "Rate subject to satisfactory inspection",
+  "Subject to completion of application",
+  "Subject to receipt of additional underwriting information",
+  "Coverage bound subject to company acceptance",
+  "Premium subject to audit",
+  "Policy subject to terrorism exclusion",
+  "Subject to cyber security questionnaire completion",
+  "Coverage subject to satisfactory financial review",
+  "Subject to underlying quotes and binders",
+];
+
+// Required endorsements - always included on every quote
+const REQUIRED_ENDORSEMENT_CODES = [
+  "END-OFAC-001",  // OFAC Sanctions Compliance
+  "END-WAR-001",   // War & Terrorism Exclusion
+];
+
+// Endorsement category display labels
+const ENDORSEMENT_CATEGORIES = {
+  exclusion: "Exclusions",
+  extension: "Extensions",
+  cyber: "Cyber",
+  general: "General",
+  coverage: "Coverage",
+  reporting: "Reporting",
+  administrative: "Administrative",
+  cancellation: "Cancellation",
+};
+
 // Quote detail panel
 function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const queryClient = useQueryClient();
@@ -528,11 +562,27 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const hasAnyQs = (quote.tower_json || []).some(l => l.quota_share);
   const [showQsColumn, setShowQsColumn] = useState(hasAnyQs);
 
+  // Dates state
+  const [retroactiveDate, setRetroactiveDate] = useState(quote.retroactive_date || '');
+
+  // Subjectivities state
+  const [subjectivities, setSubjectivities] = useState(quote.subjectivities || []);
+  const [customSubjectivity, setCustomSubjectivity] = useState('');
+  const [selectedStock, setSelectedStock] = useState('');
+
+  // Endorsements state
+  const [endorsements, setEndorsements] = useState(quote.endorsements || []);
+  const [selectedEndorsement, setSelectedEndorsement] = useState('');
+
   // Reset state when quote changes
   useEffect(() => {
     setTowerLayers(quote.tower_json || []);
     setEditingTower(false);
     setEditedDescriptor(quote.option_descriptor || '');
+    setRetroactiveDate(quote.retroactive_date || '');
+    setSubjectivities(quote.subjectivities || []);
+    setEndorsements(quote.endorsements || []);
+    setSelectedEndorsement('');
     // Auto-show QS column if any layer has quota share
     setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
   }, [quote.id]);
@@ -558,6 +608,16 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     queryKey: ['quoteEndorsements', quote.id],
     queryFn: () => getQuoteEndorsements(quote.id).then(res => res.data),
     enabled: showPackageOptions,
+  });
+
+  // Query for available endorsements from document library
+  const { data: availableEndorsements } = useQuery({
+    queryKey: ['documentLibrary', 'endorsement', position],
+    queryFn: () => getDocumentLibraryEntries({
+      document_type: 'endorsement',
+      position: position,
+      status: 'active',
+    }).then(res => res.data),
   });
 
   // Update mutation
@@ -1160,6 +1220,50 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
       </div>
       )}
 
+      {/* Policy Dates */}
+      <div className="card">
+        <h4 className="form-section-title">Policy Dates</h4>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="form-label">Effective Date</label>
+            <input
+              type="date"
+              className="form-input bg-gray-50"
+              value={submission.effective_date || ''}
+              readOnly
+              title="Set at submission level"
+            />
+            <p className="text-xs text-gray-500 mt-1">From submission</p>
+          </div>
+          <div>
+            <label className="form-label">Expiration Date</label>
+            <input
+              type="date"
+              className="form-input bg-gray-50"
+              value={submission.expiration_date || ''}
+              readOnly
+              title="Set at submission level"
+            />
+            <p className="text-xs text-gray-500 mt-1">From submission</p>
+          </div>
+          <div>
+            <label className="form-label">Retroactive Date</label>
+            <input
+              type="date"
+              className="form-input"
+              value={retroactiveDate}
+              onChange={(e) => setRetroactiveDate(e.target.value)}
+              onBlur={() => {
+                if (retroactiveDate !== (quote.retroactive_date || '')) {
+                  updateMutation.mutate({ retroactive_date: retroactiveDate || null });
+                }
+              }}
+            />
+            <p className="text-xs text-gray-500 mt-1">Quote-specific</p>
+          </div>
+        </div>
+      </div>
+
       {/* Coverage Schedule - Only for Primary quotes */}
       {position === 'primary' && (
         <CoverageEditor
@@ -1183,6 +1287,193 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           }}
         />
       )}
+
+      {/* Subjectivities */}
+      <div className="card">
+        <h4 className="form-section-title">Subjectivities</h4>
+
+        {/* Add from stock */}
+        <div className="flex gap-2 mb-3">
+          <select
+            className="form-select flex-1"
+            value={selectedStock}
+            onChange={(e) => setSelectedStock(e.target.value)}
+          >
+            <option value="">Select from stock subjectivities...</option>
+            {STOCK_SUBJECTIVITIES.filter(s => !subjectivities.includes(s)).map((s, i) => (
+              <option key={i} value={s}>{s}</option>
+            ))}
+          </select>
+          <button
+            className="btn btn-outline"
+            disabled={!selectedStock}
+            onClick={() => {
+              if (selectedStock && !subjectivities.includes(selectedStock)) {
+                const updated = [...subjectivities, selectedStock];
+                setSubjectivities(updated);
+                setSelectedStock('');
+                updateMutation.mutate({ subjectivities: updated });
+              }
+            }}
+          >
+            Add
+          </button>
+        </div>
+
+        {/* Custom input */}
+        <div className="flex gap-2 mb-4">
+          <input
+            type="text"
+            className="form-input flex-1"
+            placeholder="Enter custom subjectivity..."
+            value={customSubjectivity}
+            onChange={(e) => setCustomSubjectivity(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && customSubjectivity.trim()) {
+                const updated = [...subjectivities, customSubjectivity.trim()];
+                setSubjectivities(updated);
+                setCustomSubjectivity('');
+                updateMutation.mutate({ subjectivities: updated });
+              }
+            }}
+          />
+          <button
+            className="btn btn-outline"
+            disabled={!customSubjectivity.trim()}
+            onClick={() => {
+              if (customSubjectivity.trim() && !subjectivities.includes(customSubjectivity.trim())) {
+                const updated = [...subjectivities, customSubjectivity.trim()];
+                setSubjectivities(updated);
+                setCustomSubjectivity('');
+                updateMutation.mutate({ subjectivities: updated });
+              }
+            }}
+          >
+            Add
+          </button>
+        </div>
+
+        {/* Current list */}
+        {subjectivities.length > 0 ? (
+          <div className="space-y-2">
+            {subjectivities.map((subj, idx) => (
+              <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
+                <span className="text-gray-400 text-sm">{idx + 1}.</span>
+                <span className="flex-1 text-sm text-gray-700">{subj}</span>
+                <button
+                  className="text-red-400 hover:text-red-600 text-sm"
+                  onClick={() => {
+                    const updated = subjectivities.filter((_, i) => i !== idx);
+                    setSubjectivities(updated);
+                    updateMutation.mutate({ subjectivities: updated });
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 italic">No subjectivities added</p>
+        )}
+      </div>
+
+      {/* Endorsements */}
+      <div className="card">
+        <h4 className="form-section-title">Endorsements</h4>
+
+        {/* Required endorsements - always included */}
+        {availableEndorsements && (() => {
+          const requiredEndorsements = availableEndorsements.filter(e =>
+            REQUIRED_ENDORSEMENT_CODES.includes(e.code)
+          );
+          return requiredEndorsements.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Required (always included)</p>
+              <div className="space-y-1">
+                {requiredEndorsements.map((e) => (
+                  <div key={e.id} className="flex items-center gap-2 text-sm text-gray-600">
+                    <span className="text-gray-400">🔒</span>
+                    <span>{e.code} - {e.title}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Add endorsement selector */}
+        <div className="flex gap-2 mb-4">
+          <select
+            className="form-select flex-1"
+            value={selectedEndorsement}
+            onChange={(e) => setSelectedEndorsement(e.target.value)}
+          >
+            <option value="">Select endorsement to add...</option>
+            {availableEndorsements && availableEndorsements
+              .filter(e =>
+                !REQUIRED_ENDORSEMENT_CODES.includes(e.code) &&
+                !endorsements.includes(e.title)
+              )
+              .map((e) => (
+                <option key={e.id} value={e.title}>
+                  {e.code} - {e.title}
+                  {e.category && ` [${ENDORSEMENT_CATEGORIES[e.category] || e.category}]`}
+                </option>
+              ))}
+          </select>
+          <button
+            className="btn btn-outline"
+            disabled={!selectedEndorsement}
+            onClick={() => {
+              if (selectedEndorsement && !endorsements.includes(selectedEndorsement)) {
+                const updated = [...endorsements, selectedEndorsement];
+                setEndorsements(updated);
+                setSelectedEndorsement('');
+                updateMutation.mutate({ endorsements: updated });
+              }
+            }}
+          >
+            Add
+          </button>
+        </div>
+
+        {/* Selected endorsements list */}
+        {endorsements.length > 0 ? (
+          <div className="space-y-2">
+            {endorsements.map((title, idx) => {
+              const libEntry = availableEndorsements?.find(e => e.title === title);
+              return (
+                <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
+                  <span className="text-gray-400 text-sm">{idx + 1}.</span>
+                  <div className="flex-1">
+                    <span className="text-sm text-gray-700">
+                      {libEntry ? `${libEntry.code} - ${title}` : title}
+                    </span>
+                    {libEntry?.category && (
+                      <span className="ml-2 text-xs text-gray-500">
+                        [{ENDORSEMENT_CATEGORIES[libEntry.category] || libEntry.category}]
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    className="text-red-400 hover:text-red-600 text-sm"
+                    onClick={() => {
+                      const updated = endorsements.filter((_, i) => i !== idx);
+                      setEndorsements(updated);
+                      updateMutation.mutate({ endorsements: updated });
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 italic">No additional endorsements selected</p>
+        )}
+      </div>
 
       {/* Document Generation */}
       <div className="card">
