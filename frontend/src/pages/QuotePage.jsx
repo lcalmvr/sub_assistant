@@ -541,7 +541,7 @@ const ENDORSEMENT_CATEGORIES = {
 };
 
 // Subjectivity row with status and overflow menu
-function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange, openMenuId, setOpenMenuId }) {
+function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, onDelete, onStatusChange, openMenuId, setOpenMenuId, showOptions, optionNames }) {
   const statusMenuId = `subj-${subj.id}-status`;
   const actionsMenuId = `subj-${subj.id}-actions`;
   const statusMenuOpen = openMenuId === statusMenuId;
@@ -558,6 +558,18 @@ function SubjectivityRow({ subj, idx, position, onUnlinkThis, onUnlinkPosition, 
     <div className="flex items-center gap-2 p-2 bg-gray-50 rounded group relative">
       <div className="flex-1 min-w-0">
         <span className="text-sm text-gray-700">{subj.text}</span>
+        {showOptions && optionNames && optionNames.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            {optionNames.slice(0, 3).map((name, i) => (
+              <span key={i} className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">
+                {name}
+              </span>
+            ))}
+            {optionNames.length > 3 && (
+              <span className="text-xs text-gray-500">+{optionNames.length - 3}</span>
+            )}
+          </div>
+        )}
       </div>
       {/* Status badge (clickable) */}
       <div className="relative">
@@ -764,6 +776,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const [customSubjectivity, setCustomSubjectivity] = useState('');
   const [selectedStock, setSelectedStock] = useState('');
   const [openSubjMenu, setOpenSubjMenu] = useState(null); // tracks which menu is open: 'auto-{idx}-status', 'subj-{id}-actions', etc.
+  const [showSubjOptions, setShowSubjOptions] = useState(false); // toggle to show which quote options each subjectivity is on
 
   // Endorsements state
   const [endorsements, setEndorsements] = useState(quote.endorsements || []);
@@ -795,6 +808,29 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     queryKey: ['subjectivityTemplates', position],
     queryFn: () => getSubjectivityTemplates(position).then(res => res.data),
   });
+
+  // Query for submission-level subjectivities (includes quote_ids for each)
+  const { data: submissionSubjectivities = [] } = useQuery({
+    queryKey: ['submissionSubjectivities', submission.id],
+    queryFn: () => getSubmissionSubjectivities(submission.id).then(res => res.data),
+    enabled: showSubjOptions, // only fetch when toggle is on
+  });
+
+  // Build a map of subjectivity text -> quote option names
+  const subjOptionMap = {};
+  if (showSubjOptions && submissionSubjectivities.length > 0 && allQuotes) {
+    const quoteNameMap = {};
+    allQuotes.forEach(q => { quoteNameMap[q.id] = q.quote_name || `Option ${q.id.slice(0,4)}`; });
+    submissionSubjectivities.forEach(s => {
+      // quote_ids may come as array or need parsing
+      let quoteIds = s.quote_ids || [];
+      if (typeof quoteIds === 'string') {
+        try { quoteIds = JSON.parse(quoteIds); } catch { quoteIds = []; }
+      }
+      if (!Array.isArray(quoteIds)) quoteIds = [];
+      subjOptionMap[s.text] = quoteIds.map(qid => quoteNameMap[qid]).filter(Boolean);
+    });
+  }
 
   // Get subjectivity texts for display (from junction table data)
   const subjectivities = quoteSubjectivities.map(s => s.text);
@@ -1590,7 +1626,18 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
       {/* Subjectivities */}
       <div className="card">
-        <h4 className="form-section-title">Subjectivities</h4>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="form-section-title mb-0">Subjectivities</h4>
+          {allQuotes && allQuotes.length > 1 && (
+            <button
+              className={`text-xs px-2 py-1 rounded border transition-colors ${showSubjOptions ? 'bg-purple-100 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+              onClick={() => setShowSubjOptions(!showSubjOptions)}
+              title={showSubjOptions ? 'Hide option assignments' : 'Show option assignments'}
+            >
+              Options {showSubjOptions ? 'ON' : 'OFF'}
+            </button>
+          )}
+        </div>
 
         {/* Auto-added subjectivities */}
         {(() => {
@@ -1650,6 +1697,8 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                     onStatusChange={(status) => updateSubjectivityMutation.mutate({ id: subj.id, status })}
                     openMenuId={openSubjMenu}
                     setOpenMenuId={setOpenSubjMenu}
+                    showOptions={showSubjOptions}
+                    optionNames={subjOptionMap[subj.text] || []}
                   />
                 ))}
               </div>
@@ -1722,18 +1771,6 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           </div>
         </div>
 
-        {/* Apply to all options button */}
-        {allQuotes && allQuotes.length > 1 && quoteSubjectivities.length > 0 && (
-          <div className="mt-4 pt-3 border-t border-gray-100">
-            <button
-              className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1"
-              disabled={applyToAllMutation.isPending}
-              onClick={() => applyToAllMutation.mutate({ subjectivities: true })}
-            >
-              {applyToAllMutation.isPending ? 'Applying...' : `Sync to all ${allQuotes.length - 1} other option(s)`}
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Endorsements */}
