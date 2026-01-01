@@ -2,7 +2,7 @@
 FastAPI backend for the React frontend.
 Exposes the existing database and business logic via REST API.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -541,6 +541,58 @@ def unbind_quote(quote_id: str):
                 raise HTTPException(status_code=404, detail="Quote not found")
             conn.commit()
             return {"status": "unbound", "quote_id": quote_id}
+
+
+# ─────────────────────────────────────────────────────────────
+# Coverage Extraction Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.post("/api/extract-coverages")
+async def extract_coverages(file: UploadFile = File(...)):
+    """
+    Extract coverages from an uploaded insurance document (PDF, DOCX).
+    Uses AI to parse coverage schedules from primary carrier quotes/binders.
+    """
+    import tempfile
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    # Validate file type
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in ['.pdf', '.docx', '.doc']:
+        raise HTTPException(status_code=400, detail="Only PDF and DOCX files are supported")
+
+    # Save to temp file
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        from ai.document_extractor import extract_text_from_document
+        from ai.sublimit_intel import parse_coverages_from_document
+
+        # Extract text from document
+        document_text = extract_text_from_document(tmp_path)
+
+        if not document_text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from document")
+
+        # Parse coverages with AI
+        result = parse_coverages_from_document(document_text)
+
+        return result
+
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Missing dependency: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────

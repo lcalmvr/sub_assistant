@@ -244,13 +244,16 @@ function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending, selectedQuote,
     const finalName = quoteName.trim() || generateName();
 
     if (position === 'excess') {
-      // Excess quote: create with CMAI layer + optional primary layer
+      // Excess quote: create tower based on whether primary carrier is known
       const tower = [];
       if (primaryCarrier.trim()) {
-        // Add primary layer below CMAI
-        tower.push({ carrier: primaryCarrier.trim(), limit: 1000000, attachment: 0, retention, premium: null });
+        // Primary carrier known - limit is their limit, CMAI defaults to same
+        tower.push({ carrier: primaryCarrier.trim(), limit, attachment: 0, retention, premium: null });
+        tower.push({ carrier: 'CMAI', limit, attachment: limit, premium: null });
+      } else {
+        // No primary carrier - limit is our limit
+        tower.push({ carrier: 'CMAI', limit, attachment: 0, premium: null });
       }
-      tower.push({ carrier: 'CMAI', limit, attachment: 0, premium: null });
 
       onSubmit({
         quote_name: finalName,
@@ -379,7 +382,9 @@ function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending, selectedQuote,
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="form-label">Our Limit</label>
+                  <label className="form-label">
+                    {primaryCarrier.trim() ? 'Primary Limit' : 'Our Limit'}
+                  </label>
                   <select
                     className="form-select"
                     value={limit}
