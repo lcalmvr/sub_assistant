@@ -319,13 +319,15 @@
         .list-numbered {
             counter-reset: item;
             list-style: none;
-            padding-left: 0;
+            padding-left: 10px;
+            margin: 8px 0 0 0;
         }
 
         .list-numbered li {
             counter-increment: item;
             padding-left: 30px;
             margin-bottom: 8px;
+            position: relative;
         }
 
         .list-numbered li::before {

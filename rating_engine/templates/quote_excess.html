@@ -101,7 +101,10 @@
                 {{ layer.carrier }}
                 {% if is_our_layer %}<strong>(This Quote)</strong>{% endif %}
             </td>
-            <td class="text-right currency" style="font-size: 12px;">${{ layer.limit | format_limit }}</td>
+            <td class="text-right currency" style="font-size: 12px;">
+                ${{ layer.limit | format_limit }}
+                {% if layer.quota_share %}<span style="font-size: 10px; color: {% if is_our_layer %}rgba(255,255,255,0.7){% else %}#718096{% endif %};">po ${{ layer.quota_share | format_limit }}</span>{% endif %}
+            </td>
             <td class="text-right currency" style="font-size: 12px;">
                 {% if layer.attachment == 0 %}
                     Primary

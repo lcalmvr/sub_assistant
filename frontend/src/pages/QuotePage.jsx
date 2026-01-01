@@ -8,8 +8,6 @@ import {
   updateQuoteOption,
   deleteQuoteOption,
   cloneQuoteOption,
-  bindQuoteOption,
-  unbindQuoteOption,
   generateQuoteDocument,
   getQuoteDocuments,
   getPackageDocuments,
@@ -223,14 +221,12 @@ function QuoteOptionTab({ quote, isSelected, onSelect }) {
 }
 
 // Create Quote Modal
-function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending }) {
+function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending, selectedQuote, onClone, isCloning }) {
   const [quoteName, setQuoteName] = useState('');
   const [retention, setRetention] = useState(25000);
   const [limit, setLimit] = useState(1000000);
-  const [attachment, setAttachment] = useState(1000000);
   const [position, setPosition] = useState('primary');
-  const [policyForm, setPolicyForm] = useState('claims_made');
-  const [underlyingCarrier, setUnderlyingCarrier] = useState('Primary Carrier');
+  const [primaryCarrier, setPrimaryCarrier] = useState('');
 
   if (!isOpen) return null;
 
@@ -238,10 +234,7 @@ function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending }) {
   const generateName = () => {
     const limitStr = limit >= 1000000 ? `$${limit / 1000000}M` : `$${limit / 1000}K`;
     const retentionStr = retention >= 1000000 ? `$${retention / 1000000}M` : `$${retention / 1000}K`;
-    if (position === 'excess') {
-      const attachStr = attachment >= 1000000 ? `$${attachment / 1000000}M` : `$${attachment / 1000}K`;
-      return `${limitStr} xs ${attachStr} x ${retentionStr}`;
-    }
+    // For excess, attachment unknown - name updates after tower configured
     return `${limitStr} x ${retentionStr}`;
   };
 
@@ -250,23 +243,27 @@ function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending }) {
     const finalName = quoteName.trim() || generateName();
 
     if (position === 'excess') {
-      // Excess quote: CMAI sits above the attachment point
+      // Excess quote: create with CMAI layer + optional primary layer
+      const tower = [];
+      if (primaryCarrier.trim()) {
+        // Add primary layer below CMAI
+        tower.push({ carrier: primaryCarrier.trim(), limit: 1000000, attachment: 0, retention, premium: null });
+      }
+      tower.push({ carrier: 'CMAI', limit, attachment: 0, premium: null });
+
       onSubmit({
         quote_name: finalName,
         primary_retention: retention,
-        policy_form: policyForm,
+        policy_form: 'claims_made',
         position: 'excess',
-        underlying_carrier: underlyingCarrier,
-        tower_json: [
-          { carrier: 'CMAI', limit, attachment, premium: null }
-        ],
+        tower_json: tower,
       });
     } else {
       // Primary quote: CMAI at ground level
       onSubmit({
         quote_name: finalName,
         primary_retention: retention,
-        policy_form: policyForm,
+        policy_form: 'claims_made',
         position: 'primary',
         tower_json: [
           { carrier: 'CMAI', limit, attachment: 0, premium: null }
@@ -279,10 +276,11 @@ function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending }) {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Create New Quote Option</h3>
+
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Position Toggle */}
+          {/* Position Toggle - includes Clone if quote selected */}
           <div>
-            <label className="form-label">Position</label>
+            <label className="form-label">Start From</label>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -306,112 +304,157 @@ function CreateQuoteModal({ isOpen, onClose, onSubmit, isPending }) {
               >
                 Excess
               </button>
+              {selectedQuote && (
+                <button
+                  type="button"
+                  className={`flex-1 py-2 px-4 rounded-lg border-2 font-medium transition-colors ${
+                    position === 'clone'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                  }`}
+                  onClick={() => setPosition('clone')}
+                >
+                  Clone
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="form-label">Our Limit</label>
-              <select
-                className="form-select"
-                value={limit}
-                onChange={(e) => setLimit(Number(e.target.value))}
-              >
-                <option value={1000000}>$1M</option>
-                <option value={2000000}>$2M</option>
-                <option value={3000000}>$3M</option>
-                <option value={5000000}>$5M</option>
-                <option value={10000000}>$10M</option>
-              </select>
+          {/* Clone info */}
+          {position === 'clone' && selectedQuote && (
+            <div className="p-4 bg-green-50 rounded-lg border border-green-200 text-center">
+              <p className="text-sm text-green-800">
+                Will create a copy of <span className="font-semibold">{selectedQuote.quote_name || 'selected option'}</span>
+              </p>
             </div>
-            <div>
-              <label className="form-label">Retention</label>
-              <select
-                className="form-select"
-                value={retention}
-                onChange={(e) => setRetention(Number(e.target.value))}
-              >
-                <option value={25000}>$25K</option>
-                <option value={50000}>$50K</option>
-                <option value={100000}>$100K</option>
-                <option value={150000}>$150K</option>
-                <option value={250000}>$250K</option>
-              </select>
-            </div>
-          </div>
+          )}
 
-          {/* Excess-specific fields */}
-          {position === 'excess' && (
-            <>
+          {/* Primary fields */}
+          {position === 'primary' && (
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="form-label">Attachment Point (xs)</label>
+                <label className="form-label">Our Limit</label>
                 <select
                   className="form-select"
-                  value={attachment}
-                  onChange={(e) => setAttachment(Number(e.target.value))}
+                  value={limit}
+                  onChange={(e) => setLimit(Number(e.target.value))}
                 >
                   <option value={1000000}>$1M</option>
                   <option value={2000000}>$2M</option>
                   <option value={3000000}>$3M</option>
                   <option value={5000000}>$5M</option>
                   <option value={10000000}>$10M</option>
-                  <option value={15000000}>$15M</option>
-                  <option value={25000000}>$25M</option>
                 </select>
               </div>
               <div>
-                <label className="form-label">Underlying Carrier</label>
+                <label className="form-label">Retention</label>
+                <select
+                  className="form-select"
+                  value={retention}
+                  onChange={(e) => setRetention(Number(e.target.value))}
+                >
+                  <option value={25000}>$25K</option>
+                  <option value={50000}>$50K</option>
+                  <option value={100000}>$100K</option>
+                  <option value={150000}>$150K</option>
+                  <option value={250000}>$250K</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Excess fields - all optional */}
+          {position === 'excess' && (
+            <div className="space-y-4">
+              <div>
+                <label className="form-label">Primary Carrier</label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="e.g., Primary Carrier, AIG, Chubb"
-                  value={underlyingCarrier}
-                  onChange={(e) => setUnderlyingCarrier(e.target.value)}
+                  placeholder="e.g. Travelers, Chubb"
+                  value={primaryCarrier}
+                  onChange={(e) => setPrimaryCarrier(e.target.value)}
                 />
               </div>
-            </>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="form-label">Our Limit</label>
+                  <select
+                    className="form-select"
+                    value={limit}
+                    onChange={(e) => setLimit(Number(e.target.value))}
+                  >
+                    <option value={1000000}>$1M</option>
+                    <option value={2000000}>$2M</option>
+                    <option value={3000000}>$3M</option>
+                    <option value={5000000}>$5M</option>
+                    <option value={10000000}>$10M</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">SIR</label>
+                  <select
+                    className="form-select"
+                    value={retention}
+                    onChange={(e) => setRetention(Number(e.target.value))}
+                  >
+                    <option value={25000}>$25K</option>
+                    <option value={50000}>$50K</option>
+                    <option value={100000}>$100K</option>
+                    <option value={150000}>$150K</option>
+                    <option value={250000}>$250K</option>
+                  </select>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">Tower structure will be configured after creation</p>
+            </div>
           )}
 
-          <div>
-            <label className="form-label">Policy Form</label>
-            <select
-              className="form-select"
-              value={policyForm}
-              onChange={(e) => setPolicyForm(e.target.value)}
-            >
-              <option value="claims_made">Claims Made</option>
-              <option value="occurrence">Occurrence</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="form-label">Quote Name (optional)</label>
-            <input
-              type="text"
-              className="form-input"
-              placeholder={generateName()}
-              value={quoteName}
-              onChange={(e) => setQuoteName(e.target.value)}
-            />
-            <p className="text-xs text-gray-500 mt-1">Leave blank to auto-generate</p>
-          </div>
+          {/* Quote Name - only for primary/excess, not clone */}
+          {position !== 'clone' && (
+            <div>
+              <label className="form-label">Quote Name (optional)</label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder={generateName()}
+                value={quoteName}
+                onChange={(e) => setQuoteName(e.target.value)}
+              />
+              <p className="text-xs text-gray-500 mt-1">Leave blank to auto-generate</p>
+            </div>
+          )}
 
           <div className="flex gap-3 pt-4">
             <button
               type="button"
               className="btn btn-outline flex-1"
               onClick={onClose}
-              disabled={isPending}
+              disabled={isPending || isCloning}
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              className="btn btn-primary flex-1"
-              disabled={isPending}
-            >
-              {isPending ? 'Creating...' : 'Create Quote'}
-            </button>
+            {position === 'clone' ? (
+              <button
+                type="button"
+                className="btn btn-primary flex-1"
+                onClick={() => {
+                  onClone();
+                  onClose();
+                }}
+                disabled={isCloning}
+              >
+                {isCloning ? 'Cloning...' : 'Clone Quote'}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className="btn btn-primary flex-1"
+                disabled={isPending}
+              >
+                {isPending ? 'Creating...' : 'Create Quote'}
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -440,7 +483,7 @@ function getDocTypeLabel(type) {
 }
 
 // Quote detail panel
-function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes, onDelete }) {
+function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const queryClient = useQueryClient();
   const [editedRetention, setEditedRetention] = useState(quote.primary_retention);
   const [editedSoldPremium, setEditedSoldPremium] = useState(quote.sold_premium || '');
@@ -493,41 +536,6 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes, onDelete })
     mutationFn: (data) => updateQuoteOption(quote.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
-    },
-  });
-
-  // Bind mutation
-  const bindMutation = useMutation({
-    mutationFn: () => bindQuoteOption(quote.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
-      queryClient.invalidateQueries({ queryKey: ['policy', submission.id] });
-    },
-  });
-
-  // Unbind mutation
-  const unbindMutation = useMutation({
-    mutationFn: () => unbindQuoteOption(quote.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
-      queryClient.invalidateQueries({ queryKey: ['policy', submission.id] });
-    },
-  });
-
-  // Clone mutation
-  const cloneMutation = useMutation({
-    mutationFn: () => cloneQuoteOption(quote.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
-    },
-  });
-
-  // Delete mutation
-  const deleteMutation = useMutation({
-    mutationFn: () => deleteQuoteOption(quote.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
-      onDelete?.();
     },
   });
 
@@ -586,6 +594,9 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes, onDelete })
     const updates = {};
     if (editedRetention !== quote.primary_retention) {
       updates.primary_retention = editedRetention;
+      // Also update quote_name to reflect new retention
+      const updatedQuote = { ...quote, tower_json: towerLayers, primary_retention: editedRetention };
+      updates.quote_name = generateOptionName(updatedQuote);
     }
     if (editedSoldPremium && editedSoldPremium !== quote.sold_premium) {
       updates.sold_premium = Number(editedSoldPremium);
@@ -733,7 +744,10 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes, onDelete })
                 onClick={() => {
                   // Recalculate attachments before saving
                   const recalculated = recalculateAttachments(towerLayers);
-                  updateMutation.mutate({ tower_json: recalculated });
+                  // Also update quote_name to match new tower structure
+                  const updatedQuote = { ...quote, tower_json: recalculated, primary_retention: editedRetention };
+                  const newName = generateOptionName(updatedQuote);
+                  updateMutation.mutate({ tower_json: recalculated, quote_name: newName });
                   setEditingTower(false);
                 }}
               >
@@ -1277,56 +1291,6 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes, onDelete })
         )}
       </div>
 
-      {/* Actions */}
-      <div className="card">
-        <h4 className="form-section-title">Quote Actions</h4>
-        <div className="flex gap-3 flex-wrap">
-          {quote.is_bound ? (
-            <button
-              className="btn bg-red-100 text-red-700 hover:bg-red-200"
-              onClick={() => unbindMutation.mutate()}
-              disabled={unbindMutation.isPending}
-            >
-              {unbindMutation.isPending ? 'Unbinding...' : 'Unbind Quote'}
-            </button>
-          ) : (
-            <button
-              className="btn bg-green-600 text-white hover:bg-green-700"
-              onClick={() => bindMutation.mutate()}
-              disabled={bindMutation.isPending}
-            >
-              {bindMutation.isPending ? 'Binding...' : 'Bind Quote'}
-            </button>
-          )}
-          <button
-            className="btn btn-outline"
-            onClick={() => cloneMutation.mutate()}
-            disabled={cloneMutation.isPending}
-          >
-            {cloneMutation.isPending ? 'Cloning...' : 'Clone Option'}
-          </button>
-          <button
-            className="btn bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
-            onClick={() => {
-              if (window.confirm(`Delete "${autoName}"? This cannot be undone.`)) {
-                deleteMutation.mutate();
-              }
-            }}
-            disabled={deleteMutation.isPending}
-          >
-            {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
-          </button>
-        </div>
-        {bindMutation.isSuccess && (
-          <p className="text-sm text-green-600 mt-2">Quote bound successfully!</p>
-        )}
-        {unbindMutation.isSuccess && (
-          <p className="text-sm text-yellow-600 mt-2">Quote unbound.</p>
-        )}
-        {cloneMutation.isSuccess && (
-          <p className="text-sm text-blue-600 mt-2">Quote cloned!</p>
-        )}
-      </div>
     </div>
   );
 }
@@ -1375,13 +1339,34 @@ export default function QuotePage() {
   // Auto-select first quote if none selected
   const selectedQuote = quotes?.find(q => q.id === selectedQuoteId) || quotes?.[0];
 
+  // Clone mutation (operates on selected quote)
+  const cloneMutation = useMutation({
+    mutationFn: () => cloneQuoteOption(selectedQuote?.id),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
+      // Select the cloned quote
+      if (response.data?.id) {
+        setSelectedQuoteId(response.data.id);
+      }
+    },
+  });
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: () => deleteQuoteOption(selectedQuote?.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
+      setSelectedQuoteId(null);
+    },
+  });
+
   if (isLoading) {
     return <div className="text-gray-500">Loading quotes...</div>;
   }
 
   return (
     <div className="space-y-6">
-      {/* Header Row */}
+      {/* Header Row with Actions */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Quote Options</h2>
@@ -1389,12 +1374,25 @@ export default function QuotePage() {
             <p className="text-sm text-gray-500 mt-1">{submission.applicant_name}</p>
           )}
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => setShowCreateModal(true)}
-        >
-          + New Option
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowCreateModal(true)}
+          >
+            + New
+          </button>
+          <button
+            className="btn bg-red-50 text-red-600 hover:bg-red-100 border border-red-200"
+            onClick={() => {
+              if (window.confirm(`Delete this option? This cannot be undone.`)) {
+                deleteMutation.mutate();
+              }
+            }}
+            disabled={!selectedQuote || deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? '...' : 'Delete'}
+          </button>
+        </div>
       </div>
 
       {/* Latest Generated Quote Banner */}
@@ -1442,7 +1440,6 @@ export default function QuotePage() {
               quote={selectedQuote}
               submission={submission}
               allQuotes={quotes}
-              onDelete={() => setSelectedQuoteId(null)}
             />
           )}
 
@@ -1522,6 +1519,9 @@ export default function QuotePage() {
         onClose={() => setShowCreateModal(false)}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
+        selectedQuote={selectedQuote}
+        onClone={() => cloneMutation.mutate()}
+        isCloning={cloneMutation.isPending}
       />
     </div>
   );

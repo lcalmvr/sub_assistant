@@ -7,7 +7,8 @@ import { getComparables, getSubmission } from '../api/client';
 function formatCompact(value) {
   if (!value && value !== 0) return '—';
   const num = Number(value);
-  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(1)}M`;
+  if (num >= 1_000_000_000) return `$${Math.round(num / 1_000_000_000)}B`;
+  if (num >= 1_000_000) return `$${Math.round(num / 1_000_000)}M`;
   if (num >= 1_000) return `$${Math.round(num / 1_000)}K`;
   return `$${num.toLocaleString()}`;
 }
@@ -516,8 +517,8 @@ export default function CompsPage() {
         {isLoading ? (
           <div className="text-gray-500 py-8 text-center">Loading comparables...</div>
         ) : filteredComps.length > 0 ? (
-          <div className="overflow-hidden rounded-lg border border-gray-200">
-            <table className="w-full">
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            <table className="w-full min-w-[900px]">
               <thead className="bg-gray-50">
                 <tr>
                   <th
@@ -587,7 +588,7 @@ export default function CompsPage() {
                         {comp.applicant_name || 'Unknown'}
                       </span>
                     </td>
-                    <td className="table-cell text-gray-600">
+                    <td className="table-cell text-gray-600 whitespace-nowrap">
                       {comp.effective_date
                         ? new Date(comp.effective_date).toLocaleDateString('en-US', {
                             month: 'short',
@@ -619,7 +620,7 @@ export default function CompsPage() {
                         ? `${Math.round(comp.controls_similarity * 100)}%`
                         : '—'}
                     </td>
-                    <td className="table-cell text-gray-600">
+                    <td className="table-cell text-gray-600 whitespace-nowrap">
                       {comp.carrier || '—'}
                     </td>
                     <td className="table-cell text-gray-600">
