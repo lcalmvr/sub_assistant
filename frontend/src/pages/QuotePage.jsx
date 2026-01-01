@@ -1916,12 +1916,18 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                   <span className="flex-1">{e.code} - {e.title}</span>
                   <button
                     className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                    onClick={() => toggleEndorsementQuoteMutation.mutate({
-                      endorsementId: e.endorsement_id,
-                      quoteId: quote.id,
-                      isLinked: true
-                    })}
-                    title="Remove"
+                    onClick={async () => {
+                      // Remove from ALL quote options
+                      for (const q of allQuotes || []) {
+                        await unlinkEndorsementFromQuote(q.id, e.endorsement_id);
+                      }
+                      refetchEndorsements();
+                      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submission.id] });
+                      allQuotes?.forEach(q => {
+                        queryClient.invalidateQueries({ queryKey: ['quoteEndorsements', q.id] });
+                      });
+                    }}
+                    title="Remove from all options"
                   >
                     ×
                   </button>
