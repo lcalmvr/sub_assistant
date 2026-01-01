@@ -1866,125 +1866,94 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           </button>
         </div>
 
-        {/* Required endorsements - always included */}
-        {availableEndorsements && (() => {
-          const requiredEndorsements = availableEndorsements.filter(e =>
-            REQUIRED_ENDORSEMENT_CODES.includes(e.code)
-          );
-          return requiredEndorsements.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Required (always included)</p>
-              <div className="space-y-1">
-                {requiredEndorsements.map((e) => (
-                  <div key={e.id} className="flex items-center gap-2 text-sm text-gray-600">
-                    <span className="text-gray-400">🔒</span>
-                    <span>{e.code} - {e.title}</span>
-                  </div>
-                ))}
+        {/* Simple list of all endorsements */}
+        <div className="space-y-1.5">
+          {/* Required endorsements */}
+          {availableEndorsements?.filter(e => REQUIRED_ENDORSEMENT_CODES.includes(e.code)).map((e) => (
+            <div key={e.id} className="flex items-center gap-2 py-1 text-sm text-gray-600">
+              <span className="w-5 text-center text-gray-300 text-xs">req</span>
+              <span className="flex-1">{e.code} - {e.title}</span>
+            </div>
+          ))}
+
+          {/* Auto-added endorsements */}
+          {autoEndorsementsData?.auto_endorsements?.map((e) => (
+            <div key={e.id} className="py-1">
+              <div className="flex items-center gap-2 text-sm text-gray-600">
+                <span className="w-5 text-center text-amber-400 text-xs">auto</span>
+                <span className="flex-1">
+                  {e.code} - {e.title}
+                  {e.auto_reason && <span className="ml-1 text-xs text-gray-400">({e.auto_reason})</span>}
+                </span>
               </div>
-            </div>
-          );
-        })()}
-
-        {/* Auto-attached endorsements - based on quote rules */}
-        {autoEndorsementsData?.auto_endorsements?.length > 0 && (
-          <div className="mb-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Auto-Added (based on quote)</p>
-            <div className="space-y-2">
-              {autoEndorsementsData.auto_endorsements.map((e) => (
-                <div key={e.id} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
-                  <span className="text-amber-500">⚡</span>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm text-gray-700">{e.code} - {e.title}</span>
-                    {e.auto_reason && (
-                      <span className="ml-2 text-xs text-gray-400 italic">({e.auto_reason})</span>
-                    )}
-                    {showEndorsementOptions && allQuoteOptions.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {allQuoteOptions.map((opt) => (
-                          <span
-                            key={opt.id}
-                            className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 opacity-60"
-                            title="Auto-added to all options"
-                          >
-                            {opt.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+              {showEndorsementOptions && allQuoteOptions.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1 ml-7">
+                  {allQuoteOptions.map((opt) => (
+                    <span key={opt.id} className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 opacity-60">
+                      {opt.name}
+                    </span>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
+          ))}
 
-        {/* Added endorsements list (from junction table) */}
-        {quoteEndorsementsData?.endorsements?.length > 0 && (
-          <div className="mb-4">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Added ({quoteEndorsementsData.endorsements.length})</p>
-            <div className="space-y-2">
-              {quoteEndorsementsData.endorsements.map((e) => (
-                <div key={e.id} className="flex items-start gap-2 p-2 bg-gray-50 rounded group">
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm text-gray-700">{e.code} - {e.title}</span>
-                    {e.category && (
-                      <span className="ml-2 text-xs text-gray-500">
-                        [{ENDORSEMENT_CATEGORIES[e.category] || e.category}]
-                      </span>
-                    )}
-                    {showEndorsementOptions && allQuoteOptions.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {allQuoteOptions.map((opt) => {
-                          const linkedQuoteIds = endorsementQuoteIdsMap[e.endorsement_id] || [];
-                          const isLinked = linkedQuoteIds.includes(opt.id);
-                          return (
-                            <button
-                              key={opt.id}
-                              className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
-                                isLinked
-                                  ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                                  : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                              }`}
-                              onClick={() => toggleEndorsementQuoteMutation.mutate({
-                                endorsementId: e.endorsement_id,
-                                quoteId: opt.id,
-                                isLinked
-                              })}
-                              title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
-                            >
-                              {opt.name}
-                            </button>
-                          );
+          {/* Added endorsements */}
+          {quoteEndorsementsData?.endorsements?.map((e) => (
+            <div key={e.id} className="py-1 group">
+              <div className="flex items-center gap-2 text-sm text-gray-700">
+                <span className="w-5 text-center text-gray-300">+</span>
+                <span className="flex-1">{e.code} - {e.title}</span>
+                <button
+                  className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                  onClick={() => toggleEndorsementQuoteMutation.mutate({
+                    endorsementId: e.endorsement_id,
+                    quoteId: quote.id,
+                    isLinked: true
+                  })}
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </div>
+              {showEndorsementOptions && allQuoteOptions.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1 ml-7">
+                  {allQuoteOptions.map((opt) => {
+                    const linkedQuoteIds = endorsementQuoteIdsMap[e.endorsement_id] || [];
+                    const isLinked = linkedQuoteIds.includes(opt.id);
+                    return (
+                      <button
+                        key={opt.id}
+                        className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                          isLinked
+                            ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                            : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                        }`}
+                        onClick={() => toggleEndorsementQuoteMutation.mutate({
+                          endorsementId: e.endorsement_id,
+                          quoteId: opt.id,
+                          isLinked
                         })}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
-                    onClick={() => toggleEndorsementQuoteMutation.mutate({
-                      endorsementId: e.endorsement_id,
-                      quoteId: quote.id,
-                      isLinked: true
-                    })}
-                    title="Remove from this option"
-                  >
-                    ×
-                  </button>
+                        title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
+                      >
+                        {opt.name}
+                      </button>
+                    );
+                  })}
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
+          ))}
+        </div>
 
         {/* Add endorsement selector */}
-        <div className="flex gap-2 mb-4">
+        <div className="flex gap-2 mt-4 pt-3 border-t border-gray-100">
           <select
-            className="form-select flex-1"
+            className="form-select flex-1 text-sm"
             value={selectedEndorsement}
             onChange={(e) => setSelectedEndorsement(e.target.value)}
           >
-            <option value="">Select endorsement to add...</option>
+            <option value="">Add endorsement...</option>
             {availableEndorsements && (() => {
               const autoTitles = (autoEndorsementsData?.auto_endorsements || []).map(e => e.title);
               const linkedTitles = (quoteEndorsementsData?.endorsements || []).map(e => e.title);
@@ -1997,13 +1966,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                 .map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.code} - {e.title}
-                    {e.category && ` [${ENDORSEMENT_CATEGORIES[e.category] || e.category}]`}
                   </option>
                 ));
             })()}
           </select>
           <button
-            className="btn btn-outline"
+            className="btn btn-outline text-sm"
             disabled={!selectedEndorsement || toggleEndorsementQuoteMutation.isPending}
             onClick={() => {
               if (selectedEndorsement) {
@@ -2016,13 +1984,9 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
               }
             }}
           >
-            {toggleEndorsementQuoteMutation.isPending ? '...' : 'Add'}
+            Add
           </button>
         </div>
-
-        {!quoteEndorsementsData?.endorsements?.length && !autoEndorsementsData?.auto_endorsements?.length && (
-          <p className="text-sm text-gray-500 italic">No endorsements selected</p>
-        )}
       </div>
 
       {/* Document Generation */}
