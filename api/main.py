@@ -2081,6 +2081,175 @@ def delete_subjectivity_template(template_id: str):
             return {"status": "deleted"}
 
 
+# =============================================================================
+# Endorsement Component Templates
+# =============================================================================
+
+@app.get("/api/endorsement-component-templates")
+def get_endorsement_component_templates(
+    component_type: str = None,
+    position: str = None,
+    defaults_only: bool = False
+):
+    """Get endorsement component templates (header, lead_in, closing).
+
+    Filters:
+    - component_type: 'header', 'lead_in', 'closing'
+    - position: 'primary', 'excess', 'either'
+    - defaults_only: only return default templates
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            conditions = []
+            values = []
+
+            if component_type:
+                conditions.append("component_type = %s")
+                values.append(component_type)
+            if position:
+                # Return templates for this position OR 'either'
+                conditions.append("(position = %s OR position = 'either')")
+                values.append(position)
+            if defaults_only:
+                conditions.append("is_default = true")
+
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+            cur.execute(f"""
+                SELECT id, component_type, name, content_html, position, is_default,
+                       created_at, updated_at, created_by, updated_by
+                FROM endorsement_component_templates
+                {where_clause}
+                ORDER BY component_type, position, name
+            """, values)
+            return cur.fetchall()
+
+
+@app.get("/api/endorsement-component-templates/{template_id}")
+def get_endorsement_component_template(template_id: str):
+    """Get a single endorsement component template."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, component_type, name, content_html, position, is_default,
+                       created_at, updated_at, created_by, updated_by
+                FROM endorsement_component_templates
+                WHERE id = %s
+            """, (template_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return row
+
+
+@app.post("/api/endorsement-component-templates")
+def create_endorsement_component_template(data: dict):
+    """Create a new endorsement component template."""
+    component_type = data.get("component_type")
+    name = data.get("name", "").strip()
+
+    if not component_type or component_type not in ('header', 'lead_in', 'closing'):
+        raise HTTPException(status_code=400, detail="component_type must be header, lead_in, or closing")
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    content_html = data.get("content_html", "")
+    position = data.get("position", "either")
+    is_default = data.get("is_default", False)
+    created_by = data.get("created_by", "user")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # If setting as default, unset other defaults for this type+position
+            if is_default:
+                cur.execute("""
+                    UPDATE endorsement_component_templates
+                    SET is_default = false
+                    WHERE component_type = %s AND position = %s AND is_default = true
+                """, (component_type, position))
+
+            cur.execute("""
+                INSERT INTO endorsement_component_templates
+                    (component_type, name, content_html, position, is_default, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, component_type, name, content_html, position, is_default,
+                          created_at, updated_at, created_by, updated_by
+            """, (component_type, name, content_html, position, is_default, created_by))
+            conn.commit()
+            return cur.fetchone()
+
+
+@app.patch("/api/endorsement-component-templates/{template_id}")
+def update_endorsement_component_template(template_id: str, data: dict):
+    """Update an endorsement component template."""
+    updates = []
+    values = []
+
+    if "name" in data:
+        updates.append("name = %s")
+        values.append(data["name"].strip())
+    if "content_html" in data:
+        updates.append("content_html = %s")
+        values.append(data["content_html"])
+    if "position" in data:
+        updates.append("position = %s")
+        values.append(data["position"])
+    if "is_default" in data:
+        updates.append("is_default = %s")
+        values.append(data["is_default"])
+    if "updated_by" in data:
+        updates.append("updated_by = %s")
+        values.append(data["updated_by"])
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    values.append(template_id)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # If setting as default, first get the template's type and position
+            if data.get("is_default"):
+                cur.execute("""
+                    SELECT component_type, position FROM endorsement_component_templates WHERE id = %s
+                """, (template_id,))
+                row = cur.fetchone()
+                if row:
+                    # Unset other defaults for this type+position
+                    cur.execute("""
+                        UPDATE endorsement_component_templates
+                        SET is_default = false
+                        WHERE component_type = %s AND position = %s AND is_default = true AND id != %s
+                    """, (row["component_type"], row["position"], template_id))
+
+            cur.execute(f"""
+                UPDATE endorsement_component_templates
+                SET {", ".join(updates)}
+                WHERE id = %s
+                RETURNING id, component_type, name, content_html, position, is_default,
+                          created_at, updated_at, created_by, updated_by
+            """, values)
+            conn.commit()
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return row
+
+
+@app.delete("/api/endorsement-component-templates/{template_id}")
+def delete_endorsement_component_template(template_id: str):
+    """Delete an endorsement component template."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM endorsement_component_templates WHERE id = %s
+            """, (template_id,))
+            conn.commit()
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Template not found")
+            return {"status": "deleted"}
+
+
 @app.get("/api/admin/search-policies")
 def search_policies(q: str):
     """Search for policies by name."""
