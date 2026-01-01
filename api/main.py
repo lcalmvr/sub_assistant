@@ -570,16 +570,23 @@ def clone_quote(quote_id: str):
 def bind_quote(quote_id: str):
     """Bind a quote option (and unbind others for the same submission)."""
     from datetime import datetime
+    import json
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # Get submission_id for this quote
-            cur.execute("SELECT submission_id FROM insurance_towers WHERE id = %s", (quote_id,))
+            # Get submission_id and subjectivities for this quote
+            cur.execute("""
+                SELECT submission_id, subjectivities
+                FROM insurance_towers WHERE id = %s
+            """, (quote_id,))
             row = cur.fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Quote not found")
 
             submission_id = row["submission_id"]
+            subjectivities = row.get("subjectivities") or []
+            if isinstance(subjectivities, str):
+                subjectivities = json.loads(subjectivities)
 
             # Unbind all other quotes for this submission
             cur.execute("""
@@ -596,25 +603,62 @@ def bind_quote(quote_id: str):
                 RETURNING id
             """, (datetime.utcnow(), quote_id))
 
+            # Sync subjectivities to policy_subjectivities table
+            # Uses UPSERT to avoid duplicates on rebind
+            for subj_text in subjectivities:
+                cur.execute("""
+                    INSERT INTO policy_subjectivities (
+                        submission_id, text, category, status, created_by
+                    ) VALUES (
+                        %s, %s, 'general', 'pending', 'system'
+                    )
+                    ON CONFLICT (submission_id, text) DO NOTHING
+                """, (submission_id, subj_text))
+
             conn.commit()
-            return {"status": "bound", "quote_id": quote_id}
+            return {
+                "status": "bound",
+                "quote_id": quote_id,
+                "subjectivities_synced": len(subjectivities)
+            }
 
 
 @app.post("/api/quotes/{quote_id}/unbind")
 def unbind_quote(quote_id: str):
-    """Unbind a quote option."""
+    """Unbind a quote option. Removes pending subjectivities but keeps received/waived for audit."""
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Get submission_id
+            cur.execute("""
+                SELECT submission_id FROM insurance_towers WHERE id = %s
+            """, (quote_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            submission_id = row["submission_id"]
+
+            # Unbind the quote
             cur.execute("""
                 UPDATE insurance_towers
                 SET is_bound = false, bound_at = NULL
                 WHERE id = %s
                 RETURNING id
             """, (quote_id,))
-            if cur.fetchone() is None:
-                raise HTTPException(status_code=404, detail="Quote not found")
+
+            # Delete pending subjectivities (keep received/waived for audit trail)
+            cur.execute("""
+                DELETE FROM policy_subjectivities
+                WHERE submission_id = %s AND status = 'pending'
+            """, (submission_id,))
+            deleted_count = cur.rowcount
+
             conn.commit()
-            return {"status": "unbound", "quote_id": quote_id}
+            return {
+                "status": "unbound",
+                "quote_id": quote_id,
+                "pending_subjectivities_removed": deleted_count
+            }
 
 
 # ─────────────────────────────────────────────────────────────
