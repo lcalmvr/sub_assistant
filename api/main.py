@@ -151,7 +151,7 @@ def list_quotes(submission_id: str):
             cur.execute("""
                 SELECT id, quote_name, option_descriptor, tower_json, primary_retention, position,
                        technical_premium, risk_adjusted_premium, sold_premium,
-                       policy_form, coverages, is_bound, retroactive_date, created_at
+                       policy_form, coverages, sublimits, is_bound, retroactive_date, created_at
                 FROM insurance_towers
                 WHERE submission_id = %s
                 ORDER BY created_at DESC
@@ -273,6 +273,7 @@ class QuoteUpdate(BaseModel):
     policy_form: Optional[str] = None
     tower_json: Optional[list] = None
     coverages: Optional[dict] = None
+    sublimits: Optional[list] = None  # Excess quote coverage schedule
 
 
 @app.post("/api/submissions/{submission_id}/quotes")
@@ -410,7 +411,7 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     updates = {}
     for k, v in data.model_dump(exclude_unset=True).items():
         # Convert dict/list to JSON string for JSONB columns
-        if k in ('tower_json', 'coverages') and v is not None:
+        if k in ('tower_json', 'coverages', 'sublimits') and v is not None:
             updates[k] = json.dumps(v)
         else:
             updates[k] = v

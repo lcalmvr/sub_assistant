@@ -17,6 +17,7 @@ import {
   getSubmissionDocuments,
 } from '../api/client';
 import CoverageEditor from '../components/CoverageEditor';
+import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
 
 // Format currency
 function formatCurrency(value) {
@@ -1141,6 +1142,17 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           }}
           allQuotes={allQuotes}
           submissionId={submission.id}
+        />
+      )}
+
+      {/* Coverage Schedule - Only for Excess quotes */}
+      {position !== 'primary' && (
+        <ExcessCoverageEditor
+          sublimits={quote.sublimits || []}
+          towerJson={towerLayers}
+          onSave={(updatedSublimits) => {
+            updateMutation.mutate({ sublimits: updatedSublimits });
+          }}
         />
       )}
 
