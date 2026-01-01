@@ -1897,44 +1897,34 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             </div>
           ))}
 
-          {/* Added endorsements (submission-level - shows across all options) */}
-          {submissionEndorsementsData?.endorsements?.map((e) => {
+          {/* Added endorsements - only show ones linked to current quote */}
+          {quoteEndorsementsData?.endorsements
+            ?.filter(e => {
+              // Exclude required endorsements (already shown with 🔒)
+              if (REQUIRED_ENDORSEMENT_CODES.includes(e.code)) return false;
+              // Exclude auto-added endorsements (already shown with ⚡)
+              const autoTitles = (autoEndorsementsData?.auto_endorsements || []).map(a => a.title);
+              if (autoTitles.includes(e.title)) return false;
+              return true;
+            })
+            ?.map((e) => {
             const linkedQuoteIds = endorsementQuoteIdsMap[e.endorsement_id] || [];
-            const isLinkedToCurrentQuote = linkedQuoteIds.includes(quote.id);
             return (
               <div key={e.endorsement_id} className="py-1 group">
                 <div className="flex items-center gap-2 text-sm text-gray-700">
                   <span className="w-5 text-center text-gray-300">+</span>
-                  <span className={`flex-1 ${!isLinkedToCurrentQuote ? 'text-gray-400' : ''}`}>
-                    {e.code} - {e.title}
-                    {!isLinkedToCurrentQuote && <span className="ml-1 text-xs">(other options)</span>}
-                  </span>
-                  {isLinkedToCurrentQuote && (
-                    <button
-                      className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                      onClick={() => toggleEndorsementQuoteMutation.mutate({
-                        endorsementId: e.endorsement_id,
-                        quoteId: quote.id,
-                        isLinked: true
-                      })}
-                      title="Remove from this option"
-                    >
-                      ×
-                    </button>
-                  )}
-                  {!isLinkedToCurrentQuote && (
-                    <button
-                      className="text-gray-400 hover:text-purple-600 transition-colors opacity-0 group-hover:opacity-100 text-xs"
-                      onClick={() => toggleEndorsementQuoteMutation.mutate({
-                        endorsementId: e.endorsement_id,
-                        quoteId: quote.id,
-                        isLinked: false
-                      })}
-                      title="Add to this option"
-                    >
-                      + add
-                    </button>
-                  )}
+                  <span className="flex-1">{e.code} - {e.title}</span>
+                  <button
+                    className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                    onClick={() => toggleEndorsementQuoteMutation.mutate({
+                      endorsementId: e.endorsement_id,
+                      quoteId: quote.id,
+                      isLinked: true
+                    })}
+                    title="Remove"
+                  >
+                    ×
+                  </button>
                 </div>
                 {showEndorsementOptions && allQuoteOptions.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1 ml-7">
