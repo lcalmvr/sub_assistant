@@ -101,6 +101,7 @@ export default function ExcessCoverageEditor({
 }) {
   const [showDetails, setShowDetails] = useState(false);
   const [extractedPreview, setExtractedPreview] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
   const sublimits = propSublimits || [];
@@ -135,6 +136,37 @@ export default function ExcessCoverageEditor({
     // Reset input so same file can be selected again
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  // Drag and drop handlers
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!readOnly && !extractMutation.isPending) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (readOnly || extractMutation.isPending) return;
+
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (['pdf', 'docx', 'doc'].includes(ext)) {
+        extractMutation.mutate(file);
+      }
     }
   };
 
@@ -208,7 +240,19 @@ export default function ExcessCoverageEditor({
   };
 
   return (
-    <div className="card">
+    <div
+      className={`card relative ${isDragging ? 'ring-2 ring-purple-400 ring-offset-2' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 bg-purple-50 bg-opacity-90 flex items-center justify-center z-10 rounded-lg">
+          <div className="text-purple-600 font-medium">Drop PDF or DOCX to scan</div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-4">
         <h4 className="form-section-title mb-0">Coverage Schedule (Excess)</h4>
         <div className="flex items-center gap-2">
