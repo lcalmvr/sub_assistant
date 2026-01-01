@@ -415,7 +415,7 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     updates = {}
     for k, v in data.model_dump(exclude_unset=True).items():
         # Convert dict/list to JSON string for JSONB columns
-        if k in ('tower_json', 'coverages', 'sublimits') and v is not None:
+        if k in ('tower_json', 'coverages', 'sublimits', 'endorsements', 'subjectivities') and v is not None:
             updates[k] = json.dumps(v)
         else:
             updates[k] = v
