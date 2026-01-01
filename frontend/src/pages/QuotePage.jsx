@@ -839,11 +839,10 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     enabled: showSubjOptions, // only fetch when toggle is on
   });
 
-  // Build quote info for option badges
+  // Build quote info for option badges - use generateOptionName for consistency with cards
   const allQuoteOptions = (allQuotes || []).map(q => ({
     id: q.id,
-    // Strip date from name (e.g., "$5M x $50K - 12.29.25" -> "$5M x $50K")
-    name: (q.quote_name || `Option ${q.id.slice(0,4)}`).replace(/\s*-\s*\d{1,2}\.\d{1,2}\.\d{2,4}$/, ''),
+    name: generateOptionName(q),
   }));
 
   // Build a map of subjectivity text -> linked quote IDs
