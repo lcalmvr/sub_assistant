@@ -3692,64 +3692,173 @@ def get_package_documents(position: str = "primary"):
 @app.get("/api/quotes/{quote_id}/endorsements")
 def get_quote_endorsements(quote_id: str):
     """
-    Get endorsements attached to a quote option.
-    Returns endorsement names and matched library document IDs for rich formatting.
+    Get endorsements attached to a quote option from junction table.
+    Returns endorsements with library details and field values.
     """
-    import json
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT endorsements, position FROM insurance_towers WHERE id = %s",
-                (quote_id,)
-            )
-            row = cur.fetchone()
-            if not row:
+            # Verify quote exists
+            cur.execute("SELECT id FROM insurance_towers WHERE id = %s", (quote_id,))
+            if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Quote not found")
 
-            endorsements = row.get("endorsements", [])
-            if isinstance(endorsements, str):
-                endorsements = json.loads(endorsements)
+            # Get endorsements from junction table with library details
+            cur.execute("""
+                SELECT
+                    qe.id,
+                    qe.endorsement_id,
+                    qe.field_values,
+                    qe.created_at,
+                    dl.title,
+                    dl.code,
+                    dl.category,
+                    dl.position,
+                    dl.fill_in_mappings
+                FROM quote_endorsements qe
+                JOIN document_library dl ON dl.id = qe.endorsement_id
+                WHERE qe.quote_id = %s
+                ORDER BY dl.default_sort_order, dl.code
+            """, (quote_id,))
 
-            position = row.get("position", "primary")
+            endorsements = []
+            for row in cur.fetchall():
+                endorsements.append({
+                    "id": str(row["id"]),
+                    "endorsement_id": str(row["endorsement_id"]),
+                    "field_values": row["field_values"] or {},
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "title": row["title"],
+                    "code": row["code"],
+                    "category": row["category"],
+                    "position": row["position"],
+                    "fill_in_mappings": row["fill_in_mappings"],
+                })
 
-    # Match endorsement names to library documents
-    matched_library_ids = []
-    if endorsements:
-        try:
-            from core.document_library import get_library_entries
-
-            # Get all endorsements from library for this position
-            library_endorsements = get_library_entries(
-                document_type="endorsement",
-                position=position,
-                status="active"
-            )
-
-            # Try to match by title or code (case-insensitive partial match)
-            for name in endorsements:
-                name_lower = name.lower().strip()
-                for lib_doc in library_endorsements:
-                    title_lower = lib_doc.get('title', '').lower()
-                    code_lower = lib_doc.get('code', '').lower()
-
-                    # Check for matches
-                    if (name_lower in title_lower or
-                        title_lower in name_lower or
-                        name_lower in code_lower or
-                        name_lower.replace(' ', '') in title_lower.replace(' ', '')):
-                        if lib_doc['id'] not in matched_library_ids:
-                            matched_library_ids.append(lib_doc['id'])
-                        break
-        except Exception:
-            pass  # If matching fails, just return names without library IDs
+            # Also return legacy format for backwards compatibility
+            matched_library_ids = [e["endorsement_id"] for e in endorsements]
 
     return {
-        "endorsements": endorsements or [],
+        "endorsements": endorsements,
         "matched_library_ids": matched_library_ids,
     }
+
+
+class EndorsementFieldValues(BaseModel):
+    field_values: dict = {}
+
+
+@app.post("/api/quotes/{quote_id}/endorsements/{endorsement_id}")
+def link_endorsement_to_quote(quote_id: str, endorsement_id: str, data: EndorsementFieldValues = None):
+    """Link an endorsement to a quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Verify quote exists
+            cur.execute("SELECT id FROM insurance_towers WHERE id = %s", (quote_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            # Verify endorsement exists in library
+            cur.execute("SELECT id FROM document_library WHERE id = %s", (endorsement_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Endorsement not found")
+
+            # Insert link (ignore if already exists)
+            field_values = data.field_values if data else {}
+            cur.execute("""
+                INSERT INTO quote_endorsements (quote_id, endorsement_id, field_values)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (quote_id, endorsement_id)
+                DO UPDATE SET field_values = EXCLUDED.field_values
+                RETURNING id
+            """, (quote_id, endorsement_id, psycopg2.extras.Json(field_values)))
+
+            result = cur.fetchone()
+            conn.commit()
+
+    return {"id": str(result["id"]), "linked": True}
+
+
+@app.delete("/api/quotes/{quote_id}/endorsements/{endorsement_id}")
+def unlink_endorsement_from_quote(quote_id: str, endorsement_id: str):
+    """Unlink an endorsement from a quote option."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM quote_endorsements
+                WHERE quote_id = %s AND endorsement_id = %s
+            """, (quote_id, endorsement_id))
+
+            deleted = cur.rowcount > 0
+            conn.commit()
+
+    return {"unlinked": deleted}
+
+
+@app.patch("/api/quotes/{quote_id}/endorsements/{endorsement_id}")
+def update_endorsement_field_values(quote_id: str, endorsement_id: str, data: EndorsementFieldValues):
+    """Update field values for a quote-endorsement link."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE quote_endorsements
+                SET field_values = %s
+                WHERE quote_id = %s AND endorsement_id = %s
+                RETURNING id
+            """, (psycopg2.extras.Json(data.field_values), quote_id, endorsement_id))
+
+            result = cur.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Endorsement link not found")
+
+            conn.commit()
+
+    return {"id": str(result["id"]), "updated": True}
+
+
+@app.get("/api/submissions/{submission_id}/endorsements")
+def get_submission_endorsements(submission_id: str):
+    """
+    Get all endorsements across all quote options for a submission.
+    Returns each endorsement with the list of quote IDs it's linked to.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    dl.id AS endorsement_id,
+                    dl.title,
+                    dl.code,
+                    dl.category,
+                    dl.position,
+                    array_agg(DISTINCT t.id) AS quote_ids
+                FROM quote_endorsements qe
+                JOIN document_library dl ON dl.id = qe.endorsement_id
+                JOIN insurance_towers t ON t.id = qe.quote_id
+                WHERE t.submission_id = %s
+                GROUP BY dl.id, dl.title, dl.code, dl.category, dl.position
+                ORDER BY dl.default_sort_order, dl.code
+            """, (submission_id,))
+
+            endorsements = []
+            for row in cur.fetchall():
+                # Handle PostgreSQL array - may come as list or string
+                quote_ids = row["quote_ids"]
+                if isinstance(quote_ids, str):
+                    # Parse PostgreSQL array string format: {uuid1,uuid2,...}
+                    quote_ids = quote_ids.strip('{}').split(',') if quote_ids.strip('{}') else []
+                elif quote_ids is None:
+                    quote_ids = []
+
+                endorsements.append({
+                    "endorsement_id": str(row["endorsement_id"]),
+                    "title": row["title"],
+                    "code": row["code"],
+                    "category": row["category"],
+                    "position": row["position"],
+                    "quote_ids": [str(qid) for qid in quote_ids] if quote_ids else [],
+                })
+
+    return {"endorsements": endorsements}
 
 
 @app.get("/api/quotes/{quote_id}/auto-endorsements")

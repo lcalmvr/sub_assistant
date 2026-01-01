@@ -27,6 +27,9 @@ import {
   linkSubjectivityToQuote,
   unlinkSubjectivityFromQuote,
   unlinkSubjectivityFromPosition,
+  linkEndorsementToQuote,
+  unlinkEndorsementFromQuote,
+  getSubmissionEndorsements,
 } from '../api/client';
 import CoverageEditor from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
@@ -802,8 +805,8 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const [showSubjOptions, setShowSubjOptions] = useState(false); // toggle to show which quote options each subjectivity is on
 
   // Endorsements state
-  const [endorsements, setEndorsements] = useState(quote.endorsements || []);
   const [selectedEndorsement, setSelectedEndorsement] = useState('');
+  const [showEndorsementOptions, setShowEndorsementOptions] = useState(false);
 
   // Reset state when quote changes
   useEffect(() => {
@@ -811,7 +814,6 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     setEditingTower(false);
     setEditedDescriptor(quote.option_descriptor || '');
     setRetroactiveDate(quote.retroactive_date || '');
-    setEndorsements(quote.endorsements || []);
     setSelectedEndorsement('');
     // Auto-show QS column if any layer has quota share
     setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
@@ -874,11 +876,10 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     enabled: showPackageOptions,
   });
 
-  // Query for quote's endorsements
-  const { data: quoteEndorsementsData } = useQuery({
+  // Query for quote's endorsements (from junction table)
+  const { data: quoteEndorsementsData, refetch: refetchEndorsements } = useQuery({
     queryKey: ['quoteEndorsements', quote.id],
     queryFn: () => getQuoteEndorsements(quote.id).then(res => res.data),
-    enabled: showPackageOptions,
   });
 
   // Query for available endorsements from document library
@@ -896,6 +897,25 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     queryKey: ['autoEndorsements', quote.id],
     queryFn: () => getQuoteAutoEndorsements(quote.id).then(res => res.data),
   });
+
+  // Query for submission-level endorsements (for Options toggle - shows which quotes have each endorsement)
+  const { data: submissionEndorsementsData } = useQuery({
+    queryKey: ['submissionEndorsements', submission.id],
+    queryFn: () => getSubmissionEndorsements(submission.id).then(res => res.data),
+    enabled: showEndorsementOptions,
+  });
+
+  // Build map of endorsement_id -> quote_ids for options toggle
+  const endorsementQuoteIdsMap = {};
+  if (showEndorsementOptions && submissionEndorsementsData?.endorsements) {
+    submissionEndorsementsData.endorsements.forEach(e => {
+      let quoteIds = e.quote_ids || [];
+      if (typeof quoteIds === 'string') {
+        quoteIds = quoteIds.replace(/^\{|\}$/g, '').split(',').filter(Boolean);
+      }
+      endorsementQuoteIdsMap[e.endorsement_id] = quoteIds;
+    });
+  }
 
   // Update mutation
   const updateMutation = useMutation({
@@ -989,6 +1009,21 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
       queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submission.id] });
       allQuotes?.forEach(q => {
         queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+      });
+    },
+  });
+
+  // Toggle link between endorsement and quote option
+  const toggleEndorsementQuoteMutation = useMutation({
+    mutationFn: ({ endorsementId, quoteId, isLinked }) =>
+      isLinked
+        ? unlinkEndorsementFromQuote(quoteId, endorsementId)
+        : linkEndorsementToQuote(quoteId, endorsementId),
+    onSuccess: () => {
+      refetchEndorsements();
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submission.id] });
+      allQuotes?.forEach(q => {
+        queryClient.invalidateQueries({ queryKey: ['quoteEndorsements', q.id] });
       });
     },
   });
@@ -1821,7 +1856,15 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
       {/* Endorsements */}
       <div className="card">
-        <h4 className="form-section-title">Endorsements</h4>
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="form-section-title mb-0">Endorsements</h4>
+          <button
+            className={`text-xs px-2 py-1 rounded border transition-colors ${showEndorsementOptions ? 'bg-purple-100 border-purple-300 text-purple-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+            onClick={() => setShowEndorsementOptions(!showEndorsementOptions)}
+          >
+            Options {showEndorsementOptions ? 'ON' : 'OFF'}
+          </button>
+        </div>
 
         {/* Required endorsements - always included */}
         {availableEndorsements && (() => {
@@ -1847,14 +1890,87 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
         {autoEndorsementsData?.auto_endorsements?.length > 0 && (
           <div className="mb-4">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Auto-Added (based on quote)</p>
-            <div className="space-y-1">
+            <div className="space-y-2">
               {autoEndorsementsData.auto_endorsements.map((e) => (
-                <div key={e.id} className="flex items-center gap-2 text-sm text-gray-600">
+                <div key={e.id} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
                   <span className="text-amber-500">⚡</span>
-                  <span>{e.code} - {e.title}</span>
-                  {e.auto_reason && (
-                    <span className="text-xs text-gray-400 italic">({e.auto_reason})</span>
-                  )}
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-gray-700">{e.code} - {e.title}</span>
+                    {e.auto_reason && (
+                      <span className="ml-2 text-xs text-gray-400 italic">({e.auto_reason})</span>
+                    )}
+                    {showEndorsementOptions && allQuoteOptions.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {allQuoteOptions.map((opt) => (
+                          <span
+                            key={opt.id}
+                            className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 opacity-60"
+                            title="Auto-added to all options"
+                          >
+                            {opt.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Added endorsements list (from junction table) */}
+        {quoteEndorsementsData?.endorsements?.length > 0 && (
+          <div className="mb-4">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Added ({quoteEndorsementsData.endorsements.length})</p>
+            <div className="space-y-2">
+              {quoteEndorsementsData.endorsements.map((e) => (
+                <div key={e.id} className="flex items-start gap-2 p-2 bg-gray-50 rounded group">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-gray-700">{e.code} - {e.title}</span>
+                    {e.category && (
+                      <span className="ml-2 text-xs text-gray-500">
+                        [{ENDORSEMENT_CATEGORIES[e.category] || e.category}]
+                      </span>
+                    )}
+                    {showEndorsementOptions && allQuoteOptions.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {allQuoteOptions.map((opt) => {
+                          const linkedQuoteIds = endorsementQuoteIdsMap[e.endorsement_id] || [];
+                          const isLinked = linkedQuoteIds.includes(opt.id);
+                          return (
+                            <button
+                              key={opt.id}
+                              className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                                isLinked
+                                  ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                                  : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                              }`}
+                              onClick={() => toggleEndorsementQuoteMutation.mutate({
+                                endorsementId: e.endorsement_id,
+                                quoteId: opt.id,
+                                isLinked
+                              })}
+                              title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
+                            >
+                              {opt.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    onClick={() => toggleEndorsementQuoteMutation.mutate({
+                      endorsementId: e.endorsement_id,
+                      quoteId: quote.id,
+                      isLinked: true
+                    })}
+                    title="Remove from this option"
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
             </div>
@@ -1871,14 +1987,15 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             <option value="">Select endorsement to add...</option>
             {availableEndorsements && (() => {
               const autoTitles = (autoEndorsementsData?.auto_endorsements || []).map(e => e.title);
+              const linkedTitles = (quoteEndorsementsData?.endorsements || []).map(e => e.title);
               return availableEndorsements
                 .filter(e =>
                   !REQUIRED_ENDORSEMENT_CODES.includes(e.code) &&
                   !autoTitles.includes(e.title) &&
-                  !endorsements.includes(e.title)
+                  !linkedTitles.includes(e.title)
                 )
                 .map((e) => (
-                  <option key={e.id} value={e.title}>
+                  <option key={e.id} value={e.id}>
                     {e.code} - {e.title}
                     {e.category && ` [${ENDORSEMENT_CATEGORIES[e.category] || e.category}]`}
                   </option>
@@ -1887,67 +2004,24 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           </select>
           <button
             className="btn btn-outline"
-            disabled={!selectedEndorsement}
+            disabled={!selectedEndorsement || toggleEndorsementQuoteMutation.isPending}
             onClick={() => {
-              if (selectedEndorsement && !endorsements.includes(selectedEndorsement)) {
-                const updated = [...endorsements, selectedEndorsement];
-                setEndorsements(updated);
+              if (selectedEndorsement) {
+                toggleEndorsementQuoteMutation.mutate({
+                  endorsementId: selectedEndorsement,
+                  quoteId: quote.id,
+                  isLinked: false
+                });
                 setSelectedEndorsement('');
-                updateMutation.mutate({ endorsements: updated });
               }
             }}
           >
-            Add
+            {toggleEndorsementQuoteMutation.isPending ? '...' : 'Add'}
           </button>
         </div>
 
-        {/* Selected endorsements list */}
-        {endorsements.length > 0 ? (
-          <div className="space-y-2">
-            {endorsements.map((title, idx) => {
-              const libEntry = availableEndorsements?.find(e => e.title === title);
-              return (
-                <div key={idx} className="flex items-start gap-2 p-2 bg-gray-50 rounded">
-                  <span className="text-gray-400 text-sm">{idx + 1}.</span>
-                  <div className="flex-1">
-                    <span className="text-sm text-gray-700">
-                      {libEntry ? `${libEntry.code} - ${title}` : title}
-                    </span>
-                    {libEntry?.category && (
-                      <span className="ml-2 text-xs text-gray-500">
-                        [{ENDORSEMENT_CATEGORIES[libEntry.category] || libEntry.category}]
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    className="text-red-400 hover:text-red-600 text-sm"
-                    onClick={() => {
-                      const updated = endorsements.filter((_, i) => i !== idx);
-                      setEndorsements(updated);
-                      updateMutation.mutate({ endorsements: updated });
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500 italic">No additional endorsements selected</p>
-        )}
-
-        {/* Apply to all options button */}
-        {allQuotes && allQuotes.length > 1 && (
-          <div className="mt-4 pt-3 border-t border-gray-100">
-            <button
-              className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1"
-              disabled={applyToAllMutation.isPending}
-              onClick={() => applyToAllMutation.mutate({ endorsements: true })}
-            >
-              {applyToAllMutation.isPending ? 'Applying...' : `Apply to all ${allQuotes.length - 1} other option(s)`}
-            </button>
-          </div>
+        {!quoteEndorsementsData?.endorsements?.length && !autoEndorsementsData?.auto_endorsements?.length && (
+          <p className="text-sm text-gray-500 italic">No endorsements selected</p>
         )}
       </div>
 

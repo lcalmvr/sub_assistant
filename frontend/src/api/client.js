@@ -44,6 +44,16 @@ export const getQuoteEndorsements = (quoteId) => api.get(`/quotes/${quoteId}/end
 export const getQuoteAutoEndorsements = (quoteId) => api.get(`/quotes/${quoteId}/auto-endorsements`);
 export const generateQuotePackage = (quoteId, data) => api.post(`/quotes/${quoteId}/generate-package`, data);
 
+// Quote Endorsements (junction table)
+export const linkEndorsementToQuote = (quoteId, endorsementId, fieldValues = {}) =>
+  api.post(`/quotes/${quoteId}/endorsements/${endorsementId}`, { field_values: fieldValues });
+export const unlinkEndorsementFromQuote = (quoteId, endorsementId) =>
+  api.delete(`/quotes/${quoteId}/endorsements/${endorsementId}`);
+export const updateEndorsementFieldValues = (quoteId, endorsementId, fieldValues) =>
+  api.patch(`/quotes/${quoteId}/endorsements/${endorsementId}`, { field_values: fieldValues });
+export const getSubmissionEndorsements = (submissionId) =>
+  api.get(`/submissions/${submissionId}/endorsements`);
+
 // Rating
 export const calculatePremium = (submissionId, params) => api.post(`/submissions/${submissionId}/calculate-premium`, params);
 export const calculatePremiumGrid = (submissionId) => api.post(`/submissions/${submissionId}/calculate-premium-grid`);
