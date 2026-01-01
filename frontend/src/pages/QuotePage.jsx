@@ -898,16 +898,15 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     queryFn: () => getQuoteAutoEndorsements(quote.id).then(res => res.data),
   });
 
-  // Query for submission-level endorsements (for Options toggle - shows which quotes have each endorsement)
-  const { data: submissionEndorsementsData } = useQuery({
+  // Query for submission-level endorsements (shows all endorsements across all quotes)
+  const { data: submissionEndorsementsData, refetch: refetchSubmissionEndorsements } = useQuery({
     queryKey: ['submissionEndorsements', submission.id],
     queryFn: () => getSubmissionEndorsements(submission.id).then(res => res.data),
-    enabled: showEndorsementOptions,
   });
 
-  // Build map of endorsement_id -> quote_ids for options toggle
+  // Build map of endorsement_id -> quote_ids
   const endorsementQuoteIdsMap = {};
-  if (showEndorsementOptions && submissionEndorsementsData?.endorsements) {
+  if (submissionEndorsementsData?.endorsements) {
     submissionEndorsementsData.endorsements.forEach(e => {
       let quoteIds = e.quote_ids || [];
       if (typeof quoteIds === 'string') {
@@ -1898,52 +1897,73 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             </div>
           ))}
 
-          {/* Added endorsements */}
-          {quoteEndorsementsData?.endorsements?.map((e) => (
-            <div key={e.id} className="py-1 group">
-              <div className="flex items-center gap-2 text-sm text-gray-700">
-                <span className="w-5 text-center text-gray-300">+</span>
-                <span className="flex-1">{e.code} - {e.title}</span>
-                <button
-                  className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                  onClick={() => toggleEndorsementQuoteMutation.mutate({
-                    endorsementId: e.endorsement_id,
-                    quoteId: quote.id,
-                    isLinked: true
-                  })}
-                  title="Remove"
-                >
-                  ×
-                </button>
-              </div>
-              {showEndorsementOptions && allQuoteOptions.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1 ml-7">
-                  {allQuoteOptions.map((opt) => {
-                    const linkedQuoteIds = endorsementQuoteIdsMap[e.endorsement_id] || [];
-                    const isLinked = linkedQuoteIds.includes(opt.id);
-                    return (
-                      <button
-                        key={opt.id}
-                        className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
-                          isLinked
-                            ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                            : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                        }`}
-                        onClick={() => toggleEndorsementQuoteMutation.mutate({
-                          endorsementId: e.endorsement_id,
-                          quoteId: opt.id,
-                          isLinked
-                        })}
-                        title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
-                      >
-                        {opt.name}
-                      </button>
-                    );
-                  })}
+          {/* Added endorsements (submission-level - shows across all options) */}
+          {submissionEndorsementsData?.endorsements?.map((e) => {
+            const linkedQuoteIds = endorsementQuoteIdsMap[e.endorsement_id] || [];
+            const isLinkedToCurrentQuote = linkedQuoteIds.includes(quote.id);
+            return (
+              <div key={e.endorsement_id} className="py-1 group">
+                <div className="flex items-center gap-2 text-sm text-gray-700">
+                  <span className="w-5 text-center text-gray-300">+</span>
+                  <span className={`flex-1 ${!isLinkedToCurrentQuote ? 'text-gray-400' : ''}`}>
+                    {e.code} - {e.title}
+                    {!isLinkedToCurrentQuote && <span className="ml-1 text-xs">(other options)</span>}
+                  </span>
+                  {isLinkedToCurrentQuote && (
+                    <button
+                      className="text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                      onClick={() => toggleEndorsementQuoteMutation.mutate({
+                        endorsementId: e.endorsement_id,
+                        quoteId: quote.id,
+                        isLinked: true
+                      })}
+                      title="Remove from this option"
+                    >
+                      ×
+                    </button>
+                  )}
+                  {!isLinkedToCurrentQuote && (
+                    <button
+                      className="text-gray-400 hover:text-purple-600 transition-colors opacity-0 group-hover:opacity-100 text-xs"
+                      onClick={() => toggleEndorsementQuoteMutation.mutate({
+                        endorsementId: e.endorsement_id,
+                        quoteId: quote.id,
+                        isLinked: false
+                      })}
+                      title="Add to this option"
+                    >
+                      + add
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
-          ))}
+                {showEndorsementOptions && allQuoteOptions.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1 ml-7">
+                    {allQuoteOptions.map((opt) => {
+                      const isLinked = linkedQuoteIds.includes(opt.id);
+                      return (
+                        <button
+                          key={opt.id}
+                          className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                            isLinked
+                              ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                              : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                          }`}
+                          onClick={() => toggleEndorsementQuoteMutation.mutate({
+                            endorsementId: e.endorsement_id,
+                            quoteId: opt.id,
+                            isLinked
+                          })}
+                          title={isLinked ? `Remove from ${opt.name}` : `Add to ${opt.name}`}
+                        >
+                          {opt.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Add endorsement selector */}
@@ -1956,12 +1976,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             <option value="">Add endorsement...</option>
             {availableEndorsements && (() => {
               const autoTitles = (autoEndorsementsData?.auto_endorsements || []).map(e => e.title);
-              const linkedTitles = (quoteEndorsementsData?.endorsements || []).map(e => e.title);
+              const submissionTitles = (submissionEndorsementsData?.endorsements || []).map(e => e.title);
               return availableEndorsements
                 .filter(e =>
                   !REQUIRED_ENDORSEMENT_CODES.includes(e.code) &&
                   !autoTitles.includes(e.title) &&
-                  !linkedTitles.includes(e.title)
+                  !submissionTitles.includes(e.title)
                 )
                 .map((e) => (
                   <option key={e.id} value={e.id}>
