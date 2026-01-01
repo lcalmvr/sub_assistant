@@ -105,6 +105,20 @@ export const unlinkSubjectivityFromQuote = (quoteId, subjectivityId) => api.dele
 export const unlinkSubjectivityFromPosition = (subjectivityId, position) => api.delete(`/subjectivities/${subjectivityId}/position/${position}`);
 export const pullSubjectivitiesFromQuote = (quoteId, sourceQuoteId) => api.post(`/quotes/${quoteId}/subjectivities/pull/${sourceQuoteId}`);
 
+// Endorsement Component Templates (header, lead_in, closing)
+export const getEndorsementComponentTemplates = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.component_type) query.append('component_type', params.component_type);
+  if (params.position) query.append('position', params.position);
+  if (params.defaults_only) query.append('defaults_only', 'true');
+  const queryStr = query.toString();
+  return api.get(`/endorsement-component-templates${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getEndorsementComponentTemplate = (templateId) => api.get(`/endorsement-component-templates/${templateId}`);
+export const createEndorsementComponentTemplate = (data) => api.post('/endorsement-component-templates', data);
+export const updateEndorsementComponentTemplate = (templateId, data) => api.patch(`/endorsement-component-templates/${templateId}`, data);
+export const deleteEndorsementComponentTemplate = (templateId) => api.delete(`/endorsement-component-templates/${templateId}`);
+
 // Compliance
 export const getComplianceStats = () => api.get('/compliance/stats');
 export const getComplianceRules = (params = {}) => {
