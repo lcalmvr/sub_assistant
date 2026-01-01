@@ -1,7 +1,38 @@
 import { useState, useRef } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+
+// Fetch standard coverage tags
+async function fetchStandardTags() {
+  const res = await fetch(`${API_URL}/api/coverage-catalog/standard-tags`);
+  if (!res.ok) throw new Error('Failed to fetch tags');
+  return res.json();
+}
+
+// Submit coverage mappings to catalog
+async function submitToCatalog(carrierName, coverages) {
+  const res = await fetch(`${API_URL}/api/coverage-catalog/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      carrier_name: carrierName,
+      coverages: coverages.map(c => ({
+        coverage: c.coverage,
+        coverage_normalized: c.coverage_normalized || [],
+      })),
+    }),
+  });
+  return res.json();
+}
+
+// Look up coverage mapping from catalog
+async function lookupCoverage(carrierName, coverageOriginal) {
+  const params = new URLSearchParams({ carrier_name: carrierName, coverage_original: coverageOriginal });
+  const res = await fetch(`${API_URL}/api/coverage-catalog/lookup?${params}`);
+  if (!res.ok) return null;
+  return res.json();
+}
 
 // Format compact currency
 function formatCompact(value) {
@@ -11,24 +42,59 @@ function formatCompact(value) {
   return `$${value}`;
 }
 
-// Build tower context for proportional calculations
+// Build tower context for proportional calculations (handles quota share)
 function buildTowerContext(towerJson) {
   if (!towerJson || !towerJson.length) {
-    return { our_aggregate_limit: 0, our_aggregate_attachment: 0, primary_aggregate_limit: 0, layers_below_count: 0, tower_layers: [] };
+    return { our_aggregate_limit: 0, our_aggregate_attachment: 0, primary_aggregate_limit: 0, layers_below_count: 0, tower_layers: [], cmai_qs: null };
   }
 
   let cmaiIdx = null;
+  let cmaiLayer = null;
   for (let i = 0; i < towerJson.length; i++) {
     if (towerJson[i].carrier?.toUpperCase().includes('CMAI')) {
       cmaiIdx = i;
+      cmaiLayer = towerJson[i];
       break;
     }
   }
 
-  const primaryAggLimit = towerJson[0]?.limit || 0;
-  const ourAggLimit = cmaiIdx !== null ? (towerJson[cmaiIdx]?.limit || 0) : primaryAggLimit;
-  const layersBelowCount = cmaiIdx !== null ? cmaiIdx : towerJson.length;
-  const ourAggAttachment = towerJson.slice(0, layersBelowCount).reduce((sum, l) => sum + (l.limit || 0), 0);
+  // Primary aggregate limit: use quota_share if QS layer, else limit
+  const primaryLayer = towerJson[0];
+  const primaryAggLimit = primaryLayer?.quota_share || primaryLayer?.limit || 0;
+
+  // Our aggregate limit: CMAI's participation
+  const ourAggLimit = cmaiLayer?.limit || primaryAggLimit;
+
+  // Check if CMAI is in a quota share layer
+  const cmaiQs = cmaiLayer?.quota_share || null;
+
+  // Calculate effective layers below count (for QS, find start of QS group)
+  let layersBelowCount = cmaiIdx !== null ? cmaiIdx : towerJson.length;
+  if (cmaiQs && cmaiIdx !== null) {
+    let effectiveIdx = cmaiIdx;
+    while (effectiveIdx > 0 && towerJson[effectiveIdx - 1]?.quota_share === cmaiQs) {
+      effectiveIdx--;
+    }
+    layersBelowCount = effectiveIdx;
+  }
+
+  // Calculate our aggregate attachment (handles QS layers)
+  let ourAggAttachment = 0;
+  let i = 0;
+  while (i < layersBelowCount) {
+    const layer = towerJson[i];
+    const layerQs = layer.quota_share;
+    if (layerQs) {
+      // QS layer - add full layer size once, skip others in same QS
+      ourAggAttachment += layerQs;
+      while (i < layersBelowCount && towerJson[i]?.quota_share === layerQs) {
+        i++;
+      }
+    } else {
+      ourAggAttachment += layer.limit || 0;
+      i++;
+    }
+  }
 
   return {
     tower_layers: towerJson,
@@ -36,20 +102,36 @@ function buildTowerContext(towerJson) {
     our_aggregate_attachment: ourAggAttachment,
     layers_below_count: layersBelowCount,
     primary_aggregate_limit: primaryAggLimit,
+    cmai_qs: cmaiQs,
   };
 }
 
-// Calculate proportional sublimit
+// Calculate proportional sublimit (handles quota share)
 function calcProportional(primarySublimit, ctx) {
   const { primary_aggregate_limit, our_aggregate_limit, tower_layers, layers_below_count } = ctx;
   if (!primary_aggregate_limit || !primarySublimit) return { limit: primarySublimit || 0, attachment: 0 };
 
   const ratio = primarySublimit / primary_aggregate_limit;
   const ourLimit = Math.round(ratio * our_aggregate_limit);
+
+  // Calculate attachment - handle QS layers properly
   let ourAttachment = 0;
-  for (const layer of (tower_layers || []).slice(0, layers_below_count)) {
-    ourAttachment += Math.round((layer.limit || 0) * ratio);
+  let i = 0;
+  while (i < layers_below_count) {
+    const layer = tower_layers[i];
+    const layerQs = layer?.quota_share;
+    if (layerQs) {
+      // QS layer - add full layer size once, skip others in same QS
+      ourAttachment += Math.round(layerQs * ratio);
+      while (i < layers_below_count && tower_layers[i]?.quota_share === layerQs) {
+        i++;
+      }
+    } else {
+      ourAttachment += Math.round((layer?.limit || 0) * ratio);
+      i++;
+    }
   }
+
   return { limit: ourLimit, attachment: ourAttachment };
 }
 
@@ -63,6 +145,14 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
 
   const sublimits = propSublimits || [];
   const ctx = buildTowerContext(towerJson);
+
+  // Fetch standard tags for mapping
+  const { data: tagsData } = useQuery({
+    queryKey: ['standard-coverage-tags'],
+    queryFn: fetchStandardTags,
+    staleTime: Infinity,
+  });
+  const standardTags = tagsData?.tags || [];
 
   // Document extraction
   const extractMutation = useMutation({
@@ -93,21 +183,40 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
     }
   };
 
-  const handleApplyExtracted = () => {
+  const handleApplyExtracted = async () => {
     if (!extractedPreview?.sublimits) return;
-    const newSublimits = extractedPreview.sublimits.map(sub => ({
-      coverage: sub.coverage,
-      primary_limit: sub.primary_limit,
-      treatment: 'follow_form',
-      our_limit: null,
-      our_attachment: null,
-    }));
+    const carrierName = extractedPreview.carrier_name || 'Unknown';
+
+    // Look up existing mappings from catalog
+    const newSublimits = await Promise.all(
+      extractedPreview.sublimits.map(async (sub) => {
+        let coverageNormalized = [];
+        try {
+          const mapping = await lookupCoverage(carrierName, sub.coverage);
+          if (mapping?.coverage_normalized) {
+            coverageNormalized = Array.isArray(mapping.coverage_normalized)
+              ? mapping.coverage_normalized
+              : [];
+          }
+        } catch (e) {
+          console.warn('Catalog lookup failed for:', sub.coverage);
+        }
+        return {
+          coverage: sub.coverage,
+          primary_limit: sub.primary_limit,
+          treatment: 'follow_form',
+          our_limit: null,
+          our_attachment: null,
+          coverage_normalized: coverageNormalized,
+        };
+      })
+    );
     onSave(newSublimits);
     setExtractedPreview(null);
   };
 
   const handleAddCoverage = () => {
-    onSave([...sublimits, { coverage: '', primary_limit: 1_000_000, treatment: 'follow_form', our_limit: null, our_attachment: null }]);
+    onSave([...sublimits, { coverage: '', primary_limit: 1_000_000, treatment: 'follow_form', our_limit: null, our_attachment: null, coverage_normalized: [] }]);
   };
 
   const handleDeleteCoverage = (idx) => {
@@ -167,7 +276,9 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
           <h4 className="form-section-title mb-0">Coverage Schedule</h4>
           {ctx.primary_aggregate_limit > 0 && (
             <div className="text-xs text-gray-500 mt-1">
-              Primary: {formatCompact(ctx.primary_aggregate_limit)} · Ours: {formatCompact(ctx.our_aggregate_limit)} xs {formatCompact(ctx.our_aggregate_attachment)}
+              Primary: {formatCompact(ctx.primary_aggregate_limit)} · Ours: {formatCompact(ctx.our_aggregate_limit)}
+              {ctx.cmai_qs && <span className="text-purple-600"> po {formatCompact(ctx.cmai_qs)}</span>}
+              {' '}xs {formatCompact(ctx.our_aggregate_attachment)}
             </div>
           )}
         </div>
@@ -274,15 +385,37 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
                     onClick={() => setExpandedIdx(isExpanded ? null : idx)}
                   >
                     <span className="text-gray-400 text-xs w-4">{isExpanded ? '▼' : '▶'}</span>
-                    <span className={`flex-1 truncate ${isNoCoverage ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
-                      {cov.coverage || 'Unnamed coverage'}
-                    </span>
+                    <div className={`flex-1 min-w-0 ${isNoCoverage ? 'text-gray-400' : ''}`}>
+                      <span className={`truncate block ${isNoCoverage ? 'line-through' : 'text-gray-900'}`}>
+                        {cov.coverage || 'Unnamed coverage'}
+                      </span>
+                      {cov.coverage_normalized?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {cov.coverage_normalized.slice(0, 3).map((tag, tidx) => (
+                            <span key={tidx} className="text-xs px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded">
+                              {tag}
+                            </span>
+                          ))}
+                          {cov.coverage_normalized.length > 3 && (
+                            <span className="text-xs text-gray-500">+{cov.coverage_normalized.length - 3}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <span className="text-gray-500 text-sm whitespace-nowrap">
                       {formatCompact(cov.primary_limit)}
                     </span>
                     <span className="text-gray-300">→</span>
                     <span className={`font-medium text-sm whitespace-nowrap ${isNoCoverage ? 'text-gray-400' : 'text-gray-900'}`}>
-                      {isNoCoverage ? 'Excluded' : `${formatCompact(effective.limit)} xs ${formatCompact(effective.attachment)}`}
+                      {isNoCoverage ? 'Excluded' : (
+                        <>
+                          {formatCompact(effective.limit)}
+                          {ctx.cmai_qs && (
+                            <span className="text-purple-600"> po {formatCompact(Math.round((cov.primary_limit / ctx.primary_aggregate_limit) * ctx.cmai_qs))}</span>
+                          )}
+                          {' '}xs {formatCompact(effective.attachment)}
+                        </>
+                      )}
                     </span>
                     {!readOnly && (
                       <button
@@ -371,6 +504,38 @@ export default function ExcessCoverageEditor({ sublimits: propSublimits, towerJs
                           </div>
                         </div>
                       )}
+
+                      {/* Standard Tags */}
+                      <div className="mt-3">
+                        <label className="text-xs text-gray-500 mb-1 block">Standard Coverage Tags</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {standardTags.map(tag => {
+                            const isSelected = cov.coverage_normalized?.includes(tag);
+                            return (
+                              <button
+                                key={tag}
+                                className={`text-xs px-2 py-1 rounded border transition-colors ${
+                                  isSelected
+                                    ? 'bg-purple-100 border-purple-300 text-purple-700'
+                                    : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-gray-300'
+                                }`}
+                                onClick={() => {
+                                  const current = cov.coverage_normalized || [];
+                                  const updated = isSelected
+                                    ? current.filter(t => t !== tag)
+                                    : [...current, tag];
+                                  handleUpdateCoverage(idx, 'coverage_normalized', updated);
+                                }}
+                              >
+                                {isSelected && '✓ '}{tag}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {standardTags.length === 0 && (
+                          <p className="text-xs text-gray-400 italic">Loading tags...</p>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

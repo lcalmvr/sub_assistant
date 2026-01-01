@@ -595,6 +595,131 @@ async def extract_coverages(file: UploadFile = File(...)):
             pass
 
 
+@app.get("/api/coverage-catalog/lookup")
+def lookup_coverage_mapping(carrier_name: str, coverage_original: str, policy_form: Optional[str] = None):
+    """
+    Look up a coverage mapping from the catalog.
+    Returns the normalized tags if found.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if policy_form:
+                cur.execute("""
+                    SELECT id, coverage_normalized, status
+                    FROM coverage_catalog
+                    WHERE carrier_name = %s AND coverage_original = %s AND policy_form = %s
+                    ORDER BY status = 'approved' DESC
+                    LIMIT 1
+                """, (carrier_name, coverage_original, policy_form))
+            else:
+                cur.execute("""
+                    SELECT id, coverage_normalized, status
+                    FROM coverage_catalog
+                    WHERE carrier_name = %s AND coverage_original = %s
+                    ORDER BY status = 'approved' DESC
+                    LIMIT 1
+                """, (carrier_name, coverage_original))
+
+            row = cur.fetchone()
+            if row:
+                return {
+                    "id": row["id"],
+                    "coverage_normalized": row["coverage_normalized"],
+                    "status": row["status"],
+                }
+            return None
+
+
+class CoverageMappingBatch(BaseModel):
+    carrier_name: str
+    policy_form: Optional[str] = None
+    coverages: List[dict]  # List of {coverage, coverage_normalized}
+
+
+@app.post("/api/coverage-catalog/batch")
+def submit_coverage_mappings(data: CoverageMappingBatch):
+    """
+    Submit multiple coverage mappings to the catalog.
+    Used when applying extracted coverages to save the carrier-specific mappings.
+    """
+    import json
+
+    count = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for cov in data.coverages:
+                coverage_original = cov.get("coverage", "")
+                coverage_normalized = cov.get("coverage_normalized", [])
+
+                if not coverage_original:
+                    continue
+
+                # Ensure coverage_normalized is a list
+                if isinstance(coverage_normalized, str):
+                    coverage_normalized = [coverage_normalized] if coverage_normalized else []
+
+                try:
+                    cur.execute("""
+                        INSERT INTO coverage_catalog (
+                            carrier_name, policy_form, coverage_original, coverage_normalized,
+                            submitted_by, status
+                        ) VALUES (%s, %s, %s, %s, %s, 'pending')
+                        ON CONFLICT (carrier_name, policy_form, coverage_original)
+                        DO UPDATE SET updated_at = now()
+                        RETURNING id
+                    """, (
+                        data.carrier_name,
+                        data.policy_form,
+                        coverage_original,
+                        coverage_normalized,
+                        "api",
+                    ))
+                    if cur.fetchone():
+                        count += 1
+                except Exception:
+                    pass  # Skip duplicates or errors
+
+            conn.commit()
+
+    return {"submitted": count}
+
+
+@app.get("/api/coverage-catalog/standard-tags")
+def get_standard_coverage_tags():
+    """
+    Get list of standard coverage tags for mapping.
+    """
+    return {
+        "tags": [
+            "Network Security Liability",
+            "Privacy Liability",
+            "Privacy Regulatory Defense",
+            "Privacy Regulatory Penalties",
+            "PCI DSS Assessment",
+            "Media Liability",
+            "Business Interruption",
+            "System Failure (Non-Malicious BI)",
+            "Dependent BI - IT Providers",
+            "Dependent BI - Non-IT Providers",
+            "Cyber Extortion / Ransomware",
+            "Data Recovery / Restoration",
+            "Reputational Harm",
+            "Crisis Management / PR",
+            "Technology E&O",
+            "Social Engineering",
+            "Invoice Manipulation",
+            "Funds Transfer Fraud",
+            "Telecommunications Fraud",
+            "Breach Response / Notification",
+            "Forensics",
+            "Credit Monitoring",
+            "Cryptojacking",
+            "Betterment",
+            "Bricking",
+        ]
+    }
+
+
 # ─────────────────────────────────────────────────────────────
 # Comparables Endpoints
 # ─────────────────────────────────────────────────────────────

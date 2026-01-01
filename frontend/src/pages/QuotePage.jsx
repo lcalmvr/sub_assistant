@@ -57,22 +57,26 @@ function formatCompact(value) {
 // With new model: limit = participation, quota_share = full layer size (when QS)
 function getTowerLimit(quote) {
   if (!quote.tower_json || !quote.tower_json.length) return null;
-  const cmaiLayer = quote.tower_json.find(l => l.carrier === 'CMAI') || quote.tower_json[0];
+  const cmaiLayer = quote.tower_json.find(l => l.carrier?.toUpperCase().includes('CMAI')) || quote.tower_json[0];
   // Always return limit (the carrier's participation/written amount)
   return cmaiLayer?.limit;
 }
 
 // Generate auto option name from tower structure
-// Format: Primary = "$1M x $25K", Excess = "$1M xs $6M x $25K"
+// Format: Primary = "$1M x $25K", Excess = "$1M xs $6M x $25K", QS Excess = "$5M po $10M xs $5M x $25K"
 function generateOptionName(quote) {
   const tower = quote.tower_json || [];
-  const cmaiIdx = tower.findIndex(l => l.carrier === 'CMAI');
+  const cmaiIdx = tower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
   const cmaiLayer = cmaiIdx >= 0 ? tower[cmaiIdx] : tower[0];
 
   if (!cmaiLayer) return 'Option';
 
   const limit = cmaiLayer.limit || 0;
   const limitStr = formatCompact(limit);
+
+  // Check if CMAI is in a quota share layer
+  const cmaiQs = cmaiLayer.quota_share;
+  const qsStr = cmaiQs ? ` po ${formatCompact(cmaiQs)}` : '';
 
   // Get retention from primary layer (index 0 if not CMAI primary)
   const primaryLayer = tower[0];
@@ -83,7 +87,7 @@ function generateOptionName(quote) {
     // Calculate CMAI's attachment using the tower structure
     const attachment = calculateAttachment(tower, cmaiIdx);
     const attachStr = formatCompact(attachment);
-    return `${limitStr} xs ${attachStr} x ${retentionStr}`;
+    return `${limitStr}${qsStr} xs ${attachStr} x ${retentionStr}`;
   }
 
   return `${limitStr} x ${retentionStr}`;
@@ -94,12 +98,31 @@ function generateOptionName(quote) {
 // All carriers in a QS group share the same attachment point
 // Data model: limit = participation, quota_share = full layer size (when QS)
 function calculateAttachment(layers, targetIdx) {
-  if (!layers || layers.length === 0 || targetIdx <= 0) return 0;
+  if (!layers || layers.length === 0) return 0;
+
+  // Special case: if target is index 0 and it's CMAI, calculate from all non-CMAI layers
+  // This handles cases where tower order might be wrong in stored data
+  const targetLayer = layers[targetIdx];
+  if (targetIdx === 0 && targetLayer?.carrier?.toUpperCase().includes('CMAI')) {
+    // Sum all non-CMAI layers
+    let attachment = 0;
+    for (const layer of layers) {
+      if (!layer.carrier?.toUpperCase().includes('CMAI')) {
+        if (layer.quota_share) {
+          attachment += layer.quota_share;
+        } else {
+          attachment += layer.limit || 0;
+        }
+      }
+    }
+    return attachment;
+  }
+
+  if (targetIdx <= 0) return 0;
 
   // If this layer is part of a QS group, find the first layer of the group
   // All layers in a QS group should have the same attachment
   let effectiveIdx = targetIdx;
-  const targetLayer = layers[targetIdx];
 
   if (targetLayer?.quota_share) {
     const qsFullLayer = targetLayer.quota_share;
@@ -800,7 +823,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             {/* Show layers from top to bottom (reversed for visual stacking) */}
             {[...towerLayers].reverse().map((layer, displayIdx) => {
               const actualIdx = towerLayers.length - 1 - displayIdx;
-              const isCMAI = layer.carrier === 'CMAI';
+              const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
               const isPrimary = actualIdx === 0; // First layer in array is primary (ground level)
 
               // Calculate attachment for this layer (handles quota share correctly)
@@ -995,7 +1018,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
               className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-gray-400 hover:text-gray-600"
               onClick={() => {
                 // Find CMAI layer index (new layer goes just below CMAI)
-                const cmaiIdx = towerLayers.findIndex(l => l.carrier === 'CMAI');
+                const cmaiIdx = towerLayers.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
 
                 // Search for any incomplete QS layer in the stack (excluding CMAI)
                 // Start from the top (just below CMAI) and work down
@@ -1050,7 +1073,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                 </div>
                 {[...towerLayers].reverse().map((layer, displayIdx) => {
                   const actualIdx = towerLayers.length - 1 - displayIdx;
-                  const isCMAI = layer.carrier === 'CMAI';
+                  const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
                   const isPrimary = actualIdx === 0;
 
                   // Calculate attachment (handles quota share correctly)

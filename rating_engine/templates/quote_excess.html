@@ -135,9 +135,12 @@
 <table class="mt-2">
     <thead>
         <tr>
-            <th style="width: 60%;">Coverage</th>
-            <th style="width: 20%;" class="text-right">Drop-Down Limit</th>
-            <th style="width: 20%;" class="text-right">Attachment</th>
+            <th style="width: {% if has_qs_sublimits %}45{% else %}60{% endif %}%;">Coverage</th>
+            <th style="width: {% if has_qs_sublimits %}15{% else %}20{% endif %}%;" class="text-right">Drop-Down Limit</th>
+            {% if has_qs_sublimits %}
+            <th style="width: 15%;" class="text-right">Part of</th>
+            {% endif %}
+            <th style="width: {% if has_qs_sublimits %}15{% else %}20{% endif %}%;" class="text-right">Attachment</th>
         </tr>
     </thead>
     <tbody>
@@ -151,6 +154,15 @@
                     ${{ "{:,}".format(data.limit | int) }}
                 {% endif %}
             </td>
+            {% if has_qs_sublimits %}
+            <td class="text-right currency" style="font-size: 12px;">
+                {% if data.quota_share %}
+                    ${{ "{:,}".format(data.quota_share | int) }}
+                {% else %}
+                    —
+                {% endif %}
+            </td>
+            {% endif %}
             <td class="text-right currency" style="font-size: 12px;">${{ "{:,}".format(data.attachment | int) }}</td>
         </tr>
         {% endfor %}
