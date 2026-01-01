@@ -1983,12 +1983,17 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           <button
             className="btn btn-outline text-sm"
             disabled={!selectedEndorsement || toggleEndorsementQuoteMutation.isPending}
-            onClick={() => {
-              if (selectedEndorsement) {
-                toggleEndorsementQuoteMutation.mutate({
-                  endorsementId: selectedEndorsement,
-                  quoteId: quote.id,
-                  isLinked: false
+            onClick={async () => {
+              if (selectedEndorsement && allQuotes?.length) {
+                // Add to ALL quote options
+                for (const q of allQuotes) {
+                  await linkEndorsementToQuote(q.id, selectedEndorsement);
+                }
+                // Refresh data
+                refetchEndorsements();
+                queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submission.id] });
+                allQuotes.forEach(q => {
+                  queryClient.invalidateQueries({ queryKey: ['quoteEndorsements', q.id] });
                 });
                 setSelectedEndorsement('');
               }
