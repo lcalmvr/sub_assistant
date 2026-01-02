@@ -2,27 +2,63 @@
 
 import os, json
 import re
+from typing import List
 from supabase import create_client
 from langchain_openai.embeddings import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
-from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_classic.chains import ConversationalRetrievalChain
 from langchain_core.prompts import PromptTemplate
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
 
 from pathlib import Path
-from dotenv import load_dotenv          # ⬅️ add this
+from dotenv import load_dotenv
 from utils.performance_monitor import monitor
 
-load_dotenv(Path(__file__).resolve().parents[0] / ".env")  # ⬅️ and this
+load_dotenv(Path(__file__).resolve().parents[0] / ".env")
 
-# 1) Supabase vec-store pointing at guideline_chunks
+# 1) Custom retriever using direct Supabase RPC call (bypasses broken SupabaseVectorStore)
 _supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-_store    = SupabaseVectorStore(
-    client     = _supabase,
-    embedding  = OpenAIEmbeddings(model="text-embedding-3-small"),
-    table_name = "guideline_chunks",
-    query_name = "match_guidelines",
-)
+_embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+
+class DirectSupabaseRetriever(BaseRetriever):
+    """Custom retriever that uses direct Supabase RPC calls for vector similarity search."""
+
+    k: int = 15
+
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        """Retrieve documents using direct Supabase RPC call."""
+        # Generate embedding for query
+        query_embedding = _embeddings.embed_query(query)
+
+        # Call the match_guidelines function directly via RPC
+        try:
+            result = _supabase.rpc(
+                "match_guidelines",
+                {
+                    "query_embedding": query_embedding,
+                    "match_count": self.k,
+                }
+            ).execute()
+
+            docs = []
+            for row in result.data or []:
+                docs.append(Document(
+                    page_content=row.get("content", ""),
+                    metadata={
+                        "section": row.get("section", ""),
+                        "page": row.get("page", ""),
+                        "similarity": row.get("similarity", 0),
+                    }
+                ))
+            return docs
+        except Exception as e:
+            print(f"[guideline_rag] Retrieval error: {e}")
+            return []
 
 # 2) Prompt: Quote / Decline / Refer  + citations
 _PROMPT = PromptTemplate.from_template(
@@ -49,10 +85,7 @@ Return markdown exactly in this form:
 # -----------------------------------------------------------
 # Retriever: top-15 most similar chunks (no hard threshold)
 # -----------------------------------------------------------
-retriever = _store.as_retriever(
-    search_type   = "similarity",   #  ←  changed
-    search_kwargs = {"k": 15},      #  ←  keep 15 best
-)
+retriever = DirectSupabaseRetriever(k=15)
 
 # 4) Single, final chain
 _chain = ConversationalRetrievalChain.from_llm(
