@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 # Import document library
 from core.document_library import get_library_entry, get_library_entries
+from core.document_generator import get_endorsement_component_templates, render_endorsement_component
 
 # Import document generator for context and rendering
 from core.document_generator import (
@@ -213,7 +214,8 @@ def generate_package(
     doc_type: str,
     package_type: str = "quote_only",
     selected_documents: list[str] = None,
-    created_by: str = "user"
+    created_by: str = "user",
+    include_specimen: bool = False
 ) -> dict:
     """
     Generate a document package.
@@ -225,6 +227,7 @@ def generate_package(
         package_type: 'quote_only' or 'full_package'
         selected_documents: List of library entry IDs to include
         created_by: User generating the package
+        include_specimen: Include the policy specimen form
 
     Returns:
         dict with id, pdf_url, document_number, manifest
@@ -269,11 +272,12 @@ def generate_package(
         ))
 
     # Render combined HTML
-    if library_docs:
+    if library_docs or include_specimen:
         html_content = render_package_html(
             doc_config["template"],
             context,
-            library_docs
+            library_docs,
+            include_specimen=include_specimen
         )
     else:
         # Just render the quote
@@ -312,7 +316,8 @@ def generate_package(
 def render_package_html(
     quote_template: str,
     context: dict,
-    library_documents: list[dict]
+    library_documents: list[dict],
+    include_specimen: bool = False
 ) -> str:
     """
     Render combined HTML for a package with quote + library documents.
@@ -321,6 +326,7 @@ def render_package_html(
         quote_template: Template name for the quote
         context: Quote context data
         library_documents: List of library document dicts
+        include_specimen: Include the policy specimen form
 
     Returns:
         Combined HTML string
@@ -346,6 +352,13 @@ def render_package_html(
     # Add library document styles
     library_styles = _get_library_document_styles()
 
+    # Add policy specimen form if requested
+    if include_specimen:
+        specimen_html = _render_policy_specimen(context)
+        if specimen_html:
+            parts.append('<div class="page-break"></div>')
+            parts.append(specimen_html)
+
     # Add each library document with page break
     for doc in library_documents:
         parts.append('<div class="page-break"></div>')
@@ -367,8 +380,43 @@ def render_package_html(
     return combined
 
 
+def _render_policy_specimen(context: dict) -> str:
+    """
+    Render the policy specimen form based on the quote's policy_form.
+
+    Args:
+        context: Quote context data (must include policy_form)
+
+    Returns:
+        Rendered HTML for the policy form, or empty string if not found
+    """
+    from rating_engine.coverage_config import get_default_policy_form
+
+    policy_form = context.get("policy_form") or get_default_policy_form()
+
+    # Map policy form to template
+    form_templates = {
+        "cyber": "policy_forms/cyber_form.html",
+        "cyber_tech": "policy_forms/cyber_tech_form.html",
+        "tech": "policy_forms/tech_form.html",
+    }
+
+    template_name = form_templates.get(policy_form)
+    if not template_name:
+        # Default to cyber form
+        template_name = "policy_forms/cyber_form.html"
+
+    try:
+        form_template = TEMPLATE_ENV.get_template(template_name)
+        return form_template.render(**context)
+    except Exception as e:
+        # Template not found or render error - return empty
+        print(f"Warning: Could not render policy specimen: {e}")
+        return ""
+
+
 def _render_library_document_html(doc: dict, context: dict) -> str:
-    """Render a single library document as HTML."""
+    """Render a single library document as HTML using mid-term endorsement format."""
     doc_type = doc.get("document_type", "endorsement")
     title = doc.get("title", "")
     code = doc.get("code", "")
@@ -379,43 +427,74 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
     if doc_type == "endorsement" and content:
         content = process_endorsement_fill_ins(content, context, fill_in_mappings)
 
-    # Add context info for endorsements
-    effective_date = context.get("effective_date", "")
-    policy_number = context.get("quote_number", "")
-
     if doc_type == "endorsement":
+        # Use mid-term endorsement format for all endorsements
+        effective_date = context.get("effective_date", "")
+        insured_name = context.get("insured_name", "")
+        document_number = context.get("document_number", "")
+        position = context.get("position", "primary")
+
+        # Fetch component templates from database
+        templates = get_endorsement_component_templates(position)
+
+        # Build template context for variable substitution
+        template_context = {
+            "document_code": code,
+            "effective_date": effective_date,
+            "document_number": document_number,
+            "position": position,
+        }
+
+        # Render lead-in from template (with fallback)
+        lead_in_html = render_endorsement_component(templates.get("lead_in", ""), template_context)
+        if not lead_in_html:
+            lead_in_html = "<p>This endorsement modifies the insurance provided under the policy to which it is attached.</p>"
+
+        # Render closing from template (with fallback)
+        closing_html = render_endorsement_component(templates.get("closing", ""), template_context)
+        if not closing_html:
+            closing_html = "<p>This endorsement forms a part of the policy to which it is attached and is subject to all terms, conditions, and exclusions of such policy except as specifically modified herein.</p>"
+
         return f'''
-        <div class="library-document endorsement-document">
-            <div class="library-document-header">
-                <div class="library-document-title">{title}</div>
-                <div class="library-document-code">{code}</div>
+        <div class="endorsement-document">
+            <div class="endorsement-header">
+                <div class="endorsement-title">{title.upper()}</div>
             </div>
 
             <div class="endorsement-meta">
-                <div class="endorsement-meta-item">
-                    <span class="endorsement-meta-label">Effective Date:</span>
-                    <span class="endorsement-meta-value">{effective_date}</span>
+                <div class="meta-item">
+                    <div class="meta-label">ENDORSEMENT</div>
+                    <div class="meta-value">{code}</div>
                 </div>
-                <div class="endorsement-meta-item">
-                    <span class="endorsement-meta-label">Quote Reference:</span>
-                    <span class="endorsement-meta-value">{policy_number}</span>
+                <div class="meta-item">
+                    <div class="meta-label">POLICY NUMBER</div>
+                    <div class="meta-value">{document_number}</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">EFFECTIVE DATE</div>
+                    <div class="meta-value">{effective_date}</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">NAMED INSURED</div>
+                    <div class="meta-value">{insured_name}</div>
                 </div>
             </div>
 
-            <div class="library-document-content">
+            <div class="endorsement-lead-in">
+                {lead_in_html}
+            </div>
+
+            <div class="endorsement-content">
                 {content}
             </div>
 
             <div class="endorsement-footer">
-                <p class="endorsement-footer-text">
-                    This endorsement modifies the policy to which it is attached and is effective
-                    on the date indicated above. All other terms and conditions of the policy remain unchanged.
-                </p>
+                {closing_html}
             </div>
         </div>
         '''
     else:
-        # Generic library document
+        # Generic library document (non-endorsement)
         return f'''
         <div class="library-document">
             <div class="library-document-header">
@@ -433,7 +512,127 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
 def _get_library_document_styles() -> str:
     """Get CSS styles for library documents."""
     return '''
-    /* Library Document Styles */
+    /* Endorsement Document Styles (mid-term format) */
+    .endorsement-document {
+        margin-bottom: 30px;
+    }
+
+    .endorsement-header {
+        text-align: center;
+        border-bottom: 2px solid #1a365d;
+        padding-bottom: 20px;
+        margin-bottom: 25px;
+    }
+
+    .endorsement-header .endorsement-title {
+        font-size: 18px;
+        font-weight: bold;
+        color: #1a365d;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 5px;
+    }
+
+    .endorsement-header .endorsement-code {
+        font-size: 10px;
+        color: #718096;
+    }
+
+    .endorsement-meta {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 25px;
+        padding: 15px 20px;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+
+    .endorsement-meta .meta-item {
+        text-align: center;
+    }
+
+    .endorsement-meta .meta-label {
+        font-size: 9px;
+        color: #718096;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+
+    .endorsement-meta .meta-value {
+        font-size: 12px;
+        font-weight: bold;
+        color: #1a365d;
+    }
+
+    .endorsement-lead-in {
+        margin-bottom: 20px;
+        font-size: 11px;
+        font-style: italic;
+        color: #4a5568;
+    }
+
+    .endorsement-lead-in p {
+        margin: 0;
+    }
+
+    .endorsement-content {
+        text-align: justify;
+        line-height: 1.7;
+    }
+
+    .endorsement-content h2 {
+        color: #1a365d;
+        font-size: 14px;
+        margin-top: 20px;
+        margin-bottom: 10px;
+    }
+
+    .endorsement-content h3 {
+        color: #1a365d;
+        font-size: 12px;
+        margin-top: 15px;
+        margin-bottom: 8px;
+    }
+
+    .endorsement-content p {
+        margin-bottom: 10px;
+    }
+
+    .endorsement-content ul, .endorsement-content ol {
+        margin: 10px 0;
+        padding-left: 25px;
+    }
+
+    .endorsement-content li {
+        margin-bottom: 5px;
+    }
+
+    .endorsement-content table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+    }
+
+    .endorsement-content td, .endorsement-content th {
+        padding: 10px;
+        border: 1px solid #ddd;
+    }
+
+    .endorsement-footer {
+        margin-top: 40px;
+        padding-top: 20px;
+        border-top: 1px solid #e2e8f0;
+    }
+
+    .endorsement-footer p {
+        font-size: 9px;
+        color: #718096;
+        text-align: center;
+        font-style: italic;
+    }
+
+    /* Generic library document styles */
     .library-document {
         margin-bottom: 30px;
     }
@@ -601,6 +800,19 @@ def _save_document(
             serializable_json[key] = str(value) if value is not None else None
 
     with get_conn() as conn:
+        # Void any existing documents of the same type for this quote option
+        conn.execute(text("""
+            UPDATE policy_documents
+            SET status = 'void'
+            WHERE quote_option_id = :quote_option_id
+            AND document_type = :doc_type
+            AND status != 'void'
+        """), {
+            "quote_option_id": quote_option_id,
+            "doc_type": doc_type,
+        })
+
+        # Insert the new document
         result = conn.execute(text("""
             INSERT INTO policy_documents (
                 submission_id, quote_option_id, document_type,

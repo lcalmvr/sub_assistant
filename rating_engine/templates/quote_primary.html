@@ -7,7 +7,7 @@
 
 {# Document Header #}
 <div class="document-header">
-    <div class="document-type">Cyber & Technology E&O Quote</div>
+    <div class="document-type">{{ document_type | default('Cyber Quote') }}</div>
     <div class="document-number">{{ quote_number }} | {{ quote_date }}</div>
 </div>
 
@@ -37,6 +37,7 @@
 
 {# Policy Period #}
 <div class="info-box">
+    {% if effective_date and effective_date != '—' and expiration_date and expiration_date != '—' %}
     <div class="info-grid">
         <div class="info-item">
             <div class="info-label">Effective Date</div>
@@ -47,6 +48,12 @@
             <div class="info-value">{{ expiration_date }}</div>
         </div>
     </div>
+    {% else %}
+    <div class="info-item">
+        <div class="info-label">Policy Period</div>
+        <div class="info-value">12 month policy period</div>
+    </div>
+    {% endif %}
 </div>
 
 {# Premium Summary - Highlighted Box #}
@@ -69,11 +76,33 @@
 
 {# Coverage Schedule #}
 <div class="section-header">Coverage Schedule</div>
-{% if policy_form %}
-<div class="text-small text-muted mb-2">Policy Form: {{ policy_form | replace('_', ' ') | title }}</div>
-{% endif %}
+<div class="text-small text-muted mb-2">{{ coverage_type }}</div>
 
 {{ render_coverage_schedule(aggregate_coverages, sublimit_coverages, retention) }}
+
+{# Retroactive Dates #}
+{% if retro_schedule %}
+<div class="section-header">Retroactive Dates</div>
+<table>
+    <thead>
+        <tr>
+            <th style="width: 50%;">Coverage</th>
+            <th style="width: 50%;">Retroactive Date</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in retro_schedule %}
+        <tr>
+            <td>{{ entry.coverage }}</td>
+            <td>{{ entry.retro }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if retro_notes %}
+<div class="text-small text-muted mt-1">{{ retro_notes }}</div>
+{% endif %}
+{% endif %}
 
 {# Endorsements #}
 {% if endorsements %}

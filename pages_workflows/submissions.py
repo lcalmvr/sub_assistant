@@ -46,12 +46,14 @@ parse_controls_from_summary = pipeline.parse_controls_from_summary
 # Import modular components
 from pages_components.rating_panel_v2 import render_rating_panel
 from pages_components.similar_submissions_panel import render_similar_submissions_panel
+from pages_components.benchmarking_panel import render_benchmarking_panel
 from pages_components.details_panel import render_details_panel
 from pages_components.status_header import render_status_header
 from pages_components.review_queue_panel import render_review_queue_panel
 from pages_components.account_history_panel import render_account_history_compact
 from pages_components.renewal_panel import render_renewal_panel
 from pages_components.endorsements_history_panel import render_endorsements_history_panel
+from pages_components.admin_agent_sidebar import render_admin_agent_sidebar
 from core.policy_tab_data import load_policy_tab_data as _load_policy_tab_data_uncached
 
 @st.cache_data(ttl=30)
@@ -580,7 +582,8 @@ def _render_policy_period_section(sub_id: str):
         with col_btn:
             if st.button("Edit", key=f"edit_period_btn_{sub_id}", type="secondary"):
                 st.session_state[edit_key] = True
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
     else:
         # Edit mode
         new_effective = st.date_input("Effective Date", value=effective_date, key=f"eff_{sub_id}")
@@ -608,13 +611,14 @@ def _render_policy_period_section(sub_id: str):
             if st.button("Save", key=f"save_period_{sub_id}", type="primary"):
                 with conn.cursor() as cur:
                     cur.execute("UPDATE submissions SET effective_date = %s, expiration_date = %s, updated_at = now() WHERE id = %s", (new_effective, new_expiration, sub_id))
-                clear_submission_caches()
                 st.session_state[edit_key] = False
-                st.rerun()
+                from utils.tab_state import save_and_rerun_on_account_tab
+                save_and_rerun_on_account_tab()
         with c2:
             if st.button("Cancel", key=f"cancel_period_{sub_id}"):
                 st.session_state[edit_key] = False
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
 
 
 def _render_broker_section(sub_id: str):
@@ -644,7 +648,8 @@ def _render_broker_section(sub_id: str):
             btn_label = "Change" if current else "Assign"
             if st.button(btn_label, key=f"edit_broker_btn_{sub_id}", type="secondary"):
                 st.session_state[edit_key] = True
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
     else:
         # Edit mode
         employments = get_all_broker_employments()
@@ -670,69 +675,246 @@ def _render_broker_section(sub_id: str):
                                     SET broker_org_id = %s, broker_employment_id = %s, updated_at = now()
                                     WHERE id = %s
                                 """, (emp["org_id"], emp["id"], sub_id))
-                            clear_submission_caches()
                             st.session_state[edit_key] = False
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_account_tab
+                            save_and_rerun_on_account_tab()
                             break
             with c2:
                 if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
                     st.session_state[edit_key] = False
-                    st.rerun()
+                    from utils.tab_state import rerun_on_account_tab
+                    rerun_on_account_tab()
         else:
             st.caption("No brokers available")
             if st.button("Cancel", key=f"cancel_broker_{sub_id}"):
                 st.session_state[edit_key] = False
-                st.rerun()
+                from utils.tab_state import rerun_on_account_tab
+                rerun_on_account_tab()
 
 
 # ─────────────────────── UI starts ──────────────────────────
+def _sync_selected_submission_from_query_params():
+    query_sub_id = st.query_params.get("selected_submission_id")
+    if query_sub_id:
+        st.session_state.selected_submission_id = str(query_sub_id)
+        st.query_params.clear()  # Clear to avoid stale params
+
+
+def _format_submission_label(applicant_name: str, submission_id: str) -> str:
+    return f"{applicant_name} – {str(submission_id)[:8]}"
+
+
+def _get_current_submission_display(submission_id: str) -> Optional[dict]:
+    if not submission_id:
+        return None
+    try:
+        df = load_submission(str(submission_id))
+        if df is None or df.empty:
+            return None
+        row = df.iloc[0]
+        applicant_name = row["applicant_name"]
+        submission_id = str(row["id"])
+        return {
+            "id": submission_id,
+            "short_id": submission_id[:8],
+            "applicant_name": applicant_name,
+            "label": _format_submission_label(applicant_name, submission_id),
+        }
+    except Exception:
+        return None
+
+
+def _render_submission_context(submission_id: str):
+    """Compact broker + account context line shown above tabs."""
+    if not submission_id:
+        return
+
+    try:
+        from core.bor_management import get_current_broker
+        from core.account_management import get_submission_account
+
+        broker = get_current_broker(submission_id)
+        account = get_submission_account(submission_id)
+
+        if account:
+            acct_text = account.get("name") or "—"
+            if account.get("website"):
+                acct_text += f" · {account['website']}"
+        else:
+            acct_text = "Not linked"
+
+        if broker:
+            broker_text = broker.get("broker_name") or "—"
+            contact = broker.get("contact_name")
+            email = broker.get("contact_email")
+            if contact:
+                broker_text += f" - {contact}"
+            if email:
+                broker_text += f" ({email})"
+        else:
+            broker_text = "Not assigned"
+
+        st.caption(f"Broker: {broker_text}")
+    except Exception:
+        # Context is helpful but non-critical; avoid breaking page render.
+        return
+
+
+def _render_submission_switcher(current_sub_id: Optional[str], *, status_edit_submission_id: Optional[str] = None):
+    """Popover-based submission search/switcher (used in header)."""
+    with st.popover("Load / Edit", use_container_width=True):
+        # Keep this simple: quick recent picks + a selectbox with built-in type-to-filter.
+        sub_df = load_submissions("TRUE", ())
+        label_map = {
+            _format_submission_label(r.applicant_name, r.id): str(r.id)
+            for r in sub_df.itertuples()
+        }
+
+        current_display = _get_current_submission_display(current_sub_id) if current_sub_id else None
+        current_label = current_display["label"] if current_display else None
+        if current_sub_id and current_label and current_label not in label_map:
+            label_map = {current_label: str(current_sub_id), **label_map}
+
+        options = list(label_map.keys()) or ["—"]
+        default_idx = options.index(current_label) if current_label in options else 0
+
+        st.caption("Search")
+        selected_label = st.selectbox(
+            "Open submission",
+            options,
+            index=default_idx,
+            key=f"submission_switch_select_{current_sub_id or 'none'}",
+            label_visibility="collapsed",
+        )
+
+        new_sub_id = label_map.get(selected_label)
+        if new_sub_id and str(new_sub_id) != str(current_sub_id):
+            st.session_state.selected_submission_id = str(new_sub_id)
+            st.rerun()
+
+        if status_edit_submission_id:
+            if st.button(
+                "Edit status…",
+                key=f"edit_status_from_switch_{status_edit_submission_id}",
+                use_container_width=True,
+            ):
+                st.session_state[f"editing_status_{status_edit_submission_id}"] = True
+                st.rerun()
+
+            if st.button(
+                "Edit broker…",
+                key=f"edit_broker_from_switch_{status_edit_submission_id}",
+                use_container_width=True,
+            ):
+                st.session_state[f"editing_parties_{status_edit_submission_id}"] = True
+                st.rerun()
+
+            if st.button(
+                "Edit account…",
+                key=f"edit_account_from_switch_{status_edit_submission_id}",
+                use_container_width=True,
+            ):
+                st.session_state[f"editing_parties_{status_edit_submission_id}"] = True
+                st.rerun()
+
+        recent_df = sub_df.head(5) if not sub_df.empty else sub_df
+        if recent_df is not None and not recent_df.empty:
+            st.divider()
+            st.caption("Recent")
+            for r in recent_df.itertuples():
+                label = _format_submission_label(r.applicant_name, r.id)
+                if st.button(label, key=f"recent_submission_btn_{r.id}", use_container_width=True):
+                    st.session_state.selected_submission_id = str(r.id)
+                    st.rerun()
+
+
 def render():
     """Main render function for the submissions page"""
     import pandas as pd
 
-    st.title("📂 AI-Processed Submissions")
+    _sync_selected_submission_from_query_params()
+    current_sub_id = st.session_state.get("selected_submission_id")
 
-    # Search and submission selection in same row
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        search_term = st.text_input("🔍 Search by company name", key="search_submissions", placeholder="Enter company name...")
-        # Trigger rerun when search term changes
-        if search_term != st.session_state.get("last_search_term", ""):
-            st.session_state.last_search_term = search_term
-            st.rerun()
-
-    with col2:
-        # Load submissions with search filter
-        if search_term:
-            where_sql = "LOWER(applicant_name) LIKE LOWER(%s)"
-            params = (f"%{search_term}%",)
+    # Resolve current selection (and display label) from DB.
+    sub_id = None
+    current_display = None
+    if current_sub_id:
+        current_display = _get_current_submission_display(str(current_sub_id))
+        if current_display:
+            sub_id = current_display["id"]
         else:
-            where_sql = "TRUE"
-            params = ()
+            # Stale selection (e.g., deleted submission) - clear.
+            st.session_state.pop("selected_submission_id", None)
+            current_sub_id = None
 
-        sub_df = load_submissions(where_sql, params)
-        label_map = {f"{r.applicant_name} – {str(r.id)[:8]}": r.id for r in sub_df.itertuples()}
-        # Restore previous selection if available
-        id_to_label = {str(v): k for k, v in label_map.items()}
+    sub_df = pd.DataFrame()
+    search_term = ""
+    if not sub_id:
+        # Selection mode: show full picker UI (search/select + recent table)
+        st.header("Submissions")
+        col1, col2 = st.columns([2, 1])
 
-        # Check for query param (for links from account history)
-        query_sub_id = st.query_params.get("selected_submission_id")
-        if query_sub_id:
-            st.session_state.selected_submission_id = query_sub_id
-            st.query_params.clear()  # Clear to avoid stale params
+        with col1:
+            search_term = st.text_input(
+                "🔍 Search by company name",
+                key="submission_picker_search",
+                placeholder="Enter company name...",
+            )
 
-        current_sub_id = st.session_state.get("selected_submission_id")
-        current_label = id_to_label.get(current_sub_id) if current_sub_id else None
-        options = list(label_map.keys()) or ["—"]
-        default_idx = options.index(current_label) if current_label in options else 0
+        with col2:
+            if search_term:
+                where_sql = "LOWER(applicant_name) LIKE LOWER(%s)"
+                params = (f"%{search_term}%",)
+            else:
+                where_sql = "TRUE"
+                params = ()
 
-        label_selected = st.selectbox("Open submission:", options, index=default_idx)
-        sub_id = label_map.get(label_selected)
+            sub_df = load_submissions(where_sql, params)
+            label_map = {
+                _format_submission_label(r.applicant_name, r.id): str(r.id)
+                for r in sub_df.itertuples()
+            }
 
-        # Store in session state for cross-page access
-        if sub_id:
-            st.session_state.selected_submission_id = str(sub_id)
+            options = list(label_map.keys()) or ["—"]
+            chosen_label = st.selectbox("Open submission:", options, index=0)
+            chosen = label_map.get(chosen_label)
+            if chosen:
+                st.session_state.selected_submission_id = str(chosen)
+                st.rerun()
+    else:
+        # Work mode: unified top header with actions on the same row.
+        import html as _html
+        st.markdown(
+            """
+<style>
+div[data-testid="stButton"] button { white-space: nowrap; }
+div[data-testid="stPopover"] button { white-space: nowrap; }
+.submission-title {
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1.05 !important;
+}
+</style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # Give the right-side actions enough room so the button label doesn't wrap/truncate.
+        title_col, actions_col = st.columns([8, 4])
+        with title_col:
+            short_id = str(sub_id)[:8]
+            st.markdown(
+                f"<h1 class='submission-title'>{_html.escape(current_display['applicant_name'])} <span style='color:#9ca3af;font-size:0.5em;font-weight:400'>({short_id})</span></h1>",
+                unsafe_allow_html=True,
+            )
+        with actions_col:
+            # Nested cols to right-align the action buttons.
+            spacer, docs_col, switcher_col = st.columns([1, 2, 3])
+            with docs_col:
+                from pages_components.docs_popover import render_docs_popover
+                render_docs_popover(sub_id, get_conn)
+            with switcher_col:
+                _render_submission_switcher(current_sub_id=sub_id, status_edit_submission_id=sub_id)
 
     # Configure column display (shared configuration)
     column_config = {
@@ -788,38 +970,54 @@ def render():
     else:
         sub_df_display = sub_df
 
-    # Use different expander behavior based on search state
-    if search_term:
-        # Force expanded when searching
-        with st.expander("📋 Recent submissions (filtered)", expanded=True):
-
+    if not sub_id:
+        # Selection mode: show recent submissions table
+        title = "📋 Recent submissions (filtered)" if search_term else "📋 Recent submissions"
+        with st.expander(title, expanded=True):
             st.dataframe(
-                sub_df_display, 
-                use_container_width=True, 
+                sub_df_display,
+                use_container_width=True,
                 hide_index=True,
-                column_config=column_config
+                column_config=column_config,
             )
-    else:
-        # Default expander behavior when not searching
-        with st.expander("📋 Recent submissions", expanded=True):
-
-            st.dataframe(
-                sub_df_display, 
-                use_container_width=True, 
-                hide_index=True,
-                column_config=column_config
-            )
-
 
     if sub_id:
-        st.divider()
-        st.subheader(label_selected)
-
         # ------------------- STATUS HEADER -------------------
-        render_status_header(sub_id, get_conn=get_conn)
+        render_status_header(sub_id, get_conn=get_conn, show_change_button=False)
+        _render_submission_context(sub_id)
+
+        # ------------------- TAB STATE -------------------
+        # Determine which tab to show (using Streamlit's native default parameter)
+        tab_labels = ["📋 Account", "⚠️ Review", "🔍 UW", "📈 Comps", "📊 Rating", "💰 Quote", "📑 Policy"]
+        tab_name_to_label = {
+            "Account": "📋 Account",
+            "Review": "⚠️ Review",
+            "UW": "🔍 UW",
+            "Comps": "📈 Comps",
+            "Rating": "📊 Rating",
+            "Quote": "💰 Quote",
+            "Policy": "📑 Policy",
+        }
+
+        # Check for tab state and determine default
+        default_tab_label = None
+        if st.session_state.pop("_return_to_policy_tab", False):
+            default_tab_label = "📑 Policy"
+        elif st.session_state.get("_active_tab"):
+            target = st.session_state.pop("_active_tab", None)
+            default_tab_label = tab_name_to_label.get(target)
+            # Clean up related state
+            st.session_state.pop("_active_tab_request_id", None)
+            st.session_state.pop("_active_tab_injected", None)
+
+        # Clean up old state keys from previous implementation
+        st.session_state.pop("_active_tab_use_count", None)
 
         # ------------------- TABS -------------------
-        tab_details, tab_uw, tab_rating, tab_quote, tab_policy = st.tabs(["📋 Details", "🔍 UW", "📊 Rating", "💰 Quote", "📑 Policy"])
+        tab_details, tab_review, tab_uw, tab_benchmark, tab_rating, tab_quote, tab_policy = st.tabs(
+            tab_labels,
+            default=default_tab_label,  # Native Streamlit parameter - no JS hack needed!
+        )
 
         # Define quote_helpers up front for use in Quote tab
         quote_helpers = {
@@ -920,15 +1118,16 @@ def render():
                 col1, col2, col3, col4 = st.columns(4)
                 cols = [col1, col2, col3, col4]
 
+                from utils.tab_state import on_change_stay_on_rating
                 for i, (col, limit_label, limit, premium) in enumerate(zip(cols, limit_labels, limits, premiums)):
                     with col:
                         st.metric(
                             label=f"{limit_label} / {ret_label}",
                             value=f"${premium:,.0f}" if premium > 0 else "N/A"
                         )
-                        # Create Quote Option button
+                        # Create Quote Option button - on_click for tab state, but NO explicit rerun
                         if premium > 0:
-                            if st.button("+ Create Option", key=f"create_opt_{limit}_{selected_retention}_{sub_id}", use_container_width=True):
+                            if st.button("+ Create Option", key=f"create_opt_{limit}_{selected_retention}_{sub_id}", use_container_width=True, on_click=on_change_stay_on_rating):
                                 from pages_components.tower_db import save_tower, list_quotes_for_submission
                                 from pages_components.coverages_panel import build_coverages_from_rating
                                 from rating_engine.coverage_config import get_default_policy_form
@@ -967,14 +1166,17 @@ def render():
                                     primary_retention=selected_retention,
                                     quote_name=quote_name,
                                     technical_premium=premium,
+                                    sold_premium=premium,  # Initialize sold to technical premium
                                     position="primary",
                                     policy_form=policy_form,
                                     coverages=coverages,
                                 )
-                                st.success(f"Created: {quote_name}")
-                                st.rerun()
+                                # Show success - no rerun so message displays reliably
+                                st.success(f"✓ Created: {quote_name}")
 
                 # Rating Parameters (Retention, Hazard Class, Control Adjustment)
+                # Import on_change callback to prevent tab bouncing on widget change
+                from utils.tab_state import on_change_stay_on_rating
                 col_ret, col_haz, col_adj = st.columns(3)
 
                 with col_ret:
@@ -983,7 +1185,8 @@ def render():
                         options=retention_options,
                         format_func=lambda x: retention_labels[retention_options.index(x)],
                         index=retention_options.index(selected_retention) if selected_retention in retention_options else 1,
-                        key=f"rating_retention_{sub_id}"
+                        key=f"rating_retention_{sub_id}",
+                        on_change=on_change_stay_on_rating,
                     )
 
                 with col_haz:
@@ -995,7 +1198,8 @@ def render():
                         options=hazard_options,
                         format_func=lambda x: hazard_labels[hazard_options.index(x)],
                         index=hazard_idx,
-                        key=f"rating_hazard_{sub_id}"
+                        key=f"rating_hazard_{sub_id}",
+                        on_change=on_change_stay_on_rating,
                     )
                     if new_hazard != current_hazard:
                         with get_conn().cursor() as cur:
@@ -1003,8 +1207,8 @@ def render():
                                 "UPDATE submissions SET hazard_override = %s WHERE id = %s",
                                 (new_hazard, sub_id)
                             )
-                        clear_submission_caches()
-                        st.rerun()
+                        # No explicit rerun needed - premiums already use session state values
+                        # and natural Streamlit rerun handles the rest
 
                 with col_adj:
                     adj_options = [-0.15, -0.10, -0.05, 0, 0.05, 0.10, 0.15]
@@ -1015,7 +1219,8 @@ def render():
                         options=adj_options,
                         format_func=lambda x: adj_labels[adj_options.index(x)],
                         index=adj_idx,
-                        key=f"rating_ctrl_adj_{sub_id}"
+                        key=f"rating_ctrl_adj_{sub_id}",
+                        on_change=on_change_stay_on_rating,
                     )
                     if new_adj != current_adj:
                         with get_conn().cursor() as cur:
@@ -1023,8 +1228,63 @@ def render():
                                 "UPDATE submissions SET control_overrides = %s WHERE id = %s",
                                 (json_mod.dumps({"overall": new_adj}), sub_id)
                             )
-                        clear_submission_caches()
-                        st.rerun()
+                        # No explicit rerun needed - premiums already use session state values
+
+                # Retroactive Date (submission default - applies to all quote options)
+                retro_col1, retro_col2 = st.columns([1, 2])
+
+                with retro_col1:
+                    # Fetch current value
+                    current_retro = None
+                    with get_conn().cursor() as cur:
+                        cur.execute(
+                            "SELECT default_retroactive_date FROM submissions WHERE id = %s",
+                            (sub_id,)
+                        )
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            current_retro = row[0]
+
+                    presets = ["", "Full Prior Acts", "Inception"]
+                    is_custom = current_retro and current_retro not in presets
+
+                    dropdown_options = presets + ["Custom..."]
+                    if is_custom:
+                        default_idx = len(presets)  # "Custom..."
+                    elif current_retro in presets:
+                        default_idx = presets.index(current_retro)
+                    else:
+                        default_idx = 0
+
+                    selected_retro = st.selectbox(
+                        "Retroactive Date",
+                        options=dropdown_options,
+                        index=default_idx,
+                        key=f"retro_select_{sub_id}",
+                        on_change=on_change_stay_on_rating,
+                        help="Applies to all quote options"
+                    )
+
+                with retro_col2:
+                    if selected_retro == "Custom...":
+                        custom_retro = st.text_input(
+                            "Custom Retro",
+                            value=current_retro if is_custom else "",
+                            key=f"retro_text_{sub_id}",
+                            placeholder="e.g., 1/1/2020, Inception for Tech E&O",
+                        )
+                        final_retro = custom_retro.strip() if custom_retro else None
+                    else:
+                        final_retro = selected_retro if selected_retro else None
+                        st.text("")  # Spacer
+
+                # Save if changed
+                if final_retro != current_retro:
+                    with get_conn().cursor() as cur:
+                        cur.execute(
+                            "UPDATE submissions SET default_retroactive_date = %s WHERE id = %s",
+                            (final_retro, sub_id)
+                        )
 
                 # ─────────────────────────────────────────────────────────────
                 # Rating Factors Summary (concise, universal)
@@ -1282,155 +1542,30 @@ def render():
             # ------------------- Unified Details Panel --------------------
             render_details_panel(sub_id, applicant_name, website, get_conn=get_conn)
 
-            # ------------------- Review Queue Panel -------------------
-            # Show conflicts requiring human attention (below account history)
+        # =================== REVIEW QUEUE TAB ===================
+        with tab_review:
             review_summary = render_review_queue_panel(
                 submission_id=sub_id,
                 expanded=True,
                 show_resolved=False,
             )
-            if review_summary["has_blockers"]:
+            if review_summary.get("has_blockers"):
                 st.warning("⚠️ Resolve high-priority conflicts before binding this submission.")
 
         # =================== POLICY TAB ===================
         with tab_policy:
-            # Load all policy tab data in ONE database call
-            policy_data = load_policy_tab_data(sub_id)
-            bound_option = policy_data.get("bound_option")
-            effective_state = policy_data.get("effective_state", {})
-            submission_info = policy_data.get("submission", {})
+            # Use shared policy panel component (same as admin console)
+            from pages_components.policy_panel import render_policy_panel
+            render_policy_panel(
+                submission_id=sub_id,
+                show_sidebar=True,
+                show_renewal=True,
+                compact=False
+            )
 
-            if not bound_option:
-                # No bound policy - show message
-                st.info("No bound policy. Bind a quote option on the Quote tab to manage the policy.")
-            else:
-                # ------------------- POLICY SUMMARY --------------------
-                st.markdown("##### Policy Summary")
-
-                # Status indicator
-                if effective_state.get("is_cancelled"):
-                    status_text = "🔴 Cancelled"
-                elif effective_state.get("has_erp"):
-                    status_text = "🟡 ERP Active"
-                else:
-                    status_text = "🟢 Active"
-
-                # Dates
-                eff_date = submission_info.get("effective_date")
-                exp_date = effective_state.get("effective_expiration") or submission_info.get("expiration_date")
-                eff_str = eff_date.strftime("%m/%d/%Y") if eff_date and hasattr(eff_date, 'strftime') else str(eff_date or "—")
-                exp_str = exp_date.strftime("%m/%d/%Y") if exp_date and hasattr(exp_date, 'strftime') else str(exp_date or "—")
-
-                # Policy details from bound option
-                tower_json = bound_option.get("tower_json") or []
-                if tower_json and len(tower_json) > 0:
-                    primary_layer = tower_json[0]
-                    limit = primary_layer.get("limit", 0)
-                    limit_str = f"\\${limit:,.0f}" if limit else "—"
-                else:
-                    limit_str = "—"
-
-                retention = bound_option.get("primary_retention", 0)
-                retention_str = f"\\${retention:,.0f}" if retention else "—"
-                premium = effective_state.get("effective_premium", 0)
-                premium_str = f"\\${premium:,.0f}"
-                position = (bound_option.get("position") or "primary").title()
-                policy_form = bound_option.get("policy_form") or "—"
-
-                # Display summary in compact format
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"**Status:** {status_text}  \n**Period:** {eff_str} → {exp_str}  \n**Terms:** {limit_str} / {retention_str} SIR  \n**Premium:** {premium_str}  \n**Form:** {policy_form.title()}")
-                with col2:
-                    if st.button("Unbind Policy", key=f"unbind_{sub_id}"):
-                        st.session_state[f"confirm_unbind_{sub_id}"] = True
-
-                if st.session_state.get(f"confirm_unbind_{sub_id}"):
-                    st.warning("This will remove the bound status and delete associated binder documents. Endorsements will also be removed.")
-                    c1, c2, _ = st.columns([1, 1, 4])
-                    with c1:
-                        if st.button("Confirm Unbind", key=f"confirm_unbind_btn_{sub_id}", type="primary"):
-                            from core.bound_option import unbind_option
-                            tower_id = bound_option.get("id")
-                            if tower_id:
-                                unbind_option(tower_id)
-                                st.session_state.pop(f"confirm_unbind_{sub_id}", None)
-                                st.rerun()
-                    with c2:
-                        if st.button("Cancel", key=f"cancel_unbind_{sub_id}"):
-                            st.session_state.pop(f"confirm_unbind_{sub_id}", None)
-                            st.rerun()
-
-                st.divider()
-
-                # ------------------- POLICY DOCUMENTS --------------------
-                st.markdown("##### Policy Documents")
-
-                # Filter to show binders, policy docs, and bound quotes
-                all_docs = policy_data.get("documents", [])
-                policy_docs = [
-                    d for d in all_docs
-                    if d.get("document_type") in ("binder", "policy", "endorsement")
-                    or d.get("is_bound_quote", False)  # Include bound quotes
-                ]
-
-                # Sort: Quote first, then Binder, then Endorsements (by date within type)
-                def doc_sort_key(d):
-                    type_order = {
-                        "quote_primary": 0, "quote_excess": 0,
-                        "binder": 1,
-                        "policy": 2,
-                        "endorsement": 3
-                    }
-                    doc_type = d.get("document_type", "")
-                    return (type_order.get(doc_type, 99), d.get("created_at") or "")
-
-                policy_docs.sort(key=doc_sort_key)
-
-                if policy_docs:
-                    import pandas as pd
-
-                    doc_rows = []
-                    for doc in policy_docs:
-                        doc_type = doc.get("type_label", doc.get("document_type", "Document"))
-                        doc_number = doc.get("document_number", "")
-                        pdf_url = doc.get("pdf_url", "")
-                        created_at = doc.get("created_at")
-                        date_str = created_at.strftime("%m/%d/%Y") if created_at and hasattr(created_at, 'strftime') else ""
-
-                        doc_rows.append({
-                            "Document": f"{doc_type}: {doc_number}",
-                            "Date": date_str,
-                            "PDF": pdf_url or "",
-                        })
-
-                    # Placeholders
-                    doc_rows.append({"Document": "Dec Page — coming soon", "Date": "", "PDF": ""})
-                    doc_rows.append({"Document": "Policy Form — coming soon", "Date": "", "PDF": ""})
-
-                    df = pd.DataFrame(doc_rows)
-                    st.dataframe(
-                        df,
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "Document": st.column_config.TextColumn(width="large"),
-                            "Date": st.column_config.TextColumn(width="small"),
-                            "PDF": st.column_config.LinkColumn(display_text="PDF", width="small"),
-                        },
-                        height=(len(doc_rows) * 35) + 38,
-                    )
-                else:
-                    st.caption("No policy documents generated yet.")
-
-                st.divider()
-
-                # ------------------- ENDORSEMENTS --------------------
-                render_endorsements_history_panel(sub_id, preloaded_data=policy_data)
-
-                # ------------------- RENEWAL --------------------
-                st.markdown("##### Renewal")
-                render_renewal_panel(sub_id)
+        # =================== BENCHMARK TAB ===================
+        with tab_benchmark:
+            render_benchmarking_panel(sub_id, get_conn)
 
         # =================== UW TAB ===================
         with tab_uw:
@@ -1494,14 +1629,15 @@ def render():
                                 comment="Updated business_summary",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_biz_{sub_id}"] = False
                             st.success("✅ Business summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_biz_{sub_id}"):
                             st.session_state[f"editing_biz_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(biz_sum or "No business summary available")
         
@@ -1537,14 +1673,15 @@ def render():
                                     (edited_rev if edited_rev > 0 else None, sub_id)
                                 )
                                 conn.commit()
-                            clear_submission_caches()
                             st.session_state[f"editing_rev_{sub_id}"] = False
                             st.success("Revenue saved!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_rev_{sub_id}"):
                             st.session_state[f"editing_rev_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
 
                 # Industry Classification
                 industry_lines = []
@@ -1591,14 +1728,15 @@ def render():
                                 comment="Updated cyber_exposures",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_exp_{sub_id}"] = False
                             st.success("✅ Exposure summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_exp_{sub_id}"):
                             st.session_state[f"editing_exp_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(exp_sum or "No exposure summary available")
     
@@ -1635,14 +1773,15 @@ def render():
                                 comment="Updated nist_controls_summary",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_ctrl_{sub_id}"] = False
                             st.success("✅ NIST controls summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_ctrl_{sub_id}"):
                             st.session_state[f"editing_ctrl_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(ctrl_sum or "No NIST controls summary available")
     
@@ -1679,14 +1818,15 @@ def render():
                                 comment="Updated bullet_point_summary",
                                 user_id=CURRENT_USER
                             )
-                            clear_submission_caches()
                             st.session_state[f"editing_bullet_{sub_id}"] = False
                             st.success("✅ Bullet point summary saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import save_and_rerun_on_uw_tab
+                            save_and_rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_bullet_{sub_id}"):
                             st.session_state[f"editing_bullet_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     st.markdown(bullet_sum or "No bullet point summary available")
     
@@ -1777,11 +1917,13 @@ def render():
                     
                             st.session_state[f"editing_underwriter_{sub_id}"] = False
                             st.success("✅ Underwriter decision saved successfully!")
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                     with col2:
                         if st.button("❌ Cancel", key=f"cancel_underwriter_{sub_id}"):
                             st.session_state[f"editing_underwriter_{sub_id}"] = False
-                            st.rerun()
+                            from utils.tab_state import rerun_on_uw_tab
+                            rerun_on_uw_tab()
                 else:
                     # Display current decision (like other sections display their content)
                     uw_decision = st.session_state.get(f"underwriter_decision_{sub_id}")
@@ -1817,7 +1959,8 @@ def render():
                                         for citation in result["citations"]:
                                             st.markdown(f"- {citation}")
                                     st.success("✅ AI recommendation generated!")
-                                    st.rerun()
+                                    from utils.tab_state import rerun_on_uw_tab
+                                    rerun_on_uw_tab()
                             else:
                                 st.info("No data available for AI recommendation")
                         except Exception as e:
@@ -1853,9 +1996,10 @@ def render():
                         except Exception as e:
                             error_msg = f"❌ Error getting AI response: {e}"
                             st.session_state.chat_history.append({"role": "assistant", "content": error_msg})
-            
+
                     # Rerun to refresh the display
-                    st.rerun()
+                    from utils.tab_state import rerun_on_uw_tab
+                    rerun_on_uw_tab()
         
                 # Display chat history in reverse order (most recent at top)
                 if st.session_state.chat_history:
@@ -1883,9 +2027,6 @@ def render():
                     st.info("No feedback history available")
 
             st.divider()
-
-            # ------------------- Similar Submissions --------------------
-            render_similar_submissions_panel(sub_id, ops_vec, ctrl_vec, get_conn, load_submissions, load_submission, format_nist_controls_list)
 
             # ------------------- Documents Section -----------------------
             st.subheader("📄 Documents")
@@ -1943,11 +2084,12 @@ def render():
                             )
                     
                             st.success(f"✅ Uploaded: {uploaded_file.name}")
-                    
+
                         except Exception as e:
                             st.error(f"❌ Error uploading {uploaded_file.name}: {str(e)}")
-            
-                    st.rerun()
+
+                    from utils.tab_state import save_and_rerun_on_uw_tab
+                    save_and_rerun_on_uw_tab()
 
             # Display existing documents
             docs = load_documents(sub_id)

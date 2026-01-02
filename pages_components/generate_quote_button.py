@@ -7,6 +7,7 @@ from __future__ import annotations
 import streamlit as st
 from datetime import datetime
 from typing import Callable
+from utils.tab_state import rerun_on_quote_tab
 
 
 def render_generate_quote_button(
@@ -48,7 +49,7 @@ def render_generate_quote_button(
             if st.button("Cancel Edit", key="cancel_edit"):
                 st.session_state.pop("loaded_quote_id", None)
                 st.session_state.pop("loaded_quote_data", None)
-                st.rerun()
+                rerun_on_quote_tab()
 
     if generate_clicked:
         if not quote_helpers:
@@ -158,7 +159,7 @@ def _generate_quote(
 
             # Clean up
             pdf_path.unlink()
-            st.rerun()
+            rerun_on_quote_tab()
 
         except Exception as e:
             st.error(f"Error generating quote: {e}")

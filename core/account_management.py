@@ -384,7 +384,7 @@ def get_account_submissions(account_id: str) -> list[dict]:
     """
     with get_conn() as conn:
         result = conn.execute(text("""
-            SELECT id, applicant_name, date_received, submission_status,
+            SELECT id, applicant_name, date_received, effective_date, submission_status,
                    submission_outcome, outcome_reason, annual_revenue,
                    naics_primary_title, created_at
             FROM submissions
@@ -397,12 +397,13 @@ def get_account_submissions(account_id: str) -> list[dict]:
                 "id": str(row[0]),
                 "applicant_name": row[1],
                 "date_received": row[2],
-                "submission_status": row[3],
-                "submission_outcome": row[4],
-                "outcome_reason": row[5],
-                "annual_revenue": row[6],
-                "naics_primary_title": row[7],
-                "created_at": row[8]
+                "effective_date": row[3],
+                "submission_status": row[4],
+                "submission_outcome": row[5],
+                "outcome_reason": row[6],
+                "annual_revenue": row[7],
+                "naics_primary_title": row[8],
+                "created_at": row[9]
             }
             for row in result.fetchall()
         ]

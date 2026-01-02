@@ -1,0 +1,194 @@
+{% extends "_base.html" %}
+{% from "_components/coverage_table.html" import render_coverage_schedule %}
+{% from "_components/signature_block.html" import render_signature_block %}
+
+{% block title %}Policy - {{ insured_name }}{% endblock %}
+
+{% block content %}
+
+{# ==================== DECLARATIONS PAGE ==================== #}
+<div class="document-header">
+    <div class="document-type">DECLARATIONS</div>
+    <div class="document-number">Policy Number: {{ policy_number }}</div>
+</div>
+
+<div class="info-box info-box-highlight" style="text-align: center; margin: 20px 0;">
+    <div style="font-size: 14px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 5px;">
+        {% if position == "excess" %}
+            Excess Cyber & Technology Errors & Omissions Liability Policy
+        {% else %}
+            Cyber & Technology Errors & Omissions Liability Policy
+        {% endif %}
+    </div>
+    <div style="font-size: 11px; opacity: 0.9;">Claims-Made Policy Form</div>
+</div>
+
+{# Named Insured #}
+<div class="section-header">Named Insured</div>
+<div class="info-box">
+    <div class="info-value text-bold" style="font-size: 16px;">{{ insured_name }}</div>
+    {% if insured_address %}
+    <div class="text-small text-muted mt-1">{{ insured_address }}</div>
+    {% endif %}
+    {% if insured_website %}
+    <div class="text-small text-muted">{{ insured_website }}</div>
+    {% endif %}
+    {% if insured_industry %}
+    <div class="text-small text-muted">Industry: {{ insured_industry }}</div>
+    {% endif %}
+</div>
+
+{# Policy Period #}
+<div class="section-header">Policy Period</div>
+<div class="info-box">
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="info-label">Effective Date</div>
+            <div class="info-value">{{ effective_date }}</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Expiration Date</div>
+            <div class="info-value">{{ expiration_date }}</div>
+        </div>
+    </div>
+    <div class="text-small text-muted mt-2">12:01 a.m. local time at the Named Insured's address</div>
+</div>
+
+{# Limits of Liability & Premium #}
+<div class="section-header">Limits of Liability & Premium</div>
+<div class="info-box">
+    <table style="width: 100%; border-collapse: collapse;">
+        <tr style="border-bottom: 1px solid var(--gray-300);">
+            <td style="padding: 8px 0; width: 60%;">
+                {% if position == "excess" %}Excess Limit{% else %}Aggregate Limit{% endif %}
+            </td>
+            <td class="text-bold currency" style="padding: 8px 0; text-align: right; font-size: 14px;">
+                ${{ "{:,}".format(aggregate_limit) }}
+            </td>
+        </tr>
+        <tr style="border-bottom: 1px solid var(--gray-300);">
+            <td style="padding: 8px 0;">
+                {% if position == "excess" %}Attachment Point{% else %}Retention{% endif %}
+            </td>
+            <td class="text-bold currency" style="padding: 8px 0; text-align: right; font-size: 14px;">
+                ${{ "{:,}".format(retention) }}
+            </td>
+        </tr>
+        {% if position == "excess" and our_attachment %}
+        <tr style="border-bottom: 1px solid var(--gray-300);">
+            <td style="padding: 8px 0;">Our Attachment</td>
+            <td class="text-bold currency" style="padding: 8px 0; text-align: right; font-size: 14px;">
+                ${{ "{:,}".format(our_attachment) }}
+            </td>
+        </tr>
+        {% endif %}
+        <tr style="background: var(--gray-100);">
+            <td style="padding: 10px 0; font-weight: 600;">Annual Premium</td>
+            <td class="text-bold currency" style="padding: 10px 0; text-align: right; font-size: 16px; color: var(--navy);">
+                ${{ "{:,}".format(premium | int) }}
+            </td>
+        </tr>
+    </table>
+</div>
+
+{# Coverage Schedule #}
+<div class="section-header">Schedule of Coverages</div>
+{% if policy_form %}
+<div class="text-small text-muted mb-2">Policy Form: {{ policy_form_code }}</div>
+{% endif %}
+
+{{ render_coverage_schedule(aggregate_coverages, sublimit_coverages, retention) }}
+
+{# Tower Structure (for excess policies) #}
+{% if position == "excess" and tower %}
+<div class="section-header">Tower Structure</div>
+<table>
+    <thead>
+        <tr>
+            <th style="width: 8%;">Layer</th>
+            <th>Carrier</th>
+            <th class="text-right" style="width: 20%;">Limit</th>
+            <th class="text-right" style="width: 20%;">Attachment</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for layer in tower | reverse %}
+        {% set is_our_layer = "CMAI" in layer.carrier %}
+        <tr{% if is_our_layer %} style="background: var(--navy); color: white;"{% endif %}>
+            <td style="font-size: 11px;">{{ loop.revindex }}</td>
+            <td style="font-size: 11px;">{{ layer.carrier }}{% if is_our_layer %} <strong>(This Policy)</strong>{% endif %}</td>
+            <td class="text-right currency" style="font-size: 11px;">${{ layer.limit | format_limit }}</td>
+            <td class="text-right currency" style="font-size: 11px;">
+                {% if layer.attachment == 0 %}Primary{% else %}${{ layer.attachment | format_limit }}{% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{# Endorsements Attached at Issuance #}
+{% if endorsements %}
+<div class="section-header">Endorsements Attached at Issuance</div>
+<ul class="list-styled">
+    {% for endorsement in endorsements %}
+    <li>{{ endorsement }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{# Producing Broker #}
+{% if broker_name %}
+<div class="section-header">Producing Broker</div>
+<div class="info-box">
+    <div class="info-value text-bold">{{ broker_name }}</div>
+    {% if broker_company %}<div class="text-small">{{ broker_company }}</div>{% endif %}
+    {% if broker_email %}<div class="text-small text-muted">{{ broker_email }}</div>{% endif %}
+</div>
+{% endif %}
+
+{# Authorization #}
+<div class="section-header">Authorization</div>
+{{ render_signature_block() }}
+
+<div class="page-break"></div>
+
+{# ==================== POLICY FORM ==================== #}
+<div class="document-header">
+    <div class="document-type">POLICY FORM</div>
+    <div class="document-number">{{ policy_form_code }}</div>
+</div>
+
+{# Include the appropriate policy form based on policy_form_type #}
+{% if policy_form_type == "cyber_tech" %}
+    {% include "policy_forms/cyber_tech_form.html" %}
+{% elif policy_form_type == "tech" %}
+    {% include "policy_forms/tech_form.html" %}
+{% else %}
+    {% include "policy_forms/cyber_form.html" %}
+{% endif %}
+
+{# ==================== ENDORSEMENTS ==================== #}
+{% if endorsement_documents %}
+{% for endorsement in endorsement_documents %}
+<div class="page-break"></div>
+
+<div class="document-header">
+    <div class="document-type">ENDORSEMENT</div>
+    <div class="document-number">{{ endorsement.code }}</div>
+</div>
+
+{% if endorsement.title %}
+<div style="text-align: center; margin: 15px 0;">
+    <strong style="font-size: 14px;">{{ endorsement.title }}</strong>
+</div>
+{% endif %}
+
+<div class="endorsement-content" style="margin-top: 20px;">
+    {{ endorsement.content | safe }}
+</div>
+
+{% endfor %}
+{% endif %}
+
+{% endblock %}

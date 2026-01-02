@@ -138,8 +138,8 @@ def _render_renewal_chain(chain: list, current_submission_id: str):
         effective = submission.get("effective_date")
         effective_str = effective.strftime("%m/%d/%Y") if effective else "—"
 
-        status = submission.get("submission_status", "").replace("_", " ").title()
-        outcome = submission.get("submission_outcome", "").replace("_", " ").title()
+        status = (submission.get("submission_status") or "").replace("_", " ").title()
+        outcome = (submission.get("submission_outcome") or "").replace("_", " ").title()
 
         # Icon based on outcome
         if submission.get("submission_outcome") == "bound":

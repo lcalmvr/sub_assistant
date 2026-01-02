@@ -91,3 +91,20 @@ ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS coverages JSONB;
 -- default_policy_form on submissions: Account-level default policy form
 -- Can be overridden at quote option level
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS default_policy_form TEXT DEFAULT 'cyber';
+
+-- ========================================
+-- Retroactive Date Columns (Dec 2024)
+-- ========================================
+-- Retroactive date defines the earliest date from which claims can arise.
+-- Stored as TEXT to support hybrid values:
+--   - Dates: "1/1/25", "2024-12-15"
+--   - Contextual: "Full Prior Acts", "Inception"
+--   - Coverage-specific: "Inception for Tech E&O but Full Prior Acts for cyber"
+
+-- default_retroactive_date on submissions: Account-level default
+-- Applied to new quote options; can be overridden per-option
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS default_retroactive_date TEXT;
+
+-- retroactive_date on insurance_towers: Per-option override
+-- NULL = use submission default, non-NULL = explicit override
+ALTER TABLE insurance_towers ADD COLUMN IF NOT EXISTS retroactive_date TEXT;

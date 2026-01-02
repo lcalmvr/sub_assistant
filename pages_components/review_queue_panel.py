@@ -11,6 +11,7 @@ from __future__ import annotations
 import streamlit as st
 from datetime import date, datetime
 from typing import Callable
+from utils.tab_state import rerun_on_review_tab
 
 from core.conflict_service import (
     ConflictService,
@@ -91,7 +92,7 @@ def render_review_queue_panel(
                 result = service.calculate_credibility_from_stored_data(submission_id)
                 if result:
                     st.success(f"Score updated: {result.total_score:.0f} ({result.label})")
-                    st.rerun()
+                    rerun_on_review_tab()
                 else:
                     st.warning("No application data found for this submission")
             st.markdown("")
@@ -105,7 +106,7 @@ def render_review_queue_panel(
                     result = service.calculate_credibility_from_stored_data(submission_id)
                     if result:
                         st.success(f"Score: {result.total_score:.0f} ({result.label})")
-                        st.rerun()
+                        rerun_on_review_tab()
                     else:
                         st.warning("No application data found")
             st.markdown("")
@@ -120,7 +121,7 @@ def render_review_queue_panel(
         with col2:
             if st.button("Refresh", key=f"review_refresh_{submission_id}"):
                 service.force_refresh(submission_id)
-                st.rerun()
+                rerun_on_review_tab()
 
         if not deduplicated_items:
             st.success("All items have been reviewed.")
@@ -163,7 +164,7 @@ def render_review_queue_panel(
                     if resolved_now:
                         if on_resolve:
                             on_resolve(item["id"])
-                        st.rerun()
+                        rerun_on_review_tab()
                     # Add spacing between cards
                     st.markdown("")
                 
@@ -185,8 +186,28 @@ def render_review_queue_panel(
                 if resolved_now:
                     if on_resolve:
                         on_resolve(item["id"])
-                    st.rerun()
+                    rerun_on_review_tab()
                 # Add spacing between verification cards
+                st.markdown("")
+
+        # Dynamic conflicts (LLM-detected)
+        dynamic_conflicts = service.get_dynamic_conflicts(submission_id)
+        pending_dynamic = [c for c in dynamic_conflicts if c.get("status") == "pending"]
+
+        if pending_dynamic:
+            if conflicts or verifications:
+                st.divider()
+                st.markdown("")
+            st.markdown("#### AI-Detected Conflicts")
+            st.caption("Contradictions and issues detected by AI analysis")
+            st.markdown("")
+
+            for conflict in pending_dynamic:
+                resolved_now = _render_dynamic_conflict_card(conflict, service)
+                if resolved_now:
+                    if on_resolve:
+                        on_resolve(conflict["id"])
+                    rerun_on_review_tab()
                 st.markdown("")
 
         # Show resolved items if requested
@@ -392,7 +413,7 @@ def _render_verification_card(
         with col_secondary:
             if st.button("Edit", key=f"edit_verify_{item_id}"):
                 st.session_state[f"editing_{item_id}"] = True
-                st.rerun()
+                rerun_on_review_tab()
 
         with col_tertiary:
             if st.button("Defer", key=f"defer_verify_{item_id}"):
@@ -426,7 +447,90 @@ def _render_verification_card(
             with ecol2:
                 if st.button("Cancel", key=f"cancel_edit_{item_id}"):
                     st.session_state[f"editing_{item_id}"] = False
-                    st.rerun()
+                    rerun_on_review_tab()
+
+    return False
+
+
+def _render_dynamic_conflict_card(
+    conflict: dict,
+    service: ConflictService,
+) -> bool:
+    """Render a card for a dynamically detected conflict (from LLM analyzer)."""
+    conflict_id = conflict.get("id")
+    rule_name = conflict.get("rule_name", "unknown")
+    category = conflict.get("category", "general")
+    severity = conflict.get("severity", "medium")
+    title = conflict.get("title", rule_name.replace("_", " ").title())
+    description = conflict.get("description", "")
+    llm_explanation = conflict.get("llm_explanation", "")
+    field_values = conflict.get("field_values", {})
+
+    # Severity to priority mapping
+    severity_priority = {
+        "critical": "high",
+        "high": "high",
+        "medium": "medium",
+        "low": "low",
+    }
+    priority = severity_priority.get(severity, "medium")
+
+    with st.container(border=True):
+        header_col1, header_col2 = st.columns([1, 7])
+
+        with header_col1:
+            st.markdown(_get_priority_badge_html(priority), unsafe_allow_html=True)
+
+        with header_col2:
+            st.markdown(f"**{title}**")
+            st.caption(f"Category: {category}")
+
+        st.markdown("")
+
+        # Show description or LLM explanation
+        if llm_explanation:
+            st.markdown(f"*{llm_explanation}*")
+        elif description:
+            st.caption(description)
+
+        # Show conflicting field values
+        if field_values:
+            if isinstance(field_values, str):
+                try:
+                    import json
+                    field_values = json.loads(field_values)
+                except Exception:
+                    pass
+
+            if isinstance(field_values, dict):
+                st.markdown("**Conflicting values:**")
+                for field, value in field_values.items():
+                    field_label = _format_field_name(field)
+                    st.markdown(f"- {field_label}: `{value}`")
+
+        st.markdown("")
+
+        col_spacer, col_confirm, col_dismiss = st.columns([5, 2, 2])
+
+        with col_confirm:
+            if st.button("Confirm Issue", key=f"confirm_dyn_{conflict_id}", type="primary"):
+                service.resolve_dynamic_conflict(
+                    conflict_id=str(conflict_id),
+                    status="confirmed",
+                    resolved_by="review_queue",
+                    notes="Confirmed by underwriter",
+                )
+                return True
+
+        with col_dismiss:
+            if st.button("Dismiss", key=f"dismiss_dyn_{conflict_id}"):
+                service.resolve_dynamic_conflict(
+                    conflict_id=str(conflict_id),
+                    status="dismissed",
+                    resolved_by="review_queue",
+                    notes="Dismissed by underwriter",
+                )
+                return True
 
     return False
 
@@ -567,7 +671,7 @@ def _render_low_confidence_ui(
     with col_secondary:
         if st.button("Edit", key=f"edit_{item_id}"):
             st.session_state[f"editing_{item_id}"] = True
-            st.rerun()
+            rerun_on_review_tab()
 
     with col_tertiary:
         if st.button("Defer", key=f"defer_{item_id}"):
@@ -597,7 +701,7 @@ def _render_low_confidence_ui(
         with ecol2:
             if st.button("Cancel", key=f"cancel_{item_id}"):
                 st.session_state[f"editing_{item_id}"] = False
-                st.rerun()
+                rerun_on_review_tab()
 
     return False
 
@@ -770,7 +874,7 @@ def _render_outlier_ui(
     with col_secondary:
         if st.button("Edit", key=f"edit_{item_id}"):
             st.session_state[f"editing_{item_id}"] = True
-            st.rerun()
+            rerun_on_review_tab()
 
     with col_tertiary:
         if st.button("Defer", key=f"defer_{item_id}"):
@@ -799,7 +903,7 @@ def _render_outlier_ui(
         with ecol2:
             if st.button("Cancel", key=f"cancel_{item_id}"):
                 st.session_state[f"editing_{item_id}"] = False
-                st.rerun()
+                rerun_on_review_tab()
 
     return False
 

@@ -180,11 +180,14 @@ OUTLIER_RANGES: dict[str, tuple[float | None, float | None]] = {
 
 APPLICATION_CONTRADICTION_RULES: list[dict] = [
     # EDR contradictions
+    # Note: field_a_alt and field_b_alt support native extraction field names
     {
         "name": "edr_vendor_without_edr",
         "field_a": "hasEdr",
+        "field_a_alt": ["endpointSecurity.hasEdr"],
         "value_a": [False, "No", "no", "false"],
         "field_b": "edrVendor",
+        "field_b_alt": ["endpointSecurity.endpointSecurityTechnologies"],
         "condition": "should_be_empty",  # field_b should be empty if field_a matches
         "message": "EDR vendor specified but EDR is marked as not present",
         "priority": "medium",
@@ -192,8 +195,10 @@ APPLICATION_CONTRADICTION_RULES: list[dict] = [
     {
         "name": "edr_no_vendor",
         "field_a": "hasEdr",
+        "field_a_alt": ["endpointSecurity.hasEdr"],
         "value_a": [True, "Yes", "yes", "true"],
         "field_b": "edrVendor",
+        "field_b_alt": ["endpointSecurity.endpointSecurityTechnologies"],
         "condition": "should_not_be_empty",  # field_b should have value if field_a matches
         "message": "EDR marked as present but no vendor specified",
         "priority": "low",

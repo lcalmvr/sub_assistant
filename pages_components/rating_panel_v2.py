@@ -137,19 +137,26 @@ def _render_with_revenue(sub_id: str, sub_data: tuple, get_conn_func, quote_help
     """Render rating panel when revenue exists"""
     # Map industry name to rating engine slug
     industry_slug = _map_industry_to_slug(sub_data[3])
-    
+
     # Rating Preview Section
     st.markdown("#### 🔍 Rating Preview")
+
+    # Show prior year rating context if available
+    from pages_components.show_prior_panel import render_prior_rating_context
+    render_prior_rating_context(sub_id)
     
     # Policy Configuration
     config_col1, config_col2 = st.columns([1, 1])
     
     with config_col1:
         selected_limit = _render_limit_controls(sub_id)
-    
+
     with config_col2:
         selected_retention = _render_retention_controls(sub_id)
-    
+
+    # Retroactive Date (submission default - applies to all quote options)
+    _render_retroactive_date_controls(sub_id, get_conn_func)
+
     # Auto-generate rating preview
     try:
         # Parse controls from bullet and NIST summaries
@@ -583,6 +590,83 @@ def _render_retention_controls(sub_id: str, suffix: str = "") -> int:
 
     return selected_retention
 
+
+def _render_retroactive_date_controls(sub_id: str, get_conn_func):
+    """
+    Render retroactive date controls - sets the default for ALL quote options.
+
+    This is a submission-level setting stored in submissions.default_retroactive_date.
+    """
+    from utils.tab_state import on_change_stay_on_rating
+
+    st.markdown("**Retroactive Date:**")
+
+    # Fetch current default from database
+    current_retro = None
+    with get_conn_func().cursor() as cur:
+        cur.execute(
+            "SELECT default_retroactive_date FROM submissions WHERE id = %s",
+            (sub_id,)
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            current_retro = row[0]
+
+    # Preset options
+    presets = ["", "Full Prior Acts", "Inception"]
+
+    # Determine if current value is a preset or custom
+    is_custom = current_retro and current_retro not in presets
+
+    # Build dropdown options
+    dropdown_options = presets + ["Custom..."]
+
+    # Find default index
+    if is_custom:
+        default_idx = len(presets)  # "Custom..."
+    elif current_retro in presets:
+        default_idx = presets.index(current_retro)
+    else:
+        default_idx = 0  # Empty/not set
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        selected = st.selectbox(
+            "Select Retroactive Date:",
+            options=dropdown_options,
+            index=default_idx,
+            key=f"retro_select_{sub_id}",
+            on_change=on_change_stay_on_rating,
+            help="Applies to all quote options. Select a preset or enter custom text."
+        )
+
+    # Handle selection
+    if selected == "Custom...":
+        with col2:
+            custom_value = st.text_input(
+                "Custom Retro Date:",
+                value=current_retro if is_custom else "",
+                key=f"retro_text_{sub_id}",
+                placeholder="e.g., 1/1/2020, Inception for Tech E&O",
+                help="Enter a date or descriptive text"
+            )
+            final_value = custom_value.strip() if custom_value else None
+    else:
+        final_value = selected if selected else None
+
+    # Save to database if changed
+    if final_value != current_retro:
+        with get_conn_func().cursor() as cur:
+            cur.execute(
+                "UPDATE submissions SET default_retroactive_date = %s WHERE id = %s",
+                (final_value, sub_id)
+            )
+        # Show confirmation
+        if final_value:
+            st.caption(f"Saved: {final_value}")
+
+
 def _get_coverage_configuration(sub_id: str, aggregate_limit: int, suffix: str = "") -> dict:
     """Get comprehensive coverage limits configuration"""
     
@@ -852,6 +936,7 @@ def _render_quote_generation(sub_id: str, quote_data: dict, sub_data: tuple, get
                 pdf_path.unlink()
 
                 # Trigger rerun to refresh the saved quotes list
+                st.session_state["_active_tab"] = "Rating"
                 st.rerun()
                 
             except Exception as e:

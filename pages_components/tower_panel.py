@@ -8,9 +8,15 @@ import re
 from typing import Optional
 import pandas as pd
 import streamlit as st
+from utils.tab_state import rerun_on_quote_tab
+from pages_components.tower_db import get_underlying_coverages, has_underlying_coverages
 
 
 # ─────────────────────── Formatting Helpers ───────────────────────
+
+def _rerun_on_quote_tab() -> None:
+    rerun_on_quote_tab()
+
 
 def _parse_amount(val) -> float:
     """Parse dollar amounts including K/M notation."""
@@ -203,7 +209,7 @@ def _render_primary_tower_panel(sub_id: str, expanded: bool = True, readonly: bo
                 if st.button("+ Add Layer", key="tower_add_layer_btn", use_container_width=True):
                     st.session_state.adding_new_layer = True
                     st.session_state.editing_layer_idx = None
-                    st.rerun()
+                    _rerun_on_quote_tab()
 
             with col_bulk:
                 if st.button("Bulk Add", key="tower_bulk_btn", use_container_width=True):
@@ -215,7 +221,7 @@ def _render_primary_tower_panel(sub_id: str, expanded: bool = True, readonly: bo
                     st.session_state.primary_retention = None
                     st.session_state.editing_layer_idx = None
                     st.session_state.adding_new_layer = False
-                    st.rerun()
+                    _rerun_on_quote_tab()
 
             # Show bulk add dialog if triggered
             if st.session_state.get("show_bulk_add_dialog"):
@@ -275,11 +281,24 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True, readonly: boo
             return
 
         # ─────────────────────────────────────────────────────
-        # HEADER BAR - Toggle and Add button
+        # HEADER BAR - Toggle, Import, and Add buttons
         # ─────────────────────────────────────────────────────
-        col_toggle, col_add = st.columns([1, 3])
+        # Check if we have extracted underlying coverages to import
+        has_extracted = has_underlying_coverages(sub_id)
+
+        if has_extracted:
+            col_toggle, col_import, col_add = st.columns([1, 1.5, 1.5])
+        else:
+            col_toggle, col_add = st.columns([1, 3])
+
         with col_toggle:
             view_mode = st.toggle("Card", key=f"tower_card_view_{viewing_quote_id}", help="Switch to card view for mobile")
+
+        if has_extracted:
+            with col_import:
+                if st.button("Import from Quotes", key=f"import_underlying_btn_{viewing_quote_id}", use_container_width=True, help="Import underlying coverage from extracted quote documents"):
+                    _import_underlying_coverages(sub_id)
+
         with col_add:
             if st.button("+ Add Underlying Layer", key=f"add_underlying_btn_{viewing_quote_id}", use_container_width=True):
                 _add_underlying_layer(sub_id)
@@ -402,7 +421,7 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True, readonly: boo
                 _recalculate_all(st.session_state.tower_layers)
                 _save_tower_changes(sub_id)
                 # Rerun to refresh display (quote name for limit, RPM/ILF for premium)
-                st.rerun()
+                _rerun_on_quote_tab()
         elif not cmai_layer and layers:
             # Create CMAI layer if missing
             new_cmai = {
@@ -541,7 +560,7 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
             st.session_state.tower_layers.pop(layer_idx)
             _recalculate_all(st.session_state.tower_layers)
             _save_tower_changes(sub_id)
-            st.rerun()
+            _rerun_on_quote_tab()
 
     # Check for changes and save
     changed = False
@@ -565,7 +584,7 @@ def _render_underlying_layer_row(sub_id: str, layer_idx: int, layer: dict, is_pr
         _recalculate_all(st.session_state.tower_layers)
         _save_tower_changes(sub_id)
         # Rerun to refresh RPM/ILF calculations across all layers
-        st.rerun()
+        _rerun_on_quote_tab()
 
 
 def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_primary: bool = False, layers_by_idx: dict = None):
@@ -647,7 +666,7 @@ def _render_underlying_layer_card(sub_id: str, layer_idx: int, layer: dict, is_p
         help="Tap to edit"
     ):
         st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = True
-        st.rerun()
+        _rerun_on_quote_tab()
 
     # Show edit dialog if this card is being edited
     if st.session_state.get(f"editing_underlying_{quote_id}_{layer_idx}"):
@@ -719,7 +738,7 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
                 _recalculate_all(st.session_state.tower_layers)
                 _save_tower_changes(sub_id)
                 st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
         with col_delete:
             if st.button("Delete", use_container_width=True, key=f"del_layer_{quote_id}_{layer_idx}"):
@@ -727,14 +746,75 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
                 _recalculate_all(st.session_state.tower_layers)
                 _save_tower_changes(sub_id)
                 st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
         with col_cancel:
             if st.button("Cancel", use_container_width=True, key=f"cancel_layer_{quote_id}_{layer_idx}"):
                 st.session_state[f"editing_underlying_{quote_id}_{layer_idx}"] = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
     show_edit()
+
+
+def _import_underlying_coverages(sub_id: str):
+    """Import underlying coverage from extracted quote documents into the tower."""
+    coverages = get_underlying_coverages(sub_id)
+    if not coverages:
+        st.warning("No extracted coverages found.")
+        return
+
+    layers = st.session_state.tower_layers or []
+
+    # Find CMAI layer index
+    cmai_idx = None
+    for idx, layer in enumerate(layers):
+        if "CMAI" in str(layer.get("carrier", "")).upper():
+            cmai_idx = idx
+            break
+
+    # Remove existing underlying layers (keep CMAI)
+    if cmai_idx is not None:
+        cmai_layer = layers[cmai_idx]
+        layers = [cmai_layer]
+    else:
+        layers = []
+
+    # Add layers from extracted coverages
+    # Each coverage record represents a carrier's quote/policy
+    current_attachment = 0
+    imported_count = 0
+
+    for coverage in coverages:
+        carrier = coverage.get("carrier") or "Unknown Carrier"
+        limit = coverage.get("aggregate_limit") or 0
+        retention = coverage.get("retention") or 0
+
+        if limit > 0:
+            new_layer = {
+                "carrier": carrier,
+                "limit": limit,
+                "attachment": current_attachment,
+                "retention": retention if current_attachment == 0 else None,  # Only primary has retention
+                "premium": None,
+            }
+            layers.insert(len(layers) - 1 if cmai_idx is not None else len(layers), new_layer)
+            current_attachment += limit
+            imported_count += 1
+
+    # Update CMAI attachment if present
+    for layer in layers:
+        if "CMAI" in str(layer.get("carrier", "")).upper():
+            layer["attachment"] = current_attachment
+            break
+
+    st.session_state.tower_layers = layers
+    _recalculate_all(st.session_state.tower_layers)
+    _save_tower_changes(sub_id)
+
+    if imported_count > 0:
+        st.success(f"Imported {imported_count} underlying layer(s) from extracted quotes.")
+
+    _rerun_on_quote_tab()
 
 
 def _add_underlying_layer(sub_id: str):
@@ -770,7 +850,7 @@ def _add_underlying_layer(sub_id: str):
     st.session_state.tower_layers = layers
     _recalculate_all(st.session_state.tower_layers)
     _save_tower_changes(sub_id)
-    st.rerun()
+    _rerun_on_quote_tab()
 
 
 def _save_tower_changes(sub_id: str):
@@ -873,7 +953,7 @@ Argo, 5M, 10M, 50K"""
                     result = _parse_csv_to_layers(csv_input)
                     if result.get("success"):
                         st.session_state.show_bulk_add_dialog = False
-                        st.rerun()
+                        _rerun_on_quote_tab()
                     else:
                         st.error(result.get("error", "Failed to parse CSV"))
                 else:
@@ -901,7 +981,7 @@ Argo, 5M, 10M, 50K"""
                     if result.get("success"):
                         st.success(result.get("message", "Tower updated"))
                         st.session_state.show_bulk_add_dialog = False
-                        st.rerun()
+                        _rerun_on_quote_tab()
                     else:
                         st.error(result.get("error", "Failed to parse description"))
                 else:
@@ -910,7 +990,7 @@ Argo, 5M, 10M, 50K"""
         st.markdown("---")
         if st.button("Cancel", key="bulk_cancel", use_container_width=True):
             st.session_state.show_bulk_add_dialog = False
-            st.rerun()
+            _rerun_on_quote_tab()
 
     show_dialog()
 
@@ -1119,12 +1199,12 @@ def _render_new_layer_card():
 
                 # Close card
                 st.session_state.adding_new_layer = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
     with col_cancel:
         if st.button("Cancel", key="new_layer_cancel", use_container_width=True):
             st.session_state.adding_new_layer = False
-            st.rerun()
+            _rerun_on_quote_tab()
 
 
 def _render_edit_layer_card(layer_idx: int):
@@ -1133,7 +1213,7 @@ def _render_edit_layer_card(layer_idx: int):
 
     if layer_idx >= len(layers):
         st.session_state.editing_layer_idx = None
-        st.rerun()
+        _rerun_on_quote_tab()
         return
 
     layer = layers[layer_idx]
@@ -1156,7 +1236,7 @@ def _render_edit_layer_card(layer_idx: int):
                 layers[layer_idx], layers[layer_idx - 1] = layers[layer_idx - 1], layers[layer_idx]
                 _recalculate_all(layers)
                 st.session_state.editing_layer_idx = layer_idx - 1
-                st.rerun()
+                _rerun_on_quote_tab()
         else:
             st.write("")  # Placeholder
 
@@ -1167,7 +1247,7 @@ def _render_edit_layer_card(layer_idx: int):
                 layers[layer_idx], layers[layer_idx + 1] = layers[layer_idx + 1], layers[layer_idx]
                 _recalculate_all(layers)
                 st.session_state.editing_layer_idx = layer_idx + 1
-                st.rerun()
+                _rerun_on_quote_tab()
         else:
             st.write("")  # Placeholder
 
@@ -1176,7 +1256,7 @@ def _render_edit_layer_card(layer_idx: int):
             layers.pop(layer_idx)
             _recalculate_all(layers)
             st.session_state.editing_layer_idx = None
-            st.rerun()
+            _rerun_on_quote_tab()
 
     # Carrier name
     carrier = st.text_input(
@@ -1288,12 +1368,12 @@ def _render_edit_layer_card(layer_idx: int):
 
                 # Close card
                 st.session_state.editing_layer_idx = None
-                st.rerun()
+                _rerun_on_quote_tab()
 
     with col_cancel:
         if st.button("Cancel", key=f"edit_layer_cancel_{layer_idx}", use_container_width=True):
             st.session_state.editing_layer_idx = None
-            st.rerun()
+            _rerun_on_quote_tab()
 
 
 # ─────────────────────── Card-Based Layer Display ───────────────────────
@@ -1397,7 +1477,7 @@ def _render_tower_cards():
             ):
                 st.session_state.editing_layer_idx = idx
                 st.session_state.adding_new_layer = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
 
 def _render_tower_cards_readonly():

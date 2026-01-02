@@ -8,7 +8,7 @@
 
 {# Document Header #}
 <div class="document-header">
-    <div class="document-type">Excess Cyber & Technology E&O Quote</div>
+    <div class="document-type">{{ document_type | default('Excess Cyber Quote') }}</div>
     <div class="document-number">{{ quote_number }} | {{ quote_date }}</div>
 </div>
 
@@ -38,6 +38,7 @@
 
 {# Policy Period #}
 <div class="info-box">
+    {% if effective_date and effective_date != '—' and expiration_date and expiration_date != '—' %}
     <div class="info-grid">
         <div class="info-item">
             <div class="info-label">Effective Date</div>
@@ -48,6 +49,12 @@
             <div class="info-value">{{ expiration_date }}</div>
         </div>
     </div>
+    {% else %}
+    <div class="info-item">
+        <div class="info-label">Policy Period</div>
+        <div class="info-value">12 month policy period</div>
+    </div>
+    {% endif %}
 </div>
 
 {# Excess Layer Summary - Highlighted Box #}
@@ -94,7 +101,10 @@
                 {{ layer.carrier }}
                 {% if is_our_layer %}<strong>(This Quote)</strong>{% endif %}
             </td>
-            <td class="text-right currency" style="font-size: 12px;">${{ layer.limit | format_limit }}</td>
+            <td class="text-right currency" style="font-size: 12px;">
+                ${{ layer.limit | format_limit }}
+                {% if layer.quota_share %}<span style="font-size: 10px; color: {% if is_our_layer %}rgba(255,255,255,0.7){% else %}#718096{% endif %};">po ${{ layer.quota_share | format_limit }}</span>{% endif %}
+            </td>
             <td class="text-right currency" style="font-size: 12px;">
                 {% if layer.attachment == 0 %}
                     Primary
@@ -112,50 +122,6 @@
     </tbody>
 </table>
 
-{# Underlying Coverage Requirements #}
-{% set underlying_layers = [] %}
-{% for layer in tower %}
-    {% if "CMAI" not in layer.carrier %}
-        {% set _ = underlying_layers.append(layer) %}
-    {% endif %}
-{% endfor %}
-
-{% if underlying_layers %}
-<div class="section-header">Underlying Coverage Requirements</div>
-<div class="info-box" style="background: #fff3cd; border-color: #ffc107;">
-    <p class="text-small mb-2" style="color: #856404;">
-        <strong>Important:</strong> This excess policy requires the following underlying coverage to be in place:
-    </p>
-    <table>
-        <thead>
-            <tr>
-                <th>Carrier</th>
-                <th class="text-right">Limit</th>
-                <th class="text-right">Attachment</th>
-                <th class="text-center">Status</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for layer in underlying_layers %}
-            <tr>
-                <td style="font-size: 12px;">{{ layer.carrier }}</td>
-                <td class="text-right currency" style="font-size: 12px;">${{ layer.limit | format_limit }}</td>
-                <td class="text-right currency" style="font-size: 12px;">
-                    {% if layer.attachment == 0 %}
-                        Primary
-                    {% else %}
-                        ${{ layer.attachment | format_limit }}
-                    {% endif %}
-                </td>
-                <td class="text-center" style="font-size: 12px;">
-                    <span class="badge badge-draft">Required</span>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endif %}
 
 {# Drop-Down Sublimits (if applicable) #}
 {% if has_dropdown_sublimits and sublimit_coverages %}
@@ -169,9 +135,12 @@
 <table class="mt-2">
     <thead>
         <tr>
-            <th style="width: 60%;">Coverage</th>
-            <th style="width: 20%;" class="text-right">Drop-Down Limit</th>
-            <th style="width: 20%;" class="text-right">Attachment</th>
+            <th style="width: {% if has_qs_sublimits %}45{% else %}60{% endif %}%;">Coverage</th>
+            <th style="width: {% if has_qs_sublimits %}15{% else %}20{% endif %}%;" class="text-right">Drop-Down Limit</th>
+            {% if has_qs_sublimits %}
+            <th style="width: 15%;" class="text-right">Part of</th>
+            {% endif %}
+            <th style="width: {% if has_qs_sublimits %}15{% else %}20{% endif %}%;" class="text-right">Attachment</th>
         </tr>
     </thead>
     <tbody>
@@ -185,11 +154,44 @@
                     ${{ "{:,}".format(data.limit | int) }}
                 {% endif %}
             </td>
+            {% if has_qs_sublimits %}
+            <td class="text-right currency" style="font-size: 12px;">
+                {% if data.quota_share %}
+                    ${{ "{:,}".format(data.quota_share | int) }}
+                {% else %}
+                    —
+                {% endif %}
+            </td>
+            {% endif %}
             <td class="text-right currency" style="font-size: 12px;">${{ "{:,}".format(data.attachment | int) }}</td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+{% endif %}
+
+{# Retroactive Dates #}
+{% if retro_schedule %}
+<div class="section-header">Retroactive Dates</div>
+<table>
+    <thead>
+        <tr>
+            <th style="width: 50%;">Coverage</th>
+            <th style="width: 50%;">Retroactive Date</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in retro_schedule %}
+        <tr>
+            <td>{{ entry.coverage }}</td>
+            <td>{{ entry.retro }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if retro_notes %}
+<div class="text-small text-muted mt-1">{{ retro_notes }}</div>
+{% endif %}
 {% endif %}
 
 {# Endorsements #}

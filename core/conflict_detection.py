@@ -362,6 +362,90 @@ def detect_duplicate_submission(
     return conflicts
 
 
+def detect_document_conflicts(submission_id: str) -> list[ConflictResult]:
+    """
+    Detect VALUE_MISMATCH conflicts where different documents have different
+    values for the same field.
+
+    Uses the extraction_conflicts_view which compares extraction_provenance
+    records across different source documents.
+
+    Args:
+        submission_id: The submission to check for document conflicts
+
+    Returns:
+        List of VALUE_MISMATCH conflicts with document sources
+    """
+    from core.db import get_conn
+    from sqlalchemy import text
+
+    conflicts = []
+
+    with get_conn() as conn:
+        # Query the conflicts view
+        result = conn.execute(text("""
+            SELECT
+                field_name,
+                value_1,
+                confidence_1,
+                document_id_1,
+                document_1,
+                value_2,
+                confidence_2,
+                document_id_2,
+                document_2
+            FROM extraction_conflicts_view
+            WHERE submission_id = :submission_id
+        """), {"submission_id": submission_id})
+
+        rows = result.fetchall()
+
+        for row in rows:
+            # Determine priority based on field name
+            field_parts = row.field_name.split(".", 1)
+            simple_field = field_parts[1] if len(field_parts) > 1 else field_parts[0]
+
+            conflicts.append(ConflictResult(
+                conflict_type="VALUE_MISMATCH",
+                field_name=row.field_name,
+                priority=get_field_priority(simple_field),
+                message=f"'{simple_field}' has different values in different applications",
+                details={
+                    "source_documents": [row.document_1, row.document_2],
+                    "values": {
+                        row.document_1: {
+                            "value": row.value_1,
+                            "confidence": row.confidence_1,
+                            "document_id": str(row.document_id_1),
+                        },
+                        row.document_2: {
+                            "value": row.value_2,
+                            "confidence": row.confidence_2,
+                            "document_id": str(row.document_id_2),
+                        },
+                    },
+                },
+                conflicting_values=[
+                    {
+                        "value": row.value_1,
+                        "source_type": "ai_extraction",
+                        "source_document": row.document_1,
+                        "source_document_id": str(row.document_id_1),
+                        "confidence": row.confidence_1,
+                    },
+                    {
+                        "value": row.value_2,
+                        "source_type": "ai_extraction",
+                        "source_document": row.document_2,
+                        "source_document_id": str(row.document_id_2),
+                        "confidence": row.confidence_2,
+                    },
+                ],
+            ))
+
+    return conflicts
+
+
 def detect_application_contradictions(app_data: dict) -> list[ConflictResult]:
     """
     Detect contradictory answers within the application form.
@@ -388,9 +472,22 @@ def detect_application_contradictions(app_data: dict) -> list[ConflictResult]:
         field_a = rule["field_a"]
         field_b = rule["field_b"]
 
-        # Get field values (case-insensitive lookup)
+        # Get field values (case-insensitive lookup with alternate field names)
         value_a = _get_field_case_insensitive(flat_data, field_a)
+        # Try alternate field names if primary not found
+        if value_a is None and "field_a_alt" in rule:
+            for alt_field in rule["field_a_alt"]:
+                value_a = _get_field_case_insensitive(flat_data, alt_field)
+                if value_a is not None:
+                    break
+
         value_b = _get_field_case_insensitive(flat_data, field_b)
+        # Try alternate field names if primary not found
+        if value_b is None and "field_b_alt" in rule:
+            for alt_field in rule["field_b_alt"]:
+                value_b = _get_field_case_insensitive(flat_data, alt_field)
+                if value_b is not None:
+                    break
 
         # Skip if field_a doesn't exist
         if value_a is None:

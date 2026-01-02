@@ -17,6 +17,7 @@ from pages_components.tower_db import (
     update_quote_limit,
 )
 from utils.quote_formatting import format_currency, generate_quote_name
+from utils.tab_state import rerun_on_quote_tab
 
 
 def _parse_currency(val) -> Optional[float]:
@@ -36,6 +37,11 @@ def _parse_currency(val) -> Optional[float]:
         return float(s)
     except Exception:
         return None
+
+
+def _rerun_on_quote_tab() -> None:
+    st.session_state["_active_tab"] = "Quote"
+    rerun_on_quote_tab()
 
 
 def _get_cmai_limit(tower_json: list) -> Optional[float]:
@@ -115,11 +121,11 @@ def render_quote_options_table(
     with col1:
         if st.button("+ Add Primary", key=f"add_primary_{sub_id}"):
             _create_default_quote(sub_id, "primary", get_conn_func)
-            st.rerun()
+            _rerun_on_quote_tab()
     with col2:
         if st.button("+ Add Excess", key=f"add_excess_{sub_id}"):
             _create_default_quote(sub_id, "excess", get_conn_func)
-            st.rerun()
+            _rerun_on_quote_tab()
 
     return expanded_quote_id
 
@@ -146,7 +152,7 @@ def _render_empty_state(sub_id: str, get_conn_func: Callable) -> None:
     with col2:
         if st.button("Generate $1M/$3M/$5M", key=f"generate_defaults_{sub_id}"):
             _generate_default_options(sub_id, default_retention, get_conn_func)
-            st.rerun()
+            _rerun_on_quote_tab()
 
     with col3:
         st.caption("Or use AI: \"Create 1M, 2M, 3M options with 25K retention\"")
@@ -313,7 +319,7 @@ def _render_quote_row(
                         if parsed != sold_premium:
                             update_quote_field(quote_id, "sold_premium", parsed)
                         st.session_state[widget_key] = expected
-                        st.rerun()
+                        _rerun_on_quote_tab()
 
             new_sold_str = st.text_input(
                 "Sold",
@@ -380,7 +386,7 @@ def _render_quote_row(
                         if parsed != sold_premium:
                             update_quote_field(quote_id, "sold_premium", parsed)
                         st.session_state[widget_key] = expected
-                        st.rerun()
+                        _rerun_on_quote_tab()
 
             new_sold_str = st.text_input(
                 "Sold",
@@ -409,7 +415,7 @@ def _render_quote_row(
                     st.session_state[f"expanded_quote_{sub_id}"] = quote_id
                     if on_expand_quote:
                         on_expand_quote(quote_id)
-                st.rerun()
+                _rerun_on_quote_tab()
 
         # Delete button
         with action_cols[1]:
@@ -417,7 +423,7 @@ def _render_quote_row(
                 delete_tower(quote_id)
                 if st.session_state.get(f"expanded_quote_{sub_id}") == quote_id:
                     st.session_state[f"expanded_quote_{sub_id}"] = None
-                st.rerun()
+                _rerun_on_quote_tab()
 
     return is_expanded
 

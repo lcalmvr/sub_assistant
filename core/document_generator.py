@@ -78,6 +78,64 @@ TEMPLATE_ENV.filters['format_date'] = format_date
 TEMPLATE_ENV.filters['format_limit'] = format_limit
 
 
+def get_endorsement_component_templates(position: str = "primary") -> dict:
+    """
+    Fetch default endorsement component templates (header, lead_in, closing).
+
+    Args:
+        position: 'primary' or 'excess' - determines which templates to use
+
+    Returns:
+        dict with 'header', 'lead_in', 'closing' keys containing HTML content
+    """
+    components = {"header": "", "lead_in": "", "closing": ""}
+
+    with get_conn() as conn:
+        # Fetch default templates for each component type
+        # Prefer position-specific templates, fall back to 'either'
+        for component_type in ["header", "lead_in", "closing"]:
+            result = conn.execute(text("""
+                SELECT content_html
+                FROM endorsement_component_templates
+                WHERE component_type = :component_type
+                  AND is_default = TRUE
+                  AND (position = :position OR position = 'either')
+                ORDER BY
+                    CASE WHEN position = :position THEN 0 ELSE 1 END
+                LIMIT 1
+            """), {"component_type": component_type, "position": position})
+            row = result.fetchone()
+            if row and row[0]:
+                components[component_type] = row[0]
+
+    return components
+
+
+def render_endorsement_component(template_html: str, context: dict) -> str:
+    """
+    Render an endorsement component template with variable substitution.
+
+    Replaces {{placeholder}} with values from context.
+    """
+    if not template_html:
+        return ""
+
+    result = template_html
+    # Map context keys to template placeholders
+    placeholder_map = {
+        "form_number": context.get("document_code", ""),
+        "edition_date": context.get("edition_date", ""),
+        "policy_type": context.get("document_type", "Cyber Quote").replace(" Quote", ""),
+        "effective_date": context.get("effective_date", ""),
+        "policy_number": context.get("document_number", ""),
+    }
+
+    for key, value in placeholder_map.items():
+        result = result.replace("{{" + key + "}}", str(value) if value else "")
+
+    return result
+
+
 def format_quote_display_name(limit: int, retention_or_attachment: int, position: str = "primary") -> str:
     """
     Format a quote display name like '1M x 50K SIR' or '5M x 1M'.
@@ -122,6 +180,11 @@ DOCUMENT_TYPES = {
         "template": "binder.html",
         "prefix": "B",
         "label": "Binder",
+    },
+    "policy": {
+        "template": "policy_combined.html",
+        "prefix": "P",
+        "label": "Policy",
     },
 }
 
@@ -271,7 +334,9 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                 risk_adjusted_premium,
                 position,
                 policy_form,
-                quote_name
+                quote_name,
+                retro_schedule,
+                retro_notes
             FROM insurance_towers
             WHERE id = :quote_option_id
         """), {"quote_option_id": quote_option_id})
@@ -287,6 +352,8 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
             position = quote_row[8] or "primary"
             policy_form = quote_row[9]
             quote_name = quote_row[10]
+            retro_schedule = quote_row[11] or []
+            retro_notes = quote_row[12]
 
             # Calculate limit and attachment based on position
             aggregate_limit = 0
@@ -296,9 +363,11 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
             if tower_json:
                 if position == "excess":
                     # For excess, find the CMAI layer
-                    for layer in tower_json:
+                    cmai_idx = None
+                    for i, layer in enumerate(tower_json):
                         carrier = layer.get("carrier", "")
-                        if "CMAI" in carrier:
+                        if "CMAI" in carrier.upper():
+                            cmai_idx = i
                             # Handle various numeric formats (int, float, string)
                             limit_raw = layer.get("limit", 0)
                             attachment_raw = layer.get("attachment", 0)
@@ -310,6 +379,14 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                             if not our_premium:
                                 our_premium = int(float(premium_raw)) if premium_raw else 0
                             break
+
+                    # If attachment is 0, calculate it from tower structure (sum of layers below CMAI)
+                    if our_attachment == 0 and cmai_idx is not None and cmai_idx > 0:
+                        our_attachment = sum(
+                            int(float(layer.get("limit", 0) or 0))
+                            for layer in tower_json[:cmai_idx]
+                        )
+
                     # Fallback if no CMAI layer found
                     if aggregate_limit == 0 and tower_json:
                         fallback_limit = tower_json[0].get("limit", 0)
@@ -348,44 +425,139 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
             agg_cov = coverages.get("aggregate_coverages", {})
             sub_cov = coverages.get("sublimit_coverages", {})
 
-            # If coverages are empty, build from coverage config
-            if not agg_cov and not sub_cov:
+            # Check if we have any non-zero coverages
+            has_agg = any(v > 0 for v in agg_cov.values()) if agg_cov else False
+            has_sub = any(v > 0 for v in sub_cov.values()) if sub_cov else False
+
+            # If no non-zero coverages, build from coverage config
+            if not has_agg and not has_sub:
                 form = policy_form or get_default_policy_form()
                 built_coverages = get_coverages_for_form(form, aggregate_limit)
                 agg_cov = built_coverages.get("aggregate_coverages", {})
                 sub_cov = built_coverages.get("sublimit_coverages", {})
 
+                # If form returned all zeros (e.g., claims_made), use default form
+                if not any(v > 0 for v in agg_cov.values()):
+                    built_coverages = get_coverages_for_form(get_default_policy_form(), aggregate_limit)
+                    agg_cov = built_coverages.get("aggregate_coverages", {})
+                    sub_cov = built_coverages.get("sublimit_coverages", {})
+
+            # Determine if quote has Tech E&O - check both policy_form AND actual coverage data
+            form_lower = (policy_form or "").lower()
+            has_tech = "tech" in form_lower or form_lower == "cyber_tech" or agg_cov.get("tech_eo", 0) > 0
+
             # Convert coverage IDs to labels for display
-            context["aggregate_coverages"] = {
-                get_coverage_label(k): v for k, v in agg_cov.items() if v > 0
+            # Exclude tech_eo if not a tech form
+            filtered_agg = {
+                k: v for k, v in agg_cov.items()
+                if v > 0 and (k != "tech_eo" or has_tech)
             }
+
+            # If filtering removed all coverages, rebuild from default form
+            if not filtered_agg and any(v > 0 for v in agg_cov.values()):
+                built_coverages = get_coverages_for_form(get_default_policy_form(), aggregate_limit)
+                agg_cov = built_coverages.get("aggregate_coverages", {})
+                sub_cov = built_coverages.get("sublimit_coverages", {})
+                filtered_agg = {k: v for k, v in agg_cov.items() if v > 0}
+
+            context["aggregate_coverages"] = {
+                get_coverage_label(k): v for k, v in filtered_agg.items()
+            }
+            # Set document type and coverage type based on actual coverages
+            context["coverage_type"] = "Cyber & Tech E&O" if has_tech else "Cyber"
+            if position == "excess":
+                context["document_type"] = f"Excess {context['coverage_type']} Quote"
+            else:
+                context["document_type"] = f"{context['coverage_type']} Quote"
 
             # For excess quotes, use sublimits from database with proper attachment calculation
             if position == "excess" and sublimits:
-                # Count underlying layers (layers below CMAI)
-                num_underlying = 0
-                for layer in tower_json:
-                    if "CMAI" not in layer.get("carrier", ""):
-                        num_underlying += 1
+                # Find CMAI layer and calculate tower context
+                cmai_idx = None
+                cmai_layer = None
+                for i, layer in enumerate(tower_json):
+                    if "CMAI" in layer.get("carrier", "").upper():
+                        cmai_idx = i
+                        cmai_layer = layer
+                        break
+
+                # Get primary aggregate limit (first layer - use quota_share if QS, else limit)
+                primary_layer = tower_json[0] if tower_json else {}
+                primary_agg_limit = primary_layer.get("quota_share") or primary_layer.get("limit", 0)
+
+                # Get our aggregate limit (CMAI's participation)
+                our_agg_limit = cmai_layer.get("limit", 0) if cmai_layer else primary_agg_limit
+
+                # Check if CMAI is in a quota share layer
+                cmai_qs = cmai_layer.get("quota_share") if cmai_layer else None
+
+                # Calculate layers below - for QS, find start of QS group
+                layers_below_count = cmai_idx if cmai_idx is not None else len(tower_json)
+                if cmai_qs and cmai_idx is not None:
+                    # Walk backwards to find first layer of QS group
+                    effective_idx = cmai_idx
+                    while effective_idx > 0 and tower_json[effective_idx - 1].get("quota_share") == cmai_qs:
+                        effective_idx -= 1
+                    layers_below_count = effective_idx
 
                 # Build sublimit coverages with drop-down attachment
                 # Format: {coverage_name: {"limit": X, "attachment": Y}}
                 excess_sublimits = {}
                 for sub in sublimits:
                     cov_name = sub.get("coverage", "")
-                    # Handle various numeric formats (int, float, string)
+                    treatment = sub.get("treatment", "follow_form")
+                    if treatment == "no_coverage":
+                        continue
+
+                    # Get primary sublimit
                     primary_limit_raw = sub.get("primary_limit", 0)
                     primary_limit = int(float(primary_limit_raw)) if primary_limit_raw else 0
-                    if primary_limit > 0:
-                        # Attachment = primary_limit × number of underlying layers
-                        attachment = primary_limit * num_underlying
-                        excess_sublimits[cov_name] = {
-                            "limit": primary_limit,
-                            "attachment": attachment
-                        }
+                    if primary_limit <= 0:
+                        continue
+
+                    # Use explicit values if set (treatment="different"), otherwise calculate proportionally
+                    our_limit = sub.get("our_limit")
+                    our_attachment = sub.get("our_attachment")
+
+                    if our_limit is None and primary_agg_limit > 0:
+                        # Calculate proportionally: ratio = sublimit / primary_agg
+                        ratio = primary_limit / primary_agg_limit
+                        our_limit = int(ratio * our_agg_limit)
+
+                        # Attachment = sum of underlying layer contributions
+                        # For each layer below, use quota_share (full layer) if QS, else limit
+                        our_attachment = 0
+                        i = 0
+                        while i < layers_below_count:
+                            layer = tower_json[i]
+                            layer_qs = layer.get("quota_share")
+                            if layer_qs:
+                                # QS layer - add full layer size once, skip others in same QS
+                                our_attachment += int(layer_qs * ratio)
+                                while i < layers_below_count and tower_json[i].get("quota_share") == layer_qs:
+                                    i += 1
+                            else:
+                                # Regular layer
+                                our_attachment += int(layer.get("limit", 0) * ratio)
+                                i += 1
+
+                    our_limit = our_limit or primary_limit
+                    our_attachment = our_attachment or 0
+
+                    # Calculate quota share sublimit if CMAI is in QS layer
+                    qs_sublimit = None
+                    if cmai_qs and primary_agg_limit > 0:
+                        qs_sublimit = int((primary_limit / primary_agg_limit) * cmai_qs)
+
+                    excess_sublimits[cov_name] = {
+                        "limit": our_limit,
+                        "attachment": our_attachment,
+                        "quota_share": qs_sublimit,
+                    }
 
                 context["sublimit_coverages"] = excess_sublimits
                 context["has_dropdown_sublimits"] = len(excess_sublimits) > 0
+                context["has_qs_sublimits"] = cmai_qs is not None
             else:
                 context["sublimit_coverages"] = {
                     get_coverage_label(k): v for k, v in sub_cov.items() if v > 0
@@ -409,11 +581,94 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                 if drop_down_endorsement not in context["endorsements"]:
                     context["endorsements"].insert(0, drop_down_endorsement)
 
-            # Subjectivities (placeholder for now)
-            context["subjectivities"] = []
+            # Retro schedule - format for display (dedupe by coverage, filter by actual coverages)
+            # Determine which coverages this quote actually has
+            enabled_coverages = {"cyber"}  # Cyber is always enabled
+            if has_tech:
+                enabled_coverages.add("tech_eo")
+
+            retro_display = {}
+            retro_labels = {
+                "cyber": "Cyber",
+                "tech_eo": "Tech E&O",
+                "do": "D&O",
+                "epl": "EPL",
+                "fiduciary": "Fiduciary",
+            }
+            retro_type_labels = {
+                "full_prior_acts": "Full Prior Acts",
+                "follow_form": "Follow Form",
+                "inception": "Inception",
+            }
+            for entry in retro_schedule:
+                cov = entry.get("coverage", "").lower().replace(" ", "_").replace("&", "")
+                # Normalize coverage key (e.g., "Tech E&O" -> "tech_eo", "tech_eo" -> "tech_eo")
+                cov_key = cov.replace("tech_eo", "tech_eo").replace("techeo", "tech_eo")
+
+                # Skip if coverage not enabled on this quote
+                if cov_key not in enabled_coverages:
+                    continue
+
+                if cov_key in retro_display:
+                    continue  # Skip duplicates
+
+                retro = entry.get("retro", "").lower().replace(" ", "_")
+                cov_label = retro_labels.get(cov_key, cov.replace("_", " ").title())
+
+                if retro == "date":
+                    retro_label = entry.get("date", "Date not set")
+                elif retro == "custom":
+                    retro_label = entry.get("custom_text", "Custom")
+                else:
+                    retro_label = retro_type_labels.get(retro, retro.replace("_", " ").title())
+
+                retro_display[cov_key] = {"coverage": cov_label, "retro": retro_label}
+
+            context["retro_schedule"] = list(retro_display.values())
+            context["retro_notes"] = retro_notes
+
+            # Subjectivities - fetch from junction table
+            subj_result = conn.execute(text("""
+                SELECT ss.text
+                FROM submission_subjectivities ss
+                JOIN quote_subjectivities qs ON qs.subjectivity_id = ss.id
+                WHERE qs.quote_id = :quote_id
+                ORDER BY ss.created_at
+            """), {"quote_id": quote_option_id})
+            manual_subjectivities = [row[0] for row in subj_result.fetchall()]
+
+            # Get auto-apply subjectivities from templates for this position
+            auto_result = conn.execute(text("""
+                SELECT text
+                FROM subjectivity_templates
+                WHERE is_active = true
+                  AND auto_apply = true
+                  AND (position IS NULL OR position = :position)
+                ORDER BY display_order
+            """), {"position": position})
+            auto_subjectivities = [row[0] for row in auto_result.fetchall()]
+
+            # Combine: auto-apply first, then manual (avoiding duplicates)
+            context["subjectivities"] = auto_subjectivities + [
+                s for s in manual_subjectivities if s not in auto_subjectivities
+            ]
 
             # Terms text
             context["terms"] = """Coverage is subject to the terms, conditions, and exclusions of the policy. This quote is valid for 30 days from the date of issuance. Binding is subject to receipt of completed application, premium payment, and underwriter approval. Claims-made policy form applies; coverage is provided for claims first made during the policy period. Defense costs are included within the policy limit unless otherwise stated."""
+
+    # Fetch endorsement component templates (header, lead_in, closing)
+    component_templates = get_endorsement_component_templates(context.get("position", "primary"))
+
+    # Pre-render component templates with context values
+    context["endorsement_header"] = render_endorsement_component(
+        component_templates["header"], context
+    )
+    context["endorsement_lead_in"] = render_endorsement_component(
+        component_templates["lead_in"], context
+    )
+    context["endorsement_closing"] = render_endorsement_component(
+        component_templates["closing"], context
+    )
 
     return context
 
@@ -632,6 +887,19 @@ def _save_document(
             serializable_json[key] = str(value) if value is not None else None
 
     with get_conn() as conn:
+        # Void any existing documents of the same type for this quote option
+        conn.execute(text("""
+            UPDATE policy_documents
+            SET status = 'void'
+            WHERE quote_option_id = :quote_option_id
+            AND document_type = :doc_type
+            AND status != 'void'
+        """), {
+            "quote_option_id": quote_option_id,
+            "doc_type": doc_type,
+        })
+
+        # Insert the new document
         result = conn.execute(text("""
             INSERT INTO policy_documents (
                 submission_id, quote_option_id, document_type,

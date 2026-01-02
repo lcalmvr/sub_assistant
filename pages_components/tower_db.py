@@ -86,6 +86,7 @@ def _row_to_quote(row) -> dict:
         "policy_form": row[15] if len(row) > 15 else "cyber",
         "coverages": _parse_json_field(row[16]) if len(row) > 16 else None,
         "is_bound": bool(row[17]) if len(row) > 17 and row[17] is not None else False,
+        "retroactive_date": row[18] if len(row) > 18 else None,
     }
 
 
@@ -95,7 +96,8 @@ def save_tower(submission_id: str, tower_json: list, primary_retention: Optional
                technical_premium: Optional[float] = None, risk_adjusted_premium: Optional[float] = None,
                sold_premium: Optional[float] = None,
                endorsements: Optional[list] = None, position: str = "primary",
-               policy_form: str = "cyber", coverages: Optional[dict] = None) -> str:
+               policy_form: str = "cyber", coverages: Optional[dict] = None,
+               retroactive_date: Optional[str] = None) -> str:
     """Save a new tower/quote option for a submission.
 
     Three-tier premium model:
@@ -111,15 +113,17 @@ def save_tower(submission_id: str, tower_json: list, primary_retention: Optional
             INSERT INTO insurance_towers (submission_id, tower_json, primary_retention,
                                           sublimits, quote_name, quoted_premium, quote_notes,
                                           technical_premium, risk_adjusted_premium, sold_premium,
-                                          endorsements, position, policy_form, coverages, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                          endorsements, position, policy_form, coverages, created_by,
+                                          retroactive_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (submission_id, json.dumps(tower_json), primary_retention,
              json.dumps(sublimits or []), quote_name, quoted_premium, quote_notes,
              technical_premium, risk_adjusted_premium, final_sold,
              json.dumps(endorsements or []), position, policy_form,
-             json.dumps(coverages) if coverages else None, CURRENT_USER),
+             json.dumps(coverages) if coverages else None, CURRENT_USER,
+             retroactive_date),
         )
         return str(cur.fetchone()[0])
 
@@ -130,7 +134,8 @@ def update_tower(tower_id: str, tower_json: list, primary_retention: Optional[fl
                  technical_premium: Optional[float] = None, risk_adjusted_premium: Optional[float] = None,
                  sold_premium: Optional[float] = None,
                  endorsements: Optional[list] = None, position: Optional[str] = None,
-                 policy_form: Optional[str] = None, coverages: Optional[dict] = None):
+                 policy_form: Optional[str] = None, coverages: Optional[dict] = None,
+                 retroactive_date: Optional[str] = None):
     """Update an existing tower/quote option."""
     with get_conn().cursor() as cur:
         cur.execute(
@@ -146,6 +151,7 @@ def update_tower(tower_id: str, tower_json: list, primary_retention: Optional[fl
                 position = COALESCE(%s, position),
                 policy_form = COALESCE(%s, policy_form),
                 coverages = COALESCE(%s, coverages),
+                retroactive_date = COALESCE(%s, retroactive_date),
                 updated_at = now()
             WHERE id = %s
             """,
@@ -155,6 +161,7 @@ def update_tower(tower_id: str, tower_json: list, primary_retention: Optional[fl
              json.dumps(endorsements) if endorsements is not None else None,
              position, policy_form,
              json.dumps(coverages) if coverages is not None else None,
+             retroactive_date,
              tower_id),
         )
 
@@ -167,7 +174,7 @@ def get_tower_for_submission(submission_id: str) -> Optional[dict]:
             SELECT id, tower_json, primary_retention, sublimits,
                    quote_name, quoted_premium, quote_notes, created_at, updated_at,
                    technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
-                   submission_id, policy_form, coverages, is_bound
+                   submission_id, policy_form, coverages, is_bound, retroactive_date
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY updated_at DESC
@@ -187,7 +194,7 @@ def get_quote_by_id(quote_id: str) -> Optional[dict]:
             SELECT id, tower_json, primary_retention, sublimits,
                    quote_name, quoted_premium, quote_notes, created_at, updated_at,
                    technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
-                   submission_id, policy_form, coverages, is_bound
+                   submission_id, policy_form, coverages, is_bound, retroactive_date
             FROM insurance_towers
             WHERE id = %s
             """,
@@ -205,7 +212,7 @@ def list_quotes_for_submission(submission_id: str) -> list[dict]:
             SELECT id, tower_json, primary_retention, sublimits,
                    quote_name, quoted_premium, quote_notes, created_at, updated_at,
                    technical_premium, risk_adjusted_premium, sold_premium, endorsements, position,
-                   submission_id, policy_form, coverages, is_bound
+                   submission_id, policy_form, coverages, is_bound, retroactive_date
             FROM insurance_towers
             WHERE submission_id = %s
             ORDER BY quote_name, created_at
@@ -244,6 +251,7 @@ def clone_quote(quote_id: str, new_name: str) -> str:
         position=original.get("position", "primary"),
         policy_form=original.get("policy_form", "cyber"),
         coverages=original.get("coverages"),
+        retroactive_date=original.get("retroactive_date"),
     )
 
 
@@ -259,12 +267,12 @@ def update_quote_field(quote_id: str, field: str, value):
 
     Allowed fields: sold_premium, technical_premium, risk_adjusted_premium,
                    primary_retention, quote_name, endorsements, sublimits, position,
-                   policy_form, coverages
+                   policy_form, coverages, retroactive_date
     """
     allowed_fields = {
         "sold_premium", "technical_premium", "risk_adjusted_premium",
         "primary_retention", "quote_name", "endorsements", "sublimits", "position",
-        "policy_form", "coverages"
+        "policy_form", "coverages", "retroactive_date"
     }
     if field not in allowed_fields:
         raise ValueError(f"Field {field} not allowed for direct update")
@@ -319,3 +327,51 @@ def update_quote_limit(quote_id: str, new_limit: float):
         )
 
     return tower_json
+
+
+def get_underlying_coverages(submission_id: str) -> list[dict]:
+    """
+    Fetch underlying coverage data extracted from quotes/policies.
+    Returns list of coverage records from the underlying_coverages table.
+    """
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, carrier, aggregate_limit, retention, policy_type, sublimits, created_at
+            FROM underlying_coverages
+            WHERE submission_id = %s
+            ORDER BY created_at DESC
+            """,
+            (submission_id,),
+        )
+        rows = cur.fetchall()
+
+    results = []
+    for row in rows:
+        results.append({
+            "id": str(row[0]),
+            "carrier": row[1],
+            "aggregate_limit": float(row[2]) if row[2] else None,
+            "retention": float(row[3]) if row[3] else None,
+            "policy_type": row[4],
+            "sublimits": row[5] if isinstance(row[5], list) else json.loads(row[5] or "[]"),
+            "created_at": row[6].isoformat() if row[6] else None,
+        })
+
+    return results
+
+
+def has_underlying_coverages(submission_id: str) -> bool:
+    """Check if a submission has any extracted underlying coverages."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM underlying_coverages WHERE submission_id = %s
+            )
+            """,
+            (submission_id,),
+        )
+        return cur.fetchone()[0]

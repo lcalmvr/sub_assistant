@@ -19,6 +19,7 @@ from core.bound_option import bind_option, unbind_option, get_bound_option, has_
 # Import shared premium calculator - single source of truth for premium calculations
 from rating_engine.premium_calculator import calculate_premium_for_submission
 from utils.quote_formatting import format_currency, generate_quote_name
+from utils.tab_state import rerun_on_quote_tab, on_change_stay_on_quote
 
 
 def _format_premium(amount: float) -> str:
@@ -51,6 +52,11 @@ def _parse_currency(val) -> float:
         return None
 
 
+def _rerun_on_quote_tab() -> None:
+    rerun_on_quote_tab()
+
+
+
 def render_quote_options_panel(sub_id: str, readonly: bool = False):
     """
     Render saved quote options as a dropdown selector with action buttons.
@@ -72,7 +78,9 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
     # Get all saved quote options for this submission
     all_quotes = list_quotes_for_submission(sub_id)
 
-    # No banner needed - the bound card makes it clear
+    # Show prior year quote context if available
+    from pages_components.show_prior_panel import render_prior_quote_context
+    render_prior_quote_context(sub_id)
 
     if not all_quotes and not readonly:
         # No quotes yet - show simple add buttons
@@ -146,9 +154,11 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                 format_func=lambda x: quote_options[x]["label"] if x in quote_options else x,
                 index=list(quote_options.keys()).index(viewing_quote_id) if viewing_quote_id and viewing_quote_id in quote_options else 0,
                 key="saved_quote_selector_override",
+                on_change=on_change_stay_on_quote,
             )
             if selected_id and selected_id != viewing_quote_id:
                 _view_quote(selected_id)
+                viewing_quote_id = selected_id  # Update local var to match
     else:
         # Full edit mode: Two rows - buttons on top, dropdown below
         # Row 1: Action buttons (Add, Delete, Quote, Bind)
@@ -160,7 +170,7 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                     _create_primary_option(sub_id, all_quotes, viewing_quote_id)
                 if st.button("Excess", key=f"add_excess_{sub_id}", use_container_width=True):
                     st.session_state[f"show_excess_dialog_{sub_id}"] = True
-                    st.rerun()
+                    _rerun_on_quote_tab()
 
         with col_delete:
             delete_disabled = not viewing_quote_id
@@ -185,13 +195,15 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
                     if viewing_quote_id:
                         unbind_option(viewing_quote_id)
                         st.success("Option unbound")
-                        st.rerun()
+                        _rerun_on_quote_tab()
             else:
                 if st.button("Bind", key="bind_selected_btn", use_container_width=True, disabled=bind_disabled, type="primary"):
                     if viewing_quote_id:
-                        bind_option(viewing_quote_id, bound_by="user")
+                        # Get subjectivities from session state for migration to DB
+                        session_subjectivities = st.session_state.get(f"subjectivities_{sub_id}", [])
+                        bind_option(viewing_quote_id, bound_by="user", subjectivities=session_subjectivities)
                         st.success("Option bound!")
-                        st.rerun()
+                        _rerun_on_quote_tab()
 
         # Row 2: Dropdown selector
         option_ids = list(quote_options.keys())
@@ -208,11 +220,13 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
             index=default_idx,
             key="saved_quote_selector",
             label_visibility="collapsed",
+            on_change=on_change_stay_on_quote,
         )
 
-        # Auto-load when selection changes
+        # Auto-load when selection changes (happens during natural rerun after on_change)
         if selected_id and selected_id != viewing_quote_id:
             _view_quote(selected_id)
+            viewing_quote_id = selected_id  # Update local var to match
 
         # Handle dialogs (outside columns)
         if st.session_state.get(f"show_excess_dialog_{sub_id}"):
@@ -229,6 +243,7 @@ def render_quote_options_panel(sub_id: str, readonly: bool = False):
 def _update_quote_limit_retention(quote_id: str, quote_data: dict, new_limit: int, new_retention: int):
     """
     Update the quote's limit, retention, regenerate quote name, and recalculate premiums.
+    No explicit rerun - caller's widget should have on_change callback for tab state.
     """
     import json
     from pages_components.tower_db import get_conn
@@ -288,7 +303,8 @@ def _update_quote_limit_retention(quote_id: str, quote_data: dict, new_limit: in
     st.session_state.primary_retention = new_retention
     st.session_state.quote_name = new_name
 
-    st.rerun()
+    # Explicit rerun needed to show fresh data (DB was updated mid-render)
+    _rerun_on_quote_tab()
 
 
 def _calculate_premium_for_quote(sub_id: str, limit: int, retention: int) -> dict:
@@ -565,10 +581,11 @@ def _render_primary_premium_row1(quote_id: str, quote_data: dict, tower_json: li
                 options=limit_labels,
                 index=limit_default_idx,
                 key=f"view_limit_{quote_id}",
+                on_change=on_change_stay_on_quote,
             )
             selected_limit = limit_values[selected_limit_label]
 
-            # Auto-save limit change
+            # Auto-save limit change (happens during natural rerun after on_change)
             if selected_limit != current_limit:
                 _update_quote_limit_retention(quote_id, quote_data, selected_limit, current_retention)
 
@@ -581,10 +598,11 @@ def _render_primary_premium_row1(quote_id: str, quote_data: dict, tower_json: li
                 options=retention_labels,
                 index=retention_default_idx,
                 key=f"view_retention_{quote_id}",
+                on_change=on_change_stay_on_quote,
             )
             selected_retention = retention_values[selected_retention_label]
 
-            # Auto-save retention change
+            # Auto-save retention change (happens during natural rerun after on_change)
             if selected_retention != current_retention:
                 _update_quote_limit_retention(quote_id, quote_data, current_limit, selected_retention)
 
@@ -610,12 +628,13 @@ def _render_sold_premium_input(quote_id: str, sold_premium: float):
                 if parsed != sold_premium:
                     update_quote_field(quote_id, "sold_premium", parsed)
                 st.session_state[widget_key] = expected
-                st.rerun()
+                _rerun_on_quote_tab()
 
     new_sold_str = st.text_input(
         "Sold Premium",
         key=widget_key,
-        placeholder="$0"
+        placeholder="$0",
+        on_change=on_change_stay_on_quote,
     )
     new_sold = _parse_currency(new_sold_str)
 
@@ -628,10 +647,11 @@ def _view_quote(quote_id: str):
     """
     Load a saved quote for VIEWING (read-only comparison).
     This populates the tower display but does NOT enable editing.
+    No explicit rerun - caller's widget should have on_change callback for tab state.
     """
     from utils.quote_option_factory import load_quote_into_session
     load_quote_into_session(quote_id)
-    st.rerun()
+    # No explicit rerun - selectbox on_change already set tab state
 
 
 
@@ -648,7 +668,7 @@ def _delete_quote(quote_id: str, viewing_quote_id: str):
             st.session_state._viewing_saved_option = False
 
         st.success("Quote deleted.")
-        st.rerun()
+        _rerun_on_quote_tab()
     except Exception as e:
         st.error(f"Error deleting: {e}")
 
@@ -724,7 +744,7 @@ def _render_generate_dialog(sub_id: str, quote_id: str):
         with col_cancel:
             if st.button("Cancel", key=f"gen_cancel_{quote_id}", use_container_width=True):
                 st.session_state[f"show_generate_dialog_{sub_id}"] = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
         with col_generate:
             btn_label = "Generate Quote" if package_type == "quote_only" else "Generate Package"
@@ -749,7 +769,7 @@ def _render_generate_dialog(sub_id: str, quote_id: str):
                             )
                     st.session_state[f"show_generate_dialog_{sub_id}"] = False
                     st.success(f"Generated: {result['document_number']}")
-                    st.rerun()
+                    _rerun_on_quote_tab()
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -1047,7 +1067,7 @@ def _render_quote_detail_modal(sub_id: str, quote_id: str):
                     from pages_components.coverage_editor import reset_coverage_editor
                     reset_coverage_editor(f"quote_{sub_id}")
                     st.session_state[f"view_quote_modal_{sub_id}"] = None
-                    st.rerun()
+                    _rerun_on_quote_tab()
             with col_save:
                 if st.button("Save Changes & Revise Binder", key=f"save_{quote_id}", type="primary", use_container_width=True):
                     # Save coverages to quote
@@ -1068,14 +1088,14 @@ def _render_quote_detail_modal(sub_id: str, quote_id: str):
                         )
                         st.session_state[f"view_quote_modal_{sub_id}"] = None
                         st.success(f"Coverages updated. Revised binder created: {result.get('document_number', 'N/A')}")
-                        st.rerun()
+                        _rerun_on_quote_tab()
                     except Exception as e:
                         st.error(f"Coverages updated, but binder generation failed: {e}")
         else:
             # Close button for non-bound quotes
             if st.button("Close", key=f"close_modal_{quote_id}", use_container_width=True):
                 st.session_state[f"view_quote_modal_{sub_id}"] = None
-                st.rerun()
+                _rerun_on_quote_tab()
 
     show_modal()
 
@@ -1106,7 +1126,7 @@ def _create_primary_option(sub_id: str, all_quotes: list, clone_from_quote_id: s
     load_quote_into_session(new_id)
     quote_data = get_quote_by_id(new_id)
     st.success(f"Created: {quote_data.get('quote_name', 'New Option')}")
-    st.rerun()
+    _rerun_on_quote_tab()
 
 
 def _render_excess_option_dialog(sub_id: str, all_quotes: list):
@@ -1164,7 +1184,7 @@ def _render_excess_option_dialog(sub_id: str, all_quotes: list):
         with col_cancel:
             if st.button("Cancel", key=f"excess_cancel_{sub_id}", use_container_width=True):
                 st.session_state[f"show_excess_dialog_{sub_id}"] = False
-                st.rerun()
+                _rerun_on_quote_tab()
 
         with col_create:
             if st.button("Create Excess Option", key=f"excess_create_{sub_id}", type="primary", use_container_width=True):
@@ -1233,7 +1253,7 @@ def _create_excess_option(
     load_quote_into_session(new_id)
     quote_data = get_quote_by_id(new_id)
     st.success(f"Created: {quote_data.get('quote_name', 'New Option')}")
-    st.rerun()
+    _rerun_on_quote_tab()
 
 
 def get_current_quote_position(sub_id: str) -> str:

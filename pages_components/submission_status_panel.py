@@ -190,7 +190,9 @@ def render_submission_status_panel(submission_id: str):
                 try:
                     # If binding and an option was selected, bind it first
                     if selected_outcome == "bound" and bound_option_to_bind:
-                        bind_option(bound_option_to_bind, bound_by="user")
+                        # Get subjectivities from session state for migration to DB
+                        session_subjectivities = st.session_state.get(f"subjectivities_{submission_id}", [])
+                        bind_option(bound_option_to_bind, bound_by="user", subjectivities=session_subjectivities)
 
                     # Handle None reason safely
                     reason_value = (selected_reason or "").strip() or None

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Broker Quoting Platform - Cyber Insurance</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>Broker Quoting Platform</h1>
+                <p class="subtitle">Multi-Carrier Cyber Insurance Quoting</p>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Submission Form -->
+            <section class="form-section">
+                <h2>New Submission</h2>
+                <form id="submissionForm" class="submission-form">
+                    <!-- Company Information -->
+                    <div class="form-group">
+                        <h3>Company Information</h3>
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label for="companyName">Company Name *</label>
+                                <input type="text" id="companyName" name="companyName" required 
+                                       placeholder="e.g., Acme Corporation">
+                            </div>
+                            <div class="form-field">
+                                <label for="website">Website</label>
+                                <input type="text" id="website" name="website" 
+                                       placeholder="example.com or https://example.com">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Financial Information -->
+                    <div class="form-group">
+                        <h3>Financial Information</h3>
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label for="annualRevenue">Annual Revenue *</label>
+                                <select id="annualRevenue" name="annualRevenue" required>
+                                    <option value="">Select revenue range</option>
+                                    <option value="500000">$500K - $1M</option>
+                                    <option value="2000000">$1M - $5M</option>
+                                    <option value="10000000">$5M - $10M</option>
+                                    <option value="25000000">$10M - $25M</option>
+                                    <option value="50000000">$25M - $50M</option>
+                                    <option value="100000000">$50M - $100M</option>
+                                    <option value="250000000">$100M - $250M</option>
+                                    <option value="500000000">$250M+</option>
+                                </select>
+                            </div>
+                            <div class="form-field">
+                                <label for="industry">Industry (NAICS) *</label>
+                                <select id="industry" name="industry" required>
+                                    <option value="">Select industry</option>
+                                    <option value="Software_as_a_Service_SaaS">Software/SaaS</option>
+                                    <option value="Professional_Services_Consulting">Professional Services</option>
+                                    <option value="Advertising_Marketing_Technology">Marketing/Advertising</option>
+                                    <option value="Healthcare_Services">Healthcare Services</option>
+                                    <option value="Financial_Services">Financial Services</option>
+                                    <option value="Retail_E_Commerce">Retail/E-Commerce</option>
+                                    <option value="Manufacturing">Manufacturing</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Security Controls -->
+                    <div class="form-group">
+                        <h3>Security Controls</h3>
+                        <div class="controls-grid">
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="controls" value="MFA">
+                                <span>Multi-Factor Authentication (MFA)</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="controls" value="EDR">
+                                <span>Endpoint Detection & Response (EDR)</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="controls" value="Backups">
+                                <span>Automated Backups</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="controls" value="Encryption">
+                                <span>Data Encryption at Rest</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="controls" value="SIEM">
+                                <span>Security Information & Event Management (SIEM)</span>
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="controls" value="SOC">
+                                <span>Security Operations Center (SOC)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Policy Requirements -->
+                    <div class="form-group">
+                        <h3>Policy Requirements</h3>
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label for="policyLimit">Policy Limit *</label>
+                                <select id="policyLimit" name="policyLimit" required>
+                                    <option value="">Select limit</option>
+                                    <option value="1000000">$1M</option>
+                                    <option value="2000000">$2M</option>
+                                    <option value="3000000">$3M</option>
+                                    <option value="5000000">$5M</option>
+                                    <option value="10000000">$10M</option>
+                                </select>
+                            </div>
+                            <div class="form-field">
+                                <label for="retention">Retention/Deductible *</label>
+                                <select id="retention" name="retention" required>
+                                    <option value="">Select retention</option>
+                                    <option value="10000">$10K</option>
+                                    <option value="25000">$25K</option>
+                                    <option value="50000">$50K</option>
+                                    <option value="100000">$100K</option>
+                                    <option value="250000">$250K</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary" id="submitBtn">
+                            <span class="btn-text">Submit to Carriers</span>
+                            <span class="btn-loader" style="display: none;">Submitting...</span>
+                        </button>
+                        <p class="form-help-text">This submission will be sent to all available carriers for quoting</p>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section" id="resultsSection" style="display: none;">
+                <div class="results-header">
+                    <h2>Carrier Responses</h2>
+                    <div class="submission-info" id="submissionInfo"></div>
+                </div>
+                <div id="quoteResults" class="carrier-results">
+                    <!-- Results will be populated here -->
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>This is a demonstration of broker platform integration capability</p>
+        </footer>
+    </div>
+
+    <script src="mock-api.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
+
