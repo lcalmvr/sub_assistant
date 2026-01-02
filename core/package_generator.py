@@ -459,10 +459,13 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
         <div class="endorsement-document">
             <div class="endorsement-header">
                 <div class="endorsement-title">{title.upper()}</div>
-                <div class="endorsement-code">{code}</div>
             </div>
 
             <div class="endorsement-meta">
+                <div class="meta-item">
+                    <div class="meta-label">ENDORSEMENT</div>
+                    <div class="meta-value">{code}</div>
+                </div>
                 <div class="meta-item">
                     <div class="meta-label">POLICY NUMBER</div>
                     <div class="meta-value">{document_number}</div>
