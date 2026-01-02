@@ -5,7 +5,7 @@ Exposes the existing database and business logic via REST API.
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
