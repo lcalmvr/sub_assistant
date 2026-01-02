@@ -1,7 +1,8 @@
 # Review & UW Page Redesign Roadmap
 
-> **Status**: Planning
+> **Status**: Phase 1 Complete
 > **Created**: 2025-01-02
+> **Updated**: 2025-01-02
 > **Target Architecture**: Document-Centric Review with Side-by-Side Intelligence
 
 ---
@@ -293,33 +294,41 @@ Clicking [📄 Source] opens:
 
 ## Part 4: Implementation Roadmap
 
-### Phase 1: Foundation (Current Sprint)
+### Phase 1: Foundation ✅ COMPLETE
 
 **Goal**: Restore core Streamlit functionality in React
 
-#### 1.1 UWPage Editing
-- Add inline edit mode for:
+**Completed 2025-01-02:**
+
+#### 1.1 UWPage Editing ✅
+- Inline edit mode for AI-generated fields:
   - `business_summary`
   - `cyber_exposures`
   - `nist_controls_summary`
   - `bullet_point_summary`
-- Implement save with API PATCH
-- Add feedback tracking to `feedback` table
-- Estimated: 2-3 days
+- Auto-save with API PATCH
+- Keyboard shortcuts (Cmd+Enter to save, Escape to cancel)
+- Note: Feedback tracking deferred to later phase
 
-#### 1.2 ReviewPage Enhancements
-- Add credibility score display
-  - Create `GET /api/submissions/:id/credibility` endpoint
-  - Display as metric card with breakdown
-- Add conflict summary
-  - Create `GET /api/submissions/:id/conflicts` endpoint
-  - Display as warning cards with resolve action
-- Add document preview button
-  - Create `GET /api/submissions/:id/documents` endpoint
-  - Modal with PDF.js viewer
-- Estimated: 2-3 days
+#### 1.2 ReviewPage Enhancements ✅
+- Credibility score display with dimension breakdown
+- Conflict list with approve/defer actions
+- Source documents list
+- New API endpoints for all three
 
-#### 1.3 API Endpoints
+#### 1.3 Deferred: Layout & UX Refinement
+
+The following UX work is recognized but deferred to focus on functionality first:
+
+- **Field placement optimization** - Review layout of sections across Review/UW pages
+- **Complementary field grouping** - Some fields may overlap or complement each other (e.g., AI recommendation appears in both Review and UW)
+- **Information hierarchy** - Determine which information is primary vs. supporting
+- **Progressive disclosure** - Consider collapsible sections for less critical data
+- **Cross-page consistency** - Ensure similar patterns used across all tabs
+
+This refinement should happen after Phase 2 (native ingestion) when we have a clearer picture of how extraction provenance will be displayed alongside the data.
+
+#### 1.4 API Endpoints (Implemented)
 ```
 GET  /api/submissions/:id/credibility
 GET  /api/submissions/:id/conflicts
