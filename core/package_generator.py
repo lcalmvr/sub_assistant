@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 # Import document library
 from core.document_library import get_library_entry, get_library_entries
+from core.document_generator import get_endorsement_component_templates, render_endorsement_component
 
 # Import document generator for context and rendering
 from core.document_generator import (
@@ -431,9 +432,28 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
         effective_date = context.get("effective_date", "")
         insured_name = context.get("insured_name", "")
         document_number = context.get("document_number", "")
+        position = context.get("position", "primary")
 
-        # Standard lead-in (system-generated, not in body content)
-        lead_in = "This endorsement modifies the insurance provided under the policy to which it is attached."
+        # Fetch component templates from database
+        templates = get_endorsement_component_templates(position)
+
+        # Build template context for variable substitution
+        template_context = {
+            "document_code": code,
+            "effective_date": effective_date,
+            "document_number": document_number,
+            "position": position,
+        }
+
+        # Render lead-in from template (with fallback)
+        lead_in_html = render_endorsement_component(templates.get("lead_in", ""), template_context)
+        if not lead_in_html:
+            lead_in_html = "<p>This endorsement modifies the insurance provided under the policy to which it is attached.</p>"
+
+        # Render closing from template (with fallback)
+        closing_html = render_endorsement_component(templates.get("closing", ""), template_context)
+        if not closing_html:
+            closing_html = "<p>This endorsement forms a part of the policy to which it is attached and is subject to all terms, conditions, and exclusions of such policy except as specifically modified herein.</p>"
 
         return f'''
         <div class="endorsement-document">
@@ -458,7 +478,7 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
             </div>
 
             <div class="endorsement-lead-in">
-                <p>{lead_in}</p>
+                {lead_in_html}
             </div>
 
             <div class="endorsement-content">
@@ -466,7 +486,7 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
             </div>
 
             <div class="endorsement-footer">
-                <p>This endorsement forms a part of the policy to which it is attached and is subject to all terms, conditions, and exclusions of such policy except as specifically modified herein.</p>
+                {closing_html}
             </div>
         </div>
         '''
