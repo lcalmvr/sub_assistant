@@ -2,14 +2,15 @@
 Document classifier for insurance submission attachments.
 
 Classifies PDFs into categories:
-- application_acord: ACORD application forms
-- application_supplemental: Carrier-specific supplemental applications
-- loss_runs: Loss history reports
-- quote: Quote or indication from another carrier
-- financial: Financial statements, K-1s, etc.
+- application_supplemental: Carrier-specific cyber/tech applications (Axis, Coalition, At Bay, etc.) - PRIMARY
+- application_acord: ACORD application forms - DEPRIORITIZED (often have minimal useful data for cyber)
+- loss_runs: Loss history reports - auto-processed for claims history
+- quote: Quote or indication from another carrier - used to populate underlying tower for excess
+- financial: Financial statements, K-1s, etc. - fallback for revenue when app is blank
 - other: Marketing materials, miscellaneous
 
 Uses first-page analysis via OpenAI vision for accurate classification.
+Cyber/tech insurance primarily uses carrier-specific applications, not ACORD forms.
 """
 
 import base64
@@ -192,17 +193,26 @@ def classify_documents(pdf_paths: list[str], model: str = "gpt-4o") -> dict[str,
 
 def get_applications(classifications: dict[str, ClassificationResult]) -> list[tuple[str, ClassificationResult]]:
     """
-    Get all application documents (ACORD and supplemental) from classifications.
-    Returns list of (path, result) tuples, sorted with ACORD first.
+    Get all application documents from classifications.
+    Returns list of (path, result) tuples, sorted with carrier supplementals FIRST.
+
+    For cyber/tech insurance, carrier-specific applications (Axis, Coalition, At Bay, etc.)
+    contain the most useful data. ACORD forms are deprioritized as they often have
+    minimal relevant information for cyber risk assessment.
     """
     apps = []
     for path, result in classifications.items():
         if result.document_type in (DocumentType.APPLICATION_ACORD, DocumentType.APPLICATION_SUPPLEMENTAL):
             apps.append((path, result))
 
-    # Sort: ACORD first, then supplementals
-    apps.sort(key=lambda x: (0 if x[1].document_type == DocumentType.APPLICATION_ACORD else 1))
+    # Sort: Carrier supplementals FIRST (priority), ACORD last (deprioritized)
+    apps.sort(key=lambda x: (0 if x[1].document_type == DocumentType.APPLICATION_SUPPLEMENTAL else 1))
     return apps
+
+
+def get_financials(classifications: dict[str, ClassificationResult]) -> list[tuple[str, ClassificationResult]]:
+    """Get all financial documents from classifications."""
+    return [(p, r) for p, r in classifications.items() if r.document_type == DocumentType.FINANCIAL]
 
 
 def get_loss_runs(classifications: dict[str, ClassificationResult]) -> list[tuple[str, ClassificationResult]]:

@@ -659,6 +659,8 @@ from ai.document_classifier import (
     smart_classify_documents,
     get_applications,
     get_loss_runs,
+    get_quotes,
+    get_financials,
     DocumentType,
     ClassificationResult
 )
@@ -1247,6 +1249,286 @@ def _merge_application_data(primary: dict, supplemental: dict) -> dict:
     return merge_dict(primary, supplemental)
 
 
+# ───────────── Document Processing Helpers ─────────────
+
+def _extract_text_from_pdf(pdf_path: str) -> str:
+    """Extract text from PDF using PyMuPDF."""
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(pdf_path)
+        text_parts = []
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+        return "\n".join(text_parts)
+    except Exception as e:
+        print(f"[pipeline] Failed to extract text from {pdf_path}: {e}")
+        return ""
+
+
+def _process_loss_runs(submission_id: str, loss_runs_docs: list[tuple[str, ClassificationResult]]) -> None:
+    """
+    Process loss runs documents and save to loss_history table.
+    Uses AI to extract claims data from PDF text.
+    """
+    if not loss_runs_docs:
+        return
+
+    for pdf_path, classification in loss_runs_docs:
+        try:
+            text = _extract_text_from_pdf(pdf_path)
+            if not text.strip():
+                print(f"[pipeline] No text extracted from loss runs: {pdf_path}")
+                continue
+
+            # Parse loss runs with AI
+            loss_data = _parse_loss_runs_with_ai(text)
+            if loss_data and loss_data.get("claims"):
+                _save_loss_history(submission_id, loss_data, classification.detected_carrier)
+                print(f"[pipeline] Processed loss runs from {Path(pdf_path).name}: {len(loss_data['claims'])} claims")
+        except Exception as e:
+            print(f"[pipeline] Failed to process loss runs {pdf_path}: {e}")
+
+
+def _parse_loss_runs_with_ai(text: str) -> dict:
+    """Parse loss runs text using AI to extract structured claims data."""
+    prompt = """Analyze this loss runs / loss history document and extract all claims.
+
+Document text:
+'''
+{text}
+'''
+
+Output strictly as JSON:
+{{
+  "carrier": string | null,  // Carrier name if found
+  "policy_period": string | null,  // Policy period if found (e.g., "01/01/2020 - 01/01/2021")
+  "total_incurred": number | null,  // Total incurred losses if shown
+  "claims": [
+    {{
+      "claim_number": string | null,
+      "date_of_loss": string | null,  // ISO format YYYY-MM-DD if possible
+      "description": string | null,  // Brief description of loss
+      "status": string | null,  // "open", "closed", "reserved"
+      "paid": number | null,  // Amount paid
+      "reserved": number | null,  // Amount reserved
+      "incurred": number | null  // Total incurred (paid + reserved)
+    }}
+  ]
+}}
+
+Rules:
+- Extract ALL claims mentioned
+- Parse dates to ISO format when possible
+- Parse amounts to raw numbers (e.g., "$50,000" -> 50000)
+- If a claim shows "No losses" or similar, return empty claims array
+- Include "clean" loss runs (no claims) by returning empty claims array
+"""
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            max_tokens=4000,
+            messages=[{"role": "user", "content": prompt.format(text=text[:15000])}],  # Limit text length
+            response_format={"type": "json_object"},
+        )
+        return json.loads(response.choices[0].message.content or "{}")
+    except Exception as e:
+        print(f"[pipeline] AI loss runs parsing failed: {e}")
+        return {}
+
+
+def _save_loss_history(submission_id: str, loss_data: dict, carrier: str = None) -> None:
+    """Save parsed loss history to database."""
+    if not engine:
+        return
+
+    claims = loss_data.get("claims", [])
+    carrier_name = carrier or loss_data.get("carrier")
+
+    with engine.begin() as conn:
+        for claim in claims:
+            try:
+                conn.execute(
+                    text("""
+                        INSERT INTO loss_history (
+                            submission_id, carrier, claim_number, date_of_loss,
+                            description, status, paid_amount, reserved_amount, incurred_amount
+                        ) VALUES (
+                            :sub_id, :carrier, :claim_num, :date_loss,
+                            :description, :status, :paid, :reserved, :incurred
+                        )
+                        ON CONFLICT DO NOTHING
+                    """),
+                    {
+                        "sub_id": submission_id,
+                        "carrier": carrier_name,
+                        "claim_num": claim.get("claim_number"),
+                        "date_loss": claim.get("date_of_loss"),
+                        "description": claim.get("description"),
+                        "status": claim.get("status"),
+                        "paid": claim.get("paid"),
+                        "reserved": claim.get("reserved"),
+                        "incurred": claim.get("incurred"),
+                    },
+                )
+            except Exception as e:
+                print(f"[pipeline] Failed to save claim: {e}")
+
+
+def _extract_revenue_from_financials(financial_docs: list[tuple[str, ClassificationResult]]) -> int | None:
+    """
+    Extract annual revenue from financial documents as fallback
+    when application doesn't include it.
+    """
+    if not financial_docs:
+        return None
+
+    for pdf_path, classification in financial_docs:
+        try:
+            text = _extract_text_from_pdf(pdf_path)
+            if not text.strip():
+                continue
+
+            # Parse financials with AI
+            revenue = _parse_revenue_from_financials_ai(text)
+            if revenue:
+                print(f"[pipeline] Extracted revenue from financials: ${revenue:,}")
+                return revenue
+        except Exception as e:
+            print(f"[pipeline] Failed to extract revenue from {pdf_path}: {e}")
+
+    return None
+
+
+def _parse_revenue_from_financials_ai(text: str) -> int | None:
+    """Parse financial document to extract annual revenue."""
+    prompt = """Analyze this financial document and extract the annual revenue.
+
+Document text:
+'''
+{text}
+'''
+
+Output strictly as JSON:
+{{
+  "annual_revenue": number | null,  // Annual revenue/sales in dollars
+  "revenue_year": string | null,  // Year the revenue is for
+  "source_line": string | null,  // The exact line item name (e.g., "Total Revenue", "Net Sales")
+  "confidence": string  // "high", "medium", "low"
+}}
+
+Look for:
+- "Revenue", "Total Revenue", "Net Revenue"
+- "Sales", "Net Sales", "Gross Sales"
+- "Service Revenue", "Operating Revenue"
+- Income statement top-line figures
+
+Parse amounts to raw numbers (e.g., "$5,000,000" -> 5000000, "5M" -> 5000000).
+Use the most recent full year if multiple years shown.
+"""
+
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt.format(text=text[:10000])}],
+            response_format={"type": "json_object"},
+        )
+        data = json.loads(response.choices[0].message.content or "{}")
+        revenue = data.get("annual_revenue")
+        if revenue and data.get("confidence") != "low":
+            return int(revenue)
+    except Exception as e:
+        print(f"[pipeline] AI revenue extraction failed: {e}")
+
+    return None
+
+
+def _process_underlying_quotes(submission_id: str, quote_docs: list[tuple[str, ClassificationResult]]) -> None:
+    """
+    Process underlying quotes/policies for excess submissions.
+    Extracts coverage information to populate the tower structure.
+    """
+    if not quote_docs:
+        return
+
+    from ai.sublimit_intel import parse_coverages_from_document
+
+    for pdf_path, classification in quote_docs:
+        try:
+            text = _extract_text_from_pdf(pdf_path)
+            if not text.strip():
+                print(f"[pipeline] No text extracted from quote: {pdf_path}")
+                continue
+
+            # Parse coverage using existing sublimit_intel function
+            coverage_data = parse_coverages_from_document(text)
+
+            if coverage_data:
+                _save_underlying_coverage(submission_id, coverage_data, classification.detected_carrier)
+                carrier = coverage_data.get("carrier_name") or classification.detected_carrier or "Unknown"
+                print(f"[pipeline] Processed underlying quote from {carrier}: {len(coverage_data.get('sublimits', []))} coverages")
+        except Exception as e:
+            print(f"[pipeline] Failed to process quote {pdf_path}: {e}")
+
+
+def _save_underlying_coverage(submission_id: str, coverage_data: dict, detected_carrier: str = None) -> None:
+    """
+    Save underlying coverage data from quotes.
+    This creates entries that can be used to populate the tower for excess submissions.
+    """
+    if not engine:
+        return
+
+    carrier = coverage_data.get("carrier_name") or detected_carrier
+    aggregate = coverage_data.get("aggregate_limit")
+    retention = coverage_data.get("retention")
+    sublimits = coverage_data.get("sublimits", [])
+
+    # Save to underlying_coverages table (or similar)
+    # This data can then be used by the quote page to auto-populate tower
+    with engine.begin() as conn:
+        # Check if table exists
+        tables = _existing_tables()
+        if "underlying_coverages" not in tables:
+            # Create the table if it doesn't exist
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS underlying_coverages (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    submission_id UUID REFERENCES submissions(id) ON DELETE CASCADE,
+                    carrier VARCHAR(200),
+                    aggregate_limit NUMERIC,
+                    retention NUMERIC,
+                    policy_type VARCHAR(50),
+                    sublimits JSONB,
+                    source_document VARCHAR(500),
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """))
+
+        # Insert the coverage data
+        conn.execute(
+            text("""
+                INSERT INTO underlying_coverages (
+                    submission_id, carrier, aggregate_limit, retention,
+                    policy_type, sublimits
+                ) VALUES (
+                    :sub_id, :carrier, :aggregate, :retention,
+                    :policy_type, :sublimits
+                )
+            """),
+            {
+                "sub_id": submission_id,
+                "carrier": carrier,
+                "aggregate": aggregate,
+                "retention": retention,
+                "policy_type": coverage_data.get("policy_type"),
+                "sublimits": Json(sublimits),
+            },
+        )
+
+
 # ───────────── PUBLIC ENTRYPOINT used by ingest_local.py ─────────────
 
 def process_submission(subject: str, email_body: str, sender_email: str, attachments: list[str] | None, use_docupipe: bool = False) -> Any:
@@ -1334,9 +1616,15 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
     name, website = extract_applicant_info(app_data)
     if not name:
         name = extract_name_from_email(email_body or subject or "")
-    
-    # Extract revenue
+
+    # Extract revenue (with financial document fallback)
     revenue = extract_revenue(app_data)
+    if not revenue and document_classifications:
+        # Fallback: try to extract revenue from financial documents
+        financial_docs = get_financials(document_classifications)
+        if financial_docs:
+            print(f"[pipeline] No revenue in app, checking {len(financial_docs)} financial document(s)...")
+            revenue = _extract_revenue_from_financials(financial_docs)
 
     # External public info
     tavily_text = get_public_description(name, website)
@@ -1450,6 +1738,26 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
             _save_extraction_run(sid_str, extraction_result)
         except Exception as e:
             print(f"[pipeline] Failed to save extraction provenance: {e}")
+
+    # ───────────── Process other document types ─────────────
+    if document_classifications:
+        # Process loss runs
+        loss_runs_docs = get_loss_runs(document_classifications)
+        if loss_runs_docs:
+            print(f"[pipeline] Processing {len(loss_runs_docs)} loss runs document(s)...")
+            try:
+                _process_loss_runs(sid_str, loss_runs_docs)
+            except Exception as e:
+                print(f"[pipeline] Loss runs processing failed: {e}")
+
+        # Process underlying quotes for tower population
+        quote_docs = get_quotes(document_classifications)
+        if quote_docs:
+            print(f"[pipeline] Processing {len(quote_docs)} underlying quote(s)...")
+            try:
+                _process_underlying_quotes(sid_str, quote_docs)
+            except Exception as e:
+                print(f"[pipeline] Quote processing failed: {e}")
 
     return sid
 
