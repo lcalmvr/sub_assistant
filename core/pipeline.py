@@ -651,6 +651,9 @@ from ai.guideline_rag import get_ai_decision
 # ───────────── Conflict Detection ─────────────
 from core.conflict_service import save_field_value, ConflictService
 
+# Native application extraction
+from ai.application_extractor import extract_from_pdf, ApplicationExtraction
+
 # ───────────── DB helpers (schema-safe) ─────────────
 
 def _existing_columns(table: str) -> set[str]:
@@ -1110,6 +1113,106 @@ def resolve_broker_assignment(email_body: str, sender_email: str) -> dict:
         "source": "sender",
     }
 
+# ───────────── Extraction Provenance Helpers ─────────────
+
+def _save_extraction_provenance(
+    submission_id: str,
+    extraction: ApplicationExtraction,
+    document_id: str | None = None,
+) -> None:
+    """Save extraction provenance records to database."""
+    if not engine:
+        return
+
+    tables = _existing_tables()
+    if "extraction_provenance" not in tables:
+        return
+
+    records = extraction.to_provenance_records(submission_id)
+
+    with engine.begin() as conn:
+        for rec in records:
+            conn.execute(
+                text("""
+                    INSERT INTO extraction_provenance
+                    (submission_id, field_name, extracted_value, confidence,
+                     source_page, source_text, is_present, model_used, source_document_id)
+                    VALUES (:submission_id, :field_name, :extracted_value, :confidence,
+                            :source_page, :source_text, :is_present, :model_used, :doc_id)
+                    ON CONFLICT (submission_id, field_name)
+                    DO UPDATE SET
+                        extracted_value = EXCLUDED.extracted_value,
+                        confidence = EXCLUDED.confidence,
+                        source_page = EXCLUDED.source_page,
+                        source_text = EXCLUDED.source_text,
+                        is_present = EXCLUDED.is_present,
+                        model_used = EXCLUDED.model_used,
+                        source_document_id = EXCLUDED.source_document_id,
+                        created_at = NOW()
+                """),
+                {
+                    "submission_id": submission_id,
+                    "field_name": rec["field_name"],
+                    "extracted_value": Json(rec["extracted_value"]),
+                    "confidence": rec["confidence"],
+                    "source_page": rec.get("source_page"),
+                    "source_text": rec.get("source_text"),
+                    "is_present": rec["is_present"],
+                    "model_used": extraction.model_used,
+                    "doc_id": document_id,
+                },
+            )
+
+
+def _save_extraction_run(
+    submission_id: str,
+    extraction: ApplicationExtraction,
+) -> None:
+    """Save extraction run metadata for monitoring."""
+    if not engine:
+        return
+
+    tables = _existing_tables()
+    if "extraction_runs" not in tables:
+        return
+
+    # Count high/low confidence
+    high_conf = sum(
+        1 for section in extraction.data.values()
+        for field in section.values()
+        if field.confidence >= 0.8
+    )
+    low_conf = sum(
+        1 for section in extraction.data.values()
+        for field in section.values()
+        if field.confidence < 0.5 and field.is_present
+    )
+    total_fields = sum(len(section) for section in extraction.data.values())
+
+    metadata = extraction.extraction_metadata
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO extraction_runs
+                (submission_id, model_used, input_tokens, output_tokens,
+                 fields_extracted, high_confidence_count, low_confidence_count,
+                 status, completed_at)
+                VALUES (:submission_id, :model, :input_tokens, :output_tokens,
+                        :fields, :high, :low, 'completed', NOW())
+            """),
+            {
+                "submission_id": submission_id,
+                "model": extraction.model_used,
+                "input_tokens": metadata.get("prompt_tokens"),
+                "output_tokens": metadata.get("completion_tokens"),
+                "fields": total_fields,
+                "high": high_conf,
+                "low": low_conf,
+            },
+        )
+
+
 # ───────────── PUBLIC ENTRYPOINT used by ingest_local.py ─────────────
 
 def process_submission(subject: str, email_body: str, sender_email: str, attachments: list[str] | None, use_docupipe: bool = False) -> Any:
@@ -1119,7 +1222,11 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
     """
     attachments = attachments or []
 
-    # Prefer a JSON application attachment if present
+    # Track extraction for provenance saving later
+    extraction_result: ApplicationExtraction | None = None
+    pdf_path: str | None = None
+
+    # Prefer a JSON application attachment if present, otherwise try PDF extraction
     app_data = {}
     for p in attachments:
         if hasattr(p, 'standardized_json') and p.standardized_json:
@@ -1128,6 +1235,20 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
         elif str(p).lower().endswith(".json") and Path(p).exists():
             app_data = load_json(p)
             break
+
+    # If no JSON found, try native PDF extraction
+    if not app_data:
+        for p in attachments:
+            path_str = str(p.path if hasattr(p, 'path') and p.path else p)
+            if path_str.lower().endswith(".pdf") and Path(path_str).exists():
+                try:
+                    extraction_result = extract_from_pdf(path_str)
+                    app_data = extraction_result.to_docupipe_format()
+                    pdf_path = path_str
+                    break
+                except Exception as e:
+                    print(f"[pipeline] PDF extraction failed for {path_str}: {e}")
+                    continue
 
     # Determine applicant
     name, website = extract_applicant_info(app_data)
@@ -1241,6 +1362,14 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
         app_data=app_data,
         broker_info=broker_info,
     )
+
+    # ───────────── Save extraction provenance (if native extraction was used) ─────────────
+    if extraction_result is not None:
+        try:
+            _save_extraction_provenance(sid_str, extraction_result)
+            _save_extraction_run(sid_str, extraction_result)
+        except Exception as e:
+            print(f"[pipeline] Failed to save extraction provenance: {e}")
 
     return sid
 
