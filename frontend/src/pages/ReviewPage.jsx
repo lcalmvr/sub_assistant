@@ -82,10 +82,19 @@ export default function ReviewPage() {
   });
 
   const handleDecision = (decision) => {
-    updateMutation.mutate({
+    const payload = {
       decision_tag: decision,
       decision_reason: decisionReason || null,
-    });
+    };
+
+    // If declining, also update submission status (header pill is source of truth)
+    if (decision === 'decline') {
+      payload.submission_status = 'declined';
+      payload.submission_outcome = 'declined';
+      payload.outcome_reason = decisionReason || 'Declined by underwriter';
+    }
+
+    updateMutation.mutate(payload);
   };
 
   if (isLoading) {

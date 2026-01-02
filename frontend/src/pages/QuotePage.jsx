@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getQuoteOptions,
   getSubmission,
+  updateSubmission,
   createQuoteOption,
   updateQuoteOption,
   deleteQuoteOption,
@@ -30,6 +31,8 @@ import {
   linkEndorsementToQuote,
   unlinkEndorsementFromQuote,
   getSubmissionEndorsements,
+  bindQuoteOption,
+  unbindQuoteOption,
 } from '../api/client';
 import CoverageEditor from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
@@ -873,6 +876,34 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     },
   });
 
+  // Update submission mutation (for policy dates)
+  const updateSubmissionMutation = useMutation({
+    mutationFn: (data) => updateSubmission(submission.id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['submission', submission.id] });
+    },
+  });
+
+  // Bind quote mutation
+  const bindMutation = useMutation({
+    mutationFn: () => bindQuoteOption(quote.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['submission', submission.id] }); // Sync header pill
+      onRefresh?.();
+    },
+  });
+
+  // Unbind quote mutation
+  const unbindMutation = useMutation({
+    mutationFn: () => unbindQuoteOption(quote.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['submission', submission.id] }); // Sync header pill
+      onRefresh?.();
+    },
+  });
+
   // Apply to all quotes mutation
   const applyToAllMutation = useMutation({
     mutationFn: (data) => applyToAllQuotes(quote.id, data),
@@ -1009,6 +1040,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
       queryClient.invalidateQueries({ queryKey: ['quoteDocuments', quote.id] });
       queryClient.invalidateQueries({ queryKey: ['latestDocument', submission.id] });
       queryClient.invalidateQueries({ queryKey: ['submissionDocuments', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['submission', submission.id] }); // Sync header pill (API updates status to 'quoted')
       // Open the PDF in a new tab if available
       if (data.data?.pdf_url) {
         window.open(data.data.pdf_url, '_blank');
@@ -1082,11 +1114,33 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             }}
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           {quote.is_bound ? (
-            <span className="badge badge-bound">BOUND</span>
+            <>
+              <span className="badge badge-bound">BOUND</span>
+              <button
+                onClick={() => unbindMutation.mutate()}
+                disabled={unbindMutation.isPending}
+                className="text-sm text-gray-500 hover:text-red-600 transition-colors"
+                title="Unbind this quote option"
+              >
+                {unbindMutation.isPending ? '...' : 'Unbind'}
+              </button>
+            </>
+          ) : quoteDocuments && quoteDocuments.length > 0 ? (
+            <>
+              <span className="badge badge-quoted">QUOTED</span>
+              <button
+                onClick={() => bindMutation.mutate()}
+                disabled={bindMutation.isPending}
+                className="text-sm text-purple-600 hover:text-purple-800 font-medium transition-colors"
+                title="Bind this quote option"
+              >
+                {bindMutation.isPending ? '...' : 'Bind'}
+              </button>
+            </>
           ) : (
-            <span className="badge badge-quoted">QUOTED</span>
+            <span className="badge badge-draft">DRAFT</span>
           )}
         </div>
       </div>
@@ -1588,25 +1642,67 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="form-label">Effective Date</label>
-            <input
-              type="date"
-              className="form-input bg-gray-50"
-              value={submission.effective_date || ''}
-              readOnly
-              title="Set at submission level"
-            />
-            <p className="text-xs text-gray-500 mt-1">From submission</p>
+            <div className="flex gap-2">
+              <input
+                type="date"
+                className="form-input flex-1"
+                key={`eff-${quote.id}-${submission.effective_date || 'none'}`}
+                defaultValue={submission.effective_date || ''}
+                onBlur={(e) => {
+                  const newDate = e.target.value || null;
+                  if (newDate !== submission.effective_date) {
+                    if (newDate) {
+                      // Calculate expiration as 12 months from effective (timezone-safe)
+                      const [year, month, day] = newDate.split('-').map(Number);
+                      const expYear = year + 1;
+                      const expDate = `${expYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                      updateSubmissionMutation.mutate({
+                        effective_date: newDate,
+                        expiration_date: expDate,
+                      });
+                    } else {
+                      // Clear both dates
+                      updateSubmissionMutation.mutate({
+                        effective_date: null,
+                        expiration_date: null,
+                      });
+                    }
+                  }
+                }}
+              />
+              {submission.effective_date && (
+                <button
+                  type="button"
+                  className="px-2 text-gray-400 hover:text-red-500"
+                  title="Clear dates"
+                  onClick={() => {
+                    updateSubmissionMutation.mutate({
+                      effective_date: null,
+                      expiration_date: null,
+                    });
+                  }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Leave blank for "12 month term"</p>
           </div>
           <div>
             <label className="form-label">Expiration Date</label>
             <input
               type="date"
-              className="form-input bg-gray-50"
-              value={submission.expiration_date || ''}
-              readOnly
-              title="Set at submission level"
+              className="form-input"
+              key={`exp-${quote.id}-${submission.expiration_date || 'none'}`}
+              defaultValue={submission.expiration_date || ''}
+              onBlur={(e) => {
+                const newDate = e.target.value || null;
+                if (newDate !== submission.expiration_date) {
+                  updateSubmissionMutation.mutate({ expiration_date: newDate });
+                }
+              }}
             />
-            <p className="text-xs text-gray-500 mt-1">From submission</p>
+            <p className="text-xs text-gray-500 mt-1">Auto-set from effective</p>
           </div>
         </div>
 

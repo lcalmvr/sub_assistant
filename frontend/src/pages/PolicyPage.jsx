@@ -1321,6 +1321,7 @@ export default function PolicyPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['policy', submissionId] });
       queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['submission', submissionId] }); // Sync header pill
       setShowUnbindConfirm(false);
     },
   });

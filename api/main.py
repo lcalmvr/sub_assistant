@@ -102,6 +102,13 @@ class SubmissionUpdate(BaseModel):
     # Financial
     annual_revenue: Optional[int] = None
     naics_primary_title: Optional[str] = None
+    # Policy dates
+    effective_date: Optional[str] = None  # ISO date string YYYY-MM-DD
+    expiration_date: Optional[str] = None  # ISO date string YYYY-MM-DD
+    # Status fields
+    submission_status: Optional[str] = None  # received, pending_info, quoted, declined
+    submission_outcome: Optional[str] = None  # pending, bound, lost, waiting_for_response, declined
+    outcome_reason: Optional[str] = None  # Required for lost/declined
     # Rating overrides
     hazard_override: Optional[int] = None
     control_overrides: Optional[dict] = None
@@ -116,14 +123,23 @@ def update_submission(submission_id: str, data: SubmissionUpdate):
     """Update a submission."""
     from datetime import datetime
 
-    updates = {k: v for k, v in data.model_dump().items() if v is not None}
-    if not updates:
+    # Use exclude_unset to distinguish "not provided" from "explicitly set to null"
+    # Fields that are explicitly set (even to None) will be included
+    provided_fields = data.model_dump(exclude_unset=True)
+    if not provided_fields:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Build updates - include None values for explicitly provided fields
+    updates = provided_fields
 
     # Auto-set decided_at when decision_tag is provided
     # Note: decided_by is a UUID foreign key, so we skip it for now (no auth)
     if "decision_tag" in updates:
         updates["decided_at"] = datetime.utcnow()
+
+    # Auto-set status_updated_at when status changes
+    if "submission_status" in updates or "submission_outcome" in updates:
+        updates["status_updated_at"] = datetime.utcnow()
 
     set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
     values = list(updates.values()) + [submission_id]
@@ -669,6 +685,15 @@ def bind_quote(quote_id: str):
                 RETURNING id
             """, (datetime.utcnow(), quote_id))
 
+            # Auto-update submission status to quoted/bound
+            cur.execute("""
+                UPDATE submissions
+                SET submission_status = 'quoted',
+                    submission_outcome = 'bound',
+                    status_updated_at = %s
+                WHERE id = %s
+            """, (datetime.utcnow(), submission_id))
+
             # Count linked subjectivities (for informational return)
             cur.execute("""
                 SELECT COUNT(*) as count
@@ -688,6 +713,8 @@ def bind_quote(quote_id: str):
 @app.post("/api/quotes/{quote_id}/unbind")
 def unbind_quote(quote_id: str):
     """Unbind a quote option. Subjectivity status is preserved (tracking is in submission_subjectivities)."""
+    from datetime import datetime
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Get submission_id
@@ -698,6 +725,8 @@ def unbind_quote(quote_id: str):
             if not row:
                 raise HTTPException(status_code=404, detail="Quote not found")
 
+            submission_id = row["submission_id"]
+
             # Unbind the quote
             cur.execute("""
                 UPDATE insurance_towers
@@ -705,6 +734,14 @@ def unbind_quote(quote_id: str):
                 WHERE id = %s
                 RETURNING id
             """, (quote_id,))
+
+            # Auto-update submission outcome to waiting_for_response (keep status as quoted)
+            cur.execute("""
+                UPDATE submissions
+                SET submission_outcome = 'waiting_for_response',
+                    status_updated_at = %s
+                WHERE id = %s
+            """, (datetime.utcnow(), submission_id))
 
             conn.commit()
             return {
@@ -3753,6 +3790,7 @@ def generate_quote_document(quote_id: str):
     """Generate a quote document (PDF) for a quote option."""
     try:
         import sys
+        from datetime import datetime
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from core.document_generator import generate_document
 
@@ -3768,6 +3806,20 @@ def generate_quote_document(quote_id: str):
                     raise HTTPException(status_code=404, detail="Quote not found")
                 submission_id = row["submission_id"]
                 position = row.get("position", "primary")
+
+                # Auto-update submission status to "quoted" if currently received/pending_info
+                cur.execute("""
+                    UPDATE submissions
+                    SET submission_status = 'quoted',
+                        submission_outcome = CASE
+                            WHEN submission_outcome IN ('pending') THEN 'waiting_for_response'
+                            ELSE submission_outcome
+                        END,
+                        status_updated_at = %s
+                    WHERE id = %s
+                    AND submission_status IN ('received', 'pending_info')
+                """, (datetime.utcnow(), submission_id))
+                conn.commit()
 
         # Determine doc type based on position
         doc_type = "quote_excess" if position == "excess" else "quote_primary"
