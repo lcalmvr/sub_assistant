@@ -61,7 +61,7 @@ def put_bytes(key: str, data: bytes, content_type: str | None = None) -> str:
     """Upload bytes to storage. Returns the storage key."""
     sb = require_sb()
     ct = content_type or mimetypes.guess_type(key)[0] or "application/octet-stream"
-    sb.storage.from_(_BUCKET).upload(key, data, {"contentType": ct, "upsert": True})
+    sb.storage.from_(_BUCKET).upload(key, data, {"content-type": ct, "upsert": "true"})
     return key
 
 
