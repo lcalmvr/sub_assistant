@@ -114,20 +114,20 @@ function FieldRow({ fieldName, extraction, onShowSource, onEdit }) {
         )}
       </div>
 
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-        {extraction.source_page && (
+      <div className="flex items-center gap-1 ml-2">
+        {extraction.page && (
           <button
-            onClick={() => onShowSource?.(extraction.source_page)}
-            className="text-xs px-2 py-1 text-purple-600 hover:bg-purple-50 rounded"
-            title={`View source on page ${extraction.source_page}`}
+            onClick={() => onShowSource?.(extraction.page)}
+            className="text-xs px-2 py-1 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded"
+            title={`View source on page ${extraction.page}`}
           >
-            p.{extraction.source_page}
+            p.{extraction.page}
           </button>
         )}
         {onEdit && !isEditing && (
           <button
             onClick={handleStartEdit}
-            className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded"
+            className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
           >
             Edit
           </button>

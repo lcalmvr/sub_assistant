@@ -406,7 +406,7 @@ export default function ReviewPage() {
             </div>
           </div>
 
-          <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x`} style={{ height: '500px' }}>
+          <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x overflow-hidden`} style={{ height: '600px' }}>
             {/* Document Viewer */}
             {(viewMode === 'split' || viewMode === 'documents') && (
               <div className="flex flex-col h-full">
@@ -477,12 +477,14 @@ export default function ReviewPage() {
 
             {/* Extraction Panel */}
             {(viewMode === 'split' || viewMode === 'extractions') && (
-              <ExtractionPanel
-                extractions={extractions?.sections}
-                isLoading={extractionsLoading}
-                onShowSource={handleShowSource}
-                className="h-full"
-              />
+              <div className="h-full overflow-hidden">
+                <ExtractionPanel
+                  extractions={extractions?.sections}
+                  isLoading={extractionsLoading}
+                  onShowSource={handleShowSource}
+                  className="h-full"
+                />
+              </div>
             )}
           </div>
         </div>
