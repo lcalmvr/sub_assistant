@@ -781,9 +781,9 @@ def get_latest_quote_document(submission_id: str):
             return row if row else None
 
 
-@app.get("/api/submissions/{submission_id}/documents")
-def get_submission_documents(submission_id: str):
-    """Get all quote documents for a submission (across all options)."""
+@app.get("/api/submissions/{submission_id}/policy-documents")
+def get_submission_policy_documents(submission_id: str):
+    """Get all generated quote/binder documents for a submission."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""

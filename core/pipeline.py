@@ -1224,6 +1224,86 @@ def _save_extraction_run(
         )
 
 
+# ───────────── Document Record Saving ─────────────
+
+def _save_document_records(
+    submission_id: str,
+    document_classifications: dict,
+) -> None:
+    """
+    Save document metadata to the documents table for UI display.
+    Maps document classification types to user-friendly document types.
+    """
+    if not engine:
+        return
+
+    tables = _existing_tables()
+    if "documents" not in tables:
+        return
+
+    # Map DocumentType enum to user-friendly types for the UI
+    type_mapping = {
+        "application_supplemental": "Application Form",
+        "application_acord": "Application Form",
+        "loss_runs": "Loss Run",
+        "quote": "Quote",
+        "financial": "Financial Statement",
+        "other": "Other",
+    }
+
+    with engine.begin() as conn:
+        for file_path, classification in document_classifications.items():
+            try:
+                path = Path(file_path)
+                filename = path.name
+                doc_type = type_mapping.get(classification.document_type.value, "Other")
+
+                # Get page count if PDF
+                page_count = 1
+                if path.suffix.lower() == ".pdf" and path.exists():
+                    try:
+                        import fitz
+                        doc = fitz.open(str(path))
+                        page_count = len(doc)
+                        doc.close()
+                    except Exception:
+                        pass
+
+                # Mark applications as priority
+                is_priority = classification.document_type.value in (
+                    "application_supplemental", "application_acord"
+                )
+
+                # Build metadata
+                doc_metadata = {
+                    "classification": classification.document_type.value,
+                    "classification_confidence": classification.confidence,
+                    "file_path": str(path),
+                    "ingest_source": "native_pipeline",
+                }
+
+                conn.execute(
+                    text("""
+                        INSERT INTO documents
+                        (submission_id, filename, document_type, page_count,
+                         is_priority, doc_metadata, created_at)
+                        VALUES (:sid, :filename, :doc_type, :page_count,
+                                :is_priority, :metadata, NOW())
+                    """),
+                    {
+                        "sid": submission_id,
+                        "filename": filename,
+                        "doc_type": doc_type,
+                        "page_count": page_count,
+                        "is_priority": is_priority,
+                        "metadata": json.dumps(doc_metadata),
+                    },
+                )
+                print(f"[pipeline] Saved document: {filename} ({doc_type})")
+            except Exception as e:
+                print(f"[pipeline] Failed to save document {file_path}: {e}")
+
+
 # ───────────── Application Data Merge Helper ─────────────
 
 def _merge_application_data(primary: dict, supplemental: dict) -> dict:
@@ -1738,6 +1818,13 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
             _save_extraction_run(sid_str, extraction_result)
         except Exception as e:
             print(f"[pipeline] Failed to save extraction provenance: {e}")
+
+    # ───────────── Save document records for UI display ─────────────
+    if document_classifications:
+        try:
+            _save_document_records(sid_str, document_classifications)
+        except Exception as e:
+            print(f"[pipeline] Failed to save document records: {e}")
 
     # ───────────── Process other document types ─────────────
     if document_classifications:
