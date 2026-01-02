@@ -1,6 +1,6 @@
 # Review & UW Page Redesign Roadmap
 
-> **Status**: Phase 1 Complete
+> **Status**: Phase 2 Complete
 > **Created**: 2025-01-02
 > **Updated**: 2025-01-02
 > **Target Architecture**: Document-Centric Review with Side-by-Side Intelligence
@@ -338,47 +338,43 @@ GET  /api/submissions/:id/documents/:doc_id/content
 POST /api/feedback  (for edit tracking)
 ```
 
-### Phase 2: Native Document Ingestion
+### Phase 2: Native Document Ingestion ✅ COMPLETE
 
-**Goal**: Replace Docupipe with Claude-based extraction
+**Goal**: Replace Docupipe with native extraction
 
-#### 2.1 Extraction Pipeline
-- Build Claude-based PDF → JSON extractor
-- Define extraction schema matching current `standardized_json` format
-- Implement confidence scoring per field
-- Store extraction provenance (page, bounding box, source text)
+**Completed 2025-01-02:**
 
-#### 2.2 Database Schema Extensions
-```sql
--- Field-level extraction provenance
-CREATE TABLE extraction_provenance (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  submission_id UUID REFERENCES submissions(id),
-  field_name TEXT NOT NULL,
-  extracted_value JSONB,
-  confidence DECIMAL(3,2),
-  source_document_id UUID REFERENCES documents(id),
-  source_page INTEGER,
-  source_text TEXT,
-  source_bbox JSONB,  -- {x, y, width, height}
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+#### 2.1 Extraction Pipeline ✅
+- Built OpenAI gpt-4o based PDF → JSON extractor (`ai/application_extractor.py`)
+- Extraction schema matches Docupipe `standardized_json` format
+- Per-field confidence scoring (0.0-1.0)
+- Source provenance tracking (page number, source text)
+- Tested with real cyber applications (Axis, At Bay) - 22-24 high-confidence fields extracted
 
--- Extraction corrections (for feedback loop)
-CREATE TABLE extraction_corrections (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  provenance_id UUID REFERENCES extraction_provenance(id),
-  original_value JSONB,
-  corrected_value JSONB,
-  corrected_by TEXT,
-  corrected_at TIMESTAMPTZ DEFAULT NOW()
-);
+#### 2.2 Database Schema ✅
+- `extraction_provenance` - per-field extraction tracking with confidence and source
+- `extraction_corrections` - human corrections for feedback loop
+- `extraction_runs` - extraction job monitoring (tokens, field counts)
+- Views: `v_low_confidence_extractions`, `v_extraction_quality`
+- Migration: `db_setup/create_extraction_provenance.sql`
+
+#### 2.3 Pipeline Integration ✅
+- `core/pipeline.py` updated to use native extraction when no JSON available
+- Falls back gracefully if extraction fails
+- Saves provenance records automatically
+- Backwards compatible with existing Docupipe JSON inputs
+
+#### 2.4 API Endpoints ✅
+```
+GET  /api/submissions/:id/extractions  - Get extraction provenance by section
+POST /api/submissions/:id/extract      - Trigger extraction on demand
+POST /api/extractions/:id/correct      - Record human corrections
 ```
 
-#### 2.3 Multi-Document Handling
-- Merge extractions from multiple documents
+#### 2.5 Deferred
+- Multi-document merging (application + loss runs + email)
+- Bounding box extraction (requires PDF.js integration)
 - Conflict detection between documents
-- Priority rules (application > loss runs > email)
 
 ### Phase 3: Document-Centric Review
 
