@@ -1,83 +1,269 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 /**
- * RetroScheduleEditor - Editable table for per-coverage retroactive dates
+ * RetroScheduleEditor - Smart retro schedule with shortcut buttons
  *
  * Props:
- *   - schedule: Array of { coverage, limit?, retro } objects
- *   - notes: String, free-text retro notes
+ *   - schedule: Array of { coverage, retro, date?, custom_text? }
+ *   - notes: String
+ *   - position: 'primary' | 'excess'
+ *   - coverages: Object with coverage flags (from quote.coverages)
  *   - onChange: (schedule, notes) => void
  *   - readOnly: boolean
  */
-export default function RetroScheduleEditor({ schedule = [], notes = '', onChange, readOnly = false }) {
-  const [rows, setRows] = useState(schedule.length > 0 ? schedule : [{ coverage: '', limit: '', retro: '' }]);
+
+// Retro type options
+const RETRO_TYPES = {
+  full_prior_acts: { label: 'Full Prior Acts', short: 'FPA' },
+  follow_form: { label: 'Follow Form', short: 'FF', excessOnly: true },
+  inception: { label: 'Inception', short: 'Inc' },
+  date: { label: 'Date', short: 'Date' },
+  custom: { label: 'Custom', short: 'Custom' },
+};
+
+// Coverage type display names
+const COVERAGE_LABELS = {
+  cyber: 'Cyber',
+  tech_eo: 'Tech E&O',
+  do: 'D&O',
+  epl: 'EPL',
+  fiduciary: 'Fiduciary',
+};
+
+// Detect enabled coverages from quote coverages object
+function detectCoverages(coveragesObj, policyForm) {
+  const enabled = [];
+
+  // Cyber is always present for cyber forms
+  if (policyForm?.includes('cyber') || !policyForm) {
+    enabled.push('cyber');
+  }
+
+  // Tech E&O if enabled
+  if (coveragesObj?.aggregate_coverages?.tech_eo > 0 || policyForm?.includes('tech')) {
+    enabled.push('tech_eo');
+  }
+
+  // Add other coverage types as needed
+  // D&O, EPL, Fiduciary would be detected similarly
+
+  return enabled;
+}
+
+// Get smart defaults based on position and coverages
+function getSmartDefaults(position, enabledCoverages) {
+  const defaults = [];
+
+  enabledCoverages.forEach(cov => {
+    let retro = 'full_prior_acts';
+
+    if (position === 'excess') {
+      retro = cov === 'cyber' ? 'follow_form' : 'inception';
+    } else {
+      // Primary
+      retro = cov === 'cyber' ? 'full_prior_acts' : 'inception';
+    }
+
+    defaults.push({ coverage: cov, retro });
+  });
+
+  return defaults;
+}
+
+// Format retro value for display
+function formatRetroDisplay(entry) {
+  if (!entry) return '—';
+
+  switch (entry.retro) {
+    case 'full_prior_acts':
+      return 'Full Prior Acts';
+    case 'follow_form':
+      return 'Follow Form';
+    case 'inception':
+      return 'Inception';
+    case 'date':
+      return entry.date || 'Date not set';
+    case 'custom':
+      return entry.custom_text || 'Custom';
+    default:
+      return entry.retro || '—';
+  }
+}
+
+export default function RetroScheduleEditor({
+  schedule = [],
+  notes = '',
+  position = 'primary',
+  coverages = {},
+  policyForm = '',
+  onChange,
+  readOnly = false
+}) {
+  // Detect which coverages are enabled
+  const enabledCoverages = useMemo(() =>
+    detectCoverages(coverages, policyForm),
+    [coverages, policyForm]
+  );
+
+  // Get smart defaults
+  const smartDefaults = useMemo(() =>
+    getSmartDefaults(position, enabledCoverages),
+    [position, enabledCoverages]
+  );
+
+  // Initialize schedule from props or smart defaults
+  const [localSchedule, setLocalSchedule] = useState(() => {
+    if (schedule && schedule.length > 0) {
+      return schedule;
+    }
+    return smartDefaults;
+  });
+
   const [localNotes, setLocalNotes] = useState(notes || '');
+  const [customDate, setCustomDate] = useState({});
+  const [customText, setCustomText] = useState({});
+
+  // Check if using defaults
+  const isUsingDefaults = useMemo(() => {
+    if (localSchedule.length !== smartDefaults.length) return false;
+    return smartDefaults.every(def => {
+      const entry = localSchedule.find(e => e.coverage === def.coverage);
+      return entry && entry.retro === def.retro;
+    });
+  }, [localSchedule, smartDefaults]);
 
   // Sync with external schedule prop
   useEffect(() => {
     if (schedule && schedule.length > 0) {
-      setRows(schedule);
+      setLocalSchedule(schedule);
+      // Initialize custom fields
+      const dates = {};
+      const texts = {};
+      schedule.forEach(entry => {
+        if (entry.date) dates[entry.coverage] = entry.date;
+        if (entry.custom_text) texts[entry.coverage] = entry.custom_text;
+      });
+      setCustomDate(dates);
+      setCustomText(texts);
+    } else if (smartDefaults.length > 0) {
+      setLocalSchedule(smartDefaults);
     }
-  }, [schedule]);
+  }, [schedule, smartDefaults]);
 
   useEffect(() => {
     setLocalNotes(notes || '');
   }, [notes]);
 
-  const handleRowChange = (index, field, value) => {
-    const newRows = [...rows];
-    newRows[index] = { ...newRows[index], [field]: value };
-    setRows(newRows);
-  };
+  const handleRetroChange = (coverage, retroType) => {
+    const newSchedule = localSchedule.map(entry => {
+      if (entry.coverage === coverage) {
+        const updated = { coverage, retro: retroType };
+        if (retroType === 'date') {
+          updated.date = customDate[coverage] || '';
+        } else if (retroType === 'custom') {
+          updated.custom_text = customText[coverage] || '';
+        }
+        return updated;
+      }
+      return entry;
+    });
 
-  const addRow = () => {
-    setRows([...rows, { coverage: '', limit: '', retro: '' }]);
-  };
-
-  const removeRow = (index) => {
-    if (rows.length > 1) {
-      const newRows = rows.filter((_, i) => i !== index);
-      setRows(newRows);
+    // If coverage not in schedule, add it
+    if (!newSchedule.find(e => e.coverage === coverage)) {
+      const newEntry = { coverage, retro: retroType };
+      if (retroType === 'date') newEntry.date = customDate[coverage] || '';
+      if (retroType === 'custom') newEntry.custom_text = customText[coverage] || '';
+      newSchedule.push(newEntry);
     }
+
+    setLocalSchedule(newSchedule);
+  };
+
+  const handleDateChange = (coverage, date) => {
+    setCustomDate(prev => ({ ...prev, [coverage]: date }));
+    const newSchedule = localSchedule.map(entry => {
+      if (entry.coverage === coverage && entry.retro === 'date') {
+        return { ...entry, date };
+      }
+      return entry;
+    });
+    setLocalSchedule(newSchedule);
+  };
+
+  const handleCustomTextChange = (coverage, text) => {
+    setCustomText(prev => ({ ...prev, [coverage]: text }));
+    const newSchedule = localSchedule.map(entry => {
+      if (entry.coverage === coverage && entry.retro === 'custom') {
+        return { ...entry, custom_text: text };
+      }
+      return entry;
+    });
+    setLocalSchedule(newSchedule);
+  };
+
+  const handleResetDefaults = () => {
+    setLocalSchedule(smartDefaults);
+    setCustomDate({});
+    setCustomText({});
   };
 
   const handleSave = () => {
-    // Filter out empty rows
-    const validRows = rows.filter(r => r.coverage?.trim() || r.retro?.trim());
-    onChange(validRows.length > 0 ? validRows : null, localNotes || null);
+    // Clean up schedule - remove empty custom fields
+    const cleanSchedule = localSchedule.map(entry => {
+      const clean = { coverage: entry.coverage, retro: entry.retro };
+      if (entry.retro === 'date' && entry.date) clean.date = entry.date;
+      if (entry.retro === 'custom' && entry.custom_text) clean.custom_text = entry.custom_text;
+      return clean;
+    });
+    onChange(cleanSchedule, localNotes || null);
   };
 
+  const getEntryForCoverage = (cov) => {
+    return localSchedule.find(e => e.coverage === cov) || { coverage: cov, retro: null };
+  };
+
+  // Read-only display
   if (readOnly) {
-    // Read-only display
-    if ((!schedule || schedule.length === 0) && !notes) {
-      return <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>No retro schedule</span>;
+    if (enabledCoverages.length === 0) {
+      return <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>No coverages configured</span>;
     }
 
     return (
       <div>
-        {schedule && schedule.length > 0 && (
-          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, color: '#6b7280' }}>Coverage</th>
-                <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, color: '#6b7280' }}>Limit</th>
-                <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, color: '#6b7280' }}>Retro</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schedule.map((row, i) => (
-                <tr key={i}>
-                  <td style={{ padding: '4px 8px' }}>{row.coverage}</td>
-                  <td style={{ padding: '4px 8px', color: row.limit ? 'inherit' : '#9ca3af' }}>{row.limit || '-'}</td>
-                  <td style={{ padding: '4px 8px' }}>{row.retro}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {enabledCoverages.map(cov => {
+            const entry = getEntryForCoverage(cov);
+            return (
+              <div key={cov} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontWeight: 500, minWidth: 80 }}>{COVERAGE_LABELS[cov]}</span>
+                <span style={{
+                  padding: '2px 10px',
+                  background: '#f3f4f6',
+                  borderRadius: 12,
+                  fontSize: 13,
+                }}>
+                  {formatRetroDisplay(entry)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {localNotes && (
+          <p style={{ fontSize: 12, color: '#6b7280', marginTop: 12, fontStyle: 'italic' }}>
+            {localNotes}
+          </p>
         )}
-        {notes && (
-          <p style={{ fontSize: 12, color: '#6b7280', marginTop: 8, fontStyle: 'italic' }}>{notes}</p>
-        )}
+        <div style={{ marginTop: 8 }}>
+          <span style={{
+            fontSize: 11,
+            padding: '2px 8px',
+            borderRadius: 10,
+            background: isUsingDefaults ? '#f3f4f6' : '#f3e8ff',
+            color: isUsingDefaults ? '#6b7280' : '#7c3aed',
+          }}>
+            {isUsingDefaults ? 'Using Defaults' : 'Customized'}
+          </span>
+        </div>
       </div>
     );
   }
@@ -85,132 +271,154 @@ export default function RetroScheduleEditor({ schedule = [], notes = '', onChang
   // Editable mode
   return (
     <div>
-      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, color: '#6b7280', width: '35%' }}>Coverage</th>
-            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, color: '#6b7280', width: '25%' }}>Limit</th>
-            <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, color: '#6b7280', width: '30%' }}>Retro</th>
-            <th style={{ width: '10%' }}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i}>
-              <td style={{ padding: '4px 8px' }}>
-                <input
-                  type="text"
-                  value={row.coverage || ''}
-                  onChange={(e) => handleRowChange(i, 'coverage', e.target.value)}
-                  placeholder="e.g., Cyber"
-                  style={{
-                    width: '100%',
-                    padding: '6px 8px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: 4,
-                    fontSize: 13,
-                  }}
-                />
-              </td>
-              <td style={{ padding: '4px 8px' }}>
-                <input
-                  type="text"
-                  value={row.limit || ''}
-                  onChange={(e) => handleRowChange(i, 'limit', e.target.value)}
-                  placeholder="e.g., $1M"
-                  style={{
-                    width: '100%',
-                    padding: '6px 8px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: 4,
-                    fontSize: 13,
-                  }}
-                />
-              </td>
-              <td style={{ padding: '4px 8px' }}>
-                <input
-                  type="text"
-                  value={row.retro || ''}
-                  onChange={(e) => handleRowChange(i, 'retro', e.target.value)}
-                  placeholder="Full Prior Acts"
-                  style={{
-                    width: '100%',
-                    padding: '6px 8px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: 4,
-                    fontSize: 13,
-                  }}
-                />
-              </td>
-              <td style={{ padding: '4px 8px', textAlign: 'center' }}>
-                {rows.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeRow(i)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#dc2626',
-                      cursor: 'pointer',
-                      fontSize: 16,
-                      padding: '2px 6px',
-                    }}
-                    title="Remove row"
-                  >
-                    x
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {enabledCoverages.map(cov => {
+          const entry = getEntryForCoverage(cov);
+          const currentRetro = entry.retro;
 
-      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-        <button
-          type="button"
-          onClick={addRow}
-          style={{
-            padding: '4px 12px',
-            background: '#f3f4f6',
-            border: '1px solid #d1d5db',
-            borderRadius: 4,
-            fontSize: 12,
-            cursor: 'pointer',
-          }}
-        >
-          + Add Row
-        </button>
+          return (
+            <div key={cov} style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 12,
+              padding: '8px 0',
+              borderBottom: '1px solid #f3f4f6',
+            }}>
+              <span style={{ fontWeight: 500, minWidth: 80, paddingTop: 6 }}>
+                {COVERAGE_LABELS[cov]}
+              </span>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: 1 }}>
+                {Object.entries(RETRO_TYPES).map(([type, config]) => {
+                  // Skip Follow Form for primary
+                  if (config.excessOnly && position !== 'excess') return null;
+
+                  const isSelected = currentRetro === type;
+
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handleRetroChange(cov, type)}
+                      style={{
+                        padding: '4px 12px',
+                        border: isSelected ? '2px solid #7c3aed' : '1px solid #d1d5db',
+                        borderRadius: 16,
+                        background: isSelected ? '#f3e8ff' : '#fff',
+                        color: isSelected ? '#7c3aed' : '#374151',
+                        fontSize: 13,
+                        cursor: 'pointer',
+                        fontWeight: isSelected ? 500 : 400,
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {config.label}
+                    </button>
+                  );
+                })}
+
+                {/* Date picker when date is selected */}
+                {currentRetro === 'date' && (
+                  <input
+                    type="date"
+                    value={customDate[cov] || entry.date || ''}
+                    onChange={(e) => handleDateChange(cov, e.target.value)}
+                    style={{
+                      padding: '4px 8px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: 6,
+                      fontSize: 13,
+                    }}
+                  />
+                )}
+
+                {/* Custom text input when custom is selected */}
+                {currentRetro === 'custom' && (
+                  <input
+                    type="text"
+                    value={customText[cov] || entry.custom_text || ''}
+                    onChange={(e) => handleCustomTextChange(cov, e.target.value)}
+                    placeholder="e.g., to match expiring"
+                    style={{
+                      padding: '4px 8px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: 6,
+                      fontSize: 13,
+                      minWidth: 150,
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      <div style={{ marginTop: 12 }}>
-        <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 4 }}>Notes</label>
+      {/* Notes */}
+      <div style={{ marginTop: 16 }}>
+        <label style={{ display: 'block', fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+          Notes
+        </label>
         <textarea
           value={localNotes}
           onChange={(e) => setLocalNotes(e.target.value)}
-          placeholder="Additional context about retro dates..."
+          placeholder="Additional context..."
           rows={2}
           style={{
             width: '100%',
             padding: '8px',
             border: '1px solid #d1d5db',
-            borderRadius: 4,
+            borderRadius: 6,
             fontSize: 13,
             resize: 'vertical',
           }}
         />
       </div>
 
-      <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+      {/* Actions */}
+      <div style={{
+        marginTop: 16,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}>
+        <div>
+          <button
+            type="button"
+            onClick={handleResetDefaults}
+            style={{
+              padding: '6px 12px',
+              background: '#f3f4f6',
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+              fontSize: 12,
+              cursor: 'pointer',
+              color: '#6b7280',
+            }}
+          >
+            Reset to Defaults
+          </button>
+          <span style={{
+            marginLeft: 12,
+            fontSize: 11,
+            padding: '2px 8px',
+            borderRadius: 10,
+            background: isUsingDefaults ? '#f3f4f6' : '#f3e8ff',
+            color: isUsingDefaults ? '#6b7280' : '#7c3aed',
+          }}>
+            {isUsingDefaults ? 'Using Defaults' : 'Customized'}
+          </span>
+        </div>
+
         <button
           type="button"
           onClick={handleSave}
           style={{
             padding: '6px 16px',
-            background: '#2563eb',
+            background: '#7c3aed',
             color: '#fff',
             border: 'none',
-            borderRadius: 4,
+            borderRadius: 6,
             fontSize: 13,
             cursor: 'pointer',
           }}

@@ -415,9 +415,12 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     # Use exclude_unset to only get fields that were explicitly provided
     # This allows sending null to clear fields like option_descriptor
     updates = {}
+    retro_schedule_raw = None
     for k, v in data.model_dump(exclude_unset=True).items():
         # Convert dict/list to JSON string for JSONB columns
         if k in ('tower_json', 'coverages', 'sublimits', 'endorsements', 'subjectivities', 'retro_schedule') and v is not None:
+            if k == 'retro_schedule':
+                retro_schedule_raw = v  # Keep raw for checking
             updates[k] = json.dumps(v)
         else:
             updates[k] = v
@@ -428,16 +431,51 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
     values = list(updates.values()) + [quote_id]
 
+    prior_acts_attached = False
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"UPDATE insurance_towers SET {set_clause}, updated_at = NOW() WHERE id = %s RETURNING id",
+                f"UPDATE insurance_towers SET {set_clause}, updated_at = NOW() WHERE id = %s RETURNING id, position, submission_id",
                 values
             )
-            if cur.fetchone() is None:
+            result = cur.fetchone()
+            if result is None:
                 raise HTTPException(status_code=404, detail="Quote not found")
+
+            # Auto-attach Prior Acts Endorsement for excess with restricted retro
+            if retro_schedule_raw and result.get('position') == 'excess':
+                needs_prior_acts = any(
+                    entry.get('retro') not in ('full_prior_acts', 'follow_form')
+                    for entry in retro_schedule_raw
+                    if entry.get('retro')
+                )
+                if needs_prior_acts:
+                    # Get PA-001 endorsement ID
+                    cur.execute("""
+                        SELECT id FROM document_library
+                        WHERE code = 'PA-001' AND status = 'active'
+                    """)
+                    pa_row = cur.fetchone()
+                    if pa_row:
+                        # Check if already attached
+                        cur.execute("""
+                            SELECT 1 FROM quote_endorsements
+                            WHERE quote_id = %s AND library_id = %s
+                        """, (quote_id, pa_row['id']))
+                        if not cur.fetchone():
+                            # Auto-attach
+                            cur.execute("""
+                                INSERT INTO quote_endorsements (quote_id, library_id, auto_attached)
+                                VALUES (%s, %s, TRUE)
+                            """, (quote_id, pa_row['id']))
+                            prior_acts_attached = True
+
             conn.commit()
-    return {"status": "updated"}
+
+    response = {"status": "updated"}
+    if prior_acts_attached:
+        response["prior_acts_endorsement_attached"] = True
+    return response
 
 
 class ApplyToAllRequest(BaseModel):

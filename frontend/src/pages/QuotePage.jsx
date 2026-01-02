@@ -744,8 +744,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const hasAnyQs = (quote.tower_json || []).some(l => l.quota_share);
   const [showQsColumn, setShowQsColumn] = useState(hasAnyQs);
 
-  // Dates state
-  const [retroactiveDate, setRetroactiveDate] = useState(quote.retroactive_date || '');
+  // Retro schedule editing state
   const [editingRetroSchedule, setEditingRetroSchedule] = useState(false);
 
   // Subjectivities UI state
@@ -763,8 +762,8 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     setTowerLayers(quote.tower_json || []);
     setEditingTower(false);
     setEditedDescriptor(quote.option_descriptor || '');
-    setRetroactiveDate(quote.retroactive_date || '');
     setSelectedEndorsement('');
+    setEditingRetroSchedule(false);
     // Auto-show QS column if any layer has quota share
     setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
   }, [quote.id]);
@@ -1581,10 +1580,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
       </div>
       )}
 
-      {/* Policy Dates */}
+      {/* Policy Dates & Retro */}
       <div className="card">
-        <h4 className="form-section-title">Policy Dates</h4>
-        <div className="grid grid-cols-3 gap-4 mb-4">
+        <h4 className="form-section-title">Policy Dates & Retro</h4>
+
+        {/* Policy Period */}
+        <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="form-label">Effective Date</label>
             <input
@@ -1607,34 +1608,19 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             />
             <p className="text-xs text-gray-500 mt-1">From submission</p>
           </div>
-          <div>
-            <label className="form-label">Simple Retro Date</label>
-            <input
-              type="date"
-              className="form-input"
-              value={retroactiveDate}
-              onChange={(e) => setRetroactiveDate(e.target.value)}
-              onBlur={() => {
-                if (retroactiveDate !== (quote.retroactive_date || '')) {
-                  updateMutation.mutate({ retroactive_date: retroactiveDate || null });
-                }
-              }}
-            />
-            <p className="text-xs text-gray-500 mt-1">Single date for all coverages</p>
-          </div>
         </div>
 
-        {/* Retro Schedule - Per-coverage retro dates */}
+        {/* Retro Schedule */}
         <div className="border-t pt-4">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h5 className="font-medium text-sm">Retro Schedule</h5>
-              <p className="text-xs text-gray-500">Per-coverage retroactive dates (for complex retros)</p>
+              <h5 className="font-medium text-sm">Retroactive Dates</h5>
+              <p className="text-xs text-gray-500">Per-coverage retro schedule</p>
             </div>
             <div className="flex gap-2">
-              {!editingRetroSchedule && (quote.retro_schedule?.length > 0 || quote.retro_notes) && (
+              {!editingRetroSchedule && (
                 <button
-                  className="text-xs px-3 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
+                  className="text-xs px-3 py-1 bg-purple-50 text-purple-700 rounded hover:bg-purple-100"
                   onClick={() => {
                     applyToAllQuotes(quote.id, { retro_schedule: true }).then(() => {
                       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
@@ -1648,27 +1634,23 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                 className="text-xs px-3 py-1 border rounded hover:bg-gray-50"
                 onClick={() => setEditingRetroSchedule(!editingRetroSchedule)}
               >
-                {editingRetroSchedule ? 'Cancel' : (quote.retro_schedule?.length > 0 ? 'Edit' : '+ Add')}
+                {editingRetroSchedule ? 'Cancel' : 'Edit'}
               </button>
             </div>
           </div>
 
-          {editingRetroSchedule ? (
-            <RetroScheduleEditor
-              schedule={quote.retro_schedule || []}
-              notes={quote.retro_notes || ''}
-              onChange={(schedule, notes) => {
-                updateMutation.mutate({ retro_schedule: schedule, retro_notes: notes });
-                setEditingRetroSchedule(false);
-              }}
-            />
-          ) : (
-            <RetroScheduleEditor
-              schedule={quote.retro_schedule || []}
-              notes={quote.retro_notes || ''}
-              readOnly
-            />
-          )}
+          <RetroScheduleEditor
+            schedule={quote.retro_schedule || []}
+            notes={quote.retro_notes || ''}
+            position={position}
+            coverages={quote.coverages || {}}
+            policyForm={quote.policy_form || ''}
+            onChange={(schedule, notes) => {
+              updateMutation.mutate({ retro_schedule: schedule, retro_notes: notes });
+              setEditingRetroSchedule(false);
+            }}
+            readOnly={!editingRetroSchedule}
+          />
         </div>
       </div>
 
