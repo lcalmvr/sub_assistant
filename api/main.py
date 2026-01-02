@@ -313,6 +313,243 @@ def get_submission_documents(submission_id: str):
 
 
 # ─────────────────────────────────────────────────────────────
+# Document Extraction Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/extractions")
+def get_extractions(submission_id: str):
+    """Get extraction provenance data for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get extraction quality summary
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total_fields,
+                    COUNT(*) FILTER (WHERE is_present) as fields_present,
+                    COUNT(*) FILTER (WHERE confidence >= 0.8) as high_confidence,
+                    COUNT(*) FILTER (WHERE confidence < 0.5 AND is_present) as low_confidence,
+                    ROUND(AVG(confidence)::numeric, 2) as avg_confidence
+                FROM extraction_provenance
+                WHERE submission_id = %s
+            """, (submission_id,))
+            summary = cur.fetchone()
+
+            # Get all extractions grouped by section
+            cur.execute("""
+                SELECT
+                    field_name,
+                    extracted_value,
+                    confidence,
+                    source_text,
+                    source_page,
+                    is_present,
+                    model_used,
+                    created_at
+                FROM extraction_provenance
+                WHERE submission_id = %s
+                ORDER BY field_name
+            """, (submission_id,))
+            rows = cur.fetchall()
+
+            # Group by section
+            sections = {}
+            for row in rows:
+                parts = row["field_name"].split(".", 1)
+                section = parts[0] if len(parts) > 1 else "other"
+                field = parts[1] if len(parts) > 1 else parts[0]
+
+                if section not in sections:
+                    sections[section] = {}
+
+                sections[section][field] = {
+                    "value": row["extracted_value"],
+                    "confidence": float(row["confidence"]) if row["confidence"] else None,
+                    "source_text": row["source_text"],
+                    "page": row["source_page"],
+                    "is_present": row["is_present"],
+                }
+
+            return {
+                "has_extractions": len(rows) > 0,
+                "summary": {
+                    "total_fields": summary["total_fields"] if summary else 0,
+                    "fields_present": summary["fields_present"] if summary else 0,
+                    "high_confidence": summary["high_confidence"] if summary else 0,
+                    "low_confidence": summary["low_confidence"] if summary else 0,
+                    "avg_confidence": float(summary["avg_confidence"]) if summary and summary["avg_confidence"] else None,
+                },
+                "sections": sections,
+            }
+
+
+@app.post("/api/submissions/{submission_id}/extract")
+def trigger_extraction(submission_id: str, document_id: Optional[str] = None):
+    """
+    Trigger native document extraction for a submission.
+
+    If document_id is provided, extract from that specific document.
+    Otherwise, extract from the primary document.
+    """
+    from datetime import datetime
+    import os
+    import tempfile
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Find the document to extract from
+            if document_id:
+                cur.execute("""
+                    SELECT id, filename, file_path, storage_path
+                    FROM documents
+                    WHERE id = %s AND submission_id = %s
+                """, (document_id, submission_id))
+            else:
+                # Get the primary document (is_priority=true) or most recent
+                cur.execute("""
+                    SELECT id, filename, file_path, storage_path
+                    FROM documents
+                    WHERE submission_id = %s
+                    ORDER BY is_priority DESC, created_at DESC
+                    LIMIT 1
+                """, (submission_id,))
+
+            doc = cur.fetchone()
+            if not doc:
+                raise HTTPException(status_code=404, detail="No document found for extraction")
+
+            # Determine file path
+            file_path = doc.get("file_path") or doc.get("storage_path")
+            if not file_path or not os.path.exists(file_path):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Document file not found on disk. Re-upload the document."
+                )
+
+            # Run extraction
+            try:
+                from ai.application_extractor import extract_from_pdf
+
+                start_time = datetime.utcnow()
+                result = extract_from_pdf(file_path)
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+                # Save extraction run
+                cur.execute("""
+                    INSERT INTO extraction_runs
+                    (submission_id, model_used, input_tokens, output_tokens, duration_ms,
+                     fields_extracted, high_confidence_count, low_confidence_count, status, completed_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'completed', NOW())
+                    RETURNING id
+                """, (
+                    submission_id,
+                    result.model_used,
+                    result.extraction_metadata.get("input_tokens"),
+                    result.extraction_metadata.get("output_tokens"),
+                    duration_ms,
+                    sum(len(fields) for fields in result.data.values()),
+                    sum(1 for s in result.data.values() for f in s.values() if f.confidence >= 0.8),
+                    sum(1 for s in result.data.values() for f in s.values() if f.confidence < 0.5 and f.is_present),
+                ))
+                run_id = cur.fetchone()["id"]
+
+                # Save provenance records
+                for record in result.to_provenance_records(submission_id):
+                    cur.execute("""
+                        INSERT INTO extraction_provenance
+                        (submission_id, field_name, extracted_value, confidence,
+                         source_document_id, source_page, source_text, is_present, model_used)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (submission_id, field_name)
+                        DO UPDATE SET
+                            extracted_value = EXCLUDED.extracted_value,
+                            confidence = EXCLUDED.confidence,
+                            source_page = EXCLUDED.source_page,
+                            source_text = EXCLUDED.source_text,
+                            is_present = EXCLUDED.is_present,
+                            model_used = EXCLUDED.model_used,
+                            created_at = NOW()
+                    """, (
+                        record["submission_id"],
+                        record["field_name"],
+                        json.dumps(record["extracted_value"]) if record["extracted_value"] is not None else None,
+                        record["confidence"],
+                        str(doc["id"]),
+                        record["source_page"],
+                        record["source_text"],
+                        record["is_present"],
+                        result.model_used,
+                    ))
+
+                conn.commit()
+
+                # Return summary
+                docupipe_format = result.to_docupipe_format()
+                return {
+                    "status": "success",
+                    "run_id": str(run_id),
+                    "document_id": str(doc["id"]),
+                    "filename": doc["filename"],
+                    "pages": result.page_count,
+                    "model": result.model_used,
+                    "duration_ms": duration_ms,
+                    "fields_extracted": sum(len(fields) for fields in result.data.values()),
+                    "high_confidence": sum(1 for s in result.data.values() for f in s.values() if f.confidence >= 0.8),
+                    "low_confidence": sum(1 for s in result.data.values() for f in s.values() if f.confidence < 0.5 and f.is_present),
+                    "data": docupipe_format["data"],
+                }
+
+            except Exception as e:
+                # Log failed run
+                cur.execute("""
+                    INSERT INTO extraction_runs
+                    (submission_id, status, error_message)
+                    VALUES (%s, 'failed', %s)
+                """, (submission_id, str(e)))
+                conn.commit()
+                raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+
+
+@app.post("/api/extractions/{extraction_id}/correct")
+def correct_extraction(extraction_id: str, corrected_value: Any, reason: Optional[str] = None):
+    """Record a human correction to an extraction."""
+    from datetime import datetime
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get original extraction
+            cur.execute("""
+                SELECT id, extracted_value FROM extraction_provenance WHERE id = %s
+            """, (extraction_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Extraction not found")
+
+            # Insert correction record
+            cur.execute("""
+                INSERT INTO extraction_corrections
+                (provenance_id, original_value, corrected_value, correction_reason)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+            """, (
+                extraction_id,
+                row["extracted_value"],
+                json.dumps(corrected_value),
+                reason,
+            ))
+
+            # Update the extraction with corrected value
+            cur.execute("""
+                UPDATE extraction_provenance
+                SET extracted_value = %s, confidence = 1.0
+                WHERE id = %s
+            """, (json.dumps(corrected_value), extraction_id))
+
+            conn.commit()
+
+            return {"status": "corrected", "extraction_id": extraction_id}
+
+
+# ─────────────────────────────────────────────────────────────
 # Quote Options Endpoints
 # ─────────────────────────────────────────────────────────────
 
