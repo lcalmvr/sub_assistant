@@ -60,7 +60,7 @@ EXTRACTION_SCHEMA = {
         "networkSegmentation": {"type": "boolean", "description": "Network is segmented"},
     },
     "endpointSecurity": {
-        "endpointSecurityTechnologies": {"type": "array", "description": "EDR/AV vendors (CrowdStrike, SentinelOne, etc.)"},
+        "endpointSecurityTechnologies": {"type": "array", "description": "SELECTED EDR/AV vendors - only include checked items"},
         "hasEdr": {"type": "boolean", "description": "Has EDR solution"},
         "edrEndpointCoveragePercent": {"type": "number", "description": "Percentage of endpoints with EDR"},
         "eppedrOnDomainControllers": {"type": "boolean", "description": "EDR on domain controllers"},
@@ -182,9 +182,11 @@ Extract these fields, organized by section:
    - true/false if clearly stated
    - null if question wasn't asked or answer unclear
 
-4. For arrays:
-   - Extract all mentioned items
-   - Empty array [] if none found but question was asked
+4. For arrays (multiple choice questions):
+   - ONLY extract items that are CHECKED, SELECTED, or marked with checkmarks/X
+   - Do NOT include unchecked options that are merely listed as choices
+   - Look for checkmarks (✓, ✔, X, [X], filled boxes) to identify selected items
+   - Empty array [] if question was asked but nothing was selected
    - null if question wasn't asked
 
 ## DOCUMENT TEXT
