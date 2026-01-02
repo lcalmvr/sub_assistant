@@ -1232,6 +1232,7 @@ def _save_document_records(
 ) -> None:
     """
     Save document metadata to the documents table for UI display.
+    Also uploads files to Supabase Storage if configured.
     Maps document classification types to user-friendly document types.
     """
     if not engine:
@@ -1240,6 +1241,13 @@ def _save_document_records(
     tables = _existing_tables()
     if "documents" not in tables:
         return
+
+    # Import storage module (optional - graceful fallback if not configured)
+    try:
+        from core.storage import upload_document, is_configured as storage_configured
+        use_storage = storage_configured()
+    except ImportError:
+        use_storage = False
 
     # Map DocumentType enum to user-friendly types for the UI
     type_mapping = {
@@ -1274,6 +1282,16 @@ def _save_document_records(
                     "application_supplemental", "application_acord"
                 )
 
+                # Upload to Supabase Storage if configured
+                storage_key = None
+                if use_storage and path.exists():
+                    try:
+                        result = upload_document(str(path), submission_id, filename)
+                        storage_key = result.get("storage_key")
+                        print(f"[pipeline] Uploaded to storage: {filename}")
+                    except Exception as e:
+                        print(f"[pipeline] Storage upload failed for {filename}: {e}")
+
                 # Build metadata
                 doc_metadata = {
                     "classification": classification.document_type.value,
@@ -1281,6 +1299,8 @@ def _save_document_records(
                     "file_path": str(path),
                     "ingest_source": "native_pipeline",
                 }
+                if storage_key:
+                    doc_metadata["storage_key"] = storage_key
 
                 conn.execute(
                     text("""

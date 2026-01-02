@@ -286,29 +286,51 @@ def resolve_conflict(submission_id: str, conflict_id: str, data: ConflictResolut
 
 @app.get("/api/submissions/{submission_id}/documents")
 def get_submission_documents(submission_id: str):
-    """Get list of source documents for a submission."""
+    """Get list of source documents for a submission with signed URLs."""
+    # Import storage module for URL generation
+    try:
+        from core.storage import get_document_url, is_configured as storage_configured
+        use_storage = storage_configured()
+    except ImportError:
+        use_storage = False
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, filename, document_type, page_count, is_priority, created_at
+                SELECT id, filename, document_type, page_count, is_priority, created_at, doc_metadata
                 FROM documents
                 WHERE submission_id = %s
                 ORDER BY is_priority DESC, created_at DESC
             """, (submission_id,))
             rows = cur.fetchall()
+
+            documents = []
+            for r in rows:
+                doc = {
+                    "id": str(r["id"]),
+                    "filename": r["filename"],
+                    "type": r["document_type"],
+                    "page_count": r["page_count"],
+                    "is_priority": r["is_priority"],
+                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    "url": None,  # Will be populated if storage is configured
+                }
+
+                # Generate signed URL if document has storage_key
+                if use_storage and r["doc_metadata"]:
+                    metadata = r["doc_metadata"] if isinstance(r["doc_metadata"], dict) else {}
+                    storage_key = metadata.get("storage_key")
+                    if storage_key:
+                        try:
+                            doc["url"] = get_document_url(storage_key, expires_sec=3600)
+                        except Exception as e:
+                            print(f"[api] Failed to get URL for {r['filename']}: {e}")
+
+                documents.append(doc)
+
             return {
-                "count": len(rows),
-                "documents": [
-                    {
-                        "id": str(r["id"]),
-                        "filename": r["filename"],
-                        "type": r["document_type"],
-                        "page_count": r["page_count"],
-                        "is_priority": r["is_priority"],
-                        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
-                    }
-                    for r in rows
-                ],
+                "count": len(documents),
+                "documents": documents,
             }
 
 

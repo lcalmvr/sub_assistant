@@ -416,25 +416,57 @@ export default function ReviewPage() {
                   onSelect={setSelectedDocument}
                 />
                 {selectedDocument ? (
-                  <div className="flex-1 flex items-center justify-center bg-gray-100 p-8">
-                    <div className="text-center text-gray-500">
-                      <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      <p className="font-medium">{selectedDocument.filename}</p>
-                      <p className="text-sm mt-2">
-                        {selectedDocument.page_count} pages · {selectedDocument.type || 'Document'}
-                      </p>
-                      {highlightPage && (
-                        <p className="text-sm mt-2 text-purple-600">
-                          Jump to page {highlightPage}
-                        </p>
-                      )}
-                      <p className="text-xs mt-4 text-gray-400">
-                        PDF viewing requires document storage integration
-                      </p>
+                  selectedDocument.url ? (
+                    // PDF viewer with iframe when URL is available
+                    <div className="flex-1 flex flex-col bg-gray-100">
+                      <div className="flex items-center justify-between px-3 py-2 bg-white border-b">
+                        <span className="text-sm font-medium text-gray-700">
+                          {selectedDocument.filename}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {highlightPage && (
+                            <span className="text-xs text-purple-600">
+                              Page {highlightPage}
+                            </span>
+                          )}
+                          <a
+                            href={selectedDocument.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
+                          >
+                            Open in new tab
+                          </a>
+                        </div>
+                      </div>
+                      <iframe
+                        src={`${selectedDocument.url}${highlightPage ? `#page=${highlightPage}` : ''}`}
+                        className="flex-1 w-full border-0"
+                        title={selectedDocument.filename}
+                      />
                     </div>
-                  </div>
+                  ) : (
+                    // Placeholder when no URL available
+                    <div className="flex-1 flex items-center justify-center bg-gray-100 p-8">
+                      <div className="text-center text-gray-500">
+                        <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <p className="font-medium">{selectedDocument.filename}</p>
+                        <p className="text-sm mt-2">
+                          {selectedDocument.page_count} pages · {selectedDocument.type || 'Document'}
+                        </p>
+                        {highlightPage && (
+                          <p className="text-sm mt-2 text-purple-600">
+                            Jump to page {highlightPage}
+                          </p>
+                        )}
+                        <p className="text-xs mt-4 text-gray-400">
+                          Document not uploaded to storage
+                        </p>
+                      </div>
+                    </div>
+                  )
                 ) : (
                   <div className="flex-1 flex items-center justify-center bg-gray-100">
                     <p className="text-gray-500">Select a document to view</p>
