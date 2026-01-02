@@ -76,7 +76,7 @@ def get_submission(submission_id: str):
             cur.execute("""
                 SELECT id, applicant_name, business_summary, annual_revenue,
                        naics_primary_title, naics_primary_code,
-                       submission_status as status,
+                       submission_status, submission_outcome, outcome_reason,
                        bullet_point_summary, nist_controls_summary,
                        hazard_override, control_overrides, default_retroactive_date,
                        ai_recommendation, ai_guideline_citations,
