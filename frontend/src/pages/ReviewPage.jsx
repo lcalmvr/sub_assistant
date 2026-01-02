@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments } from '../api/client';
+import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions } from '../api/client';
+import DocumentViewer from '../components/review/DocumentViewer';
+import ExtractionPanel from '../components/review/ExtractionPanel';
 
 // Decision badge component
 function DecisionBadge({ decision }) {
@@ -34,7 +36,6 @@ function CredibilityCard({ credibility }) {
 
   const { total_score, label, dimensions, issue_count } = credibility;
 
-  // Color based on score
   const getScoreColor = (score) => {
     if (score >= 80) return 'text-green-600';
     if (score >= 60) return 'text-yellow-600';
@@ -67,7 +68,6 @@ function CredibilityCard({ credibility }) {
         </div>
       </div>
 
-      {/* Dimension breakdown */}
       <div className="grid grid-cols-3 gap-4">
         {dimensions && Object.entries(dimensions).map(([name, score]) => (
           <div key={name} className="bg-white/50 rounded-lg p-3">
@@ -97,7 +97,7 @@ function CredibilityCard({ credibility }) {
 }
 
 // Conflict list component
-function ConflictsList({ conflicts, submissionId, onResolve }) {
+function ConflictsList({ conflicts, submissionId }) {
   const queryClient = useQueryClient();
 
   const resolveMutation = useMutation({
@@ -199,18 +199,12 @@ function ConflictsList({ conflicts, submissionId, onResolve }) {
   );
 }
 
-// Source documents list component
-function DocumentsList({ documents }) {
+// Document selector for the split view
+function DocumentSelector({ documents, selectedId, onSelect }) {
   if (!documents || documents.count === 0) {
     return (
-      <div className="card bg-gray-50">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-gray-900">Source Documents</h3>
-          <span className="text-sm text-gray-500">No documents</span>
-        </div>
-        <p className="text-sm text-gray-500 mt-2">
-          No source documents have been uploaded for this submission.
-        </p>
+      <div className="text-sm text-gray-500 p-4">
+        No documents available
       </div>
     );
   }
@@ -224,44 +218,24 @@ function DocumentsList({ documents }) {
   };
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Source Documents</h3>
-        <span className="text-sm text-gray-500">{documents.count} document{documents.count !== 1 ? 's' : ''}</span>
-      </div>
-      <div className="space-y-2">
-        {documents.documents.map((doc) => (
-          <div
-            key={doc.id}
-            className={`flex items-center justify-between p-3 rounded-lg ${
-              doc.is_priority ? 'bg-purple-50 border border-purple-200' : 'bg-gray-50'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <span className="text-xl">{typeIcons[doc.type] || typeIcons.Other}</span>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-gray-900">{doc.filename}</span>
-                  {doc.is_priority && (
-                    <span className="px-1.5 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">Primary</span>
-                  )}
-                </div>
-                <span className="text-xs text-gray-500">
-                  {doc.type || 'Document'}
-                  {doc.page_count && ` · ${doc.page_count} pages`}
-                </span>
-              </div>
-            </div>
-            <button
-              className="text-sm text-purple-600 hover:text-purple-800 font-medium"
-              title="Document preview coming soon"
-              disabled
-            >
-              View
-            </button>
-          </div>
-        ))}
-      </div>
+    <div className="flex flex-wrap gap-2 p-2 bg-gray-50 border-b">
+      {documents.documents.map((doc) => (
+        <button
+          key={doc.id}
+          onClick={() => onSelect(doc)}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+            selectedId === doc.id
+              ? 'bg-purple-100 text-purple-700 border border-purple-300'
+              : 'bg-white hover:bg-gray-100 border border-gray-200'
+          }`}
+        >
+          <span>{typeIcons[doc.type] || typeIcons.Other}</span>
+          <span className="font-medium">{doc.filename}</span>
+          {doc.is_priority && (
+            <span className="px-1 py-0.5 text-xs bg-purple-200 text-purple-700 rounded">Primary</span>
+          )}
+        </button>
+      ))}
     </div>
   );
 }
@@ -270,7 +244,6 @@ function DocumentsList({ documents }) {
 function FormattedText({ text }) {
   if (!text || typeof text !== 'string') return <p className="text-gray-500 italic">No content available</p>;
 
-  // Split by headers and format
   const lines = text.split('\n');
 
   return (
@@ -312,31 +285,35 @@ export default function ReviewPage() {
   const queryClient = useQueryClient();
   const [decisionReason, setDecisionReason] = useState('');
   const [hasInitialized, setHasInitialized] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState(null);
+  const [highlightPage, setHighlightPage] = useState(null);
+  const [viewMode, setViewMode] = useState('split'); // 'split', 'documents', 'extractions'
 
   const { data: submission, isLoading } = useQuery({
     queryKey: ['submission', submissionId],
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
-  // Fetch credibility score
   const { data: credibility } = useQuery({
     queryKey: ['credibility', submissionId],
     queryFn: () => getCredibility(submissionId).then(res => res.data),
   });
 
-  // Fetch conflicts
   const { data: conflicts } = useQuery({
     queryKey: ['conflicts', submissionId],
     queryFn: () => getConflicts(submissionId).then(res => res.data),
   });
 
-  // Fetch source documents
   const { data: documents } = useQuery({
     queryKey: ['documents', submissionId],
     queryFn: () => getSubmissionDocuments(submissionId).then(res => res.data),
   });
 
-  // Initialize decision reason from existing data
+  const { data: extractions, isLoading: extractionsLoading } = useQuery({
+    queryKey: ['extractions', submissionId],
+    queryFn: () => getExtractions(submissionId).then(res => res.data),
+  });
+
   if (submission?.decision_reason && !hasInitialized) {
     setDecisionReason(submission.decision_reason);
     setHasInitialized(true);
@@ -355,7 +332,6 @@ export default function ReviewPage() {
       decision_reason: decisionReason || null,
     };
 
-    // If declining, also update submission status (header pill is source of truth)
     if (decision === 'decline') {
       payload.submission_status = 'declined';
       payload.submission_outcome = 'declined';
@@ -365,11 +341,19 @@ export default function ReviewPage() {
     updateMutation.mutate(payload);
   };
 
+  const handleShowSource = (pageNumber) => {
+    setHighlightPage(pageNumber);
+    // Auto-select primary document if none selected
+    if (!selectedDocument && documents?.documents?.length > 0) {
+      const primary = documents.documents.find(d => d.is_priority) || documents.documents[0];
+      setSelectedDocument(primary);
+    }
+  };
+
   if (isLoading) {
     return <div className="text-gray-500">Loading...</div>;
   }
 
-  // Extract recommendation decision from AI text
   const aiDecision = submission?.ai_recommendation?.includes('**Decision**: Accept')
     ? 'accept'
     : submission?.ai_recommendation?.includes('**Decision**: Decline')
@@ -378,18 +362,101 @@ export default function ReviewPage() {
     ? 'refer'
     : null;
 
+  const hasExtractions = extractions?.sections && Object.keys(extractions.sections).length > 0;
+
   return (
     <div className="space-y-6">
-      {/* Credibility Score */}
-      <CredibilityCard credibility={credibility} />
+      {/* Top section: Credibility and Conflicts */}
+      <div className="grid grid-cols-2 gap-6">
+        <CredibilityCard credibility={credibility} />
+        <ConflictsList conflicts={conflicts} submissionId={submissionId} />
+      </div>
 
-      {/* Conflicts Section */}
-      <ConflictsList conflicts={conflicts} submissionId={submissionId} />
+      {/* Document & Extraction Split View */}
+      {(hasExtractions || documents?.count > 0) && (
+        <div className="card p-0 overflow-hidden">
+          {/* View mode toggle */}
+          <div className="flex items-center justify-between px-4 py-2 bg-gray-100 border-b">
+            <h3 className="font-semibold text-gray-900">Source Verification</h3>
+            <div className="flex items-center gap-1 bg-gray-200 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode('split')}
+                className={`px-3 py-1 text-sm rounded ${
+                  viewMode === 'split' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Split
+              </button>
+              <button
+                onClick={() => setViewMode('documents')}
+                className={`px-3 py-1 text-sm rounded ${
+                  viewMode === 'documents' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Documents
+              </button>
+              <button
+                onClick={() => setViewMode('extractions')}
+                className={`px-3 py-1 text-sm rounded ${
+                  viewMode === 'extractions' ? 'bg-white shadow text-gray-900' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Extractions
+              </button>
+            </div>
+          </div>
 
-      {/* Source Documents */}
-      <DocumentsList documents={documents} />
+          <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x`} style={{ height: '500px' }}>
+            {/* Document Viewer */}
+            {(viewMode === 'split' || viewMode === 'documents') && (
+              <div className="flex flex-col h-full">
+                <DocumentSelector
+                  documents={documents}
+                  selectedId={selectedDocument?.id}
+                  onSelect={setSelectedDocument}
+                />
+                {selectedDocument ? (
+                  <div className="flex-1 flex items-center justify-center bg-gray-100 p-8">
+                    <div className="text-center text-gray-500">
+                      <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <p className="font-medium">{selectedDocument.filename}</p>
+                      <p className="text-sm mt-2">
+                        {selectedDocument.page_count} pages · {selectedDocument.type || 'Document'}
+                      </p>
+                      {highlightPage && (
+                        <p className="text-sm mt-2 text-purple-600">
+                          Jump to page {highlightPage}
+                        </p>
+                      )}
+                      <p className="text-xs mt-4 text-gray-400">
+                        PDF viewing requires document storage integration
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center bg-gray-100">
+                    <p className="text-gray-500">Select a document to view</p>
+                  </div>
+                )}
+              </div>
+            )}
 
-      {/* Decision Status Banner */}
+            {/* Extraction Panel */}
+            {(viewMode === 'split' || viewMode === 'extractions') && (
+              <ExtractionPanel
+                extractions={extractions?.sections}
+                isLoading={extractionsLoading}
+                onShowSource={handleShowSource}
+                className="h-full"
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Decision Section */}
       <div className={`card ${
         submission?.decision_tag === 'accept' ? 'bg-green-50 border-green-200' :
         submission?.decision_tag === 'decline' ? 'bg-red-50 border-red-200' :
@@ -450,7 +517,7 @@ export default function ReviewPage() {
                 onClick={() => handleDecision('accept')}
                 disabled={updateMutation.isPending}
               >
-                ✓ Accept
+                Accept
               </button>
               <button
                 className={`btn flex-1 text-white ${
@@ -461,7 +528,7 @@ export default function ReviewPage() {
                 onClick={() => handleDecision('refer')}
                 disabled={updateMutation.isPending}
               >
-                → Refer
+                Refer
               </button>
               <button
                 className={`btn flex-1 text-white ${
@@ -472,7 +539,7 @@ export default function ReviewPage() {
                 onClick={() => handleDecision('decline')}
                 disabled={updateMutation.isPending}
               >
-                ✕ Decline
+                Decline
               </button>
             </div>
 

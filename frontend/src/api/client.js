@@ -18,6 +18,17 @@ export const getConflicts = (submissionId) => api.get(`/submissions/${submission
 export const resolveConflict = (submissionId, conflictId, data) =>
   api.post(`/submissions/${submissionId}/conflicts/${conflictId}/resolve`, data);
 
+// Extractions
+export const getExtractions = (submissionId) => api.get(`/submissions/${submissionId}/extractions`);
+export const triggerExtraction = (submissionId, documentId = null) =>
+  api.post(`/submissions/${submissionId}/extract`, { document_id: documentId });
+export const correctExtraction = (extractionId, correctedValue, reason = null) =>
+  api.post(`/extractions/${extractionId}/correct`, { corrected_value: correctedValue, reason });
+
+// Document content (for PDF viewer)
+export const getDocumentContent = (documentId) => api.get(`/documents/${documentId}/content`, { responseType: 'blob' });
+export const getDocumentUrl = (documentId) => `/api/documents/${documentId}/content`;
+
 // Quote Options
 export const getQuoteOptions = (submissionId) => api.get(`/submissions/${submissionId}/quotes`);
 export const getQuoteOption = (id) => api.get(`/quotes/${id}`);
