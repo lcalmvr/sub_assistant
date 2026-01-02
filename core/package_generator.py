@@ -37,8 +37,6 @@ from core.document_generator import (
     format_currency,
     format_date,
     format_limit,
-    get_endorsement_component_templates,
-    render_endorsement_component,
 )
 
 # Database connection
@@ -417,7 +415,7 @@ def _render_policy_specimen(context: dict) -> str:
 
 
 def _render_library_document_html(doc: dict, context: dict) -> str:
-    """Render a single library document as HTML using component templates."""
+    """Render a single library document as HTML using mid-term endorsement format."""
     doc_type = doc.get("document_type", "endorsement")
     title = doc.get("title", "")
     code = doc.get("code", "")
@@ -429,68 +427,49 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
         content = process_endorsement_fill_ins(content, context, fill_in_mappings)
 
     if doc_type == "endorsement":
-        # Get component templates from database
-        position = context.get("position", "primary")
-        component_templates = get_endorsement_component_templates(position)
+        # Use mid-term endorsement format for all endorsements
+        effective_date = context.get("effective_date", "")
+        insured_name = context.get("insured_name", "")
+        document_number = context.get("document_number", "")
 
-        # Build context for component template rendering
-        component_context = {
-            **context,
-            "document_code": code,
-            "edition_date": doc.get("edition_date", ""),
-        }
+        # Standard lead-in (system-generated, not in body content)
+        lead_in = "This endorsement modifies the insurance provided under the policy to which it is attached."
 
-        # Render each component
-        header_html = render_endorsement_component(
-            component_templates.get("header", ""), component_context
-        )
-        lead_in_html = render_endorsement_component(
-            component_templates.get("lead_in", ""), component_context
-        )
-        closing_html = render_endorsement_component(
-            component_templates.get("closing", ""), component_context
-        )
-
-        # Build the endorsement document
-        parts = ['<div class="library-document endorsement-document">']
-
-        # Header component (or fallback)
-        if header_html:
-            parts.append(f'<div class="endorsement-header-component">{header_html}</div>')
-        else:
-            parts.append(f'''
-            <div class="library-document-header">
-                <div class="library-document-title">{title}</div>
-                <div class="library-document-code">{code}</div>
+        return f'''
+        <div class="endorsement-document">
+            <div class="endorsement-header">
+                <div class="endorsement-title">{title.upper()}</div>
+                <div class="endorsement-code">{code}</div>
             </div>
-            ''')
 
-        # Lead-in component
-        if lead_in_html:
-            parts.append(f'<div class="endorsement-lead-in-component">{lead_in_html}</div>')
+            <div class="endorsement-meta">
+                <div class="meta-item">
+                    <div class="meta-label">POLICY NUMBER</div>
+                    <div class="meta-value">{document_number}</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">EFFECTIVE DATE</div>
+                    <div class="meta-value">{effective_date}</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">NAMED INSURED</div>
+                    <div class="meta-value">{insured_name}</div>
+                </div>
+            </div>
 
-        # Body (title + content)
-        parts.append(f'''
-        <div class="library-document-content endorsement-body">
-            <div class="endorsement-title">{title}</div>
-            {content}
-        </div>
-        ''')
+            <div class="endorsement-lead-in">
+                <p>{lead_in}</p>
+            </div>
 
-        # Closing component (or fallback)
-        if closing_html:
-            parts.append(f'<div class="endorsement-closing-component">{closing_html}</div>')
-        else:
-            parts.append('''
+            <div class="endorsement-content">
+                {content}
+            </div>
+
             <div class="endorsement-footer">
-                <p class="endorsement-footer-text">
-                    All other terms and conditions of the Policy remain unchanged.
-                </p>
+                <p>This endorsement forms a part of the policy to which it is attached and is subject to all terms, conditions, and exclusions of such policy except as specifically modified herein.</p>
             </div>
-            ''')
-
-        parts.append('</div>')
-        return '\n'.join(parts)
+        </div>
+        '''
     else:
         # Generic library document (non-endorsement)
         return f'''
@@ -510,92 +489,131 @@ def _render_library_document_html(doc: dict, context: dict) -> str:
 def _get_library_document_styles() -> str:
     """Get CSS styles for library documents."""
     return '''
-    /* Library Document Styles */
-    .library-document {
+    /* Endorsement Document Styles (mid-term format) */
+    .endorsement-document {
         margin-bottom: 30px;
-        page-break-inside: avoid;
     }
 
-    /* Component-based endorsement layout */
-    .endorsement-header-component {
+    .endorsement-header {
         text-align: center;
-        margin-bottom: 20px;
+        border-bottom: 2px solid #1a365d;
+        padding-bottom: 20px;
+        margin-bottom: 25px;
     }
 
-    .endorsement-header-component .company-name {
-        font-size: 14px;
-        font-weight: 700;
+    .endorsement-header .endorsement-title {
+        font-size: 18px;
+        font-weight: bold;
         color: #1a365d;
         text-transform: uppercase;
         letter-spacing: 1px;
         margin-bottom: 5px;
     }
 
-    .endorsement-header-component .form-info {
+    .endorsement-header .endorsement-code {
         font-size: 10px;
         color: #718096;
     }
 
-    .endorsement-lead-in-component {
-        margin-bottom: 20px;
-        padding: 15px;
+    .endorsement-meta {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 25px;
+        padding: 15px 20px;
         background: #f8f9fa;
         border-radius: 4px;
     }
 
-    .endorsement-lead-in-component p {
-        margin: 0 0 10px 0;
-        font-size: 11px;
-        line-height: 1.6;
+    .endorsement-meta .meta-item {
+        text-align: center;
     }
 
-    .endorsement-lead-in-component p:last-child {
-        margin-bottom: 0;
-    }
-
-    .endorsement-body {
-        margin-bottom: 20px;
-    }
-
-    .endorsement-body .endorsement-title {
-        font-size: 13px;
-        font-weight: 700;
-        color: #1a365d;
+    .endorsement-meta .meta-label {
+        font-size: 9px;
+        color: #718096;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        margin-bottom: 15px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid #b7791f;
+        margin-bottom: 4px;
     }
 
-    .endorsement-closing-component {
-        margin-top: 30px;
+    .endorsement-meta .meta-value {
+        font-size: 12px;
+        font-weight: bold;
+        color: #1a365d;
+    }
+
+    .endorsement-lead-in {
+        margin-bottom: 20px;
+        font-size: 11px;
+        font-style: italic;
+        color: #4a5568;
+    }
+
+    .endorsement-lead-in p {
+        margin: 0;
+    }
+
+    .endorsement-content {
+        text-align: justify;
+        line-height: 1.7;
+    }
+
+    .endorsement-content h2 {
+        color: #1a365d;
+        font-size: 14px;
+        margin-top: 20px;
+        margin-bottom: 10px;
+    }
+
+    .endorsement-content h3 {
+        color: #1a365d;
+        font-size: 12px;
+        margin-top: 15px;
+        margin-bottom: 8px;
+    }
+
+    .endorsement-content p {
+        margin-bottom: 10px;
+    }
+
+    .endorsement-content ul, .endorsement-content ol {
+        margin: 10px 0;
+        padding-left: 25px;
+    }
+
+    .endorsement-content li {
+        margin-bottom: 5px;
+    }
+
+    .endorsement-content table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+    }
+
+    .endorsement-content td, .endorsement-content th {
+        padding: 10px;
+        border: 1px solid #ddd;
+    }
+
+    .endorsement-footer {
+        margin-top: 40px;
         padding-top: 20px;
         border-top: 1px solid #e2e8f0;
     }
 
-    .endorsement-closing-component p {
-        font-size: 10px;
-        color: #4a5568;
-        margin-bottom: 10px;
-    }
-
-    .endorsement-closing-component .signature-block {
-        margin-top: 20px;
-    }
-
-    .endorsement-closing-component .signature-line {
-        width: 200px;
-        border-top: 1px solid #a0aec0;
-        padding-top: 5px;
-    }
-
-    .endorsement-closing-component .signature-title {
+    .endorsement-footer p {
         font-size: 9px;
         color: #718096;
+        text-align: center;
+        font-style: italic;
     }
 
-    /* Fallback/legacy styles */
+    /* Generic library document styles */
+    .library-document {
+        margin-bottom: 30px;
+    }
+
     .library-document-header {
         text-align: center;
         border-bottom: 2px solid #1a365d;

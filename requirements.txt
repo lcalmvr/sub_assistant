@@ -22,7 +22,6 @@ python-dotenv
 pypdf
 tiktoken
 streamlit-pdf-viewer
-streamlit-quill
 fastapi
 uvicorn[standard]
 python-multipart

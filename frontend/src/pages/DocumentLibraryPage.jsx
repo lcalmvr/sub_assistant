@@ -9,6 +9,7 @@ import {
   activateDocumentLibraryEntry,
   archiveDocumentLibraryEntry,
 } from '../api/client';
+import RichTextEditor from '../components/RichTextEditor';
 
 const DOCUMENT_TYPES = {
   endorsement: 'Endorsements',
@@ -518,14 +519,15 @@ function FormModal({ entry, categories, defaultType, onSave, onClose, isSaving }
           </div>
 
           <div style={{ marginTop: 16 }}>
-            <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Content (HTML)</label>
-            <textarea
+            <label style={{ display: 'block', marginBottom: 4, fontWeight: 500 }}>Content</label>
+            <RichTextEditor
               value={formData.content_html}
-              onChange={(e) => handleChange('content_html', e.target.value)}
-              rows={12}
-              placeholder="<p>Document content here...</p>"
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontFamily: 'monospace', fontSize: 13, boxSizing: 'border-box' }}
+              onChange={(html) => handleChange('content_html', html)}
+              placeholder="Enter document content..."
             />
+            <p style={{ fontSize: 12, color: '#6b7280', marginTop: 8 }}>
+              For endorsements: Enter only the unique body content. Lead-in and closing language are added automatically.
+            </p>
           </div>
 
           {entry && (
