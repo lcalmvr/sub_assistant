@@ -388,9 +388,22 @@ def detect_application_contradictions(app_data: dict) -> list[ConflictResult]:
         field_a = rule["field_a"]
         field_b = rule["field_b"]
 
-        # Get field values (case-insensitive lookup)
+        # Get field values (case-insensitive lookup with alternate field names)
         value_a = _get_field_case_insensitive(flat_data, field_a)
+        # Try alternate field names if primary not found
+        if value_a is None and "field_a_alt" in rule:
+            for alt_field in rule["field_a_alt"]:
+                value_a = _get_field_case_insensitive(flat_data, alt_field)
+                if value_a is not None:
+                    break
+
         value_b = _get_field_case_insensitive(flat_data, field_b)
+        # Try alternate field names if primary not found
+        if value_b is None and "field_b_alt" in rule:
+            for alt_field in rule["field_b_alt"]:
+                value_b = _get_field_case_insensitive(flat_data, alt_field)
+                if value_b is not None:
+                    break
 
         # Skip if field_a doesn't exist
         if value_a is None:
