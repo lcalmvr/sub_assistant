@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Any
+import json
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -356,40 +357,99 @@ def get_extractions(submission_id: str):
             """, (submission_id,))
             summary = cur.fetchone()
 
-            # Get all extractions grouped by section
+            # Get all extractions with document info
             cur.execute("""
                 SELECT
-                    field_name,
-                    extracted_value,
-                    confidence,
-                    source_text,
-                    source_page,
-                    is_present,
-                    model_used,
-                    created_at
-                FROM extraction_provenance
-                WHERE submission_id = %s
-                ORDER BY field_name
+                    ep.id,
+                    ep.field_name,
+                    ep.extracted_value,
+                    ep.confidence,
+                    ep.source_text,
+                    ep.source_page,
+                    ep.source_document_id,
+                    ep.is_present,
+                    ep.is_accepted,
+                    d.filename as document_name,
+                    d.is_priority as is_priority_doc
+                FROM extraction_provenance ep
+                LEFT JOIN documents d ON d.id = ep.source_document_id
+                WHERE ep.submission_id = %s
+                ORDER BY ep.field_name, d.is_priority DESC NULLS LAST, ep.confidence DESC
             """, (submission_id,))
             rows = cur.fetchall()
 
-            # Group by section
+            # Group by section and field, tracking conflicts
             sections = {}
+            field_values = {}  # Track all values per field for conflict detection
+
             for row in rows:
                 parts = row["field_name"].split(".", 1)
+                section = parts[0] if len(parts) > 1 else "other"
+                field = parts[1] if len(parts) > 1 else parts[0]
+                full_field = row["field_name"]
+
+                # Track all values for this field
+                if full_field not in field_values:
+                    field_values[full_field] = []
+
+                field_values[full_field].append({
+                    "id": str(row["id"]),
+                    "value": row["extracted_value"],
+                    "confidence": float(row["confidence"]) if row["confidence"] else None,
+                    "source_text": row["source_text"],
+                    "page": row["source_page"],
+                    "document_id": str(row["source_document_id"]) if row["source_document_id"] else None,
+                    "document_name": row["document_name"],
+                    "is_priority_doc": row["is_priority_doc"],
+                    "is_accepted": row["is_accepted"],
+                    "is_present": row["is_present"],
+                })
+
+            # Build sections with primary value and conflicts
+            for full_field, values in field_values.items():
+                parts = full_field.split(".", 1)
                 section = parts[0] if len(parts) > 1 else "other"
                 field = parts[1] if len(parts) > 1 else parts[0]
 
                 if section not in sections:
                     sections[section] = {}
 
+                # Filter to present values only
+                present_values = [v for v in values if v["is_present"]]
+                if not present_values:
+                    continue
+
+                # Primary value: accepted one, or from priority doc, or highest confidence
+                primary = next((v for v in present_values if v["is_accepted"]), None)
+                if not primary:
+                    primary = present_values[0]  # Already sorted by priority, confidence
+
+                # Check for conflicts (different values from different documents)
+                unique_values = set()
+                for v in present_values:
+                    val_str = json.dumps(v["value"]) if v["value"] is not None else "null"
+                    unique_values.add(val_str)
+
+                has_conflict = len(unique_values) > 1
+
                 sections[section][field] = {
-                    "value": row["extracted_value"],
-                    "confidence": float(row["confidence"]) if row["confidence"] else None,
-                    "source_text": row["source_text"],
-                    "page": row["source_page"],
-                    "is_present": row["is_present"],
+                    "value": primary["value"],
+                    "confidence": primary["confidence"],
+                    "source_text": primary["source_text"],
+                    "page": primary["page"],
+                    "document_id": primary["document_id"],
+                    "document_name": primary["document_name"],
+                    "is_present": primary["is_present"],
+                    "has_conflict": has_conflict,
+                    "all_values": present_values if has_conflict else None,
                 }
+
+            # Count conflicts
+            conflict_count = sum(
+                1 for sec in sections.values()
+                for f in sec.values()
+                if f.get("has_conflict")
+            )
 
             return {
                 "has_extractions": len(rows) > 0,
@@ -399,6 +459,7 @@ def get_extractions(submission_id: str):
                     "high_confidence": summary["high_confidence"] if summary else 0,
                     "low_confidence": summary["low_confidence"] if summary else 0,
                     "avg_confidence": float(summary["avg_confidence"]) if summary and summary["avg_confidence"] else None,
+                    "conflict_count": conflict_count,
                 },
                 "sections": sections,
             }
@@ -421,14 +482,14 @@ def trigger_extraction(submission_id: str, document_id: Optional[str] = None):
             # Find the document to extract from
             if document_id:
                 cur.execute("""
-                    SELECT id, filename, file_path, storage_path
+                    SELECT id, filename, doc_metadata
                     FROM documents
                     WHERE id = %s AND submission_id = %s
                 """, (document_id, submission_id))
             else:
                 # Get the primary document (is_priority=true) or most recent
                 cur.execute("""
-                    SELECT id, filename, file_path, storage_path
+                    SELECT id, filename, doc_metadata
                     FROM documents
                     WHERE submission_id = %s
                     ORDER BY is_priority DESC, created_at DESC
@@ -439,8 +500,9 @@ def trigger_extraction(submission_id: str, document_id: Optional[str] = None):
             if not doc:
                 raise HTTPException(status_code=404, detail="No document found for extraction")
 
-            # Determine file path
-            file_path = doc.get("file_path") or doc.get("storage_path")
+            # Determine file path from metadata
+            metadata = doc.get("doc_metadata") or {}
+            file_path = metadata.get("file_path") or metadata.get("storage_key")
             if not file_path or not os.path.exists(file_path):
                 raise HTTPException(
                     status_code=400,
@@ -474,14 +536,14 @@ def trigger_extraction(submission_id: str, document_id: Optional[str] = None):
                 ))
                 run_id = cur.fetchone()["id"]
 
-                # Save provenance records
+                # Save provenance records (one per field per document)
                 for record in result.to_provenance_records(submission_id):
                     cur.execute("""
                         INSERT INTO extraction_provenance
                         (submission_id, field_name, extracted_value, confidence,
                          source_document_id, source_page, source_text, is_present, model_used)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (submission_id, field_name)
+                        ON CONFLICT (submission_id, field_name, source_document_id)
                         DO UPDATE SET
                             extracted_value = EXCLUDED.extracted_value,
                             confidence = EXCLUDED.confidence,
@@ -569,6 +631,48 @@ def correct_extraction(extraction_id: str, corrected_value: Any, reason: Optiona
             conn.commit()
 
             return {"status": "corrected", "extraction_id": extraction_id}
+
+
+@app.post("/api/extractions/{extraction_id}/accept")
+def accept_extraction_value(extraction_id: str):
+    """
+    Accept this extraction value as the correct one when there's a conflict.
+    Marks this value as accepted and clears accepted flag from other values for same field.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get the extraction to find submission_id and field_name
+            cur.execute("""
+                SELECT submission_id, field_name FROM extraction_provenance WHERE id = %s
+            """, (extraction_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Extraction not found")
+
+            submission_id = row["submission_id"]
+            field_name = row["field_name"]
+
+            # Clear accepted flag from all other values for this field
+            cur.execute("""
+                UPDATE extraction_provenance
+                SET is_accepted = NULL
+                WHERE submission_id = %s AND field_name = %s AND id != %s
+            """, (submission_id, field_name, extraction_id))
+
+            # Set this one as accepted
+            cur.execute("""
+                UPDATE extraction_provenance
+                SET is_accepted = TRUE
+                WHERE id = %s
+            """, (extraction_id,))
+
+            conn.commit()
+
+            return {
+                "status": "accepted",
+                "extraction_id": extraction_id,
+                "field_name": field_name,
+            }
 
 
 # ─────────────────────────────────────────────────────────────

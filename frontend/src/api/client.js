@@ -24,6 +24,8 @@ export const triggerExtraction = (submissionId, documentId = null) =>
   api.post(`/submissions/${submissionId}/extract`, { document_id: documentId });
 export const correctExtraction = (extractionId, correctedValue, reason = null) =>
   api.post(`/extractions/${extractionId}/correct`, { corrected_value: correctedValue, reason });
+export const acceptExtraction = (extractionId) =>
+  api.post(`/extractions/${extractionId}/accept`);
 
 // Feedback tracking
 export const saveFeedback = (submissionId, feedback) =>

@@ -1,5 +1,5 @@
 """
-Native application document extractor using OpenAI.
+Native application document extractor using Claude.
 Replaces Docupipe for converting PDF applications to structured JSON.
 
 This module extracts insurance application data from PDF text and returns
@@ -14,15 +14,15 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 from pathlib import Path
 
-from openai import OpenAI
+import anthropic
 
 
-def _get_client() -> OpenAI:
-    """Get OpenAI client with API key from environment."""
-    key = os.getenv("OPENAI_API_KEY")
+def _get_client() -> anthropic.Anthropic:
+    """Get Anthropic client with API key from environment."""
+    key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
-        raise ValueError("OPENAI_API_KEY environment variable not set")
-    return OpenAI(api_key=key)
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+    return anthropic.Anthropic(api_key=key)
 
 # ─────────────────────────────────────────────────────────────
 # Schema Definition
@@ -108,7 +108,7 @@ class ApplicationExtraction:
     data: dict[str, dict[str, ExtractionResult]]
     raw_text: str
     page_count: int
-    model_used: str = "gpt-4o"
+    model_used: str = "claude-sonnet-4-20250514"
     extraction_metadata: dict = field(default_factory=dict)
 
     def to_docupipe_format(self) -> dict:
@@ -273,7 +273,7 @@ def _get_page_for_position(position: int, page_markers: dict[int, int]) -> int:
 
 def extract_application_data(
     text: str,
-    model: str = "gpt-4o",
+    model: str = "claude-sonnet-4-20250514",
     page_count: Optional[int] = None,
 ) -> ApplicationExtraction:
     """
@@ -281,7 +281,7 @@ def extract_application_data(
 
     Args:
         text: Full text content of the application document
-        model: OpenAI model to use for extraction
+        model: Claude model to use for extraction
         page_count: Number of pages (if known)
 
     Returns:
@@ -296,14 +296,13 @@ def extract_application_data(
     prompt = _build_extraction_prompt(text, page_markers)
 
     client = _get_client()
-    response = client.chat.completions.create(
+    response = client.messages.create(
         model=model,
         max_tokens=8000,
         messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
     )
 
-    response_text = response.choices[0].message.content
+    response_text = response.content[0].text
 
     # Parse response
     raw_data = _parse_extraction_response(response_text)
@@ -340,15 +339,16 @@ def extract_application_data(
         page_count=page_count,
         model_used=model,
         extraction_metadata={
-            "prompt_tokens": response.usage.prompt_tokens,
-            "completion_tokens": response.usage.completion_tokens,
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
         },
     )
 
 
 def extract_from_pdf(
     file_path: str,
-    model: str = "gpt-4o",
+    model: str = "claude-sonnet-4-20250514",
+    use_vision: bool = True,
 ) -> ApplicationExtraction:
     """
     Extract application data directly from a PDF file.
@@ -356,10 +356,15 @@ def extract_from_pdf(
     Args:
         file_path: Path to PDF file
         model: Claude model to use
+        use_vision: If True, use Claude's vision to see checkboxes (recommended)
 
     Returns:
         ApplicationExtraction with all extracted fields
     """
+    if use_vision:
+        return extract_from_pdf_vision(file_path, model=model)
+
+    # Fallback to text-only extraction
     from pypdf import PdfReader
 
     # Get page count
@@ -378,6 +383,157 @@ def extract_from_pdf(
     return extract_application_data(text, model=model, page_count=page_count)
 
 
+def extract_from_pdf_vision(
+    file_path: str,
+    model: str = "claude-sonnet-4-20250514",
+) -> ApplicationExtraction:
+    """
+    Extract application data from PDF using Claude's vision capability.
+
+    This method converts PDF pages to images and sends them to Claude,
+    allowing it to visually identify checked checkboxes.
+    """
+    import base64
+    import tempfile
+    from pdf2image import convert_from_path
+    from pypdf import PdfReader
+
+    # Get page count
+    reader = PdfReader(file_path)
+    page_count = len(reader.pages)
+
+    # Convert PDF pages to images
+    images = convert_from_path(file_path, dpi=150)
+
+    # Encode images as base64
+    image_contents = []
+    for i, img in enumerate(images, 1):
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=True) as tmp:
+            img.save(tmp.name, 'PNG')
+            with open(tmp.name, 'rb') as f:
+                img_data = base64.standard_b64encode(f.read()).decode('utf-8')
+
+        image_contents.append({
+            "type": "text",
+            "text": f"--- Page {i} ---"
+        })
+        image_contents.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": img_data
+            }
+        })
+
+    # Build the prompt
+    schema_description = []
+    for section, fields in EXTRACTION_SCHEMA.items():
+        schema_description.append(f"\n### {section}")
+        for field_name, field_info in fields.items():
+            schema_description.append(
+                f"- **{field_name}** ({field_info['type']}): {field_info['description']}"
+            )
+
+    schema_text = "\n".join(schema_description)
+
+    prompt_text = f"""You are an expert insurance application data extractor. Extract structured data from this insurance application document.
+
+IMPORTANT: This is a scanned/image PDF. You must VISUALLY identify which checkboxes are checked:
+- Look for filled boxes, checkmarks (✓, ✔), X marks, or filled circles
+- ONLY extract items that are VISUALLY CHECKED - ignore unchecked empty boxes
+- Pay close attention to the checkbox state, not just the text labels
+
+## EXTRACTION SCHEMA
+
+Extract these fields, organized by section:
+{schema_text}
+
+## INSTRUCTIONS
+
+1. For each field, extract:
+   - **value**: The actual value (null if not found)
+   - **confidence**: 0.0-1.0 score indicating extraction certainty
+   - **source_text**: Brief quote from document (max 100 chars) that supports this extraction
+   - **page**: Page number where found (if determinable)
+   - **is_present**: true if the question was asked, false if not in the document
+
+2. For arrays (checkbox lists):
+   - ONLY include items where the checkbox is VISUALLY FILLED/CHECKED
+   - Do NOT include items with empty/unchecked boxes
+   - Empty array [] if question was asked but nothing was checked
+
+3. For boolean fields (Yes/No questions):
+   - Look at which option has the filled checkbox
+   - true if "Yes" is checked, false if "No" is checked
+   - null if neither is checked or question wasn't asked
+
+Return ONLY valid JSON with this structure:
+{{
+  "generalInformation": {{
+    "applicantName": {{
+      "value": "Company Name",
+      "confidence": 0.95,
+      "source_text": "Applicant: Company Name",
+      "page": 1,
+      "is_present": true
+    }}
+  }}
+}}"""
+
+    # Build message with images and prompt
+    content = image_contents + [{"type": "text", "text": prompt_text}]
+
+    client = _get_client()
+    response = client.messages.create(
+        model=model,
+        max_tokens=8000,
+        messages=[{"role": "user", "content": content}],
+    )
+
+    response_text = response.content[0].text
+
+    # Parse response
+    raw_data = _parse_extraction_response(response_text)
+
+    # Convert to ExtractionResult objects
+    data: dict[str, dict[str, ExtractionResult]] = {}
+
+    for section, fields in EXTRACTION_SCHEMA.items():
+        data[section] = {}
+        section_data = raw_data.get(section, {})
+
+        for field_name in fields:
+            field_data = section_data.get(field_name, {})
+
+            if isinstance(field_data, dict):
+                data[section][field_name] = ExtractionResult(
+                    value=field_data.get("value"),
+                    confidence=float(field_data.get("confidence", 0.0)),
+                    source_text=field_data.get("source_text"),
+                    page_number=field_data.get("page"),
+                    is_present=field_data.get("is_present", False),
+                )
+            else:
+                data[section][field_name] = ExtractionResult(
+                    value=field_data if field_data is not None else None,
+                    confidence=0.5,
+                    is_present=field_data is not None,
+                )
+
+    return ApplicationExtraction(
+        data=data,
+        raw_text="[Vision-based extraction - no text]",
+        page_count=page_count,
+        model_used=model,
+        extraction_metadata={
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+            "extraction_method": "vision",
+        },
+    )
+
+
 # ─────────────────────────────────────────────────────────────
 # CLI for testing
 # ─────────────────────────────────────────────────────────────
@@ -389,7 +545,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Extract application data from PDF")
     parser.add_argument("file", help="Path to PDF file")
-    parser.add_argument("--model", default="gpt-4o", help="OpenAI model to use")
+    parser.add_argument("--model", default="claude-sonnet-4-20250514", help="Claude model to use")
     parser.add_argument("--output", "-o", help="Output JSON file path")
     args = parser.parse_args()
 

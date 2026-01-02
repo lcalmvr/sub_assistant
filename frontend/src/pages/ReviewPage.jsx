@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions } from '../api/client';
+import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions, acceptExtraction } from '../api/client';
 import DocumentViewer from '../components/review/DocumentViewer';
 import ExtractionPanel from '../components/review/ExtractionPanel';
 
@@ -326,6 +326,17 @@ export default function ReviewPage() {
     },
   });
 
+  const acceptExtractionMutation = useMutation({
+    mutationFn: (extractionId) => acceptExtraction(extractionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['extractions', submissionId]);
+    },
+  });
+
+  const handleAcceptValue = async (extractionId) => {
+    await acceptExtractionMutation.mutateAsync(extractionId);
+  };
+
   const handleDecision = (decision) => {
     const payload = {
       decision_tag: decision,
@@ -341,9 +352,19 @@ export default function ReviewPage() {
     updateMutation.mutate(payload);
   };
 
-  const handleShowSource = (pageNumber) => {
+  const handleShowSource = (pageNumber, documentId) => {
     setHighlightPage(pageNumber);
-    // Auto-select primary document if none selected
+
+    // Switch to the correct document if specified
+    if (documentId && documents?.documents?.length > 0) {
+      const targetDoc = documents.documents.find(d => d.id === documentId);
+      if (targetDoc) {
+        setSelectedDocument(targetDoc);
+        return;
+      }
+    }
+
+    // Fallback: auto-select primary document if none selected
     if (!selectedDocument && documents?.documents?.length > 0) {
       const primary = documents.documents.find(d => d.is_priority) || documents.documents[0];
       setSelectedDocument(primary);
@@ -482,6 +503,7 @@ export default function ReviewPage() {
                   extractions={extractions?.sections}
                   isLoading={extractionsLoading}
                   onShowSource={handleShowSource}
+                  onAcceptValue={handleAcceptValue}
                   className="h-full"
                 />
               </div>

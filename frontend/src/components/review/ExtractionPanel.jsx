@@ -29,10 +29,24 @@ function ConfidenceBadge({ confidence, size = 'sm' }) {
   );
 }
 
+// Conflict badge component
+function ConflictBadge({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-xs px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded font-medium hover:bg-orange-200"
+      title="Different values in different documents - click to resolve"
+    >
+      Conflict
+    </button>
+  );
+}
+
 // Field row component
-function FieldRow({ fieldName, extraction, onShowSource, onEdit }) {
+function FieldRow({ fieldName, extraction, onShowSource, onEdit, onAcceptValue }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
+  const [showConflict, setShowConflict] = useState(false);
 
   const displayName = fieldName
     .replace(/([A-Z])/g, ' $1')
@@ -65,80 +79,143 @@ function FieldRow({ fieldName, extraction, onShowSource, onEdit }) {
     setIsEditing(false);
   };
 
+  const handleAccept = async (extractionId) => {
+    if (onAcceptValue) {
+      await onAcceptValue(extractionId);
+      setShowConflict(false);
+    }
+  };
+
   if (!extraction.is_present) {
     return null; // Don't show fields that weren't in the document
   }
 
+  const hasConflict = extraction.has_conflict && extraction.all_values?.length > 1;
+
   return (
-    <div className="flex items-start justify-between py-2 border-b border-gray-100 hover:bg-gray-50 group">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-700">{displayName}</span>
-          <ConfidenceBadge confidence={extraction.confidence} />
+    <div className={`py-2 border-b border-gray-100 ${hasConflict ? 'bg-orange-50' : 'hover:bg-gray-50'} group`}>
+      <div className="flex items-start justify-between">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-gray-700">{displayName}</span>
+            <ConfidenceBadge confidence={extraction.confidence} />
+            {hasConflict && (
+              <ConflictBadge onClick={() => setShowConflict(!showConflict)} />
+            )}
+          </div>
+
+          {isEditing ? (
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="text"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                className="flex-1 text-sm border rounded px-2 py-1"
+                autoFocus
+              />
+              <button
+                onClick={handleSave}
+                className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+              >
+                Save
+              </button>
+              <button
+                onClick={handleCancel}
+                className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className={`text-sm ${extraction.value !== null ? 'text-gray-900' : 'text-gray-400 italic'}`}>
+                {formatValue(extraction.value)}
+              </span>
+              {extraction.document_name && (
+                <span className="text-xs text-gray-400">
+                  ({extraction.document_name.slice(0, 20)}...)
+                </span>
+              )}
+            </div>
+          )}
+
+          {extraction.source_text && !showConflict && (
+            <p className="text-xs text-gray-500 mt-1 truncate" title={extraction.source_text}>
+              "{extraction.source_text}"
+            </p>
+          )}
         </div>
 
-        {isEditing ? (
-          <div className="mt-1 flex items-center gap-2">
-            <input
-              type="text"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              className="flex-1 text-sm border rounded px-2 py-1"
-              autoFocus
-            />
+        <div className="flex items-center gap-1 ml-2">
+          {extraction.page && (
             <button
-              onClick={handleSave}
-              className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+              onClick={() => onShowSource?.(extraction.page, extraction.document_id)}
+              className="text-xs px-2 py-1 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded"
+              title={`View source on page ${extraction.page}`}
             >
-              Save
+              p.{extraction.page}
             </button>
+          )}
+          {onEdit && !isEditing && (
             <button
-              onClick={handleCancel}
-              className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+              onClick={handleStartEdit}
+              className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
             >
-              Cancel
+              Edit
             </button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className={`text-sm ${extraction.value !== null ? 'text-gray-900' : 'text-gray-400 italic'}`}>
-              {formatValue(extraction.value)}
-            </span>
-          </div>
-        )}
+          )}
+        </div>
+      </div>
 
-        {extraction.source_text && (
-          <p className="text-xs text-gray-500 mt-1 truncate" title={extraction.source_text}>
-            "{extraction.source_text}"
+      {/* Conflict resolution panel */}
+      {showConflict && hasConflict && (
+        <div className="mt-2 ml-4 p-2 bg-white border border-orange-200 rounded">
+          <p className="text-xs font-medium text-orange-700 mb-2">
+            Different values found in different applications:
           </p>
-        )}
-      </div>
-
-      <div className="flex items-center gap-1 ml-2">
-        {extraction.page && (
-          <button
-            onClick={() => onShowSource?.(extraction.page)}
-            className="text-xs px-2 py-1 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded"
-            title={`View source on page ${extraction.page}`}
-          >
-            p.{extraction.page}
-          </button>
-        )}
-        {onEdit && !isEditing && (
-          <button
-            onClick={handleStartEdit}
-            className="text-xs px-2 py-1 text-gray-600 hover:bg-gray-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-          >
-            Edit
-          </button>
-        )}
-      </div>
+          <div className="space-y-2">
+            {extraction.all_values.map((val, idx) => (
+              <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm">
+                <div className="flex-1">
+                  <span className="font-medium">{formatValue(val.value)}</span>
+                  <span className="text-xs text-gray-500 ml-2">
+                    from {val.document_name || 'Unknown document'}
+                  </span>
+                  {val.is_accepted && (
+                    <span className="ml-2 text-xs px-1.5 py-0.5 bg-green-100 text-green-700 rounded">
+                      Accepted
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {val.page && (
+                    <button
+                      onClick={() => onShowSource?.(val.page, val.document_id)}
+                      className="text-xs px-2 py-1 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded"
+                    >
+                      View
+                    </button>
+                  )}
+                  {!val.is_accepted && (
+                    <button
+                      onClick={() => handleAccept(val.id)}
+                      className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                    >
+                      Accept
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // Section component
-function ExtractionSection({ sectionName, fields, onShowSource, onEdit, defaultExpanded = true }) {
+function ExtractionSection({ sectionName, fields, onShowSource, onEdit, onAcceptValue, defaultExpanded = true }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
 
   const displayName = sectionName
@@ -198,6 +275,7 @@ function ExtractionSection({ sectionName, fields, onShowSource, onEdit, defaultE
               extraction={extraction}
               onShowSource={onShowSource}
               onEdit={onEdit}
+              onAcceptValue={onAcceptValue}
             />
           ))}
         </div>
@@ -212,6 +290,7 @@ export default function ExtractionPanel({
   isLoading = false,
   onShowSource,
   onEdit,
+  onAcceptValue,
   className = ''
 }) {
   if (isLoading) {
@@ -270,6 +349,7 @@ export default function ExtractionPanel({
             fields={fields}
             onShowSource={onShowSource}
             onEdit={onEdit}
+            onAcceptValue={onAcceptValue}
           />
         ))}
       </div>
