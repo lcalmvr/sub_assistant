@@ -78,6 +78,64 @@ TEMPLATE_ENV.filters['format_date'] = format_date
 TEMPLATE_ENV.filters['format_limit'] = format_limit
 
 
+def get_endorsement_component_templates(position: str = "primary") -> dict:
+    """
+    Fetch default endorsement component templates (header, lead_in, closing).
+
+    Args:
+        position: 'primary' or 'excess' - determines which templates to use
+
+    Returns:
+        dict with 'header', 'lead_in', 'closing' keys containing HTML content
+    """
+    components = {"header": "", "lead_in": "", "closing": ""}
+
+    with get_conn() as conn:
+        # Fetch default templates for each component type
+        # Prefer position-specific templates, fall back to 'either'
+        for component_type in ["header", "lead_in", "closing"]:
+            result = conn.execute(text("""
+                SELECT content_html
+                FROM endorsement_component_templates
+                WHERE component_type = :component_type
+                  AND is_default = TRUE
+                  AND (position = :position OR position = 'either')
+                ORDER BY
+                    CASE WHEN position = :position THEN 0 ELSE 1 END
+                LIMIT 1
+            """), {"component_type": component_type, "position": position})
+            row = result.fetchone()
+            if row and row[0]:
+                components[component_type] = row[0]
+
+    return components
+
+
+def render_endorsement_component(template_html: str, context: dict) -> str:
+    """
+    Render an endorsement component template with variable substitution.
+
+    Replaces {{placeholder}} with values from context.
+    """
+    if not template_html:
+        return ""
+
+    result = template_html
+    # Map context keys to template placeholders
+    placeholder_map = {
+        "form_number": context.get("document_code", ""),
+        "edition_date": context.get("edition_date", ""),
+        "policy_type": "Excess Cyber & Tech E&O" if context.get("position") == "excess" else "Cyber & Technology E&O",
+        "effective_date": context.get("effective_date", ""),
+        "policy_number": context.get("document_number", ""),
+    }
+
+    for key, value in placeholder_map.items():
+        result = result.replace("{{" + key + "}}", str(value) if value else "")
+
+    return result
+
+
 def format_quote_display_name(limit: int, retention_or_attachment: int, position: str = "primary") -> str:
     """
     Format a quote display name like '1M x 50K SIR' or '5M x 1M'.
@@ -514,6 +572,20 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
 
             # Terms text
             context["terms"] = """Coverage is subject to the terms, conditions, and exclusions of the policy. This quote is valid for 30 days from the date of issuance. Binding is subject to receipt of completed application, premium payment, and underwriter approval. Claims-made policy form applies; coverage is provided for claims first made during the policy period. Defense costs are included within the policy limit unless otherwise stated."""
+
+    # Fetch endorsement component templates (header, lead_in, closing)
+    component_templates = get_endorsement_component_templates(context.get("position", "primary"))
+
+    # Pre-render component templates with context values
+    context["endorsement_header"] = render_endorsement_component(
+        component_templates["header"], context
+    )
+    context["endorsement_lead_in"] = render_endorsement_component(
+        component_templates["lead_in"], context
+    )
+    context["endorsement_closing"] = render_endorsement_component(
+        component_templates["closing"], context
+    )
 
     return context
 

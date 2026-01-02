@@ -8,14 +8,61 @@ Expected context:
 - code: Document code (optional)
 - content_html: Rich text content as HTML
 - document_type: Type of document (endorsement, marketing, etc.)
-- effective_date: Effective date if applicable (optional)
-- policy_number: Policy number if applicable (optional)
+- endorsement_header: Pre-rendered header component HTML (optional)
+- endorsement_lead_in: Pre-rendered lead-in component HTML (optional)
+- endorsement_closing: Pre-rendered closing component HTML (optional)
 #}
 
-{% macro render_library_document(doc) %}
+{% macro render_library_document(doc, endorsement_header='', endorsement_lead_in='', endorsement_closing='') %}
 {# Render a library document from a dict #}
 <div class="library-document">
-    {# Document Header #}
+    {% if doc.document_type == 'endorsement' %}
+    {# Endorsement: use component templates #}
+
+    {# Header Component #}
+    {% if endorsement_header %}
+    <div class="endorsement-header-component">
+        {{ endorsement_header | safe }}
+    </div>
+    {% else %}
+    {# Fallback header #}
+    <div class="library-document-header">
+        <div class="library-document-title">{{ doc.title }}</div>
+        {% if doc.code %}
+        <div class="library-document-code">{{ doc.code }}</div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {# Lead-in Component #}
+    {% if endorsement_lead_in %}
+    <div class="endorsement-lead-in-component">
+        {{ endorsement_lead_in | safe }}
+    </div>
+    {% endif %}
+
+    {# Endorsement Body #}
+    <div class="library-document-content endorsement-body">
+        <div class="endorsement-title">{{ doc.title }}</div>
+        {{ doc.content_html | safe }}
+    </div>
+
+    {# Closing Component #}
+    {% if endorsement_closing %}
+    <div class="endorsement-closing-component">
+        {{ endorsement_closing | safe }}
+    </div>
+    {% else %}
+    {# Fallback closing #}
+    <div class="endorsement-footer">
+        <p class="endorsement-footer-text">
+            All other terms and conditions of the Policy remain unchanged.
+        </p>
+    </div>
+    {% endif %}
+
+    {% else %}
+    {# Non-endorsement document: simple layout #}
     <div class="library-document-header">
         <div class="library-document-title">{{ doc.title }}</div>
         {% if doc.code %}
@@ -23,36 +70,8 @@ Expected context:
         {% endif %}
     </div>
 
-    {% if doc.document_type == 'endorsement' %}
-    {# Endorsement-specific layout #}
-    <div class="endorsement-meta">
-        {% if effective_date %}
-        <div class="endorsement-meta-item">
-            <span class="endorsement-meta-label">Effective Date:</span>
-            <span class="endorsement-meta-value">{{ effective_date }}</span>
-        </div>
-        {% endif %}
-        {% if policy_number %}
-        <div class="endorsement-meta-item">
-            <span class="endorsement-meta-label">Policy Number:</span>
-            <span class="endorsement-meta-value">{{ policy_number }}</span>
-        </div>
-        {% endif %}
-    </div>
-    {% endif %}
-
-    {# Document Content #}
     <div class="library-document-content">
         {{ doc.content_html | safe }}
-    </div>
-
-    {% if doc.document_type == 'endorsement' %}
-    {# Endorsement footer #}
-    <div class="endorsement-footer">
-        <p class="endorsement-footer-text">
-            This endorsement modifies the policy to which it is attached and is effective
-            on the date indicated above. All other terms and conditions of the policy remain unchanged.
-        </p>
     </div>
     {% endif %}
 </div>
@@ -63,8 +82,89 @@ Expected context:
 <style>
 .library-document {
     margin-bottom: 30px;
+    page-break-inside: avoid;
 }
 
+/* Component-based endorsement layout */
+.endorsement-header-component {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.endorsement-header-component .company-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--navy);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 5px;
+}
+
+.endorsement-header-component .form-info {
+    font-size: 10px;
+    color: var(--gray-500);
+}
+
+.endorsement-lead-in-component {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: var(--gray-50, #f8f9fa);
+    border-radius: 4px;
+}
+
+.endorsement-lead-in-component p {
+    margin: 0 0 10px 0;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.endorsement-lead-in-component p:last-child {
+    margin-bottom: 0;
+}
+
+.endorsement-body {
+    margin-bottom: 20px;
+}
+
+.endorsement-body .endorsement-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--navy);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--gold, #d4af37);
+}
+
+.endorsement-closing-component {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid var(--gray-300, #e2e8f0);
+}
+
+.endorsement-closing-component p {
+    font-size: 10px;
+    color: var(--gray-600);
+    margin-bottom: 10px;
+}
+
+.endorsement-closing-component .signature-block {
+    margin-top: 20px;
+}
+
+.endorsement-closing-component .signature-line {
+    width: 200px;
+    border-top: 1px solid var(--gray-400);
+    padding-top: 5px;
+}
+
+.endorsement-closing-component .signature-title {
+    font-size: 9px;
+    color: var(--gray-500);
+}
+
+/* Fallback/legacy styles */
 .library-document-header {
     text-align: center;
     border-bottom: 2px solid var(--navy);
