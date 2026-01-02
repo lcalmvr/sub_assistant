@@ -550,6 +550,149 @@ def correct_extraction(extraction_id: str, corrected_value: Any, reason: Optiona
 
 
 # ─────────────────────────────────────────────────────────────
+# Feedback Tracking Endpoints
+# ─────────────────────────────────────────────────────────────
+
+class FeedbackCreate(BaseModel):
+    field_name: str
+    original_value: Optional[str] = None
+    edited_value: Optional[str] = None
+    edit_type: str = "modification"
+    edit_reason: Optional[str] = None
+    time_to_edit_seconds: Optional[int] = None
+
+
+@app.post("/api/submissions/{submission_id}/feedback")
+def save_feedback(submission_id: str, feedback: FeedbackCreate):
+    """Save feedback when an AI-generated field is edited."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO ai_feedback
+                (submission_id, field_name, original_value, edited_value,
+                 edit_type, edit_reason, time_to_edit_seconds)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                submission_id,
+                feedback.field_name,
+                feedback.original_value,
+                feedback.edited_value,
+                feedback.edit_type,
+                feedback.edit_reason,
+                feedback.time_to_edit_seconds,
+            ))
+            result = cur.fetchone()
+            conn.commit()
+            return {"status": "saved", "feedback_id": str(result["id"])}
+
+
+@app.get("/api/submissions/{submission_id}/feedback")
+def get_submission_feedback(submission_id: str):
+    """Get all feedback for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, field_name, original_value, edited_value,
+                       edit_type, edit_reason, time_to_edit_seconds,
+                       edited_by, edited_at
+                FROM ai_feedback
+                WHERE submission_id = %s
+                ORDER BY edited_at DESC
+            """, (submission_id,))
+            rows = cur.fetchall()
+            return {
+                "count": len(rows),
+                "feedback": [
+                    {
+                        "id": str(r["id"]),
+                        "field_name": r["field_name"],
+                        "original_value": r["original_value"],
+                        "edited_value": r["edited_value"],
+                        "edit_type": r["edit_type"],
+                        "edit_reason": r["edit_reason"],
+                        "time_to_edit_seconds": r["time_to_edit_seconds"],
+                        "edited_by": r["edited_by"],
+                        "edited_at": r["edited_at"].isoformat() if r["edited_at"] else None,
+                    }
+                    for r in rows
+                ],
+            }
+
+
+@app.get("/api/feedback/analytics")
+def get_feedback_analytics():
+    """Get feedback analytics for the dashboard."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Field edit rates (last 30 days)
+            cur.execute("""
+                SELECT * FROM v_field_edit_rates
+            """)
+            field_rates = cur.fetchall()
+
+            # AI accuracy estimates
+            cur.execute("""
+                SELECT * FROM v_ai_accuracy
+            """)
+            accuracy = cur.fetchall()
+
+            # Daily volume (last 30 days)
+            cur.execute("""
+                SELECT feedback_date, SUM(edit_count) as total_edits
+                FROM v_daily_feedback
+                WHERE feedback_date > NOW() - INTERVAL '30 days'
+                GROUP BY feedback_date
+                ORDER BY feedback_date DESC
+            """)
+            daily_volume = cur.fetchall()
+
+            # Total stats
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total_feedback,
+                    COUNT(DISTINCT submission_id) as submissions_with_feedback,
+                    COUNT(DISTINCT field_name) as fields_edited
+                FROM ai_feedback
+            """)
+            totals = cur.fetchone()
+
+            return {
+                "totals": {
+                    "total_feedback": totals["total_feedback"],
+                    "submissions_with_feedback": totals["submissions_with_feedback"],
+                    "fields_edited": totals["fields_edited"],
+                },
+                "field_edit_rates": [
+                    {
+                        "field_name": r["field_name"],
+                        "total_edits": r["total_edits"],
+                        "submissions_edited": r["submissions_edited"],
+                        "avg_length_change": r["avg_length_change"],
+                        "avg_time_to_edit_seconds": r["avg_time_to_edit_seconds"],
+                    }
+                    for r in field_rates
+                ],
+                "ai_accuracy": [
+                    {
+                        "field_name": r["field_name"],
+                        "edited_submissions": r["edited_submissions"],
+                        "total_submissions": r["total_submissions"],
+                        "accuracy_pct": float(r["accuracy_pct"]) if r["accuracy_pct"] else None,
+                    }
+                    for r in accuracy
+                ],
+                "daily_volume": [
+                    {
+                        "date": r["feedback_date"].isoformat(),
+                        "edits": r["total_edits"],
+                    }
+                    for r in daily_volume
+                ],
+            }
+
+
+# ─────────────────────────────────────────────────────────────
 # Quote Options Endpoints
 # ─────────────────────────────────────────────────────────────
 

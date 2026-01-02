@@ -25,6 +25,13 @@ export const triggerExtraction = (submissionId, documentId = null) =>
 export const correctExtraction = (extractionId, correctedValue, reason = null) =>
   api.post(`/extractions/${extractionId}/correct`, { corrected_value: correctedValue, reason });
 
+// Feedback tracking
+export const saveFeedback = (submissionId, feedback) =>
+  api.post(`/submissions/${submissionId}/feedback`, feedback);
+export const getSubmissionFeedback = (submissionId) =>
+  api.get(`/submissions/${submissionId}/feedback`);
+export const getFeedbackAnalytics = () => api.get('/feedback/analytics');
+
 // Document content (for PDF viewer)
 export const getDocumentContent = (documentId) => api.get(`/documents/${documentId}/content`, { responseType: 'blob' });
 export const getDocumentUrl = (documentId) => `/api/documents/${documentId}/content`;

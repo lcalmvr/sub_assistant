@@ -13,6 +13,7 @@ import {
   deleteSubjectivityTemplate,
   getEndorsementComponentTemplates,
   updateEndorsementComponentTemplate,
+  getFeedbackAnalytics,
 } from '../api/client';
 
 // Format currency
@@ -835,6 +836,145 @@ function EndorsementComponentTemplatesTab() {
   );
 }
 
+// AI Feedback Analytics Tab
+function FeedbackAnalyticsTab() {
+  const { data: analytics, isLoading } = useQuery({
+    queryKey: ['feedback-analytics'],
+    queryFn: () => getFeedbackAnalytics().then(res => res.data),
+  });
+
+  if (isLoading) {
+    return <div className="text-center py-8 text-gray-500">Loading analytics...</div>;
+  }
+
+  const fieldNameLabels = {
+    business_summary: 'Business Summary',
+    cyber_exposures: 'Cyber Exposures',
+    nist_controls_summary: 'NIST Controls',
+    bullet_point_summary: 'Key Points',
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-purple-50 rounded-lg p-4">
+          <div className="text-2xl font-bold text-purple-700">
+            {analytics?.totals?.total_feedback || 0}
+          </div>
+          <div className="text-sm text-purple-600">Total Edits</div>
+        </div>
+        <div className="bg-blue-50 rounded-lg p-4">
+          <div className="text-2xl font-bold text-blue-700">
+            {analytics?.totals?.submissions_with_feedback || 0}
+          </div>
+          <div className="text-sm text-blue-600">Submissions Edited</div>
+        </div>
+        <div className="bg-green-50 rounded-lg p-4">
+          <div className="text-2xl font-bold text-green-700">
+            {analytics?.totals?.fields_edited || 0}
+          </div>
+          <div className="text-sm text-green-600">Fields Edited</div>
+        </div>
+      </div>
+
+      {/* Field Edit Rates */}
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Edit Rates by Field (Last 30 Days)</h3>
+        {analytics?.field_edit_rates?.length > 0 ? (
+          <div className="overflow-hidden border rounded-lg">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Field</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Edits</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Submissions</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Avg Change</th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Avg Time</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {analytics.field_edit_rates.map((field) => (
+                  <tr key={field.field_name}>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                      {fieldNameLabels[field.field_name] || field.field_name}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 text-right">
+                      {field.total_edits}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 text-right">
+                      {field.submissions_edited}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 text-right">
+                      {field.avg_length_change > 0 ? '+' : ''}{field.avg_length_change || 0} chars
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 text-right">
+                      {field.avg_time_to_edit_seconds || '—'}s
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-gray-500 text-center py-8">No edit data yet. Edits made on the UW page will appear here.</p>
+        )}
+      </div>
+
+      {/* AI Accuracy */}
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">AI Accuracy Estimates (Last 30 Days)</h3>
+        {analytics?.ai_accuracy?.length > 0 ? (
+          <div className="grid grid-cols-2 gap-4">
+            {analytics.ai_accuracy.map((field) => (
+              <div key={field.field_name} className="border rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-gray-900">
+                    {fieldNameLabels[field.field_name] || field.field_name}
+                  </span>
+                  <span className={`text-lg font-bold ${
+                    field.accuracy_pct >= 90 ? 'text-green-600' :
+                    field.accuracy_pct >= 70 ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                    {field.accuracy_pct?.toFixed(1) || '—'}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full ${
+                      field.accuracy_pct >= 90 ? 'bg-green-500' :
+                      field.accuracy_pct >= 70 ? 'bg-yellow-500' :
+                      'bg-red-500'
+                    }`}
+                    style={{ width: `${field.accuracy_pct || 0}%` }}
+                  />
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {field.edited_submissions} edited / {field.total_submissions} total
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-500 text-center py-4">No accuracy data available yet.</p>
+        )}
+      </div>
+
+      {/* How it works */}
+      <div className="bg-gray-50 rounded-lg p-4">
+        <h4 className="font-medium text-gray-900 mb-2">How Feedback Tracking Works</h4>
+        <ul className="text-sm text-gray-600 space-y-1">
+          <li>When UWs edit AI-generated fields (Business Summary, Cyber Exposures, etc.), the original and edited values are saved.</li>
+          <li>Edit time is tracked to understand review effort.</li>
+          <li>Accuracy = % of submissions where the AI output didn't need editing.</li>
+          <li>Fields with low accuracy scores may need prompt improvements.</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
@@ -844,6 +984,7 @@ export default function AdminPage() {
     { id: 'bound', label: 'Bound Policies' },
     { id: 'templates', label: 'Subjectivity Templates' },
     { id: 'endorsement-components', label: 'Endorsement Components' },
+    { id: 'feedback', label: 'AI Feedback' },
   ];
 
   return (
@@ -894,6 +1035,7 @@ export default function AdminPage() {
           {activeTab === 'bound' && <BoundPoliciesTab />}
           {activeTab === 'templates' && <SubjectivityTemplatesTab />}
           {activeTab === 'endorsement-components' && <EndorsementComponentTemplatesTab />}
+          {activeTab === 'feedback' && <FeedbackAnalyticsTab />}
         </div>
       </main>
     </div>

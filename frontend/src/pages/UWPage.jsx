@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission } from '../api/client';
+import { getSubmission, updateSubmission, saveFeedback } from '../api/client';
 
 // Editable section component for AI-generated content
 function EditableSection({ title, value, fieldName, submissionId, onSave, children }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(value || '');
   const [showSaved, setShowSaved] = useState(false);
+  const [editStartTime, setEditStartTime] = useState(null);
   const textareaRef = useRef(null);
   const queryClient = useQueryClient();
 
@@ -18,20 +19,41 @@ function EditableSection({ title, value, fieldName, submissionId, onSave, childr
     }
   }, [value, isEditing]);
 
-  // Focus textarea when entering edit mode
+  // Focus textarea and track edit start time when entering edit mode
   useEffect(() => {
     if (isEditing && textareaRef.current) {
       textareaRef.current.focus();
-      // Move cursor to end
       textareaRef.current.selectionStart = textareaRef.current.value.length;
+      setEditStartTime(Date.now());
     }
   }, [isEditing]);
+
+  // Mutation for saving feedback (fire and forget)
+  const feedbackMutation = useMutation({
+    mutationFn: (feedback) => saveFeedback(submissionId, feedback),
+  });
 
   const saveMutation = useMutation({
     mutationFn: (newValue) => updateSubmission(submissionId, { [fieldName]: newValue }),
     onSuccess: () => {
+      // Track feedback if the value actually changed
+      if (editValue !== value) {
+        const timeToEdit = editStartTime
+          ? Math.round((Date.now() - editStartTime) / 1000)
+          : null;
+
+        feedbackMutation.mutate({
+          field_name: fieldName,
+          original_value: value,
+          edited_value: editValue,
+          edit_type: value ? 'modification' : 'addition',
+          time_to_edit_seconds: timeToEdit,
+        });
+      }
+
       queryClient.invalidateQueries({ queryKey: ['submission', submissionId] });
       setIsEditing(false);
+      setEditStartTime(null);
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 2000);
       onSave?.(fieldName, editValue);
@@ -45,6 +67,7 @@ function EditableSection({ title, value, fieldName, submissionId, onSave, childr
   const handleCancel = () => {
     setEditValue(value || '');
     setIsEditing(false);
+    setEditStartTime(null);
   };
 
   const handleKeyDown = (e) => {
