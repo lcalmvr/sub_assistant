@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission } from '../api/client';
+import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments } from '../api/client';
 
 // Decision badge component
 function DecisionBadge({ decision }) {
@@ -14,6 +14,256 @@ function DecisionBadge({ decision }) {
 
   const { label, class: badgeClass } = config[decision] || config.pending;
   return <span className={`badge ${badgeClass}`}>{label}</span>;
+}
+
+// Credibility score display component
+function CredibilityCard({ credibility }) {
+  if (!credibility?.has_score) {
+    return (
+      <div className="card bg-gray-50">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-900">Application Credibility</h3>
+          <span className="text-sm text-gray-500">Not calculated</span>
+        </div>
+        <p className="text-sm text-gray-500 mt-2">
+          Credibility score will be calculated when the application is processed.
+        </p>
+      </div>
+    );
+  }
+
+  const { total_score, label, dimensions, issue_count } = credibility;
+
+  // Color based on score
+  const getScoreColor = (score) => {
+    if (score >= 80) return 'text-green-600';
+    if (score >= 60) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const getBgColor = (score) => {
+    if (score >= 80) return 'bg-green-50 border-green-200';
+    if (score >= 60) return 'bg-yellow-50 border-yellow-200';
+    return 'bg-red-50 border-red-200';
+  };
+
+  const getBarColor = (score) => {
+    if (score >= 80) return 'bg-green-500';
+    if (score >= 60) return 'bg-yellow-500';
+    return 'bg-red-500';
+  };
+
+  return (
+    <div className={`card ${getBgColor(total_score)}`}>
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">Application Credibility</h3>
+        <div className="flex items-center gap-3">
+          <span className={`text-2xl font-bold ${getScoreColor(total_score)}`}>
+            {Math.round(total_score)}
+          </span>
+          <span className={`px-2 py-1 text-sm font-medium rounded ${getBgColor(total_score)} ${getScoreColor(total_score)}`}>
+            {label}
+          </span>
+        </div>
+      </div>
+
+      {/* Dimension breakdown */}
+      <div className="grid grid-cols-3 gap-4">
+        {dimensions && Object.entries(dimensions).map(([name, score]) => (
+          <div key={name} className="bg-white/50 rounded-lg p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium text-gray-700 capitalize">{name}</span>
+              <span className={`text-sm font-semibold ${getScoreColor(score)}`}>
+                {score ? Math.round(score) : '—'}
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className={`h-2 rounded-full ${getBarColor(score)}`}
+                style={{ width: `${score || 0}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {issue_count > 0 && (
+        <p className="text-sm text-gray-600 mt-3">
+          {issue_count} issue{issue_count !== 1 ? 's' : ''} detected
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Conflict list component
+function ConflictsList({ conflicts, submissionId, onResolve }) {
+  const queryClient = useQueryClient();
+
+  const resolveMutation = useMutation({
+    mutationFn: ({ conflictId, status }) => resolveConflict(submissionId, conflictId, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conflicts', submissionId] });
+    },
+  });
+
+  if (!conflicts || conflicts.pending_count === 0) {
+    return null;
+  }
+
+  const priorityColors = {
+    high: 'border-l-red-500 bg-red-50',
+    medium: 'border-l-yellow-500 bg-yellow-50',
+    low: 'border-l-blue-500 bg-blue-50',
+  };
+
+  const priorityBadge = {
+    high: 'bg-red-100 text-red-700',
+    medium: 'bg-yellow-100 text-yellow-700',
+    low: 'bg-blue-100 text-blue-700',
+  };
+
+  const typeLabels = {
+    VALUE_MISMATCH: 'Value Mismatch',
+    LOW_CONFIDENCE: 'Low Confidence',
+    MISSING_REQUIRED: 'Missing Required',
+    CROSS_FIELD: 'Cross-Field Conflict',
+    APPLICATION_CONTRADICTION: 'Contradiction',
+    VERIFICATION_REQUIRED: 'Needs Verification',
+    DUPLICATE_SUBMISSION: 'Duplicate',
+    OUTLIER_VALUE: 'Outlier Value',
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="form-section-title mb-0 pb-0 border-0">Conflicts Requiring Review</h3>
+        <div className="flex items-center gap-2">
+          {conflicts.high_priority_count > 0 && (
+            <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full">
+              {conflicts.high_priority_count} high priority
+            </span>
+          )}
+          <span className="text-sm text-gray-500">
+            {conflicts.pending_count} pending
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {conflicts.pending.map((conflict) => (
+          <div
+            key={conflict.id}
+            className={`border-l-4 rounded-lg p-4 ${priorityColors[conflict.priority]}`}
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`px-2 py-0.5 text-xs font-medium rounded ${priorityBadge[conflict.priority]}`}>
+                    {conflict.priority}
+                  </span>
+                  <span className="text-sm font-medium text-gray-900">
+                    {typeLabels[conflict.type] || conflict.type}
+                  </span>
+                  {conflict.field && (
+                    <span className="text-sm text-gray-500">
+                      — {conflict.field}
+                    </span>
+                  )}
+                </div>
+                {conflict.details?.message && (
+                  <p className="text-sm text-gray-700">{conflict.details.message}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 ml-4">
+                <button
+                  onClick={() => resolveMutation.mutate({ conflictId: conflict.id, status: 'approved' })}
+                  disabled={resolveMutation.isPending}
+                  className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => resolveMutation.mutate({ conflictId: conflict.id, status: 'deferred' })}
+                  disabled={resolveMutation.isPending}
+                  className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                >
+                  Defer
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Source documents list component
+function DocumentsList({ documents }) {
+  if (!documents || documents.count === 0) {
+    return (
+      <div className="card bg-gray-50">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-900">Source Documents</h3>
+          <span className="text-sm text-gray-500">No documents</span>
+        </div>
+        <p className="text-sm text-gray-500 mt-2">
+          No source documents have been uploaded for this submission.
+        </p>
+      </div>
+    );
+  }
+
+  const typeIcons = {
+    'Application Form': '📋',
+    'Loss Runs': '📊',
+    'Financial Statement': '💰',
+    'Email': '📧',
+    'Other': '📄',
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">Source Documents</h3>
+        <span className="text-sm text-gray-500">{documents.count} document{documents.count !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="space-y-2">
+        {documents.documents.map((doc) => (
+          <div
+            key={doc.id}
+            className={`flex items-center justify-between p-3 rounded-lg ${
+              doc.is_priority ? 'bg-purple-50 border border-purple-200' : 'bg-gray-50'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-xl">{typeIcons[doc.type] || typeIcons.Other}</span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-900">{doc.filename}</span>
+                  {doc.is_priority && (
+                    <span className="px-1.5 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">Primary</span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-500">
+                  {doc.type || 'Document'}
+                  {doc.page_count && ` · ${doc.page_count} pages`}
+                </span>
+              </div>
+            </div>
+            <button
+              className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+              title="Document preview coming soon"
+              disabled
+            >
+              View
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // Parse markdown-like text into formatted sections
@@ -68,6 +318,24 @@ export default function ReviewPage() {
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
+  // Fetch credibility score
+  const { data: credibility } = useQuery({
+    queryKey: ['credibility', submissionId],
+    queryFn: () => getCredibility(submissionId).then(res => res.data),
+  });
+
+  // Fetch conflicts
+  const { data: conflicts } = useQuery({
+    queryKey: ['conflicts', submissionId],
+    queryFn: () => getConflicts(submissionId).then(res => res.data),
+  });
+
+  // Fetch source documents
+  const { data: documents } = useQuery({
+    queryKey: ['documents', submissionId],
+    queryFn: () => getSubmissionDocuments(submissionId).then(res => res.data),
+  });
+
   // Initialize decision reason from existing data
   if (submission?.decision_reason && !hasInitialized) {
     setDecisionReason(submission.decision_reason);
@@ -112,6 +380,15 @@ export default function ReviewPage() {
 
   return (
     <div className="space-y-6">
+      {/* Credibility Score */}
+      <CredibilityCard credibility={credibility} />
+
+      {/* Conflicts Section */}
+      <ConflictsList conflicts={conflicts} submissionId={submissionId} />
+
+      {/* Source Documents */}
+      <DocumentsList documents={documents} />
+
       {/* Decision Status Banner */}
       <div className={`card ${
         submission?.decision_tag === 'accept' ? 'bg-green-50 border-green-200' :

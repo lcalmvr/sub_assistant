@@ -116,6 +116,11 @@ class SubmissionUpdate(BaseModel):
     # Decision fields
     decision_tag: Optional[str] = None
     decision_reason: Optional[str] = None
+    # AI-generated fields (editable by UW)
+    business_summary: Optional[str] = None
+    cyber_exposures: Optional[str] = None
+    nist_controls_summary: Optional[str] = None
+    bullet_point_summary: Optional[str] = None
 
 
 @app.patch("/api/submissions/{submission_id}")
@@ -154,6 +159,157 @@ def update_submission(submission_id: str, data: SubmissionUpdate):
                 raise HTTPException(status_code=404, detail="Submission not found")
             conn.commit()
     return {"status": "updated"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Credibility & Conflicts Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/credibility")
+def get_credibility(submission_id: str):
+    """Get credibility score breakdown for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT total_score, label, consistency_score, plausibility_score,
+                       completeness_score, issue_count, score_details, calculated_at
+                FROM credibility_scores
+                WHERE submission_id = %s
+            """, (submission_id,))
+            row = cur.fetchone()
+            if not row:
+                # No score calculated yet - return null response
+                return {
+                    "has_score": False,
+                    "total_score": None,
+                    "label": None,
+                    "dimensions": None,
+                }
+            return {
+                "has_score": True,
+                "total_score": float(row["total_score"]) if row["total_score"] else None,
+                "label": row["label"],
+                "dimensions": {
+                    "consistency": float(row["consistency_score"]) if row["consistency_score"] else None,
+                    "plausibility": float(row["plausibility_score"]) if row["plausibility_score"] else None,
+                    "completeness": float(row["completeness_score"]) if row["completeness_score"] else None,
+                },
+                "issue_count": row["issue_count"],
+                "details": row["score_details"],
+                "calculated_at": row["calculated_at"].isoformat() if row["calculated_at"] else None,
+            }
+
+
+@app.get("/api/submissions/{submission_id}/conflicts")
+def get_conflicts(submission_id: str):
+    """Get list of detected conflicts for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, conflict_type, field_name, priority, status,
+                       conflict_details, resolution, reviewed_by, reviewed_at, detected_at
+                FROM review_items
+                WHERE submission_id = %s
+                ORDER BY
+                    CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+                    detected_at DESC
+            """, (submission_id,))
+            rows = cur.fetchall()
+
+            # Group by status
+            pending = [r for r in rows if r["status"] == "pending"]
+            resolved = [r for r in rows if r["status"] != "pending"]
+
+            return {
+                "pending_count": len(pending),
+                "high_priority_count": len([r for r in pending if r["priority"] == "high"]),
+                "pending": [
+                    {
+                        "id": str(r["id"]),
+                        "type": r["conflict_type"],
+                        "field": r["field_name"],
+                        "priority": r["priority"],
+                        "details": r["conflict_details"],
+                        "detected_at": r["detected_at"].isoformat() if r["detected_at"] else None,
+                    }
+                    for r in pending
+                ],
+                "resolved": [
+                    {
+                        "id": str(r["id"]),
+                        "type": r["conflict_type"],
+                        "field": r["field_name"],
+                        "status": r["status"],
+                        "resolution": r["resolution"],
+                        "reviewed_by": r["reviewed_by"],
+                        "reviewed_at": r["reviewed_at"].isoformat() if r["reviewed_at"] else None,
+                    }
+                    for r in resolved
+                ],
+            }
+
+
+class ConflictResolution(BaseModel):
+    status: str  # approved, rejected, deferred
+    notes: Optional[str] = None
+
+
+@app.post("/api/submissions/{submission_id}/conflicts/{conflict_id}/resolve")
+def resolve_conflict(submission_id: str, conflict_id: str, data: ConflictResolution):
+    """Resolve a conflict."""
+    from datetime import datetime
+
+    if data.status not in ("approved", "rejected", "deferred"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE review_items
+                SET status = %s,
+                    resolution = %s,
+                    reviewed_at = %s
+                WHERE id = %s AND submission_id = %s
+                RETURNING id
+            """, (
+                data.status,
+                {"notes": data.notes} if data.notes else None,
+                datetime.utcnow(),
+                conflict_id,
+                submission_id,
+            ))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Conflict not found")
+            conn.commit()
+    return {"status": "resolved"}
+
+
+@app.get("/api/submissions/{submission_id}/documents")
+def get_submission_documents(submission_id: str):
+    """Get list of source documents for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, filename, document_type, page_count, is_priority, created_at
+                FROM documents
+                WHERE submission_id = %s
+                ORDER BY is_priority DESC, created_at DESC
+            """, (submission_id,))
+            rows = cur.fetchall()
+            return {
+                "count": len(rows),
+                "documents": [
+                    {
+                        "id": str(r["id"]),
+                        "filename": r["filename"],
+                        "type": r["document_type"],
+                        "page_count": r["page_count"],
+                        "is_priority": r["is_priority"],
+                        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    }
+                    for r in rows
+                ],
+            }
 
 
 # ─────────────────────────────────────────────────────────────

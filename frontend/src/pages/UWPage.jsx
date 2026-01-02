@@ -1,7 +1,124 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSubmission, updateSubmission } from '../api/client';
+
+// Editable section component for AI-generated content
+function EditableSection({ title, value, fieldName, submissionId, onSave, children }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(value || '');
+  const [showSaved, setShowSaved] = useState(false);
+  const textareaRef = useRef(null);
+  const queryClient = useQueryClient();
+
+  // Update edit value when prop changes (after save)
+  useEffect(() => {
+    if (!isEditing) {
+      setEditValue(value || '');
+    }
+  }, [value, isEditing]);
+
+  // Focus textarea when entering edit mode
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      textareaRef.current.focus();
+      // Move cursor to end
+      textareaRef.current.selectionStart = textareaRef.current.value.length;
+    }
+  }, [isEditing]);
+
+  const saveMutation = useMutation({
+    mutationFn: (newValue) => updateSubmission(submissionId, { [fieldName]: newValue }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['submission', submissionId] });
+      setIsEditing(false);
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 2000);
+      onSave?.(fieldName, editValue);
+    },
+  });
+
+  const handleSave = () => {
+    saveMutation.mutate(editValue);
+  };
+
+  const handleCancel = () => {
+    setEditValue(value || '');
+    setIsEditing(false);
+  };
+
+  const handleKeyDown = (e) => {
+    // Cmd/Ctrl+Enter to save
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      handleSave();
+    }
+    // Escape to cancel
+    if (e.key === 'Escape') {
+      handleCancel();
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="form-section-title mb-0 pb-0 border-0">{title}</h3>
+        <div className="flex items-center gap-2">
+          {showSaved && (
+            <span className="text-sm text-green-600">Saved</span>
+          )}
+          {!isEditing ? (
+            <button
+              onClick={() => setIsEditing(true)}
+              className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+              title="Edit this section"
+            >
+              Edit
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCancel}
+                className="text-sm text-gray-500 hover:text-gray-700"
+                disabled={saveMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                className="text-sm bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 disabled:opacity-50"
+                disabled={saveMutation.isPending}
+              >
+                {saveMutation.isPending ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {isEditing ? (
+        <div>
+          <textarea
+            ref={textareaRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="form-input w-full h-64 font-mono text-sm resize-y"
+            placeholder={`Enter ${title.toLowerCase()}...`}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Tip: Cmd/Ctrl+Enter to save, Escape to cancel
+          </p>
+          {saveMutation.isError && (
+            <p className="text-sm text-red-600 mt-1">Error saving. Please try again.</p>
+          )}
+        </div>
+      ) : (
+        children
+      )}
+    </div>
+  );
+}
 
 // Format currency compact
 function formatCompact(value) {
@@ -299,28 +416,40 @@ export default function UWPage() {
 
       <div className="grid grid-cols-2 gap-6">
         {/* Business Summary */}
-        <div className="card">
-          <h3 className="form-section-title">Business Summary</h3>
+        <EditableSection
+          title="Business Summary"
+          value={submission?.business_summary}
+          fieldName="business_summary"
+          submissionId={submissionId}
+        >
           <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
             <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">
               {submission?.business_summary || 'No business summary available'}
             </p>
           </div>
-        </div>
+        </EditableSection>
 
         {/* Key Points */}
-        <div className="card">
-          <h3 className="form-section-title">Key Points</h3>
+        <EditableSection
+          title="Key Points"
+          value={submission?.bullet_point_summary}
+          fieldName="bullet_point_summary"
+          submissionId={submissionId}
+        >
           <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
             <FormattedText text={submission?.bullet_point_summary} />
           </div>
-        </div>
+        </EditableSection>
       </div>
 
       {/* Cyber Exposures */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="form-section-title mb-0 pb-0 border-0">Cyber Exposures</h3>
+      <EditableSection
+        title="Cyber Exposures"
+        value={typeof submission?.cyber_exposures === 'string' ? submission.cyber_exposures : JSON.stringify(submission?.cyber_exposures, null, 2)}
+        fieldName="cyber_exposures"
+        submissionId={submissionId}
+      >
+        <div className="flex items-center justify-end mb-2">
           {cyberExposures.length > 0 && (
             <span className="text-sm text-gray-500">{cyberExposures.length} identified</span>
           )}
@@ -336,11 +465,15 @@ export default function UWPage() {
             <p className="text-gray-500">No cyber exposures identified</p>
           </div>
         )}
-      </div>
+      </EditableSection>
 
       {/* NIST Controls Summary */}
-      <div className="card">
-        <h3 className="form-section-title">Security Controls Assessment</h3>
+      <EditableSection
+        title="Security Controls Assessment"
+        value={submission?.nist_controls_summary}
+        fieldName="nist_controls_summary"
+        submissionId={submissionId}
+      >
         {submission?.nist_controls_summary ? (
           <div className="bg-gray-50 rounded-lg p-4 mb-4">
             <FormattedText text={submission.nist_controls_summary} />
@@ -363,7 +496,7 @@ export default function UWPage() {
             <p className="text-gray-500">No security controls data available</p>
           </div>
         ) : null}
-      </div>
+      </EditableSection>
 
       {/* AI Recommendation Preview */}
       {submission?.ai_recommendation && (

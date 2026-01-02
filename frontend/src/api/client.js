@@ -12,6 +12,12 @@ export const getSubmissions = () => api.get('/submissions');
 export const getSubmission = (id) => api.get(`/submissions/${id}`);
 export const updateSubmission = (id, data) => api.patch(`/submissions/${id}`, data);
 
+// Credibility & Conflicts
+export const getCredibility = (submissionId) => api.get(`/submissions/${submissionId}/credibility`);
+export const getConflicts = (submissionId) => api.get(`/submissions/${submissionId}/conflicts`);
+export const resolveConflict = (submissionId, conflictId, data) =>
+  api.post(`/submissions/${submissionId}/conflicts/${conflictId}/resolve`, data);
+
 // Quote Options
 export const getQuoteOptions = (submissionId) => api.get(`/submissions/${submissionId}/quotes`);
 export const getQuoteOption = (id) => api.get(`/quotes/${id}`);
