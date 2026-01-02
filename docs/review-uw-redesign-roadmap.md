@@ -1,6 +1,6 @@
 # Review & UW Page Redesign Roadmap
 
-> **Status**: Phase 2 Complete
+> **Status**: Phase 3 Complete
 > **Created**: 2025-01-02
 > **Updated**: 2025-01-02
 > **Target Architecture**: Document-Centric Review with Side-by-Side Intelligence
@@ -376,31 +376,37 @@ POST /api/extractions/:id/correct      - Record human corrections
 - Bounding box extraction (requires PDF.js integration)
 - Conflict detection between documents
 
-### Phase 3: Document-Centric Review
+### Phase 3: Document-Centric Review ✅ COMPLETE
 
 **Goal**: Implement Direction A/D - side-by-side intelligence
 
-#### 3.1 Document Viewer Component
-- PDF.js integration with page navigation
-- Highlight regions based on provenance
-- Click-to-scroll from field to source
+**Completed 2025-01-02:**
 
-#### 3.2 Extraction Panel Component
-- Display all extracted fields
-- Show confidence indicators
-- Inline editing with correction tracking
-- "Show source" links per field
+#### 3.1 Document Viewer Component ✅
+- `DocumentViewer.jsx` with react-pdf for PDF rendering
+- Page navigation with prev/next and direct page input
+- Zoom controls (50%-200%)
+- Highlight ring on target page for click-to-source
+- Note: Full PDF viewing requires document storage integration
 
-#### 3.3 Review Page Redesign
-- Split-pane layout (document | extractions)
-- Credibility score prominent
-- Conflict resolution workflow
-- Approval/rejection per field
+#### 3.2 Extraction Panel Component ✅
+- `ExtractionPanel.jsx` showing all extracted fields by section
+- Confidence badges (green/yellow/red based on score)
+- Collapsible sections with field counts
+- "p.X" button on each field to jump to source page
+- Stats header showing total fields and average confidence
 
-#### 3.4 UW Page Integration
-- "Show source" on AI-generated content
-- Source document references in analysis
-- Edit history with provenance
+#### 3.3 Review Page Redesign ✅
+- Split-pane layout with view mode toggle (Split/Documents/Extractions)
+- Document selector tabs showing all uploaded documents
+- Credibility + Conflicts side-by-side at top
+- Extraction panel integrated with source verification section
+- 500px height scrollable panels for document/extraction views
+
+#### 3.4 Deferred
+- UW Page "Show source" integration (waiting for document storage)
+- Edit history with provenance tracking
+- Actual PDF viewing (requires document storage setup)
 
 ### Phase 4: Continuous Improvement
 
