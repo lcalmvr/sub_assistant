@@ -654,6 +654,15 @@ from core.conflict_service import save_field_value, ConflictService
 # Native application extraction
 from ai.application_extractor import extract_from_pdf, ApplicationExtraction
 
+# Document classification
+from ai.document_classifier import (
+    smart_classify_documents,
+    get_applications,
+    get_loss_runs,
+    DocumentType,
+    ClassificationResult
+)
+
 # ───────────── DB helpers (schema-safe) ─────────────
 
 def _existing_columns(table: str) -> set[str]:
@@ -1213,6 +1222,31 @@ def _save_extraction_run(
         )
 
 
+# ───────────── Application Data Merge Helper ─────────────
+
+def _merge_application_data(primary: dict, supplemental: dict) -> dict:
+    """
+    Merge supplemental application data into primary.
+    Supplemental fills gaps but doesn't override existing values.
+    """
+    def merge_dict(base: dict, extra: dict) -> dict:
+        result = dict(base)
+        for key, value in extra.items():
+            if key not in result or result[key] is None or result[key] == "":
+                result[key] = value
+            elif isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = merge_dict(result[key], value)
+            elif isinstance(result[key], list) and isinstance(value, list):
+                # Extend lists with unique items
+                existing = set(str(x) for x in result[key])
+                for item in value:
+                    if str(item) not in existing:
+                        result[key].append(item)
+        return result
+
+    return merge_dict(primary, supplemental)
+
+
 # ───────────── PUBLIC ENTRYPOINT used by ingest_local.py ─────────────
 
 def process_submission(subject: str, email_body: str, sender_email: str, attachments: list[str] | None, use_docupipe: bool = False) -> Any:
@@ -1236,15 +1270,61 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
             app_data = load_json(p)
             break
 
-    # If no JSON found, try native PDF extraction
+    # If no JSON found, use document classifier + native PDF extraction
+    document_classifications: dict[str, ClassificationResult] = {}
     if not app_data:
+        # Gather all PDF paths
+        pdf_paths = []
         for p in attachments:
             path_str = str(p.path if hasattr(p, 'path') and p.path else p)
             if path_str.lower().endswith(".pdf") and Path(path_str).exists():
+                pdf_paths.append(path_str)
+
+        # Classify all PDFs to identify applications vs loss runs vs quotes
+        if pdf_paths:
+            try:
+                document_classifications = smart_classify_documents(pdf_paths)
+                print(f"[pipeline] Classified {len(pdf_paths)} documents:")
+                for path, result in document_classifications.items():
+                    print(f"  - {Path(path).name}: {result.document_type.value} ({result.confidence:.0%})")
+            except Exception as e:
+                print(f"[pipeline] Document classification failed: {e}")
+                # Fall back to treating all PDFs as potential applications
+                document_classifications = {}
+
+        # Extract from application documents (ACORD first, then supplementals)
+        application_docs = get_applications(document_classifications)
+        if application_docs:
+            # Extract from the primary application (usually ACORD)
+            primary_app_path, primary_classification = application_docs[0]
+            try:
+                extraction_result = extract_from_pdf(primary_app_path)
+                app_data = extraction_result.to_docupipe_format()
+                pdf_path = primary_app_path
+                print(f"[pipeline] Extracted from primary application: {Path(primary_app_path).name}")
+
+                # If we have supplemental applications, extract and merge their data
+                if len(application_docs) > 1:
+                    for supp_path, supp_class in application_docs[1:]:
+                        try:
+                            supp_result = extract_from_pdf(supp_path)
+                            supp_data = supp_result.to_docupipe_format()
+                            # Merge: supplemental data fills in gaps but doesn't override
+                            app_data = _merge_application_data(app_data, supp_data)
+                            print(f"[pipeline] Merged supplemental: {Path(supp_path).name}")
+                        except Exception as e:
+                            print(f"[pipeline] Supplemental extraction failed for {supp_path}: {e}")
+            except Exception as e:
+                print(f"[pipeline] Primary application extraction failed: {e}")
+
+        # Fallback: if no classified applications, try first PDF
+        if not app_data and pdf_paths:
+            for path_str in pdf_paths:
                 try:
                     extraction_result = extract_from_pdf(path_str)
                     app_data = extraction_result.to_docupipe_format()
                     pdf_path = path_str
+                    print(f"[pipeline] Fallback extraction from: {Path(path_str).name}")
                     break
                 except Exception as e:
                     print(f"[pipeline] PDF extraction failed for {path_str}: {e}")
