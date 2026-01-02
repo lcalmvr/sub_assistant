@@ -11,6 +11,8 @@ import {
   createSubjectivityTemplate,
   updateSubjectivityTemplate,
   deleteSubjectivityTemplate,
+  getEndorsementComponentTemplates,
+  updateEndorsementComponentTemplate,
 } from '../api/client';
 
 // Format currency
@@ -665,6 +667,174 @@ function SubjectivityTemplatesTab() {
   );
 }
 
+// Endorsement Component Templates Tab
+function EndorsementComponentTemplatesTab() {
+  const queryClient = useQueryClient();
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+
+  const { data: templates, isLoading } = useQuery({
+    queryKey: ['endorsement-component-templates'],
+    queryFn: () => getEndorsementComponentTemplates().then(res => res.data),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => updateEndorsementComponentTemplate(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['endorsement-component-templates'] });
+      setEditingId(null);
+      setEditForm({});
+    },
+  });
+
+  const startEdit = (template) => {
+    setEditingId(template.id);
+    setEditForm({
+      name: template.name,
+      content_html: template.content_html || '',
+      position: template.position || 'either',
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+  };
+
+  const saveEdit = () => {
+    updateMutation.mutate({ id: editingId, data: editForm });
+  };
+
+  // Render HTML with sample data for preview
+  const renderPreview = (html) => {
+    if (!html) return null;
+    const sampleData = {
+      form_number: 'CMAI-END-001',
+      edition_date: '01/25',
+      policy_type: 'Commercial Management Liability',
+      effective_date: '01/01/2025',
+      policy_number: 'CML-2025-001234',
+    };
+    let rendered = html;
+    Object.entries(sampleData).forEach(([key, val]) => {
+      rendered = rendered.replace(new RegExp(`{{${key}}}`, 'g'), val);
+    });
+    return rendered;
+  };
+
+  // Get default template for each type
+  const getDefault = (type) => templates?.find(t => t.component_type === type && t.is_default);
+
+  const componentInfo = {
+    header: {
+      label: 'Header',
+      description: 'Company name and form number at the top of each endorsement',
+    },
+    lead_in: {
+      label: 'Lead-in',
+      description: 'Standard opening language identifying the policy being modified',
+    },
+    closing: {
+      label: 'Closing',
+      description: 'Signature block and "all other terms unchanged" language',
+    },
+  };
+
+  if (isLoading) {
+    return <div className="text-gray-500">Loading...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Explanation */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 className="text-sm font-medium text-blue-900 mb-2">How Endorsement Components Work</h3>
+        <p className="text-sm text-blue-800 mb-3">
+          Every endorsement document is assembled from three reusable components.
+          Edit these once, and all endorsements using them will update automatically.
+        </p>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="bg-white border border-blue-300 px-2 py-1 rounded">Header</span>
+          <span className="text-blue-400">+</span>
+          <span className="bg-white border border-blue-300 px-2 py-1 rounded">Lead-in</span>
+          <span className="text-blue-400">+</span>
+          <span className="bg-yellow-100 border border-yellow-300 px-2 py-1 rounded">Endorsement Body</span>
+          <span className="text-blue-400">+</span>
+          <span className="bg-white border border-blue-300 px-2 py-1 rounded">Closing</span>
+        </div>
+      </div>
+
+      {/* Component Cards */}
+      {['header', 'lead_in', 'closing'].map((type) => {
+        const info = componentInfo[type];
+        const defaultTemplate = getDefault(type);
+        const isEditing = editingId === defaultTemplate?.id;
+
+        return (
+          <div key={type} className="border border-gray-200 rounded-lg overflow-hidden">
+            {/* Card Header */}
+            <div className="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-gray-900">{info.label}</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{info.description}</p>
+              </div>
+              {defaultTemplate && !isEditing && (
+                <button
+                  onClick={() => startEdit(defaultTemplate)}
+                  className="text-sm text-purple-600 hover:text-purple-800"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+
+            {/* Card Body */}
+            <div className="p-4">
+              {!defaultTemplate ? (
+                <div className="text-sm text-gray-400 italic">No template configured</div>
+              ) : isEditing ? (
+                /* Edit Mode */
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">HTML Template</label>
+                    <textarea
+                      className="form-input w-full text-sm font-mono"
+                      rows={6}
+                      value={editForm.content_html}
+                      onChange={(e) => setEditForm({ ...editForm, content_html: e.target.value })}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Placeholders: {'{{form_number}}'}, {'{{edition_date}}'}, {'{{policy_type}}'}, {'{{effective_date}}'}, {'{{policy_number}}'}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={saveEdit}
+                      disabled={updateMutation.isPending}
+                      className="btn btn-primary btn-sm"
+                    >
+                      {updateMutation.isPending ? 'Saving...' : 'Save'}
+                    </button>
+                    <button onClick={cancelEdit} className="btn btn-outline btn-sm">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Preview Mode - render the HTML */
+                <div
+                  className="text-sm prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: renderPreview(defaultTemplate.content_html) }}
+                />
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
@@ -673,6 +843,7 @@ export default function AdminPage() {
     { id: 'subjectivities', label: 'Pending Subjectivities' },
     { id: 'bound', label: 'Bound Policies' },
     { id: 'templates', label: 'Subjectivity Templates' },
+    { id: 'endorsement-components', label: 'Endorsement Components' },
   ];
 
   return (
@@ -722,6 +893,7 @@ export default function AdminPage() {
           {activeTab === 'subjectivities' && <PendingSubjectivitiesTab />}
           {activeTab === 'bound' && <BoundPoliciesTab />}
           {activeTab === 'templates' && <SubjectivityTemplatesTab />}
+          {activeTab === 'endorsement-components' && <EndorsementComponentTemplatesTab />}
         </div>
       </main>
     </div>
