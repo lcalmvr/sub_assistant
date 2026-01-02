@@ -33,6 +33,7 @@ import {
 } from '../api/client';
 import CoverageEditor from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
+import RetroScheduleEditor from '../components/RetroScheduleEditor';
 
 // Format currency
 function formatCurrency(value) {
@@ -745,6 +746,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
   // Dates state
   const [retroactiveDate, setRetroactiveDate] = useState(quote.retroactive_date || '');
+  const [editingRetroSchedule, setEditingRetroSchedule] = useState(false);
 
   // Subjectivities UI state
   const [customSubjectivity, setCustomSubjectivity] = useState('');
@@ -1582,7 +1584,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
       {/* Policy Dates */}
       <div className="card">
         <h4 className="form-section-title">Policy Dates</h4>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-4 mb-4">
           <div>
             <label className="form-label">Effective Date</label>
             <input
@@ -1606,7 +1608,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             <p className="text-xs text-gray-500 mt-1">From submission</p>
           </div>
           <div>
-            <label className="form-label">Retroactive Date</label>
+            <label className="form-label">Simple Retro Date</label>
             <input
               type="date"
               className="form-input"
@@ -1618,8 +1620,55 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                 }
               }}
             />
-            <p className="text-xs text-gray-500 mt-1">Quote-specific</p>
+            <p className="text-xs text-gray-500 mt-1">Single date for all coverages</p>
           </div>
+        </div>
+
+        {/* Retro Schedule - Per-coverage retro dates */}
+        <div className="border-t pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h5 className="font-medium text-sm">Retro Schedule</h5>
+              <p className="text-xs text-gray-500">Per-coverage retroactive dates (for complex retros)</p>
+            </div>
+            <div className="flex gap-2">
+              {!editingRetroSchedule && (quote.retro_schedule?.length > 0 || quote.retro_notes) && (
+                <button
+                  className="text-xs px-3 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100"
+                  onClick={() => {
+                    applyToAllQuotes(quote.id, { retro_schedule: true }).then(() => {
+                      queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
+                    });
+                  }}
+                >
+                  Apply to All
+                </button>
+              )}
+              <button
+                className="text-xs px-3 py-1 border rounded hover:bg-gray-50"
+                onClick={() => setEditingRetroSchedule(!editingRetroSchedule)}
+              >
+                {editingRetroSchedule ? 'Cancel' : (quote.retro_schedule?.length > 0 ? 'Edit' : '+ Add')}
+              </button>
+            </div>
+          </div>
+
+          {editingRetroSchedule ? (
+            <RetroScheduleEditor
+              schedule={quote.retro_schedule || []}
+              notes={quote.retro_notes || ''}
+              onChange={(schedule, notes) => {
+                updateMutation.mutate({ retro_schedule: schedule, retro_notes: notes });
+                setEditingRetroSchedule(false);
+              }}
+            />
+          ) : (
+            <RetroScheduleEditor
+              schedule={quote.retro_schedule || []}
+              notes={quote.retro_notes || ''}
+              readOnly
+            />
+          )}
         </div>
       </div>
 

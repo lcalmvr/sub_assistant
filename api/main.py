@@ -153,7 +153,7 @@ def list_quotes(submission_id: str):
                 SELECT id, quote_name, option_descriptor, tower_json, primary_retention, position,
                        technical_premium, risk_adjusted_premium, sold_premium,
                        policy_form, coverages, sublimits, endorsements, subjectivities,
-                       is_bound, retroactive_date, created_at
+                       is_bound, retroactive_date, retro_schedule, retro_notes, created_at
                 FROM insurance_towers
                 WHERE submission_id = %s
                 ORDER BY created_at DESC
@@ -170,7 +170,7 @@ def get_quote(quote_id: str):
                 SELECT id, submission_id, quote_name, option_descriptor, tower_json, primary_retention,
                        position, technical_premium, risk_adjusted_premium, sold_premium,
                        policy_form, coverages, sublimits, endorsements, subjectivities,
-                       is_bound, retroactive_date, created_at
+                       is_bound, retroactive_date, retro_schedule, retro_notes, created_at
                 FROM insurance_towers
                 WHERE id = %s
             """, (quote_id,))
@@ -270,6 +270,8 @@ class QuoteUpdate(BaseModel):
     option_descriptor: Optional[str] = None
     sold_premium: Optional[int] = None
     retroactive_date: Optional[str] = None
+    retro_schedule: Optional[list] = None  # Per-coverage retro dates
+    retro_notes: Optional[str] = None  # Free-text retro notes
     is_bound: Optional[bool] = None
     primary_retention: Optional[int] = None
     policy_form: Optional[str] = None
@@ -415,7 +417,7 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     updates = {}
     for k, v in data.model_dump(exclude_unset=True).items():
         # Convert dict/list to JSON string for JSONB columns
-        if k in ('tower_json', 'coverages', 'sublimits', 'endorsements', 'subjectivities') and v is not None:
+        if k in ('tower_json', 'coverages', 'sublimits', 'endorsements', 'subjectivities', 'retro_schedule') and v is not None:
             updates[k] = json.dumps(v)
         else:
             updates[k] = v
@@ -441,24 +443,25 @@ def update_quote(quote_id: str, data: QuoteUpdate):
 class ApplyToAllRequest(BaseModel):
     endorsements: Optional[bool] = False
     subjectivities: Optional[bool] = False
+    retro_schedule: Optional[bool] = False
 
 
 @app.post("/api/quotes/{quote_id}/apply-to-all")
 def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
     """
-    Apply endorsements and/or subjectivities from this quote to all other quotes
+    Apply endorsements, subjectivities, and/or retro_schedule from this quote to all other quotes
     in the same submission. Uses junction table for subjectivities.
     """
     import json
 
-    if not request.endorsements and not request.subjectivities:
-        raise HTTPException(status_code=400, detail="Must specify endorsements or subjectivities to apply")
+    if not request.endorsements and not request.subjectivities and not request.retro_schedule:
+        raise HTTPException(status_code=400, detail="Must specify endorsements, subjectivities, or retro_schedule to apply")
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Get source quote's data and submission_id
             cur.execute("""
-                SELECT submission_id, endorsements
+                SELECT submission_id, endorsements, retro_schedule, retro_notes
                 FROM insurance_towers
                 WHERE id = %s
             """, (quote_id,))
@@ -468,6 +471,8 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
 
             submission_id = source["submission_id"]
             endorsements = source.get("endorsements") or []
+            retro_schedule = source.get("retro_schedule")
+            retro_notes = source.get("retro_notes")
 
             # Parse JSON if needed
             if isinstance(endorsements, str):
@@ -475,6 +480,7 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
 
             updated_count = 0
             subj_links_created = 0
+            retro_updated = 0
 
             # Handle endorsements (still uses JSONB column)
             if request.endorsements and endorsements:
@@ -485,6 +491,17 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
                     RETURNING id
                 """, (json.dumps(endorsements), submission_id, quote_id))
                 updated_count = cur.rowcount
+
+            # Handle retro_schedule
+            if request.retro_schedule:
+                cur.execute("""
+                    UPDATE insurance_towers
+                    SET retro_schedule = %s, retro_notes = %s, updated_at = NOW()
+                    WHERE submission_id = %s AND id != %s
+                    RETURNING id
+                """, (json.dumps(retro_schedule) if retro_schedule else None, retro_notes, submission_id, quote_id))
+                retro_updated = cur.rowcount
+                updated_count = max(updated_count, retro_updated)
 
             # Handle subjectivities (uses junction table)
             if request.subjectivities:
@@ -515,6 +532,7 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
         "updated_count": updated_count,
         "endorsements_applied": request.endorsements,
         "subjectivities_applied": request.subjectivities,
+        "retro_schedule_applied": request.retro_schedule,
         "subjectivity_links_created": subj_links_created if request.subjectivities else 0,
     }
 
