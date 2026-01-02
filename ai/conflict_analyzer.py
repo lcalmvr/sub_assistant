@@ -342,8 +342,8 @@ def store_detected_conflicts(submission_id: str, conflicts: list[DetectedConflic
                     SET times_detected = times_detected + 1,
                         last_detected_at = NOW(),
                         example_submission_ids = array_append(
-                            array_remove(example_submission_ids, :submission_id::uuid),
-                            :submission_id::uuid
+                            array_remove(example_submission_ids, CAST(:submission_id AS uuid)),
+                            CAST(:submission_id AS uuid)
                         )
                     WHERE id = :rule_id
                 """), {"rule_id": rule_id, "submission_id": submission_id})
@@ -369,12 +369,12 @@ def add_to_catalog(conflict: DetectedConflict, submission_id: str) -> str | None
                 VALUES
                     (:rule_name, :category, :severity, :title, :description,
                      :detection_pattern, :example_bad, :example_explanation,
-                     'llm_discovered', true, 1, ARRAY[:submission_id]::uuid[])
+                     'llm_discovered', true, 1, ARRAY[CAST(:submission_id AS uuid)])
                 ON CONFLICT (rule_name) DO UPDATE SET
                     times_detected = conflict_rules.times_detected + 1,
                     example_submission_ids = array_append(
-                        array_remove(conflict_rules.example_submission_ids, :submission_id::uuid),
-                        :submission_id::uuid
+                        array_remove(conflict_rules.example_submission_ids, CAST(:submission_id AS uuid)),
+                        CAST(:submission_id AS uuid)
                     ),
                     last_detected_at = NOW()
                 RETURNING id
