@@ -327,3 +327,51 @@ def update_quote_limit(quote_id: str, new_limit: float):
         )
 
     return tower_json
+
+
+def get_underlying_coverages(submission_id: str) -> list[dict]:
+    """
+    Fetch underlying coverage data extracted from quotes/policies.
+    Returns list of coverage records from the underlying_coverages table.
+    """
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, carrier, aggregate_limit, retention, policy_type, sublimits, created_at
+            FROM underlying_coverages
+            WHERE submission_id = %s
+            ORDER BY created_at DESC
+            """,
+            (submission_id,),
+        )
+        rows = cur.fetchall()
+
+    results = []
+    for row in rows:
+        results.append({
+            "id": str(row[0]),
+            "carrier": row[1],
+            "aggregate_limit": float(row[2]) if row[2] else None,
+            "retention": float(row[3]) if row[3] else None,
+            "policy_type": row[4],
+            "sublimits": row[5] if isinstance(row[5], list) else json.loads(row[5] or "[]"),
+            "created_at": row[6].isoformat() if row[6] else None,
+        })
+
+    return results
+
+
+def has_underlying_coverages(submission_id: str) -> bool:
+    """Check if a submission has any extracted underlying coverages."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM underlying_coverages WHERE submission_id = %s
+            )
+            """,
+            (submission_id,),
+        )
+        return cur.fetchone()[0]

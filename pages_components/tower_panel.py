@@ -9,6 +9,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 from utils.tab_state import rerun_on_quote_tab
+from pages_components.tower_db import get_underlying_coverages, has_underlying_coverages
 
 
 # ─────────────────────── Formatting Helpers ───────────────────────
@@ -280,11 +281,24 @@ def _render_excess_tower_panel(sub_id: str, expanded: bool = True, readonly: boo
             return
 
         # ─────────────────────────────────────────────────────
-        # HEADER BAR - Toggle and Add button
+        # HEADER BAR - Toggle, Import, and Add buttons
         # ─────────────────────────────────────────────────────
-        col_toggle, col_add = st.columns([1, 3])
+        # Check if we have extracted underlying coverages to import
+        has_extracted = has_underlying_coverages(sub_id)
+
+        if has_extracted:
+            col_toggle, col_import, col_add = st.columns([1, 1.5, 1.5])
+        else:
+            col_toggle, col_add = st.columns([1, 3])
+
         with col_toggle:
             view_mode = st.toggle("Card", key=f"tower_card_view_{viewing_quote_id}", help="Switch to card view for mobile")
+
+        if has_extracted:
+            with col_import:
+                if st.button("Import from Quotes", key=f"import_underlying_btn_{viewing_quote_id}", use_container_width=True, help="Import underlying coverage from extracted quote documents"):
+                    _import_underlying_coverages(sub_id)
+
         with col_add:
             if st.button("+ Add Underlying Layer", key=f"add_underlying_btn_{viewing_quote_id}", use_container_width=True):
                 _add_underlying_layer(sub_id)
@@ -740,6 +754,67 @@ def _render_underlying_edit_dialog(sub_id: str, layer_idx: int, layer: dict, is_
                 _rerun_on_quote_tab()
 
     show_edit()
+
+
+def _import_underlying_coverages(sub_id: str):
+    """Import underlying coverage from extracted quote documents into the tower."""
+    coverages = get_underlying_coverages(sub_id)
+    if not coverages:
+        st.warning("No extracted coverages found.")
+        return
+
+    layers = st.session_state.tower_layers or []
+
+    # Find CMAI layer index
+    cmai_idx = None
+    for idx, layer in enumerate(layers):
+        if "CMAI" in str(layer.get("carrier", "")).upper():
+            cmai_idx = idx
+            break
+
+    # Remove existing underlying layers (keep CMAI)
+    if cmai_idx is not None:
+        cmai_layer = layers[cmai_idx]
+        layers = [cmai_layer]
+    else:
+        layers = []
+
+    # Add layers from extracted coverages
+    # Each coverage record represents a carrier's quote/policy
+    current_attachment = 0
+    imported_count = 0
+
+    for coverage in coverages:
+        carrier = coverage.get("carrier") or "Unknown Carrier"
+        limit = coverage.get("aggregate_limit") or 0
+        retention = coverage.get("retention") or 0
+
+        if limit > 0:
+            new_layer = {
+                "carrier": carrier,
+                "limit": limit,
+                "attachment": current_attachment,
+                "retention": retention if current_attachment == 0 else None,  # Only primary has retention
+                "premium": None,
+            }
+            layers.insert(len(layers) - 1 if cmai_idx is not None else len(layers), new_layer)
+            current_attachment += limit
+            imported_count += 1
+
+    # Update CMAI attachment if present
+    for layer in layers:
+        if "CMAI" in str(layer.get("carrier", "")).upper():
+            layer["attachment"] = current_attachment
+            break
+
+    st.session_state.tower_layers = layers
+    _recalculate_all(st.session_state.tower_layers)
+    _save_tower_changes(sub_id)
+
+    if imported_count > 0:
+        st.success(f"Imported {imported_count} underlying layer(s) from extracted quotes.")
+
+    _rerun_on_quote_tab()
 
 
 def _add_underlying_layer(sub_id: str):
