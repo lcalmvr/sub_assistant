@@ -125,7 +125,7 @@ def render_endorsement_component(template_html: str, context: dict) -> str:
     placeholder_map = {
         "form_number": context.get("document_code", ""),
         "edition_date": context.get("edition_date", ""),
-        "policy_type": "Excess Cyber & Tech E&O" if context.get("position") == "excess" else "Cyber & Technology E&O",
+        "policy_type": context.get("document_type", "Cyber Quote").replace(" Quote", ""),
         "effective_date": context.get("effective_date", ""),
         "policy_number": context.get("document_number", ""),
     }
@@ -334,7 +334,9 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                 risk_adjusted_premium,
                 position,
                 policy_form,
-                quote_name
+                quote_name,
+                retro_schedule,
+                retro_notes
             FROM insurance_towers
             WHERE id = :quote_option_id
         """), {"quote_option_id": quote_option_id})
@@ -350,6 +352,8 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
             position = quote_row[8] or "primary"
             policy_form = quote_row[9]
             quote_name = quote_row[10]
+            retro_schedule = quote_row[11] or []
+            retro_notes = quote_row[12]
 
             # Calculate limit and attachment based on position
             aggregate_limit = 0
@@ -421,17 +425,50 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
             agg_cov = coverages.get("aggregate_coverages", {})
             sub_cov = coverages.get("sublimit_coverages", {})
 
-            # If coverages are empty, build from coverage config
-            if not agg_cov and not sub_cov:
+            # Check if we have any non-zero coverages
+            has_agg = any(v > 0 for v in agg_cov.values()) if agg_cov else False
+            has_sub = any(v > 0 for v in sub_cov.values()) if sub_cov else False
+
+            # If no non-zero coverages, build from coverage config
+            if not has_agg and not has_sub:
                 form = policy_form or get_default_policy_form()
                 built_coverages = get_coverages_for_form(form, aggregate_limit)
                 agg_cov = built_coverages.get("aggregate_coverages", {})
                 sub_cov = built_coverages.get("sublimit_coverages", {})
 
+                # If form returned all zeros (e.g., claims_made), use default form
+                if not any(v > 0 for v in agg_cov.values()):
+                    built_coverages = get_coverages_for_form(get_default_policy_form(), aggregate_limit)
+                    agg_cov = built_coverages.get("aggregate_coverages", {})
+                    sub_cov = built_coverages.get("sublimit_coverages", {})
+
+            # Determine if quote has Tech E&O - check both policy_form AND actual coverage data
+            form_lower = (policy_form or "").lower()
+            has_tech = "tech" in form_lower or form_lower == "cyber_tech" or agg_cov.get("tech_eo", 0) > 0
+
             # Convert coverage IDs to labels for display
-            context["aggregate_coverages"] = {
-                get_coverage_label(k): v for k, v in agg_cov.items() if v > 0
+            # Exclude tech_eo if not a tech form
+            filtered_agg = {
+                k: v for k, v in agg_cov.items()
+                if v > 0 and (k != "tech_eo" or has_tech)
             }
+
+            # If filtering removed all coverages, rebuild from default form
+            if not filtered_agg and any(v > 0 for v in agg_cov.values()):
+                built_coverages = get_coverages_for_form(get_default_policy_form(), aggregate_limit)
+                agg_cov = built_coverages.get("aggregate_coverages", {})
+                sub_cov = built_coverages.get("sublimit_coverages", {})
+                filtered_agg = {k: v for k, v in agg_cov.items() if v > 0}
+
+            context["aggregate_coverages"] = {
+                get_coverage_label(k): v for k, v in filtered_agg.items()
+            }
+            # Set document type and coverage type based on actual coverages
+            context["coverage_type"] = "Cyber & Tech E&O" if has_tech else "Cyber"
+            if position == "excess":
+                context["document_type"] = f"Excess {context['coverage_type']} Quote"
+            else:
+                context["document_type"] = f"{context['coverage_type']} Quote"
 
             # For excess quotes, use sublimits from database with proper attachment calculation
             if position == "excess" and sublimits:
@@ -543,6 +580,52 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                 drop_down_endorsement = "Drop Down Over Sublimits"
                 if drop_down_endorsement not in context["endorsements"]:
                     context["endorsements"].insert(0, drop_down_endorsement)
+
+            # Retro schedule - format for display (dedupe by coverage, filter by actual coverages)
+            # Determine which coverages this quote actually has
+            enabled_coverages = {"cyber"}  # Cyber is always enabled
+            if has_tech:
+                enabled_coverages.add("tech_eo")
+
+            retro_display = {}
+            retro_labels = {
+                "cyber": "Cyber",
+                "tech_eo": "Tech E&O",
+                "do": "D&O",
+                "epl": "EPL",
+                "fiduciary": "Fiduciary",
+            }
+            retro_type_labels = {
+                "full_prior_acts": "Full Prior Acts",
+                "follow_form": "Follow Form",
+                "inception": "Inception",
+            }
+            for entry in retro_schedule:
+                cov = entry.get("coverage", "").lower().replace(" ", "_").replace("&", "")
+                # Normalize coverage key (e.g., "Tech E&O" -> "tech_eo", "tech_eo" -> "tech_eo")
+                cov_key = cov.replace("tech_eo", "tech_eo").replace("techeo", "tech_eo")
+
+                # Skip if coverage not enabled on this quote
+                if cov_key not in enabled_coverages:
+                    continue
+
+                if cov_key in retro_display:
+                    continue  # Skip duplicates
+
+                retro = entry.get("retro", "").lower().replace(" ", "_")
+                cov_label = retro_labels.get(cov_key, cov.replace("_", " ").title())
+
+                if retro == "date":
+                    retro_label = entry.get("date", "Date not set")
+                elif retro == "custom":
+                    retro_label = entry.get("custom_text", "Custom")
+                else:
+                    retro_label = retro_type_labels.get(retro, retro.replace("_", " ").title())
+
+                retro_display[cov_key] = {"coverage": cov_label, "retro": retro_label}
+
+            context["retro_schedule"] = list(retro_display.values())
+            context["retro_notes"] = retro_notes
 
             # Subjectivities - fetch from junction table
             subj_result = conn.execute(text("""

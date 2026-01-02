@@ -460,13 +460,13 @@ def update_quote(quote_id: str, data: QuoteUpdate):
                         # Check if already attached
                         cur.execute("""
                             SELECT 1 FROM quote_endorsements
-                            WHERE quote_id = %s AND library_id = %s
+                            WHERE quote_id = %s AND endorsement_id = %s
                         """, (quote_id, pa_row['id']))
                         if not cur.fetchone():
                             # Auto-attach
                             cur.execute("""
-                                INSERT INTO quote_endorsements (quote_id, library_id, auto_attached)
-                                VALUES (%s, %s, TRUE)
+                                INSERT INTO quote_endorsements (quote_id, endorsement_id)
+                                VALUES (%s, %s)
                             """, (quote_id, pa_row['id']))
                             prior_acts_attached = True
 
@@ -497,9 +497,9 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # Get source quote's data and submission_id
+            # Get source quote's data, submission_id, and position
             cur.execute("""
-                SELECT submission_id, endorsements, retro_schedule, retro_notes
+                SELECT submission_id, position, endorsements, retro_schedule, retro_notes
                 FROM insurance_towers
                 WHERE id = %s
             """, (quote_id,))
@@ -508,6 +508,7 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
                 raise HTTPException(status_code=404, detail="Quote not found")
 
             submission_id = source["submission_id"]
+            position = source.get("position") or "primary"
             endorsements = source.get("endorsements") or []
             retro_schedule = source.get("retro_schedule")
             retro_notes = source.get("retro_notes")
@@ -520,24 +521,26 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
             subj_links_created = 0
             retro_updated = 0
 
-            # Handle endorsements (still uses JSONB column)
+            # Handle endorsements - position-aware (only apply to same position)
             if request.endorsements and endorsements:
                 cur.execute("""
                     UPDATE insurance_towers
                     SET endorsements = %s, updated_at = NOW()
                     WHERE submission_id = %s AND id != %s
+                      AND COALESCE(position, 'primary') = %s
                     RETURNING id
-                """, (json.dumps(endorsements), submission_id, quote_id))
+                """, (json.dumps(endorsements), submission_id, quote_id, position))
                 updated_count = cur.rowcount
 
-            # Handle retro_schedule
+            # Handle retro_schedule - position-aware (only apply to same position)
             if request.retro_schedule:
                 cur.execute("""
                     UPDATE insurance_towers
                     SET retro_schedule = %s, retro_notes = %s, updated_at = NOW()
                     WHERE submission_id = %s AND id != %s
+                      AND COALESCE(position, 'primary') = %s
                     RETURNING id
-                """, (json.dumps(retro_schedule) if retro_schedule else None, retro_notes, submission_id, quote_id))
+                """, (json.dumps(retro_schedule) if retro_schedule else None, retro_notes, submission_id, quote_id, position))
                 retro_updated = cur.rowcount
                 updated_count = max(updated_count, retro_updated)
 

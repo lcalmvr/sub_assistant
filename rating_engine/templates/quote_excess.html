@@ -8,7 +8,7 @@
 
 {# Document Header #}
 <div class="document-header">
-    <div class="document-type">Excess Cyber & Technology E&O Quote</div>
+    <div class="document-type">{{ document_type | default('Excess Cyber Quote') }}</div>
     <div class="document-number">{{ quote_number }} | {{ quote_date }}</div>
 </div>
 
@@ -168,6 +168,30 @@
         {% endfor %}
     </tbody>
 </table>
+{% endif %}
+
+{# Retroactive Dates #}
+{% if retro_schedule %}
+<div class="section-header">Retroactive Dates</div>
+<table>
+    <thead>
+        <tr>
+            <th style="width: 50%;">Coverage</th>
+            <th style="width: 50%;">Retroactive Date</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for entry in retro_schedule %}
+        <tr>
+            <td>{{ entry.coverage }}</td>
+            <td>{{ entry.retro }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% if retro_notes %}
+<div class="text-small text-muted mt-1">{{ retro_notes }}</div>
+{% endif %}
 {% endif %}
 
 {# Endorsements #}

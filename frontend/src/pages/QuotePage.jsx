@@ -1645,6 +1645,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             position={position}
             coverages={quote.coverages || {}}
             policyForm={quote.policy_form || ''}
+            sublimits={quote.sublimits || []}
             onChange={(schedule, notes) => {
               updateMutation.mutate({ retro_schedule: schedule, retro_notes: notes });
               setEditingRetroSchedule(false);

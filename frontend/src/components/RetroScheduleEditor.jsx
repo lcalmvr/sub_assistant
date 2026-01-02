@@ -31,21 +31,34 @@ const COVERAGE_LABELS = {
 };
 
 // Detect enabled coverages from quote coverages object
-function detectCoverages(coveragesObj, policyForm) {
+function detectCoverages(coveragesObj, policyForm, sublimits) {
   const enabled = [];
 
-  // Cyber is always present for cyber forms
-  if (policyForm?.includes('cyber') || !policyForm) {
+  // Normalize policy form
+  const form = (policyForm || '').toLowerCase();
+
+  // Cyber is present for most forms
+  if (form.includes('cyber') || form === 'claims_made' || !form) {
     enabled.push('cyber');
   }
 
-  // Tech E&O if enabled
-  if (coveragesObj?.aggregate_coverages?.tech_eo > 0 || policyForm?.includes('tech')) {
+  // Tech E&O detection
+  const hasTechInCoverages = coveragesObj?.aggregate_coverages?.tech_eo > 0;
+  const hasTechInForm = form.includes('tech');
+  const hasTechInSublimits = sublimits?.some(s =>
+    s.coverage?.toLowerCase().includes('tech') ||
+    s.coverage?.toLowerCase().includes('e&o') ||
+    s.coverage_normalized?.some(c => c.toLowerCase().includes('tech'))
+  );
+
+  if (hasTechInCoverages || hasTechInForm || hasTechInSublimits) {
     enabled.push('tech_eo');
   }
 
-  // Add other coverage types as needed
-  // D&O, EPL, Fiduciary would be detected similarly
+  // Default: if no coverages detected, at least show Cyber
+  if (enabled.length === 0) {
+    enabled.push('cyber');
+  }
 
   return enabled;
 }
@@ -96,13 +109,14 @@ export default function RetroScheduleEditor({
   position = 'primary',
   coverages = {},
   policyForm = '',
+  sublimits = [],
   onChange,
   readOnly = false
 }) {
   // Detect which coverages are enabled
   const enabledCoverages = useMemo(() =>
-    detectCoverages(coverages, policyForm),
-    [coverages, policyForm]
+    detectCoverages(coverages, policyForm, sublimits),
+    [coverages, policyForm, sublimits]
   );
 
   // Get smart defaults
@@ -122,15 +136,6 @@ export default function RetroScheduleEditor({
   const [localNotes, setLocalNotes] = useState(notes || '');
   const [customDate, setCustomDate] = useState({});
   const [customText, setCustomText] = useState({});
-
-  // Check if using defaults
-  const isUsingDefaults = useMemo(() => {
-    if (localSchedule.length !== smartDefaults.length) return false;
-    return smartDefaults.every(def => {
-      const entry = localSchedule.find(e => e.coverage === def.coverage);
-      return entry && entry.retro === def.retro;
-    });
-  }, [localSchedule, smartDefaults]);
 
   // Sync with external schedule prop
   useEffect(() => {
@@ -219,11 +224,19 @@ export default function RetroScheduleEditor({
   };
 
   const getEntryForCoverage = (cov) => {
-    return localSchedule.find(e => e.coverage === cov) || { coverage: cov, retro: null };
+    // Check saved schedule first, then fall back to smart defaults
+    const fromSchedule = localSchedule.find(e => e.coverage === cov);
+    if (fromSchedule) return fromSchedule;
+
+    const fromDefaults = smartDefaults.find(e => e.coverage === cov);
+    if (fromDefaults) return fromDefaults;
+
+    return { coverage: cov, retro: null };
   };
 
   // Read-only display
   if (readOnly) {
+    // Show retro for detected coverages only (matches what should print on quote)
     if (enabledCoverages.length === 0) {
       return <span style={{ color: '#9ca3af', fontStyle: 'italic' }}>No coverages configured</span>;
     }
@@ -253,17 +266,6 @@ export default function RetroScheduleEditor({
             {localNotes}
           </p>
         )}
-        <div style={{ marginTop: 8 }}>
-          <span style={{
-            fontSize: 11,
-            padding: '2px 8px',
-            borderRadius: 10,
-            background: isUsingDefaults ? '#f3f4f6' : '#f3e8ff',
-            color: isUsingDefaults ? '#6b7280' : '#7c3aed',
-          }}>
-            {isUsingDefaults ? 'Using Defaults' : 'Customized'}
-          </span>
-        </div>
       </div>
     );
   }
@@ -382,33 +384,21 @@ export default function RetroScheduleEditor({
         justifyContent: 'space-between',
         alignItems: 'center',
       }}>
-        <div>
-          <button
-            type="button"
-            onClick={handleResetDefaults}
-            style={{
-              padding: '6px 12px',
-              background: '#f3f4f6',
-              border: '1px solid #d1d5db',
-              borderRadius: 6,
-              fontSize: 12,
-              cursor: 'pointer',
-              color: '#6b7280',
-            }}
-          >
-            Reset to Defaults
-          </button>
-          <span style={{
-            marginLeft: 12,
-            fontSize: 11,
-            padding: '2px 8px',
-            borderRadius: 10,
-            background: isUsingDefaults ? '#f3f4f6' : '#f3e8ff',
-            color: isUsingDefaults ? '#6b7280' : '#7c3aed',
-          }}>
-            {isUsingDefaults ? 'Using Defaults' : 'Customized'}
-          </span>
-        </div>
+        <button
+          type="button"
+          onClick={handleResetDefaults}
+          style={{
+            padding: '6px 12px',
+            background: '#f3f4f6',
+            border: '1px solid #d1d5db',
+            borderRadius: 6,
+            fontSize: 12,
+            cursor: 'pointer',
+            color: '#6b7280',
+          }}
+        >
+          Reset to Defaults
+        </button>
 
         <button
           type="button"
