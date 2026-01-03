@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions, acceptExtraction, triggerTextractExtraction, uploadSubmissionDocument } from '../api/client';
+import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions, acceptExtraction, uploadSubmissionDocument } from '../api/client';
 import DocumentViewer from '../components/review/DocumentViewer';
 import ExtractionPanel from '../components/review/ExtractionPanel';
 import PdfHighlighter from '../components/review/PdfHighlighter';
@@ -420,28 +420,6 @@ export default function ReviewPage() {
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [highlightPage, setHighlightPage] = useState(null);
   const [viewMode, setViewMode] = useState('split'); // 'split', 'documents', 'extractions'
-  const [activeHighlight, setActiveHighlight] = useState(null);
-  // Load Textract cache from sessionStorage on mount
-  const [textractCache, setTextractCache] = useState(() => {
-    try {
-      const cached = sessionStorage.getItem(`textract-${submissionId}`);
-      return cached ? JSON.parse(cached) : {};
-    } catch {
-      return {};
-    }
-  });
-  const [textractLoading, setTextractLoading] = useState(false);
-
-  // Persist Textract cache to sessionStorage
-  useEffect(() => {
-    if (Object.keys(textractCache).length > 0) {
-      try {
-        sessionStorage.setItem(`textract-${submissionId}`, JSON.stringify(textractCache));
-      } catch (e) {
-        console.warn('Failed to cache Textract data:', e);
-      }
-    }
-  }, [textractCache, submissionId]);
 
   const { data: submission, isLoading } = useQuery({
     queryKey: ['submission', submissionId],
@@ -472,36 +450,6 @@ export default function ReviewPage() {
     setDecisionReason(submission.decision_reason);
     setHasInitialized(true);
   }
-
-  // Auto-run Textract when a PDF document with URL is selected (for bbox highlighting)
-  // Skip for image files (PNG, JPG, etc.) since Textract bbox doesn't apply
-  useEffect(() => {
-    if (!selectedDocument?.url || !selectedDocument?.id) return;
-    if (textractCache[selectedDocument.id]) return; // Already cached
-
-    // Skip Textract for image files - they don't benefit from bbox highlighting
-    const isImage = /\.(png|jpg|jpeg|gif|webp|bmp|tiff?)$/i.test(selectedDocument.filename || '');
-    if (isImage) return;
-
-    const runTextract = async () => {
-      setTextractLoading(true);
-      try {
-        const response = await triggerTextractExtraction(submissionId, selectedDocument.id);
-        if (response.data?.extraction) {
-          setTextractCache(prev => ({
-            ...prev,
-            [selectedDocument.id]: response.data.extraction
-          }));
-        }
-      } catch (err) {
-        console.error('Textract extraction failed:', err);
-      } finally {
-        setTextractLoading(false);
-      }
-    };
-
-    runTextract();
-  }, [selectedDocument?.id, selectedDocument?.url, selectedDocument?.filename, submissionId, textractCache]);
 
   const updateMutation = useMutation({
     mutationFn: (data) => updateSubmission(submissionId, data),
@@ -542,81 +490,28 @@ export default function ReviewPage() {
     uploadDocumentMutation.mutate({ file, documentType });
   };
 
-  // Helper to find bbox from Textract data matching extraction value
-  const findBboxForExtraction = (textractData, extractionValue, sourceText, page) => {
-    if (!textractData) return null;
-
-    const kvPairs = Object.entries(textractData.key_value_pairs || {})
-      .filter(([_, val]) => val.page === page);
-
-    if (kvPairs.length === 0) return null;
-
-    // Normalize the extraction value for comparison
-    const normalizeValue = (v) => {
-      if (v === true || v === 'True' || v === 'true') return 'true';
-      if (v === false || v === 'False' || v === 'false') return 'false';
-      return String(v || '').toLowerCase().trim();
-    };
-
-    const targetValue = normalizeValue(extractionValue);
-    const sourceWords = (sourceText || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
-
-    // First try: exact value match
-    for (const [key, val] of kvPairs) {
-      const textractValue = normalizeValue(val.value);
-      if (textractValue === targetValue && targetValue !== '') {
-        return val.bbox;
-      }
-    }
-
-    // Second try: key contains words from source text
-    for (const [key, val] of kvPairs) {
-      const keyLower = key.toLowerCase();
-      const matchingWords = sourceWords.filter(w => keyLower.includes(w));
-      if (matchingWords.length >= 2) {
-        return val.bbox;
-      }
-    }
-
-    // Third try: just return first bbox on this page (better than nothing)
-    if (kvPairs.length > 0) {
-      return kvPairs[0][1].bbox;
-    }
-
-    return null;
-  };
-
-  const handleShowSource = (pageNumber, documentId, extractionValue, sourceText) => {
-    setHighlightPage(pageNumber);
-
+  // Handle clicking a page link in extraction panel - scrolls PDF to that page
+  const handleShowSource = (pageNumber, documentId) => {
     // Switch to the correct document if specified
-    let targetDocId = documentId;
     if (documentId && documents?.documents?.length > 0) {
       const targetDoc = documents.documents.find(d => d.id === documentId);
       if (targetDoc) {
         setSelectedDocument(targetDoc);
-        targetDocId = targetDoc.id;
       }
     }
 
-    // Try to find bbox from Textract cache
-    const textractData = textractCache[targetDocId || selectedDocument?.id];
-    const bbox = findBboxForExtraction(textractData, extractionValue, sourceText, pageNumber);
+    // Set the page to scroll to
+    setHighlightPage(pageNumber);
 
-    if (bbox) {
-      setActiveHighlight({
-        page: pageNumber,
-        bbox,
-        color: 'rgba(147, 51, 234, 0.5)', // Purple for active
-      });
-    } else {
-      setActiveHighlight(null); // Clear highlight if no match
-    }
-
-    // Fallback: auto-select primary document if none selected
+    // If no document selected yet, select the primary or first one
     if (!selectedDocument && documents?.documents?.length > 0) {
       const primary = documents.documents.find(d => d.is_priority) || documents.documents[0];
       setSelectedDocument(primary);
+    }
+
+    // Switch to split or documents view to show the PDF
+    if (viewMode === 'extractions') {
+      setViewMode('split');
     }
   };
 
@@ -725,17 +620,6 @@ export default function ReviewPage() {
                               Image
                             </span>
                           )}
-                          {textractLoading && (
-                            <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded flex items-center gap-1">
-                              <span className="animate-spin h-3 w-3 border-2 border-purple-700 border-t-transparent rounded-full"></span>
-                              Scanning...
-                            </span>
-                          )}
-                          {textractCache[selectedDocument.id] && !textractLoading && (
-                            <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
-                              Ready for highlights
-                            </span>
-                          )}
                         </div>
                         <a
                           href={selectedDocument.url}
@@ -759,7 +643,6 @@ export default function ReviewPage() {
                       ) : (
                         <PdfHighlighter
                           url={selectedDocument.url}
-                          highlight={activeHighlight}
                           initialPage={highlightPage || 1}
                           className="flex-1"
                         />
@@ -807,13 +690,13 @@ export default function ReviewPage() {
 
             {/* Extraction Panel */}
             {(viewMode === 'split' || viewMode === 'extractions') && (
-              <div className="h-full overflow-auto">
+              <div className="h-full flex flex-col min-h-0">
                 <ExtractionPanel
                   extractions={extractions?.sections}
                   isLoading={extractionsLoading}
                   onShowSource={handleShowSource}
                   onAcceptValue={handleAcceptValue}
-                  className="h-full"
+                  className="h-full min-h-0"
                 />
               </div>
             )}

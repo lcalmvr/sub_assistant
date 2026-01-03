@@ -323,9 +323,9 @@ export default function ExtractionPanel({
     : 0;
 
   return (
-    <div className={`flex flex-col h-full ${className}`}>
+    <div className={`flex flex-col h-full min-h-0 ${className}`}>
       {/* Stats header */}
-      <div className="px-4 py-3 bg-gray-50 border-b">
+      <div className="px-4 py-3 bg-gray-50 border-b flex-shrink-0">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-gray-900">Extracted Data</h3>
           <div className="flex items-center gap-3 text-sm">
@@ -341,7 +341,7 @@ export default function ExtractionPanel({
       </div>
 
       {/* Sections */}
-      <div className="flex-1 overflow-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
         {Object.entries(extractions).map(([sectionName, fields]) => (
           <ExtractionSection
             key={sectionName}
