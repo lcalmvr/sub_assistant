@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmissionDocuments, getExtractions, getDocumentBbox, uploadSubmissionDocument } from '../api/client';
+import { useQuery } from '@tanstack/react-query';
+import { getSubmissionDocuments, getExtractions } from '../api/client';
 import PdfHighlighter from './review/PdfHighlighter';
 import ExtractionPanel from './review/ExtractionPanel';
 
@@ -122,49 +122,63 @@ export default function DocumentExtractionViewer({
     }
   }, [documents, selectedDocument]);
 
-  // Handle clicking "show source" on an extraction
+  // Handle clicking "show source" on an extraction - matches ReviewPage logic
   const handleShowSource = async (pageNumber, documentId, value, sourceText, bbox = null, answer_bbox = null, question_bbox = null) => {
-    // Find the document
-    const doc = documents?.documents?.find(d => d.id === documentId);
-    if (doc) {
-      setSelectedDocument(doc);
+    // Switch to the correct document if specified
+    let targetDocId = documentId;
+    if (documentId && documents?.documents?.length > 0) {
+      const targetDoc = documents.documents.find(d => d.id === documentId);
+      if (targetDoc) {
+        setSelectedDocument(targetDoc);
+        targetDocId = targetDoc.id;
+      }
+    }
+
+    // If no document selected yet, select the first one
+    if (!selectedDocument && documents?.documents?.length > 0) {
+      const first = documents.documents[0];
+      setSelectedDocument(first);
+      targetDocId = first.id;
+    }
+
+    // Determine target page - prefer answer, then question, then legacy bbox
+    const targetPage = answer_bbox?.page || question_bbox?.page || bbox?.page || pageNumber;
+    setHighlightPage(targetPage);
+    setScrollTrigger(prev => prev + 1);
+
+    // Question-only highlighting - more reliable since question text is cleaner in Textract
+    let selectedBbox = null;
+
+    // Use question_bbox (most reliable)
+    if (question_bbox?.left != null) {
+      selectedBbox = question_bbox;
+    }
+    // Legacy fallback
+    else if (bbox?.left != null) {
+      selectedBbox = bbox;
+    }
+
+    if (selectedBbox) {
+      const highlights = [{
+        page: selectedBbox.page || targetPage,
+        bbox: {
+          left: selectedBbox.left,
+          top: selectedBbox.top,
+          width: selectedBbox.width,
+          height: selectedBbox.height,
+        },
+        type: 'question',
+      }];
+      console.log('[bbox] Question highlight:', highlights[0]);
+      setActiveHighlight({ highlights });
+    } else {
+      console.log('[bbox] No bbox available:', { pageNumber, sourceText: sourceText?.slice(0, 50) });
+      setActiveHighlight(null);
     }
 
     // Switch to split or documents view to show the PDF
     if (viewMode === 'extractions') {
       setViewMode('split');
-    }
-
-    // Set page and trigger scroll
-    setHighlightPage(pageNumber);
-    setScrollTrigger(prev => prev + 1);
-
-    // Set highlight if we have bbox data
-    if (question_bbox || answer_bbox || bbox) {
-      setActiveHighlight({
-        page: pageNumber,
-        question_bbox,
-        answer_bbox,
-        bbox,
-      });
-    } else if (documentId && pageNumber) {
-      // Try to fetch bbox data
-      try {
-        const response = await getDocumentBbox(documentId, pageNumber, sourceText || String(value));
-        if (response.data?.bbox) {
-          setActiveHighlight({
-            page: pageNumber,
-            bbox: response.data.bbox,
-          });
-        } else {
-          setActiveHighlight(null);
-        }
-      } catch (error) {
-        console.error('Failed to fetch bbox:', error);
-        setActiveHighlight(null);
-      }
-    } else {
-      setActiveHighlight(null);
     }
   };
 
