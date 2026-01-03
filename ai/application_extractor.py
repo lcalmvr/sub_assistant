@@ -100,6 +100,14 @@ class ExtractionResult:
     source_text: Optional[str] = None  # The text that led to this extraction
     page_number: Optional[int] = None  # Page where this was found
     is_present: bool = True  # Whether the question was asked in the application
+    # Bbox linking: we store both question and answer locations
+    question_line_id: Optional[str] = None  # LINE_xxx where question appears
+    answer_id: Optional[str] = None  # LINE_xxx or KV_xxx where answer is found
+
+    @property
+    def textract_line_id(self) -> Optional[str]:
+        """Primary bbox link - prefers answer location, falls back to question."""
+        return self.answer_id or self.question_line_id
 
 
 @dataclass
@@ -138,6 +146,10 @@ class ApplicationExtraction:
                     "source_text": extraction.source_text,
                     "source_page": extraction.page_number,
                     "is_present": extraction.is_present,
+                    # Primary bbox link - points to answer location
+                    "textract_line_id": extraction.textract_line_id,
+                    # Also include question location for Option 2 highlighting later
+                    "question_line_id": extraction.question_line_id,
                 })
         return records
 
@@ -214,6 +226,130 @@ Return a JSON object with this structure:
 
 Extract all fields from the schema. If a field is not found, set value to null and is_present to false.
 Return ONLY valid JSON, no additional text."""
+
+
+def _build_extraction_prompt_with_textract(
+    textract_lines: list[dict],
+    key_values: list[dict] = None,
+) -> str:
+    """
+    Build extraction prompt that includes Textract lines AND key-value pairs.
+
+    Claude will extract fields using:
+    - LINE blocks: For finding questions and text answers
+    - KEY_VALUE pairs: For checkbox answers and form field values
+
+    Claude outputs both question_line_id (where the question appears) and
+    answer_id (LINE_xxx or KV_xxx where the answer is).
+
+    Args:
+        textract_lines: List of {id, text, page, bbox} from Textract LINE blocks
+        key_values: List of {id, key, value, type, page, bbox} from KEY_VALUE_SET
+    """
+    schema_description = []
+    for section, fields in EXTRACTION_SCHEMA.items():
+        schema_description.append(f"\n### {section}")
+        for field_name, field_info in fields.items():
+            schema_description.append(
+                f"- **{field_name}** ({field_info['type']}): {field_info['description']}"
+            )
+
+    schema_text = "\n".join(schema_description)
+
+    # Format Textract lines with IDs
+    lines_text = "\n".join([
+        f"[LINE_{line['id']}] (page {line['page']}): {line['text']}"
+        for line in textract_lines
+    ])
+
+    # Format KEY_VALUE pairs (form fields with answers)
+    kv_text = ""
+    if key_values:
+        kv_lines = []
+        for kv in key_values:
+            answer_display = kv['value']
+            if kv['type'] == 'checkbox':
+                answer_display = "☑ CHECKED" if kv['value'] else "☐ NOT CHECKED"
+            kv_lines.append(f"[{kv['id']}] (page {kv['page']}, {kv['type']}): \"{kv['key']}\" → {answer_display}")
+        kv_text = "\n" + "\n".join(kv_lines)
+
+    return f"""You are an expert insurance application data extractor. Extract structured data from an insurance application document.
+
+## DOCUMENT TEXT LINES (with IDs)
+
+Each line has a unique ID [LINE_xxx]. Use these to locate questions and text answers.
+
+{lines_text}
+
+## FORM FIELD ANSWERS (detected by OCR)
+
+These are form fields where Textract detected the answer (especially checkboxes).
+Each has ID [KV_xxx]. The format is: "Question/Label" → Answer
+{kv_text if kv_text else "(No form fields detected)"}
+
+## EXTRACTION SCHEMA
+
+Extract these fields, organized by section:
+{schema_text}
+
+## INSTRUCTIONS
+
+1. For each field, extract:
+   - **value**: The actual answer value (e.g., true/false for checkboxes, text for fill-ins)
+   - **confidence**: 0.0-1.0 score
+   - **question_line_id**: LINE_xxx where the QUESTION text appears
+   - **answer_id**: Where the ANSWER is found - either:
+     - LINE_xxx if answer is in document text (e.g., company name filled in)
+     - KV_xxx if answer is from form field detection (especially checkboxes)
+   - **page**: Page number
+   - **is_present**: true if question was asked, false if not in document
+
+2. **IMPORTANT FOR CHECKBOX/BOOLEAN FIELDS**:
+   - Use the FORM FIELD ANSWERS section to find checkbox states
+   - The KV entries show whether checkboxes are CHECKED or NOT CHECKED
+   - Extract true if ☑ CHECKED, false if ☐ NOT CHECKED
+   - Use the KV_xxx id as the answer_id for these
+
+3. **IMPORTANT FOR TEXT FIELDS**:
+   - Look for the filled-in value in the LINE blocks
+   - The answer_id should point to the LINE containing the actual answer text
+
+4. Confidence scoring:
+   - 1.0: Checkbox state or text clearly detected
+   - 0.8-0.9: Clear but needs interpretation
+   - 0.6-0.7: Inferred from context
+   - 0.0-0.5: Uncertain
+
+## OUTPUT FORMAT
+
+Return JSON with this structure:
+```json
+{{
+  "generalInformation": {{
+    "applicantName": {{
+      "value": "Acme Corp",
+      "confidence": 0.95,
+      "question_line_id": "LINE_5",
+      "answer_id": "LINE_8",
+      "page": 1,
+      "is_present": true
+    }}
+  }},
+  "accessManagement": {{
+    "emailMfa": {{
+      "value": true,
+      "confidence": 1.0,
+      "question_line_id": "LINE_42",
+      "answer_id": "KV_3",
+      "page": 2,
+      "is_present": true
+    }}
+  }}
+}}
+```
+
+Extract all fields. If not found: value=null, question_line_id=null, answer_id=null, is_present=false.
+Return ONLY valid JSON."""
 
 
 def _parse_extraction_response(response_text: str) -> dict:
@@ -341,6 +477,130 @@ def extract_application_data(
         extraction_metadata={
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,
+        },
+    )
+
+
+def extract_with_textract_lines(
+    textract_lines: list[dict],
+    line_id_map: dict[str, str],
+    key_values: list[dict] = None,
+    model: str = "claude-sonnet-4-20250514",
+    page_count: Optional[int] = None,
+) -> ApplicationExtraction:
+    """
+    Extract application data using Textract lines AND key-values with direct bbox linking.
+
+    Args:
+        textract_lines: List of {id, text, page, bbox} from Textract LINE blocks
+        line_id_map: Map of LINE_xxx/KV_xxx to textract_extraction UUID
+        key_values: List of {id, key, value, type, page, bbox} from KEY_VALUE_SET
+        model: Claude model to use for extraction
+        page_count: Number of pages (if known)
+
+    Returns:
+        ApplicationExtraction with question_line_id and answer_id populated for bbox lookup
+    """
+    if page_count is None:
+        page_count = max(line.get("page", 1) for line in textract_lines) if textract_lines else 1
+
+    # Build prompt with Textract lines AND key-values
+    prompt = _build_extraction_prompt_with_textract(textract_lines, key_values)
+
+    client = _get_client()
+    response = client.messages.create(
+        model=model,
+        max_tokens=8000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    response_text = response.content[0].text
+
+    # Parse response
+    raw_data = _parse_extraction_response(response_text)
+
+    # Build lookup for source text
+    def get_source_text(ref_id: str) -> Optional[str]:
+        """Get source text from LINE or KV reference."""
+        if not ref_id:
+            return None
+        if ref_id.startswith("LINE_"):
+            line_idx = ref_id.replace("LINE_", "")
+            for line in textract_lines:
+                if str(line.get("id")) == line_idx:
+                    return line.get("text")
+        elif ref_id.startswith("KV_") and key_values:
+            for kv in key_values:
+                if kv.get("id") == ref_id:
+                    # For KV entries, include both key and value in source
+                    val = kv.get("value")
+                    if kv.get("type") == "checkbox":
+                        val = "Yes" if val else "No"
+                    return f"{kv.get('key')}: {val}"
+        return None
+
+    # Convert to ExtractionResult objects
+    data: dict[str, dict[str, ExtractionResult]] = {}
+
+    for section, fields in EXTRACTION_SCHEMA.items():
+        data[section] = {}
+        section_data = raw_data.get(section, {})
+
+        for field_name in fields:
+            field_data = section_data.get(field_name, {})
+
+            if isinstance(field_data, dict):
+                # Parse both IDs from Claude's response
+                question_line_id_ref = field_data.get("question_line_id")
+                answer_id_ref = field_data.get("answer_id")
+
+                # Handle case where Claude returns a list of IDs (take first one)
+                if isinstance(question_line_id_ref, list):
+                    question_line_id_ref = question_line_id_ref[0] if question_line_id_ref else None
+                if isinstance(answer_id_ref, list):
+                    answer_id_ref = answer_id_ref[0] if answer_id_ref else None
+
+                # Map to database UUIDs
+                question_line_id = line_id_map.get(question_line_id_ref) if question_line_id_ref else None
+                answer_id = line_id_map.get(answer_id_ref) if answer_id_ref else None
+
+                # Get source text from answer (preferred) or question
+                source_text = get_source_text(answer_id_ref) or get_source_text(question_line_id_ref)
+
+                # Handle None confidence
+                raw_confidence = field_data.get("confidence")
+                confidence = float(raw_confidence) if raw_confidence is not None else 0.0
+
+                data[section][field_name] = ExtractionResult(
+                    value=field_data.get("value"),
+                    confidence=confidence,
+                    source_text=source_text,
+                    page_number=field_data.get("page"),
+                    is_present=field_data.get("is_present", False),
+                    question_line_id=question_line_id,
+                    answer_id=answer_id,
+                )
+            else:
+                # Handle case where model returns just the value
+                data[section][field_name] = ExtractionResult(
+                    value=field_data if field_data is not None else None,
+                    confidence=0.5,
+                    is_present=field_data is not None,
+                )
+
+    # Build raw text from lines
+    raw_text = "\n".join(line.get("text", "") for line in textract_lines)
+
+    return ApplicationExtraction(
+        data=data,
+        raw_text=raw_text,
+        page_count=page_count,
+        model_used=model,
+        extraction_metadata={
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+            "extraction_method": "textract_lines",
+            "lines_provided": len(textract_lines),
         },
     )
 

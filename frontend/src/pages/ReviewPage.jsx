@@ -490,7 +490,8 @@ export default function ReviewPage() {
   };
 
   // Handle clicking a page link in extraction panel - scrolls PDF to that page
-  const handleShowSource = async (pageNumber, documentId, value, sourceText, bbox = null) => {
+  // Option B: Single highlight - prefer answer, fall back to question
+  const handleShowSource = async (pageNumber, documentId, value, sourceText, bbox = null, answer_bbox = null, question_bbox = null) => {
     // Switch to the correct document if specified
     let targetDocId = documentId;
     if (documentId && documents?.documents?.length > 0) {
@@ -508,26 +509,54 @@ export default function ReviewPage() {
       targetDocId = primary.id;
     }
 
-    // Set the page to scroll to and trigger the scroll
-    const targetPage = bbox?.page || pageNumber;
+    // Determine target page - prefer answer, then question, then legacy bbox
+    const targetPage = answer_bbox?.page || question_bbox?.page || bbox?.page || pageNumber;
     setHighlightPage(targetPage);
     setScrollTrigger(prev => prev + 1);
 
-    // Use direct bbox if available (linked from textract_extractions)
-    if (bbox?.left != null) {
-      console.log('[bbox] Using direct link:', { page: bbox.page, bbox });
-      setActiveHighlight({
-        page: bbox.page || targetPage,
+    // Option B: Single highlight - prefer answer bbox, fall back to question bbox
+    // Check if answer_bbox is meaningfully different from question_bbox
+    const bboxesAreSame = (a, b) => {
+      if (!a || !b) return false;
+      const tolerance = 0.02; // 2% tolerance for "same" position
+      return Math.abs((a.left || 0) - (b.left || 0)) < tolerance &&
+             Math.abs((a.top || 0) - (b.top || 0)) < tolerance;
+    };
+
+    let selectedBbox = null;
+    let highlightType = 'primary';
+
+    // Prefer answer_bbox if it exists and is different from question_bbox
+    if (answer_bbox?.left != null && !bboxesAreSame(answer_bbox, question_bbox)) {
+      selectedBbox = answer_bbox;
+      highlightType = 'answer';
+    }
+    // Fall back to question_bbox
+    else if (question_bbox?.left != null) {
+      selectedBbox = question_bbox;
+      highlightType = 'question';
+    }
+    // Legacy fallback
+    else if (bbox?.left != null) {
+      selectedBbox = bbox;
+      highlightType = 'primary';
+    }
+
+    if (selectedBbox) {
+      const highlights = [{
+        page: selectedBbox.page || targetPage,
         bbox: {
-          left: bbox.left,
-          top: bbox.top,
-          width: bbox.width,
-          height: bbox.height,
+          left: selectedBbox.left,
+          top: selectedBbox.top,
+          width: selectedBbox.width,
+          height: selectedBbox.height,
         },
-      });
+        type: highlightType,
+      }];
+      console.log(`[bbox] Single highlight (${highlightType}):`, highlights[0]);
+      setActiveHighlight({ highlights });
     } else {
-      // No direct link - log for debugging (fuzzy fallback disabled)
-      console.log('[bbox] No direct link available:', { pageNumber, sourceText: sourceText?.slice(0, 50) });
+      console.log('[bbox] No bbox available:', { pageNumber, sourceText: sourceText?.slice(0, 50) });
       setActiveHighlight(null);
     }
 

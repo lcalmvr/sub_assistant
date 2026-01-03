@@ -48,6 +48,9 @@ export default function PdfHighlighter({
     }
   }, [scrollTrigger, initialPage]);
 
+  // Get highlights array (support both old single highlight and new array format)
+  const highlights = highlight?.highlights || (highlight?.bbox ? [{ page: highlight.page, bbox: highlight.bbox, type: 'primary' }] : []);
+
   // Execute scroll when pages are rendered and we have a pending scroll
   useEffect(() => {
     if (!pendingScroll || !containerRef.current || !totalPages) return;
@@ -63,12 +66,15 @@ export default function PdfHighlighter({
       const pageRect = pageEl.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
 
-      // If we have a highlight on this page, scroll to center on it
+      // Find first highlight on this page to center on
+      const pageHighlights = highlights.filter(h => h.page === pendingScroll);
+      const centerHighlight = pageHighlights[0]; // Use first highlight for centering
+
       let scrollTop;
-      if (highlight && highlight.page === pendingScroll && highlight.bbox && pageSize.height > 0) {
+      if (centerHighlight && centerHighlight.bbox && pageSize.height > 0) {
         // Calculate highlight position within the page
-        const highlightTop = highlight.bbox.top * pageSize.height * scale;
-        const highlightHeight = highlight.bbox.height * pageSize.height * scale;
+        const highlightTop = centerHighlight.bbox.top * pageSize.height * scale;
+        const highlightHeight = centerHighlight.bbox.height * pageSize.height * scale;
         const highlightCenter = highlightTop + highlightHeight / 2;
 
         // Scroll to put highlight in center of viewport
@@ -87,7 +93,7 @@ export default function PdfHighlighter({
     requestAnimationFrame(() => {
       requestAnimationFrame(scrollToPage);
     });
-  }, [pendingScroll, totalPages, highlight, pageSize, scale]);
+  }, [pendingScroll, totalPages, highlights, pageSize, scale]);
 
   const onDocumentLoadSuccess = ({ numPages }) => {
     setTotalPages(numPages);
@@ -134,22 +140,44 @@ export default function PdfHighlighter({
                   renderTextLayer={false}
                   renderAnnotationLayer={false}
                 />
-                {/* Highlight overlay for this page */}
-                {highlight && highlight.page === pageNum && pageSize.width > 0 && (
-                  <div
-                    className="absolute pointer-events-none animate-pulse"
-                    style={{
-                      left: `${highlight.bbox.left * pageSize.width * scale}px`,
-                      top: `${highlight.bbox.top * pageSize.height * scale}px`,
-                      width: `${highlight.bbox.width * pageSize.width * scale}px`,
-                      height: `${highlight.bbox.height * pageSize.height * scale}px`,
-                      backgroundColor: highlight.color || 'rgba(147, 51, 234, 0.4)',
-                      border: '2px solid #7c3aed',
-                      borderRadius: '2px',
-                      zIndex: 10,
-                    }}
-                  />
-                )}
+                {/* Highlight overlays for this page (supports multiple: question + answer) */}
+                {pageSize.width > 0 && highlights
+                  .filter(h => h.page === pageNum)
+                  .map((h, idx) => {
+                    // Different styles for question vs answer
+                    const isQuestion = h.type === 'question';
+                    const isAnswer = h.type === 'answer';
+
+                    // Add padding around highlights for better visibility
+                    const padding = 4; // pixels of padding on each side
+
+                    return (
+                      <div
+                        key={`highlight-${pageNum}-${idx}`}
+                        className={`absolute pointer-events-none ${isAnswer ? 'animate-pulse' : ''}`}
+                        style={{
+                          left: `${h.bbox.left * pageSize.width * scale - padding}px`,
+                          top: `${h.bbox.top * pageSize.height * scale - padding}px`,
+                          width: `${h.bbox.width * pageSize.width * scale + padding * 2}px`,
+                          height: `${h.bbox.height * pageSize.height * scale + padding * 2}px`,
+                          // Question: blue solid outline, Answer: yellow fill with pulse
+                          backgroundColor: isQuestion
+                            ? 'rgba(59, 130, 246, 0.2)'  // Light blue
+                            : isAnswer
+                              ? 'rgba(234, 179, 8, 0.4)'  // Yellow
+                              : 'rgba(147, 51, 234, 0.4)', // Purple (legacy)
+                          border: isQuestion
+                            ? '2px solid #3b82f6'  // Blue solid
+                            : isAnswer
+                              ? '2px solid #ca8a04'  // Yellow solid
+                              : '2px solid #7c3aed', // Purple (legacy)
+                          borderRadius: '4px',
+                          zIndex: isAnswer ? 11 : 10, // Answer on top
+                        }}
+                      />
+                    );
+                  })
+                }
                 {/* Page number */}
                 <div className="absolute bottom-2 right-2 px-2 py-1 bg-black/60 text-white text-xs rounded">
                   {pageNum}

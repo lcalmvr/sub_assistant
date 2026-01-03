@@ -374,6 +374,8 @@ def _save_textract_bbox_data(document_id: str, key_value_pairs: dict) -> Dict[st
     """
     Save Textract key-value pairs with bbox to textract_extractions table.
     Returns a mapping of field_key -> {id, value, page, bbox} for Claude to reference.
+
+    DEPRECATED: Use _save_textract_lines instead for better bbox coverage.
     """
     from core.db import get_conn
 
@@ -430,6 +432,149 @@ def _save_textract_bbox_data(document_id: str, key_value_pairs: dict) -> Dict[st
         print(f"[orchestrator] Failed to save bbox data: {e}")
 
     return textract_map
+
+
+def _save_textract_lines(document_id: str, textract_result) -> Tuple[List[Dict], Dict[str, str], List[Dict]]:
+    """
+    Save Textract LINE blocks, KEY_VALUE_SET data, and raw checkboxes to textract_extractions table.
+
+    Returns:
+        Tuple of (lines_for_claude, line_id_map, key_values_for_claude)
+        - lines_for_claude: List of {id, text, page, bbox} for Claude prompt
+        - line_id_map: Map of line/kv index -> database UUID for linking
+        - key_values_for_claude: List of {id, key, value, type, page, bbox} for answers
+    """
+    from core.db import get_conn
+
+    lines_for_claude = []
+    key_values_for_claude = []
+    line_id_map = {}  # Maps line/kv index (as string) -> database UUID
+
+    if not textract_result or not textract_result.fields:
+        return lines_for_claude, line_id_map, key_values_for_claude
+
+    try:
+        with get_conn() as conn:
+            # Clear existing extractions for this document
+            conn.execute(
+                text("DELETE FROM textract_extractions WHERE document_id = :doc_id"),
+                {"doc_id": document_id}
+            )
+
+            # Save ALL raw checkboxes (SELECTION_ELEMENT) for position-based matching
+            # These are checkboxes Textract found but didn't link to KEY_VALUE pairs
+            for idx, cb in enumerate(textract_result.checkboxes or []):
+                bbox = cb.bbox
+                conn.execute(
+                    text("""
+                        INSERT INTO textract_extractions
+                        (document_id, page_number, field_key, field_value, field_type,
+                         bbox_left, bbox_top, bbox_width, bbox_height, confidence)
+                        VALUES (:doc_id, :page, :key, :value, :type,
+                                :left, :top, :width, :height, :conf)
+                    """),
+                    {
+                        "doc_id": document_id,
+                        "page": cb.page,
+                        "key": f"CB_{idx}",  # Raw checkbox, not KV-linked
+                        "value": str(cb.is_selected),
+                        "type": "raw_checkbox",
+                        "left": bbox.left if bbox else None,
+                        "top": bbox.top if bbox else None,
+                        "width": bbox.width if bbox else None,
+                        "height": bbox.height if bbox else None,
+                        "conf": cb.confidence,
+                    }
+                )
+
+            # Insert LINE blocks
+            for idx, field in enumerate(textract_result.fields):
+                if field.field_type != "text":
+                    continue
+
+                bbox = field.bbox
+                result = conn.execute(
+                    text("""
+                        INSERT INTO textract_extractions
+                        (document_id, page_number, field_key, field_value, field_type,
+                         bbox_left, bbox_top, bbox_width, bbox_height, confidence)
+                        VALUES (:doc_id, :page, :key, :value, :type,
+                                :left, :top, :width, :height, :conf)
+                        RETURNING id
+                    """),
+                    {
+                        "doc_id": document_id,
+                        "page": field.page,
+                        "key": f"LINE_{idx}",
+                        "value": field.value,
+                        "type": "line",
+                        "left": bbox.left if bbox else None,
+                        "top": bbox.top if bbox else None,
+                        "width": bbox.width if bbox else None,
+                        "height": bbox.height if bbox else None,
+                        "conf": field.confidence,
+                    }
+                )
+                db_id = str(result.fetchone()[0])
+
+                lines_for_claude.append({
+                    "id": str(idx),
+                    "text": field.value,
+                    "page": field.page,
+                    "bbox": bbox.to_dict() if bbox else None,
+                })
+                line_id_map[f"LINE_{idx}"] = db_id
+
+            # Insert KEY_VALUE_SET data (form fields and checkboxes with answers)
+            kv_idx = 0
+            for key_text, kv_data in textract_result.key_value_pairs.items():
+                kv_id = f"KV_{kv_idx}"
+                bbox_data = kv_data.get("bbox", {})
+
+                result = conn.execute(
+                    text("""
+                        INSERT INTO textract_extractions
+                        (document_id, page_number, field_key, field_value, field_type,
+                         bbox_left, bbox_top, bbox_width, bbox_height, confidence)
+                        VALUES (:doc_id, :page, :key, :value, :type,
+                                :left, :top, :width, :height, :conf)
+                        RETURNING id
+                    """),
+                    {
+                        "doc_id": document_id,
+                        "page": kv_data.get("page", 1),
+                        "key": key_text,  # The form field label/question
+                        "value": str(kv_data.get("value", "")),  # The answer
+                        "type": kv_data.get("type", "text"),  # "checkbox" or "text"
+                        "left": bbox_data.get("left"),
+                        "top": bbox_data.get("top"),
+                        "width": bbox_data.get("width"),
+                        "height": bbox_data.get("height"),
+                        "conf": kv_data.get("confidence", 0),
+                    }
+                )
+                db_id = str(result.fetchone()[0])
+
+                key_values_for_claude.append({
+                    "id": kv_id,
+                    "key": key_text,
+                    "value": kv_data.get("value"),
+                    "type": kv_data.get("type", "text"),
+                    "page": kv_data.get("page", 1),
+                    "bbox": bbox_data,
+                })
+                line_id_map[kv_id] = db_id
+                kv_idx += 1
+
+            conn.commit()
+            print(f"[orchestrator] Saved {len(lines_for_claude)} LINE blocks + {len(key_values_for_claude)} KEY_VALUE pairs for document {document_id}")
+
+    except Exception as e:
+        print(f"[orchestrator] Failed to save textract data: {e}")
+        import traceback
+        traceback.print_exc()
+
+    return lines_for_claude, line_id_map, key_values_for_claude
 
 
 def _extract_with_textract_forms(
@@ -927,19 +1072,7 @@ def extract_application_with_bbox(
     """
     Extract application data using Textract + Claude with bbox linking.
 
-    This runs Textract first to get key-value pairs with bounding boxes,
-    saves them to the database, then passes the data to Claude for
-    semantic extraction. Claude references which Textract entries
-    correspond to each extracted field.
-
-    Args:
-        document_id: UUID of the document record
-        file_path: Path to the PDF file
-        submission_id: Optional submission ID for context
-
-    Returns:
-        Tuple of (textract_kv_pairs, textract_map)
-        textract_map is dict of field_key -> {id, value, page, bbox}
+    DEPRECATED: Use extract_application_integrated instead for better bbox coverage.
     """
     from ai.textract_extractor import extract_from_pdf
 
@@ -960,6 +1093,343 @@ def extract_application_with_bbox(
     except Exception as e:
         print(f"[orchestrator] Textract extraction failed: {e}")
         return None, {}
+
+
+def _log_extraction_diagnostic(
+    filename: str,
+    textract_result,
+    lines_for_claude: List[Dict],
+    key_values_for_claude: List[Dict],
+    extraction,
+    provenance_records: List[Dict],
+    line_id_map: Dict[str, str],
+):
+    """
+    Log comprehensive diagnostic info for debugging bbox linking issues.
+
+    Writes to both console and a diagnostic file for analysis.
+    """
+    from pathlib import Path
+    import json
+    from datetime import datetime
+
+    diag_lines = []
+    diag_lines.append("")
+    diag_lines.append("=" * 70)
+    diag_lines.append(f"EXTRACTION DIAGNOSTIC: {filename}")
+    diag_lines.append(f"Timestamp: {datetime.now().isoformat()}")
+    diag_lines.append("=" * 70)
+
+    # ─── TEXTRACT OUTPUT ───
+    diag_lines.append("")
+    diag_lines.append("─── TEXTRACT OUTPUT ───")
+    diag_lines.append(f"  Total LINE blocks: {len(textract_result.fields)}")
+    diag_lines.append(f"  Total KV pairs: {len(textract_result.key_value_pairs)}")
+    diag_lines.append(f"  Raw checkboxes: {len(textract_result.checkboxes)}")
+
+    # Count checkbox vs text KV pairs
+    checkbox_kvs = [kv for kv in key_values_for_claude if kv.get('type') == 'checkbox']
+    text_kvs = [kv for kv in key_values_for_claude if kv.get('type') != 'checkbox']
+    diag_lines.append(f"  KV breakdown: {len(checkbox_kvs)} checkbox, {len(text_kvs)} text")
+
+    # ─── KV PAIRS SAMPLE ───
+    diag_lines.append("")
+    diag_lines.append("─── KV PAIRS (first 20) ───")
+    for kv in key_values_for_claude[:20]:
+        val_display = kv.get('value')
+        if kv.get('type') == 'checkbox':
+            val_display = "☑ CHECKED" if kv.get('value') else "☐ NOT CHECKED"
+        diag_lines.append(f"  [{kv['id']}] p{kv.get('page', '?')}: \"{kv.get('key', '')[:40]}\" → {val_display}")
+    if len(key_values_for_claude) > 20:
+        diag_lines.append(f"  ... and {len(key_values_for_claude) - 20} more")
+
+    # ─── CLAUDE RESPONSE ANALYSIS ───
+    diag_lines.append("")
+    diag_lines.append("─── CLAUDE RESPONSE ANALYSIS ───")
+
+    # Build reverse map: UUID -> LINE_xxx/KV_xxx
+    uuid_to_ref = {v: k for k, v in line_id_map.items()}
+
+    # Analyze each field
+    boolean_fields = []
+    text_fields = []
+    problem_fields = []
+
+    for record in provenance_records:
+        field_name = record.get("field_name", "")
+        value = record.get("extracted_value")
+        answer_id = record.get("textract_line_id")  # UUID
+        question_id = record.get("question_line_id")  # UUID
+
+        # Convert UUIDs back to refs for display
+        answer_ref = uuid_to_ref.get(answer_id, "None") if answer_id else "None"
+        question_ref = uuid_to_ref.get(question_id, "None") if question_id else "None"
+
+        is_boolean = value in [True, False, "true", "false", None]
+
+        # Check for problems
+        problems = []
+        if is_boolean:
+            boolean_fields.append(field_name)
+            # Problem: answer points to LINE instead of KV for boolean
+            if answer_ref.startswith("LINE_"):
+                problems.append("BOOL_USES_LINE")
+            # Problem: answer == question
+            if answer_id and answer_id == question_id:
+                problems.append("ANSWER=QUESTION")
+        else:
+            text_fields.append(field_name)
+            # Problem: answer == question for text field
+            if answer_id and answer_id == question_id:
+                problems.append("ANSWER=QUESTION")
+
+        # Problem: no answer_id at all
+        if not answer_id and record.get("is_present"):
+            problems.append("NO_ANSWER_ID")
+
+        if problems:
+            problem_fields.append({
+                "field": field_name,
+                "value": value,
+                "answer_ref": answer_ref,
+                "question_ref": question_ref,
+                "problems": problems,
+            })
+
+    diag_lines.append(f"  Total fields extracted: {len(provenance_records)}")
+    diag_lines.append(f"  Boolean fields: {len(boolean_fields)}")
+    diag_lines.append(f"  Text fields: {len(text_fields)}")
+    diag_lines.append(f"  Fields with problems: {len(problem_fields)}")
+
+    # ─── PROBLEM FIELDS ───
+    if problem_fields:
+        diag_lines.append("")
+        diag_lines.append("─── PROBLEM FIELDS ───")
+        for pf in problem_fields:
+            probs = ", ".join(pf["problems"])
+            diag_lines.append(f"  {pf['field'][:35]:35} | val={str(pf['value'])[:10]:10} | ans={pf['answer_ref']:10} | q={pf['question_ref']:10} | [{probs}]")
+
+    # ─── SUCCESSFUL BOOLEAN FIELDS ───
+    diag_lines.append("")
+    diag_lines.append("─── SUCCESSFUL BBOX LINKS (boolean fields using KV) ───")
+    success_count = 0
+    for record in provenance_records:
+        field_name = record.get("field_name", "")
+        value = record.get("extracted_value")
+        answer_id = record.get("textract_line_id")
+
+        if value in [True, False] and answer_id:
+            answer_ref = uuid_to_ref.get(answer_id, "None")
+            if answer_ref.startswith("KV_"):
+                success_count += 1
+                diag_lines.append(f"  ✓ {field_name[:40]:40} = {str(value):5} → {answer_ref}")
+
+    if success_count == 0:
+        diag_lines.append("  (none)")
+
+    # ─── SUMMARY STATS ───
+    diag_lines.append("")
+    diag_lines.append("─── SUMMARY ───")
+    fields_with_answer = sum(1 for r in provenance_records if r.get("textract_line_id"))
+    fields_with_question = sum(1 for r in provenance_records if r.get("question_line_id"))
+    answer_eq_question = sum(1 for r in provenance_records
+                            if r.get("textract_line_id") and r.get("textract_line_id") == r.get("question_line_id"))
+    bool_with_kv = sum(1 for r in provenance_records
+                      if r.get("extracted_value") in [True, False]
+                      and r.get("textract_line_id")
+                      and uuid_to_ref.get(r.get("textract_line_id"), "").startswith("KV_"))
+    bool_total = sum(1 for r in provenance_records if r.get("extracted_value") in [True, False])
+
+    diag_lines.append(f"  Fields with answer_id: {fields_with_answer}/{len(provenance_records)} ({fields_with_answer*100//max(len(provenance_records),1)}%)")
+    diag_lines.append(f"  Fields with question_id: {fields_with_question}/{len(provenance_records)}")
+    diag_lines.append(f"  answer_id == question_id: {answer_eq_question} (should be ~0)")
+    diag_lines.append(f"  Boolean fields with KV answer: {bool_with_kv}/{bool_total} (should be {bool_total})")
+
+    diag_lines.append("")
+    diag_lines.append("=" * 70)
+
+    # Print to console
+    for line in diag_lines:
+        print(line)
+
+    # Also write to file
+    diag_dir = Path("diagnostics")
+    diag_dir.mkdir(exist_ok=True)
+    safe_filename = "".join(c if c.isalnum() or c in "._-" else "_" for c in filename)
+    diag_path = diag_dir / f"extraction_{safe_filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+    with open(diag_path, "w") as f:
+        f.write("\n".join(diag_lines))
+
+        # Also dump raw data as JSON for deeper analysis
+        f.write("\n\n")
+        f.write("=" * 70)
+        f.write("\nRAW DATA (JSON)\n")
+        f.write("=" * 70)
+        f.write("\n\n--- KV PAIRS ---\n")
+        f.write(json.dumps(key_values_for_claude, indent=2, default=str))
+        f.write("\n\n--- PROVENANCE RECORDS ---\n")
+        f.write(json.dumps(provenance_records, indent=2, default=str))
+        f.write("\n\n--- LINE ID MAP ---\n")
+        f.write(json.dumps(line_id_map, indent=2, default=str))
+
+    print(f"\n[diagnostic] Full diagnostic saved to: {diag_path}")
+
+    return str(diag_path)
+
+
+def extract_application_integrated(
+    document_id: str,
+    file_path: str,
+    submission_id: str,
+    enable_diagnostics: bool = True,
+) -> Optional[Dict]:
+    """
+    Extract application data with integrated Textract + Claude bbox linking.
+
+    This is the NEW approach that provides ~100% bbox coverage:
+    1. Run Textract to get ALL text lines with bbox
+    2. Save lines to database with UUIDs
+    3. Pass lines (with IDs) to Claude for semantic extraction
+    4. Claude references which line each field came from
+    5. Store direct textract_extraction_id in provenance (no post-hoc matching)
+
+    Args:
+        document_id: UUID of the document record
+        file_path: Path to the PDF file
+        submission_id: Submission ID (required for provenance)
+        enable_diagnostics: If True, log detailed diagnostic info
+
+    Returns:
+        Dict with extraction results including bbox link stats
+    """
+    from ai.textract_extractor import extract_from_pdf
+    from ai.application_extractor import extract_with_textract_lines
+    from pathlib import Path
+
+    filename = Path(file_path).name
+
+    result = {
+        "success": False,
+        "lines_extracted": 0,
+        "fields_extracted": 0,
+        "fields_with_bbox": 0,
+        "bbox_coverage": 0.0,
+    }
+
+    try:
+        # Step 1: Run Textract to get LINE blocks with bbox
+        print(f"[orchestrator] Running Textract on {file_path}...")
+        textract_result = extract_from_pdf(file_path)
+
+        if not textract_result or not textract_result.fields:
+            print(f"[orchestrator] Textract returned no lines")
+            return result
+
+        result["lines_extracted"] = len(textract_result.fields)
+        result["key_values_extracted"] = len(textract_result.key_value_pairs)
+        print(f"[orchestrator] Textract found {result['lines_extracted']} lines + {result['key_values_extracted']} key-value pairs")
+
+        # Step 2: Save lines and key-values to database and get ID mapping
+        lines_for_claude, line_id_map, key_values_for_claude = _save_textract_lines(document_id, textract_result)
+
+        if not lines_for_claude:
+            print(f"[orchestrator] No lines saved to database")
+            return result
+
+        # Step 3: Run Claude extraction with Textract lines AND key-value answers
+        print(f"[orchestrator] Running Claude extraction with {len(lines_for_claude)} lines + {len(key_values_for_claude)} key-values...")
+        extraction = extract_with_textract_lines(
+            textract_lines=lines_for_claude,
+            key_values=key_values_for_claude,
+            line_id_map=line_id_map,
+            page_count=textract_result.pages,
+        )
+
+        # Step 4: Save provenance with direct textract_extraction_id
+        provenance_records = extraction.to_provenance_records(submission_id)
+        result["fields_extracted"] = len(provenance_records)
+
+        # Count fields with bbox links
+        fields_with_bbox = sum(1 for r in provenance_records if r.get("textract_line_id"))
+        result["fields_with_bbox"] = fields_with_bbox
+        result["bbox_coverage"] = fields_with_bbox / max(len(provenance_records), 1) * 100
+
+        # ─── DIAGNOSTIC LOGGING ───
+        if enable_diagnostics:
+            diag_path = _log_extraction_diagnostic(
+                filename=filename,
+                textract_result=textract_result,
+                lines_for_claude=lines_for_claude,
+                key_values_for_claude=key_values_for_claude,
+                extraction=extraction,
+                provenance_records=provenance_records,
+                line_id_map=line_id_map,
+            )
+            result["diagnostic_file"] = diag_path
+
+        # Save provenance to database
+        _save_provenance_with_textract_ids(submission_id, document_id, provenance_records)
+
+        result["success"] = True
+        print(f"[orchestrator] Extraction complete: {fields_with_bbox}/{len(provenance_records)} fields have bbox ({result['bbox_coverage']:.1f}%)")
+
+        return result
+
+    except Exception as e:
+        print(f"[orchestrator] Integrated extraction failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return result
+
+
+def _save_provenance_with_textract_ids(
+    submission_id: str,
+    document_id: str,
+    provenance_records: List[Dict],
+):
+    """Save extraction provenance records with direct textract_extraction_id links."""
+    from core.db import get_conn
+
+    try:
+        with get_conn() as conn:
+            for record in provenance_records:
+                conn.execute(
+                    text("""
+                        INSERT INTO extraction_provenance
+                        (submission_id, source_document_id, field_name, extracted_value,
+                         confidence, source_text, source_page, is_present,
+                         textract_extraction_id, question_textract_id)
+                        VALUES (:sid, :doc_id, :field, :value, :conf, :source, :page, :present,
+                                :textract_id, :question_id)
+                        ON CONFLICT (submission_id, source_document_id, field_name)
+                        DO UPDATE SET
+                            extracted_value = EXCLUDED.extracted_value,
+                            confidence = EXCLUDED.confidence,
+                            source_text = EXCLUDED.source_text,
+                            source_page = EXCLUDED.source_page,
+                            is_present = EXCLUDED.is_present,
+                            textract_extraction_id = EXCLUDED.textract_extraction_id,
+                            question_textract_id = EXCLUDED.question_textract_id
+                    """),
+                    {
+                        "sid": submission_id,
+                        "doc_id": document_id,
+                        "field": record["field_name"],
+                        "value": json.dumps(record["extracted_value"]),  # Always JSON-encode for jsonb column
+                        "conf": record["confidence"],
+                        "source": record["source_text"],
+                        "page": record["source_page"],
+                        "present": record["is_present"],
+                        "textract_id": record.get("textract_line_id"),  # Answer bbox (primary)
+                        "question_id": record.get("question_line_id"),  # Question bbox (secondary)
+                    }
+                )
+            conn.commit()
+            print(f"[orchestrator] Saved {len(provenance_records)} provenance records with bbox links")
+
+    except Exception as e:
+        print(f"[orchestrator] Failed to save provenance: {e}")
 
 
 def link_provenance_to_textract(submission_id: str, verbose: bool = False) -> Dict[str, Any]:

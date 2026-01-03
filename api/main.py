@@ -582,6 +582,61 @@ def relink_bbox(submission_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/documents/{document_id}/extract-integrated")
+def extract_document_integrated(document_id: str):
+    """
+    Run integrated Textract + Claude extraction with direct bbox linking.
+
+    This is the NEW extraction approach that provides ~100% bbox coverage:
+    1. Textract extracts all text lines with bbox
+    2. Claude receives lines and references which line each field came from
+    3. Provenance is saved with direct textract_extraction_id (no post-hoc matching)
+
+    Returns extraction stats including bbox coverage percentage.
+    """
+    try:
+        from core.extraction_orchestrator import extract_application_integrated
+
+        # Get document info (file_path is in doc_metadata JSON)
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, submission_id, doc_metadata
+                    FROM documents
+                    WHERE id = %s
+                """, (document_id,))
+                doc = cur.fetchone()
+
+                if not doc:
+                    raise HTTPException(status_code=404, detail="Document not found")
+
+        # Extract file_path from metadata
+        metadata = doc["doc_metadata"] or {}
+        file_path = metadata.get("file_path")
+        if not file_path:
+            raise HTTPException(status_code=400, detail="Document has no file_path in metadata")
+
+        # Run integrated extraction
+        result = extract_application_integrated(
+            document_id=str(doc["id"]),
+            file_path=file_path,
+            submission_id=str(doc["submission_id"]),
+        )
+
+        return {
+            "document_id": document_id,
+            "success": result.get("success", False),
+            "lines_extracted": result.get("lines_extracted", 0),
+            "fields_extracted": result.get("fields_extracted", 0),
+            "fields_with_bbox": result.get("fields_with_bbox", 0),
+            "bbox_coverage_percent": round(result.get("bbox_coverage", 0), 1),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/submissions/{submission_id}/documents")
 async def upload_submission_document(
     submission_id: str,
@@ -773,6 +828,66 @@ async def upload_submission_document(
 # Document Extraction Endpoints
 # ─────────────────────────────────────────────────────────────
 
+def _find_nearest_checkbox(checkboxes: list, question_bbox: dict, value: any) -> dict:
+    """
+    Find the nearest checkbox to a question bbox that matches the expected value.
+
+    For boolean fields where Textract didn't link the checkbox to the question,
+    we find the checkbox closest to the question that matches the extracted value.
+    """
+    if not checkboxes or not question_bbox:
+        return None
+
+    page = question_bbox.get("page")
+    q_top = question_bbox.get("top", 0)
+    q_left = question_bbox.get("left", 0)
+
+    # Determine if we're looking for a selected or unselected checkbox
+    is_selected = value is True or value == "True"
+
+    best_match = None
+    best_distance = float('inf')
+
+    for cb in checkboxes:
+        if cb["page"] != page:
+            continue
+
+        # Check if checkbox selection matches the extracted value
+        cb_selected = cb["value"] == "True"
+        if cb_selected != is_selected:
+            continue
+
+        # Calculate distance (prefer checkboxes on same row, slightly to the right)
+        cb_top = cb["top"]
+        cb_left = cb["left"]
+
+        # Vertical distance matters more than horizontal
+        v_dist = abs(cb_top - q_top)
+        h_dist = cb_left - q_left  # Positive = to the right of question
+
+        # Only consider checkboxes roughly on the same row (within 5% vertical distance)
+        if v_dist > 0.05:
+            continue
+
+        # Prefer checkboxes to the right of the question text
+        if h_dist < -0.1:  # Skip checkboxes far to the left
+            continue
+
+        distance = v_dist * 10 + abs(h_dist)  # Weight vertical more
+
+        if distance < best_distance:
+            best_distance = distance
+            best_match = {
+                "left": cb["left"],
+                "top": cb["top"],
+                "width": cb["width"],
+                "height": cb["height"],
+                "page": cb["page"],
+            }
+
+    return best_match
+
+
 @app.get("/api/submissions/{submission_id}/extractions")
 def get_extractions(submission_id: str):
     """Get extraction provenance data for a submission."""
@@ -791,7 +906,26 @@ def get_extractions(submission_id: str):
             """, (submission_id,))
             summary = cur.fetchone()
 
-            # Get all extractions with document info and linked bbox
+            # Pre-fetch all raw checkboxes for position-based matching
+            cur.execute("""
+                SELECT te.page_number, te.field_value, te.bbox_left, te.bbox_top,
+                       te.bbox_width, te.bbox_height, te.document_id
+                FROM textract_extractions te
+                JOIN documents d ON d.id = te.document_id
+                WHERE d.submission_id = %s AND te.field_type = 'raw_checkbox'
+                ORDER BY te.page_number, te.bbox_top
+            """, (submission_id,))
+            raw_checkboxes = [
+                {"page": r["page_number"], "value": r["field_value"],
+                 "left": float(r["bbox_left"]) if r["bbox_left"] else 0,
+                 "top": float(r["bbox_top"]) if r["bbox_top"] else 0,
+                 "width": float(r["bbox_width"]) if r["bbox_width"] else 0,
+                 "height": float(r["bbox_height"]) if r["bbox_height"] else 0,
+                 "document_id": str(r["document_id"])}
+                for r in cur.fetchall()
+            ]
+
+            # Get all extractions with document info and linked bbox (answer + question)
             cur.execute("""
                 SELECT
                     ep.id,
@@ -804,16 +938,25 @@ def get_extractions(submission_id: str):
                     ep.is_present,
                     ep.is_accepted,
                     ep.textract_extraction_id,
+                    ep.question_textract_id,
                     d.filename as document_name,
                     d.is_priority as is_priority_doc,
-                    te.bbox_left,
-                    te.bbox_top,
-                    te.bbox_width,
-                    te.bbox_height,
-                    te.page_number as bbox_page
+                    -- Answer bbox (primary)
+                    te.bbox_left as answer_left,
+                    te.bbox_top as answer_top,
+                    te.bbox_width as answer_width,
+                    te.bbox_height as answer_height,
+                    te.page_number as answer_page,
+                    -- Question bbox (secondary)
+                    qte.bbox_left as question_left,
+                    qte.bbox_top as question_top,
+                    qte.bbox_width as question_width,
+                    qte.bbox_height as question_height,
+                    qte.page_number as question_page
                 FROM extraction_provenance ep
                 LEFT JOIN documents d ON d.id = ep.source_document_id
                 LEFT JOIN textract_extractions te ON te.id = ep.textract_extraction_id
+                LEFT JOIN textract_extractions qte ON qte.id = ep.question_textract_id
                 WHERE ep.submission_id = %s
                 ORDER BY ep.field_name, d.is_priority DESC NULLS LAST, ep.confidence DESC
             """, (submission_id,))
@@ -833,16 +976,49 @@ def get_extractions(submission_id: str):
                 if full_field not in field_values:
                     field_values[full_field] = []
 
-                # Build bbox object if linked
-                bbox = None
-                if row.get("bbox_left") is not None:
-                    bbox = {
-                        "left": float(row["bbox_left"]),
-                        "top": float(row["bbox_top"]),
-                        "width": float(row["bbox_width"]),
-                        "height": float(row["bbox_height"]),
-                        "page": row["bbox_page"] or row["source_page"],
+                # Build answer bbox (where the answer is)
+                answer_bbox = None
+                if row.get("answer_left") is not None:
+                    answer_bbox = {
+                        "left": float(row["answer_left"]),
+                        "top": float(row["answer_top"]),
+                        "width": float(row["answer_width"]),
+                        "height": float(row["answer_height"]),
+                        "page": row["answer_page"] or row["source_page"],
                     }
+
+                # Build question bbox (where the question is)
+                question_bbox = None
+                if row.get("question_left") is not None:
+                    question_bbox = {
+                        "left": float(row["question_left"]),
+                        "top": float(row["question_top"]),
+                        "width": float(row["question_width"]),
+                        "height": float(row["question_height"]),
+                        "page": row["question_page"] or row["source_page"],
+                    }
+
+                # For boolean fields where answer_bbox equals question_bbox (or is missing),
+                # try to find a nearby checkbox using position-based matching
+                value = row["extracted_value"]
+                is_boolean = value in [True, False, "True", "False", None]
+
+                if is_boolean and question_bbox:
+                    # Check if answer is missing or same as question
+                    needs_checkbox_lookup = (
+                        answer_bbox is None or
+                        (answer_bbox and question_bbox and
+                         abs(answer_bbox["top"] - question_bbox["top"]) < 0.02 and
+                         abs(answer_bbox["left"] - question_bbox["left"]) < 0.02)
+                    )
+                    if needs_checkbox_lookup and value is not None:
+                        # Find nearest checkbox that matches the expected selection state
+                        nearby_cb = _find_nearest_checkbox(raw_checkboxes, question_bbox, value)
+                        if nearby_cb:
+                            answer_bbox = nearby_cb
+
+                # Primary bbox: answer if available, otherwise question (backward compat)
+                bbox = answer_bbox or question_bbox
 
                 field_values[full_field].append({
                     "id": str(row["id"]),
@@ -855,7 +1031,9 @@ def get_extractions(submission_id: str):
                     "is_priority_doc": row["is_priority_doc"],
                     "is_accepted": row["is_accepted"],
                     "is_present": row["is_present"],
-                    "bbox": bbox,
+                    "bbox": bbox,  # Primary (for backward compat)
+                    "answer_bbox": answer_bbox,  # Answer location
+                    "question_bbox": question_bbox,  # Question location
                 })
 
             # Build sections with primary value and conflicts
@@ -895,6 +1073,9 @@ def get_extractions(submission_id: str):
                     "is_present": primary["is_present"],
                     "has_conflict": has_conflict,
                     "all_values": present_values if has_conflict else None,
+                    "bbox": primary.get("bbox"),  # Primary bbox (backward compat)
+                    "answer_bbox": primary.get("answer_bbox"),  # Answer location
+                    "question_bbox": primary.get("question_bbox"),  # Question location
                 }
 
             # Count conflicts

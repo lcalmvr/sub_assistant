@@ -305,6 +305,7 @@ def parse_textract_response(response: dict, total_pages: int = None) -> Textract
                     # Check if value is a checkbox
                     is_checkbox = False
                     checkbox_selected = None
+                    checkbox_bbox = None
                     for rel in value_block.get('Relationships', []):
                         if rel['Type'] == 'CHILD':
                             for child_id in rel['Ids']:
@@ -312,9 +313,13 @@ def parse_textract_response(response: dict, total_pages: int = None) -> Textract
                                 if child.get('BlockType') == 'SELECTION_ELEMENT':
                                     is_checkbox = True
                                     checkbox_selected = child.get('SelectionStatus') == 'SELECTED'
+                                    # Get the checkbox's actual bbox for precise highlighting
+                                    checkbox_bbox = parse_bbox(child.get('Geometry', {}).get('BoundingBox', {}))
                                     break
 
-                    bbox = parse_bbox(block.get('Geometry', {}).get('BoundingBox', {}))
+                    # KEY bbox (question label) vs VALUE bbox (answer location)
+                    key_bbox = parse_bbox(block.get('Geometry', {}).get('BoundingBox', {}))
+                    value_bbox = parse_bbox(value_block.get('Geometry', {}).get('BoundingBox', {}))
                     page = block.get('Page', 1)
                     confidence = block.get('Confidence', 0) / 100
 
@@ -324,7 +329,9 @@ def parse_textract_response(response: dict, total_pages: int = None) -> Textract
                             "type": "checkbox",
                             "confidence": confidence,
                             "page": page,
-                            "bbox": bbox.to_dict(),
+                            # Use checkbox bbox if available, otherwise value block bbox
+                            "bbox": (checkbox_bbox or value_bbox).to_dict(),
+                            "key_bbox": key_bbox.to_dict(),  # Question label location
                         }
                     else:
                         result.key_value_pairs[key_text] = {
@@ -332,7 +339,8 @@ def parse_textract_response(response: dict, total_pages: int = None) -> Textract
                             "type": "text",
                             "confidence": confidence,
                             "page": page,
-                            "bbox": bbox.to_dict(),
+                            "bbox": value_bbox.to_dict(),  # Answer location
+                            "key_bbox": key_bbox.to_dict(),  # Question label location
                         }
 
     result.pages = total_pages or page_count or 1
