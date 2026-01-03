@@ -111,6 +111,6 @@ CREATE TABLE extraction_corrections (
 
 | Project | Status | Started | Completed |
 |---------|--------|---------|-----------|
-| A - Docs Header Button | In Progress | 2025-01-03 | |
-| B - UW Notes on Claims | Not Started | | |
+| A - Docs Header Button | Complete | 2025-01-03 | 2025-01-03 |
+| B - UW Notes on Claims | Complete | 2025-01-03 | 2025-01-03 |
 | C - AI Correction Review | Not Started | | |
