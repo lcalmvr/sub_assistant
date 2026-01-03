@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSubmission, updateSubmission } from '../api/client';
+import DocsPanel from '../components/DocsPanel';
 
 const tabs = [
   { name: 'Account', path: 'account' },
@@ -215,6 +216,7 @@ function StatusPill({ submission }) {
 
 export default function SubmissionLayout() {
   const { submissionId } = useParams();
+  const [isDocsPanelOpen, setIsDocsPanelOpen] = useState(false);
 
   const { data: submission } = useQuery({
     queryKey: ['submission', submissionId],
@@ -234,6 +236,16 @@ export default function SubmissionLayout() {
             <span className="text-gray-600">{submission?.applicant_name || 'Loading...'}</span>
             <span className="text-gray-300">›</span>
             <StatusPill submission={submission} />
+            <span className="text-gray-300 ml-2">|</span>
+            <button
+              onClick={() => setIsDocsPanelOpen(true)}
+              className="ml-2 px-3 py-1 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors flex items-center gap-1"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Docs
+            </button>
           </div>
           <nav className="flex items-center gap-6">
             <Link to="/" className="nav-link">Submissions</Link>
@@ -266,6 +278,13 @@ export default function SubmissionLayout() {
       <main className="max-w-7xl mx-auto px-6 py-6">
         <Outlet />
       </main>
+
+      {/* Docs Panel */}
+      <DocsPanel
+        submissionId={submissionId}
+        isOpen={isDocsPanelOpen}
+        onClose={() => setIsDocsPanelOpen(false)}
+      />
     </div>
   );
 }
