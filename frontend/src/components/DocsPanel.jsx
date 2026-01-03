@@ -212,7 +212,7 @@ export default function DocsPanel({ submissionId, isOpen, onClose }) {
             {showExtractions && (
               <div className={`${viewMode === 'split' ? 'w-1/2' : 'flex-1'} overflow-auto bg-white`}>
                 <ExtractionPanel
-                  extractions={extractions?.extractions || []}
+                  extractions={extractions?.sections}
                   isLoading={extractionsLoading}
                   className="h-full"
                 />
