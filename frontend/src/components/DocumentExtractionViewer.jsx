@@ -88,9 +88,15 @@ export default function DocumentExtractionViewer({
   height = '100%',
   showHeader = true,
   initialViewMode = 'split',
+  viewMode: controlledViewMode,
+  onViewModeChange,
   className = '',
 }) {
-  const [viewMode, setViewMode] = useState(initialViewMode);
+  const [internalViewMode, setInternalViewMode] = useState(initialViewMode);
+
+  // Use controlled or internal state
+  const viewMode = controlledViewMode ?? internalViewMode;
+  const setViewMode = onViewModeChange ?? setInternalViewMode;
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [highlightPage, setHighlightPage] = useState(null);
   const [scrollTrigger, setScrollTrigger] = useState(0);
