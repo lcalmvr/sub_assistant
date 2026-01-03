@@ -268,7 +268,7 @@ function DocumentSelector({ documents, selectedId, onSelect, onUpload, isUploadi
             <span>{typeIcons[doc.type] || typeIcons.Other}</span>
             <span className="font-medium truncate max-w-[150px]">{doc.filename}</span>
             {doc.is_priority && (
-              <span className="px-1 py-0.5 text-xs bg-purple-200 text-purple-700 rounded">Primary</span>
+              <span className="px-1 py-0.5 text-xs bg-purple-200 text-purple-700 rounded" title="Main application document">Main</span>
             )}
             {doc.is_scanned && (
               <span className="px-1 py-0.5 text-xs bg-amber-100 text-amber-700 rounded flex items-center gap-1" title={doc.ocr_confidence ? `OCR Confidence: ${Math.round(doc.ocr_confidence * 100)}%` : 'Scanned document'}>
@@ -419,6 +419,7 @@ export default function ReviewPage() {
   const [hasInitialized, setHasInitialized] = useState(false);
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [highlightPage, setHighlightPage] = useState(null);
+  const [scrollTrigger, setScrollTrigger] = useState(0); // Increment to trigger scroll
   const [viewMode, setViewMode] = useState('split'); // 'split', 'documents', 'extractions'
 
   const { data: submission, isLoading } = useQuery({
@@ -500,8 +501,9 @@ export default function ReviewPage() {
       }
     }
 
-    // Set the page to scroll to
+    // Set the page to scroll to and trigger the scroll
     setHighlightPage(pageNumber);
+    setScrollTrigger(prev => prev + 1);
 
     // If no document selected yet, select the primary or first one
     if (!selectedDocument && documents?.documents?.length > 0) {
@@ -586,10 +588,10 @@ export default function ReviewPage() {
             </div>
           </div>
 
-          <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x`} style={{ height: '600px' }}>
+          <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x overflow-hidden`} style={{ height: '600px' }}>
             {/* Document Viewer */}
             {(viewMode === 'split' || viewMode === 'documents') && (
-              <div className="flex flex-col h-full">
+              <div className="flex flex-col h-full overflow-hidden">
                 <DocumentSelector
                   documents={documents}
                   selectedId={selectedDocument?.id}
@@ -600,7 +602,7 @@ export default function ReviewPage() {
                 {selectedDocument ? (
                   selectedDocument.url ? (
                     // Document viewer with highlighting support
-                    <div className="flex-1 flex flex-col bg-gray-100">
+                    <div className="flex-1 flex flex-col bg-gray-100 min-h-0">
                       <div className="flex items-center justify-between px-3 py-2 bg-white border-b">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-gray-700">
@@ -641,11 +643,14 @@ export default function ReviewPage() {
                           />
                         </div>
                       ) : (
-                        <PdfHighlighter
-                          url={selectedDocument.url}
-                          initialPage={highlightPage || 1}
-                          className="flex-1"
-                        />
+                        <div className="flex-1 min-h-0 overflow-hidden">
+                          <PdfHighlighter
+                            url={selectedDocument.url}
+                            initialPage={highlightPage || 1}
+                            scrollTrigger={scrollTrigger}
+                            className="h-full"
+                          />
+                        </div>
                       )}
                     </div>
                   ) : (
@@ -690,13 +695,13 @@ export default function ReviewPage() {
 
             {/* Extraction Panel */}
             {(viewMode === 'split' || viewMode === 'extractions') && (
-              <div className="h-full flex flex-col min-h-0">
+              <div className="h-full overflow-hidden">
                 <ExtractionPanel
                   extractions={extractions?.sections}
                   isLoading={extractionsLoading}
                   onShowSource={handleShowSource}
                   onAcceptValue={handleAcceptValue}
-                  className="h-full min-h-0"
+                  className="h-full"
                 />
               </div>
             )}

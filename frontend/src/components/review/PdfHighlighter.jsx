@@ -14,6 +14,7 @@ export default function PdfHighlighter({
   url,
   highlight = null,
   initialPage = 1,
+  scrollTrigger = 0, // Increment to force scroll even to same page
   className = '',
 }) {
   const containerRef = useRef(null);
@@ -21,6 +22,7 @@ export default function PdfHighlighter({
   const [totalPages, setTotalPages] = useState(null);
   const [pageSize, setPageSize] = useState({ width: 0, height: 0 });
   const [containerWidth, setContainerWidth] = useState(600);
+  const [pendingScroll, setPendingScroll] = useState(null);
 
   // Measure container width for responsive scaling
   useEffect(() => {
@@ -36,17 +38,25 @@ export default function PdfHighlighter({
     return () => observer.disconnect();
   }, []);
 
-  // Scroll to page when initialPage changes (within container only)
+  // Track pending scroll when trigger changes
   useEffect(() => {
-    if (initialPage && pageRefs.current[initialPage] && containerRef.current) {
-      const container = containerRef.current;
-      const pageEl = pageRefs.current[initialPage];
-      const containerTop = container.getBoundingClientRect().top;
-      const pageTop = pageEl.getBoundingClientRect().top;
-      const scrollOffset = pageTop - containerTop + container.scrollTop - 16; // 16px padding
-      container.scrollTo({ top: scrollOffset, behavior: 'smooth' });
+    if (scrollTrigger > 0 && initialPage) {
+      setPendingScroll(initialPage);
     }
-  }, [initialPage, totalPages]);
+  }, [scrollTrigger, initialPage]);
+
+  // Execute scroll when pages are rendered and we have a pending scroll
+  useEffect(() => {
+    if (pendingScroll && pageRefs.current[pendingScroll] && containerRef.current) {
+      const pageEl = pageRefs.current[pendingScroll];
+      const container = containerRef.current;
+      const pageRect = pageEl.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const scrollTop = pageRect.top - containerRect.top + container.scrollTop - 8;
+      container.scrollTo({ top: scrollTop, behavior: 'smooth' });
+      setPendingScroll(null);
+    }
+  }, [pendingScroll, totalPages]);
 
   const onDocumentLoadSuccess = ({ numPages }) => {
     setTotalPages(numPages);
