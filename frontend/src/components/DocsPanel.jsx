@@ -6,16 +6,32 @@ import DocumentViewer from './review/DocumentViewer';
 // Document type icons/colors
 const DOC_TYPE_CONFIG = {
   'Application Form': { color: 'bg-blue-100 text-blue-700', icon: 'A' },
+  'Questionnaire/Form': { color: 'bg-blue-100 text-blue-700', icon: 'A' },
+  'application': { color: 'bg-blue-100 text-blue-700', icon: 'A' },
   'Loss Run': { color: 'bg-orange-100 text-orange-700', icon: 'L' },
+  'loss_runs': { color: 'bg-orange-100 text-orange-700', icon: 'L' },
   'Quote': { color: 'bg-green-100 text-green-700', icon: 'Q' },
+  'quote': { color: 'bg-green-100 text-green-700', icon: 'Q' },
   'Policy': { color: 'bg-purple-100 text-purple-700', icon: 'P' },
+  'policy': { color: 'bg-purple-100 text-purple-700', icon: 'P' },
   'Financial Statement': { color: 'bg-yellow-100 text-yellow-700', icon: 'F' },
+  'financial': { color: 'bg-yellow-100 text-yellow-700', icon: 'F' },
   'Submission Email': { color: 'bg-gray-100 text-gray-700', icon: 'E' },
+  'Standardized Data': { color: 'bg-cyan-100 text-cyan-700', icon: 'S' },
   'default': { color: 'bg-gray-100 text-gray-600', icon: 'D' },
 };
 
 function getDocConfig(docType) {
   return DOC_TYPE_CONFIG[docType] || DOC_TYPE_CONFIG['default'];
+}
+
+// Check file type
+function getFileType(filename) {
+  const ext = filename?.toLowerCase().split('.').pop();
+  if (ext === 'pdf') return 'pdf';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
+  if (['json', 'txt'].includes(ext)) return 'text';
+  return 'unknown';
 }
 
 export default function DocsPanel({ submissionId, isOpen, onClose }) {
@@ -27,16 +43,17 @@ export default function DocsPanel({ submissionId, isOpen, onClose }) {
     enabled: isOpen && !!submissionId,
   });
 
-  // Auto-select first document
+  // Auto-select first viewable document
   const docs = documents?.documents || [];
-  const selectedDoc = docs.find(d => d.id === selectedDocId) || docs[0];
+  const viewableDocs = docs.filter(d => ['pdf', 'image'].includes(getFileType(d.filename)));
+  const selectedDoc = docs.find(d => d.id === selectedDocId) || viewableDocs[0] || docs[0];
   const documentUrl = selectedDoc ? getDocumentUrl(selectedDoc.id) : null;
+  const selectedFileType = selectedDoc ? getFileType(selectedDoc.filename) : null;
 
   // Check if document is viewable (PDF or image)
   const isViewable = (doc) => {
-    const filename = doc?.filename?.toLowerCase() || '';
-    return filename.endsWith('.pdf') || filename.endsWith('.png') ||
-           filename.endsWith('.jpg') || filename.endsWith('.jpeg');
+    const fileType = getFileType(doc?.filename);
+    return fileType === 'pdf' || fileType === 'image';
   };
 
   if (!isOpen) return null;
@@ -75,9 +92,10 @@ export default function DocsPanel({ submissionId, isOpen, onClose }) {
             ) : (
               <div className="p-2 space-y-1">
                 {docs.map((doc) => {
-                  const config = getDocConfig(doc.document_type);
+                  const config = getDocConfig(doc.type);
                   const isSelected = doc.id === (selectedDoc?.id);
                   const viewable = isViewable(doc);
+                  const fileType = getFileType(doc.filename);
 
                   return (
                     <button
@@ -100,7 +118,10 @@ export default function DocsPanel({ submissionId, isOpen, onClose }) {
                           <p className="text-sm font-medium text-gray-900 truncate" title={doc.filename}>
                             {doc.filename}
                           </p>
-                          <p className="text-xs text-gray-500">{doc.document_type || 'Unknown'}</p>
+                          <p className="text-xs text-gray-500">
+                            {doc.type || 'Unknown'}
+                            {!viewable && <span className="ml-1 text-gray-400">({fileType})</span>}
+                          </p>
                         </div>
                       </div>
                     </button>
@@ -111,12 +132,20 @@ export default function DocsPanel({ submissionId, isOpen, onClose }) {
           </div>
 
           {/* Document Viewer */}
-          <div className="flex-1 flex flex-col bg-gray-100">
-            {selectedDoc && isViewable(selectedDoc) ? (
+          <div className="flex-1 flex flex-col bg-gray-200">
+            {selectedDoc && selectedFileType === 'pdf' ? (
               <DocumentViewer
                 documentUrl={documentUrl}
                 className="flex-1"
               />
+            ) : selectedDoc && selectedFileType === 'image' ? (
+              <div className="flex-1 overflow-auto p-4 flex items-center justify-center">
+                <img
+                  src={documentUrl}
+                  alt={selectedDoc.filename}
+                  className="max-w-full max-h-full object-contain shadow-lg rounded"
+                />
+              </div>
             ) : selectedDoc ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
