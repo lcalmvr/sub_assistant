@@ -467,6 +467,121 @@ def get_document_bbox(document_id: str, search_text: Optional[str] = None, page:
             }
 
 
+@app.get("/api/submissions/{submission_id}/bbox-diagnostics")
+def get_bbox_diagnostics(submission_id: str):
+    """
+    Get diagnostics for bbox linking.
+
+    Returns stats on how many extraction_provenance records have linked bbox
+    and samples of unlinked records for debugging.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Total provenance records
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE textract_extraction_id IS NOT NULL) as linked,
+                    COUNT(*) FILTER (WHERE source_text IS NOT NULL) as with_source
+                FROM extraction_provenance
+                WHERE submission_id = %s
+            """, (submission_id,))
+            stats = cur.fetchone()
+
+            # Total textract extractions
+            cur.execute("""
+                SELECT COUNT(*)
+                FROM textract_extractions te
+                JOIN documents d ON d.id = te.document_id
+                WHERE d.submission_id = %s
+            """, (submission_id,))
+            textract_count = cur.fetchone()["count"]
+
+            # Sample unlinked records
+            cur.execute("""
+                SELECT field_name, source_text, source_page
+                FROM extraction_provenance
+                WHERE submission_id = %s
+                  AND source_text IS NOT NULL
+                  AND textract_extraction_id IS NULL
+                LIMIT 10
+            """, (submission_id,))
+            unlinked = cur.fetchall()
+
+            # Sample linked records with their bbox
+            cur.execute("""
+                SELECT ep.field_name, te.field_key, te.page_number, te.bbox_top
+                FROM extraction_provenance ep
+                JOIN textract_extractions te ON te.id = ep.textract_extraction_id
+                WHERE ep.submission_id = %s
+                LIMIT 10
+            """, (submission_id,))
+            linked_samples = cur.fetchall()
+
+            link_rate = stats["linked"] / max(stats["with_source"], 1) * 100
+
+            return {
+                "submission_id": submission_id,
+                "stats": {
+                    "total_provenance": stats["total"],
+                    "with_source_text": stats["with_source"],
+                    "linked_to_bbox": stats["linked"],
+                    "link_rate_percent": round(link_rate, 1),
+                    "textract_entries": textract_count,
+                },
+                "unlinked_samples": [
+                    {
+                        "field": r["field_name"],
+                        "source_text": r["source_text"][:80] if r["source_text"] else None,
+                        "page": r["source_page"],
+                    }
+                    for r in unlinked
+                ],
+                "linked_samples": [
+                    {
+                        "field": r["field_name"],
+                        "matched_key": r["field_key"],
+                        "page": r["page_number"],
+                        "bbox_y": float(r["bbox_top"]) if r["bbox_top"] else None,
+                    }
+                    for r in linked_samples
+                ],
+            }
+
+
+@app.post("/api/submissions/{submission_id}/relink-bbox")
+def relink_bbox(submission_id: str):
+    """
+    Re-run bbox linking for a submission.
+
+    Clears existing links and re-runs the matching algorithm.
+    """
+    try:
+        from core.extraction_orchestrator import link_provenance_to_textract
+
+        # Clear existing links
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE extraction_provenance
+                    SET textract_extraction_id = NULL
+                    WHERE submission_id = %s
+                """, (submission_id,))
+                conn.commit()
+
+        # Re-run linking
+        result = link_provenance_to_textract(submission_id)
+
+        return {
+            "success": True,
+            "linked_count": result.get("linked_count", 0),
+            "total_provenance": result.get("total_provenance", 0),
+            "total_textract": result.get("total_textract", 0),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/submissions/{submission_id}/documents")
 async def upload_submission_document(
     submission_id: str,

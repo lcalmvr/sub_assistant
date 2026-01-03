@@ -962,59 +962,55 @@ def extract_application_with_bbox(
         return None, {}
 
 
-def link_provenance_to_textract(submission_id: str) -> int:
+def link_provenance_to_textract(submission_id: str, verbose: bool = False) -> Dict[str, Any]:
     """
-    Link extraction_provenance records to textract_extractions using source_text matching.
+    Link extraction_provenance records to textract_extractions.
 
-    This finds provenance records whose source_text matches Textract field_value,
-    and sets the textract_extraction_id for direct bbox lookup.
+    Matching strategy:
+    1. Match if Textract field_key appears in Claude source_text (primary)
+    2. Match if Textract field_value appears in Claude source_text (secondary)
+    3. Prefer same page matches
 
     Args:
         submission_id: The submission ID
+        verbose: If True, return detailed match info
 
     Returns:
-        Number of records linked
+        Dict with linked_count and optional diagnostics
     """
-    linked_count = 0
+    result = {
+        "linked_count": 0,
+        "total_provenance": 0,
+        "total_textract": 0,
+        "unlinked_samples": [],
+    }
 
     try:
         with get_conn() as conn:
-            # Get document IDs for this submission
-            doc_rows = conn.execute(
-                text("""
-                    SELECT id FROM documents WHERE submission_id = :sid
-                """),
-                {"sid": submission_id}
-            ).fetchall()
-
-            if not doc_rows:
-                return 0
-
-            doc_ids = [str(r[0]) for r in doc_rows]
-
-            # Get all textract extractions for these documents
-            # Use a subquery join instead of ANY to avoid UUID casting issues
+            # Get all textract extractions for this submission
             textract_rows = conn.execute(
                 text("""
                     SELECT te.id, te.document_id, te.page_number, te.field_key, te.field_value
                     FROM textract_extractions te
                     JOIN documents d ON d.id = te.document_id
-                    WHERE d.submission_id = :sid AND te.field_value IS NOT NULL
+                    WHERE d.submission_id = :sid
                 """),
                 {"sid": submission_id}
             ).fetchall()
 
             if not textract_rows:
-                return 0
+                return result
 
-            # Build lookup dict
+            result["total_textract"] = len(textract_rows)
+
+            # Build lookup dict with both key and value for matching
             textract_entries = []
             for row in textract_rows:
                 textract_entries.append({
                     "id": str(row[0]),
                     "document_id": str(row[1]),
                     "page": row[2],
-                    "key": row[3],
+                    "key": str(row[3]).lower().strip() if row[3] else "",
                     "value": str(row[4]).lower().strip() if row[4] else "",
                 })
 
@@ -1030,6 +1026,9 @@ def link_provenance_to_textract(submission_id: str) -> int:
                 {"sid": submission_id}
             ).fetchall()
 
+            result["total_provenance"] = len(prov_rows)
+            linked_count = 0
+
             for row in prov_rows:
                 prov_id, field_name, source_text, source_page, source_doc_id = row
 
@@ -1041,27 +1040,37 @@ def link_provenance_to_textract(submission_id: str) -> int:
                 # Find best matching Textract entry
                 best_match_id = None
                 best_score = 0
+                best_match_reason = None
+
+                # Common words to skip (too many false positives)
+                skip_words = {"yes", "no", "true", "false", "name", "null", "n/a", "none"}
 
                 for entry in textract_entries:
-                    if not entry["value"]:
-                        continue
-
-                    # Prefer matches from same document
-                    same_doc = source_doc_id and str(source_doc_id) == entry["document_id"]
+                    # Prefer matches from same page
                     same_page = source_page == entry["page"]
+                    page_bonus = 20 if same_page else 0
 
-                    # Exact match
-                    if source_text_lower == entry["value"]:
-                        score = 100 if same_doc and same_page else (90 if same_doc else 80)
-                        if score > best_score:
-                            best_score = score
-                            best_match_id = entry["id"]
-                    # Substring match
-                    elif entry["value"] in source_text_lower or source_text_lower in entry["value"]:
-                        score = 70 if same_doc and same_page else (60 if same_doc else 50)
-                        if score > best_score:
-                            best_score = score
-                            best_match_id = entry["id"]
+                    # Strategy 1: Match field_key in source_text (primary)
+                    # e.g., "Daily" in "How frequently is Critical Information backed up? At least: Daily"
+                    key = entry["key"]
+                    if key and len(key) >= 4 and key not in skip_words:
+                        if key in source_text_lower:
+                            score = 80 + page_bonus
+                            if score > best_score:
+                                best_score = score
+                                best_match_id = entry["id"]
+                                best_match_reason = f"key '{key[:20]}' in source_text"
+
+                    # Strategy 2: Match field_value in source_text (secondary)
+                    # e.g., "windows defender" in "EDR solution: Windows Defender"
+                    val = entry["value"]
+                    if val and len(val) >= 4 and val not in skip_words:
+                        if val in source_text_lower:
+                            score = 60 + page_bonus
+                            if score > best_score:
+                                best_score = score
+                                best_match_id = entry["id"]
+                                best_match_reason = f"value '{val[:20]}' in source_text"
 
                 if best_match_id:
                     conn.execute(
@@ -1073,14 +1082,24 @@ def link_provenance_to_textract(submission_id: str) -> int:
                         {"tid": best_match_id, "pid": prov_id}
                     )
                     linked_count += 1
+                    if verbose:
+                        print(f"  [linked] {field_name[:30]:30} <- {best_match_reason}")
+                elif verbose and len(result["unlinked_samples"]) < 10:
+                    result["unlinked_samples"].append({
+                        "field": field_name,
+                        "source_text": source_text[:60],
+                        "page": source_page,
+                    })
 
             conn.commit()
-            print(f"[orchestrator] Linked {linked_count} provenance records to Textract bbox")
+            result["linked_count"] = linked_count
+            print(f"[orchestrator] Linked {linked_count}/{len(prov_rows)} provenance records ({linked_count*100//max(len(prov_rows),1)}%)")
 
     except Exception as e:
         print(f"[orchestrator] Failed to link provenance: {e}")
+        result["error"] = str(e)
 
-    return linked_count
+    return result
 
 
 def get_extraction_cost_estimate(

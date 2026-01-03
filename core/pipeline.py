@@ -1951,9 +1951,9 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
                 print(f"[pipeline] Orchestrator processed {len(extraction_results)} documents")
 
             # Link provenance records to Textract bbox entries for PDF highlighting
-            linked = link_provenance_to_textract(sid_str)
-            if linked:
-                print(f"[pipeline] Linked {linked} extractions to bbox coordinates")
+            link_result = link_provenance_to_textract(sid_str)
+            if link_result.get("linked_count"):
+                print(f"[pipeline] Linked {link_result['linked_count']}/{link_result['total_provenance']} extractions to bbox")
         except ImportError as e:
             print(f"[pipeline] Extraction orchestrator not available: {e}")
         except Exception as e:

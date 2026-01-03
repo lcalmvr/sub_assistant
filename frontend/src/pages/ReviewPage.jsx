@@ -515,6 +515,7 @@ export default function ReviewPage() {
 
     // Use direct bbox if available (linked from textract_extractions)
     if (bbox?.left != null) {
+      console.log('[bbox] Using direct link:', { page: bbox.page, bbox });
       setActiveHighlight({
         page: bbox.page || targetPage,
         bbox: {
@@ -524,24 +525,9 @@ export default function ReviewPage() {
           height: bbox.height,
         },
       });
-    } else if (targetDocId && sourceText) {
-      // Fallback to fuzzy search if no direct bbox link
-      setActiveHighlight(null);
-      try {
-        const response = await getDocumentBbox(targetDocId, sourceText, pageNumber);
-        const matches = response.data?.extractions || [];
-        const bestMatch = matches[0];
-
-        if (bestMatch?.bbox?.left != null) {
-          setActiveHighlight({
-            page: bestMatch.page || pageNumber,
-            bbox: bestMatch.bbox,
-          });
-        }
-      } catch (err) {
-        console.warn('Failed to fetch bbox for highlighting:', err);
-      }
     } else {
+      // No direct link - log for debugging (fuzzy fallback disabled)
+      console.log('[bbox] No direct link available:', { pageNumber, sourceText: sourceText?.slice(0, 50) });
       setActiveHighlight(null);
     }
 
