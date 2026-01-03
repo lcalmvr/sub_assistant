@@ -473,11 +473,15 @@ export default function ReviewPage() {
     setHasInitialized(true);
   }
 
-  // Auto-run Textract when a document with URL is selected (for bbox highlighting)
+  // Auto-run Textract when a PDF document with URL is selected (for bbox highlighting)
+  // Skip for image files (PNG, JPG, etc.) since Textract bbox doesn't apply
   useEffect(() => {
     if (!selectedDocument?.url || !selectedDocument?.id) return;
     if (textractCache[selectedDocument.id]) return; // Already cached
-    if (textractLoading) return; // Already loading
+
+    // Skip Textract for image files - they don't benefit from bbox highlighting
+    const isImage = /\.(png|jpg|jpeg|gif|webp|bmp|tiff?)$/i.test(selectedDocument.filename || '');
+    if (isImage) return;
 
     const runTextract = async () => {
       setTextractLoading(true);
@@ -497,7 +501,7 @@ export default function ReviewPage() {
     };
 
     runTextract();
-  }, [selectedDocument?.id, selectedDocument?.url, submissionId, textractCache, textractLoading]);
+  }, [selectedDocument?.id, selectedDocument?.url, selectedDocument?.filename, submissionId, textractCache]);
 
   const updateMutation = useMutation({
     mutationFn: (data) => updateSubmission(submissionId, data),
@@ -687,7 +691,7 @@ export default function ReviewPage() {
             </div>
           </div>
 
-          <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x overflow-hidden`} style={{ height: '600px' }}>
+          <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x`} style={{ height: '600px' }}>
             {/* Document Viewer */}
             {(viewMode === 'split' || viewMode === 'documents') && (
               <div className="flex flex-col h-full">
@@ -803,7 +807,7 @@ export default function ReviewPage() {
 
             {/* Extraction Panel */}
             {(viewMode === 'split' || viewMode === 'extractions') && (
-              <div className="h-full overflow-hidden">
+              <div className="h-full overflow-auto">
                 <ExtractionPanel
                   extractions={extractions?.sections}
                   isLoading={extractionsLoading}
