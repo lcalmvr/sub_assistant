@@ -1261,6 +1261,41 @@ def get_policy_form_catalog(
             }
 
 
+@app.get("/api/policy-form-catalog/lookup")
+def lookup_policy_form(form_number: str, carrier: Optional[str] = None):
+    """Look up a policy form by form number and optionally carrier."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if carrier:
+                cur.execute("""
+                    SELECT
+                        id, form_number, form_name, form_type, carrier,
+                        edition_date, page_count, times_referenced,
+                        coverage_grants, exclusions, definitions,
+                        source_document_path, source_document_id,
+                        extraction_source, created_at
+                    FROM policy_form_catalog
+                    WHERE form_number = %s AND carrier ILIKE %s
+                    LIMIT 1
+                """, (form_number, f"%{carrier}%"))
+            else:
+                cur.execute("""
+                    SELECT
+                        id, form_number, form_name, form_type, carrier,
+                        edition_date, page_count, times_referenced,
+                        coverage_grants, exclusions, definitions,
+                        source_document_path, source_document_id,
+                        extraction_source, created_at
+                    FROM policy_form_catalog
+                    WHERE form_number = %s
+                    LIMIT 1
+                """, (form_number,))
+            form = cur.fetchone()
+            if not form:
+                return None
+            return dict(form)
+
+
 @app.get("/api/policy-form-catalog/{form_id}")
 def get_policy_form(form_id: str):
     """Get a single policy form with full details."""
@@ -1272,6 +1307,7 @@ def get_policy_form(form_id: str):
                     edition_date, page_count, times_referenced,
                     coverage_grants, exclusions, definitions, conditions,
                     key_provisions, sublimit_fields,
+                    source_document_path, source_document_id,
                     extraction_source, extraction_cost,
                     created_at, updated_at
                 FROM policy_form_catalog

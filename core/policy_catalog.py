@@ -461,11 +461,17 @@ def add_form_to_catalog(
     sublimit_fields: Optional[List[str]] = None,
     extraction_source: Optional[str] = None,
     extraction_cost: Optional[float] = None,
+    source_document_path: Optional[str] = None,
+    source_document_id: Optional[str] = None,
 ) -> str:
     """
     Add a new policy form to the catalog.
 
     This is called after full extraction and AI analysis of a new form.
+
+    Args:
+        source_document_path: Path or URL to the original document file
+        source_document_id: UUID reference to documents table if uploaded through system
 
     Returns:
         The catalog entry ID
@@ -477,19 +483,23 @@ def add_form_to_catalog(
                 full_text, page_count,
                 coverage_grants, exclusions, definitions, conditions,
                 key_provisions, sublimit_fields,
-                extraction_source, extraction_cost
+                extraction_source, extraction_cost,
+                source_document_path, source_document_id
             ) VALUES (
                 :form_number, :form_name, :form_type, :carrier, :edition_date,
                 :full_text, :page_count,
                 :coverage_grants, :exclusions, :definitions, :conditions,
                 :key_provisions, :sublimit_fields,
-                :extraction_source, :extraction_cost
+                :extraction_source, :extraction_cost,
+                :source_document_path, :source_document_id
             )
             ON CONFLICT (form_number, carrier, edition_date)
             DO UPDATE SET
                 full_text = COALESCE(EXCLUDED.full_text, policy_form_catalog.full_text),
                 coverage_grants = COALESCE(EXCLUDED.coverage_grants, policy_form_catalog.coverage_grants),
                 exclusions = COALESCE(EXCLUDED.exclusions, policy_form_catalog.exclusions),
+                source_document_path = COALESCE(EXCLUDED.source_document_path, policy_form_catalog.source_document_path),
+                source_document_id = COALESCE(EXCLUDED.source_document_id, policy_form_catalog.source_document_id),
                 updated_at = now()
             RETURNING id
         """), {
@@ -508,6 +518,8 @@ def add_form_to_catalog(
             "sublimit_fields": sublimit_fields,
             "extraction_source": extraction_source,
             "extraction_cost": extraction_cost,
+            "source_document_path": source_document_path,
+            "source_document_id": source_document_id,
         })
 
         return str(result.fetchone()[0])

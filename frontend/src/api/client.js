@@ -336,6 +336,11 @@ export const getPolicyFormCatalog = (params = {}) => {
   return api.get(`/policy-form-catalog${queryStr ? `?${queryStr}` : ''}`);
 };
 export const getPolicyForm = (formId) => api.get(`/policy-form-catalog/${formId}`);
+export const lookupPolicyForm = (formNumber, carrier = null) => {
+  const params = new URLSearchParams({ form_number: formNumber });
+  if (carrier) params.append('carrier', carrier);
+  return api.get(`/policy-form-catalog/lookup?${params.toString()}`);
+};
 export const getFormExtractionQueue = (status = null) => {
   const params = status ? `?status=${status}` : '';
   return api.get(`/policy-form-catalog/queue${params}`);

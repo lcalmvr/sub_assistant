@@ -15,6 +15,7 @@ import {
   deleteCoverageMapping,
   deleteRejectedCoverages,
   explainCoverageClassification,
+  lookupPolicyForm,
 } from '../api/client';
 
 // ─────────────────────────────────────────────────────────────
@@ -140,10 +141,25 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
   });
   const [explanation, setExplanation] = useState(null);
   const [isExplaining, setIsExplaining] = useState(false);
+  const [policyForm, setPolicyForm] = useState(null);
+  const [isLoadingForm, setIsLoadingForm] = useState(false);
 
   const currentTags = Array.isArray(item.coverage_normalized)
     ? item.coverage_normalized
     : (item.coverage_normalized ? [item.coverage_normalized] : []);
+
+  const handleViewForm = async () => {
+    if (!item.policy_form) return;
+    setIsLoadingForm(true);
+    try {
+      const response = await lookupPolicyForm(item.policy_form, item.carrier_name);
+      setPolicyForm(response.data);
+    } catch (error) {
+      console.error('Failed to load form:', error);
+    } finally {
+      setIsLoadingForm(false);
+    }
+  };
 
   const handleSaveTags = () => {
     onUpdateTags(selectedTags);
@@ -177,7 +193,14 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
         <div>
           <span className="font-medium text-gray-900">{item.carrier_name}</span>
           {item.policy_form && (
-            <span className="text-gray-500 ml-2">· {item.policy_form}</span>
+            <button
+              onClick={handleViewForm}
+              disabled={isLoadingForm}
+              className="text-purple-600 hover:text-purple-800 ml-2"
+              title="View policy form details"
+            >
+              · {item.policy_form} {isLoadingForm ? '...' : '↗'}
+            </button>
           )}
         </div>
         <div className="flex gap-2">
@@ -292,6 +315,71 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
             </button>
           </div>
           <p className="text-sm text-blue-900">{explanation}</p>
+        </div>
+      )}
+
+      {/* Policy Form Modal */}
+      {policyForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setPolicyForm(null)}>
+          <div className="bg-white rounded-lg max-w-3xl w-full max-h-[80vh] overflow-auto m-4" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold">{policyForm.form_number}</h3>
+                <p className="text-sm text-gray-500">{policyForm.carrier} · {policyForm.form_name || policyForm.form_type}</p>
+              </div>
+              <button onClick={() => setPolicyForm(null)} className="text-gray-500 hover:text-gray-700 text-2xl">×</button>
+            </div>
+            <div className="p-6 space-y-4">
+              {/* Coverage Grants */}
+              {policyForm.coverage_grants?.length > 0 && (
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Coverage Grants ({policyForm.coverage_grants.length})</h4>
+                  <ul className="space-y-2">
+                    {policyForm.coverage_grants.map((cov, idx) => (
+                      <li key={idx} className="bg-gray-50 rounded p-2">
+                        <div className="font-medium text-sm">{cov.name || cov.coverage}</div>
+                        {cov.description && <div className="text-xs text-gray-600 mt-1">{cov.description}</div>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Exclusions */}
+              {policyForm.exclusions?.length > 0 && (
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-2">Exclusions ({policyForm.exclusions.length})</h4>
+                  <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                    {policyForm.exclusions.slice(0, 10).map((exc, idx) => (
+                      <li key={idx}>{typeof exc === 'string' ? exc : exc.name || exc.description}</li>
+                    ))}
+                    {policyForm.exclusions.length > 10 && (
+                      <li className="text-gray-400">... and {policyForm.exclusions.length - 10} more</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {/* Source Document Link */}
+              {(policyForm.source_document_path || policyForm.source_document_id) && (
+                <div className="pt-4 border-t">
+                  <a
+                    href={policyForm.source_document_path || `#doc-${policyForm.source_document_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-purple-600 hover:text-purple-800 text-sm"
+                  >
+                    View Source Document ↗
+                  </a>
+                </div>
+              )}
+
+              {/* Metadata */}
+              <div className="pt-4 border-t text-xs text-gray-500">
+                Extracted via {policyForm.extraction_source} · {policyForm.page_count || '?'} pages · Added {policyForm.created_at ? new Date(policyForm.created_at).toLocaleDateString() : 'unknown'}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
