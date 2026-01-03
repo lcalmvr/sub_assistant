@@ -43,18 +43,20 @@ export default function DocsPanel({ submissionId, isOpen, onClose }) {
     enabled: isOpen && !!submissionId,
   });
 
-  // Auto-select first viewable document
-  const docs = documents?.documents || [];
-  const viewableDocs = docs.filter(d => ['pdf', 'image'].includes(getFileType(d.filename)));
-  const selectedDoc = docs.find(d => d.id === selectedDocId) || viewableDocs[0] || docs[0];
-  const documentUrl = selectedDoc ? getDocumentUrl(selectedDoc.id) : null;
-  const selectedFileType = selectedDoc ? getFileType(selectedDoc.filename) : null;
-
-  // Check if document is viewable (PDF or image)
+  // Check if document is viewable (PDF or image with a URL)
   const isViewable = (doc) => {
+    if (!doc?.url) return false; // Need a URL to view
     const fileType = getFileType(doc?.filename);
     return fileType === 'pdf' || fileType === 'image';
   };
+
+  // Auto-select first viewable document
+  const docs = documents?.documents || [];
+  const viewableDocs = docs.filter(isViewable);
+  const selectedDoc = docs.find(d => d.id === selectedDocId) || viewableDocs[0] || docs[0];
+  // Use the signed URL from API if available, otherwise fall back to content endpoint
+  const documentUrl = selectedDoc?.url || (selectedDoc ? getDocumentUrl(selectedDoc.id) : null);
+  const selectedFileType = selectedDoc ? getFileType(selectedDoc.filename) : null;
 
   if (!isOpen) return null;
 
