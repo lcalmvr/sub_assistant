@@ -1277,10 +1277,18 @@ def _save_document_records(
                     except Exception:
                         pass
 
-                # Mark applications as priority
-                is_priority = classification.document_type.value in (
+                # Mark applications as priority (only if no existing priority doc)
+                is_application = classification.document_type.value in (
                     "application_supplemental", "application_acord"
                 )
+                is_priority = False
+                if is_application:
+                    # Check if there's already a priority document
+                    existing = conn.execute(
+                        text("SELECT 1 FROM documents WHERE submission_id = :sid AND is_priority = true LIMIT 1"),
+                        {"sid": submission_id}
+                    ).fetchone()
+                    is_priority = existing is None  # Only set priority if none exists
 
                 # Upload to Supabase Storage if configured
                 storage_key = None

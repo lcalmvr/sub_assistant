@@ -47,15 +47,27 @@ export default function PdfHighlighter({
 
   // Execute scroll when pages are rendered and we have a pending scroll
   useEffect(() => {
-    if (pendingScroll && pageRefs.current[pendingScroll] && containerRef.current) {
+    if (!pendingScroll || !containerRef.current || !totalPages) return;
+
+    // Use requestAnimationFrame to wait for page refs to be set after render
+    const scrollToPage = () => {
       const pageEl = pageRefs.current[pendingScroll];
+      if (!pageEl) return; // Page not rendered yet
+
       const container = containerRef.current;
+      if (!container) return;
+
       const pageRect = pageEl.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
       const scrollTop = pageRect.top - containerRect.top + container.scrollTop - 8;
       container.scrollTo({ top: scrollTop, behavior: 'smooth' });
       setPendingScroll(null);
-    }
+    };
+
+    // Wait for next frame to ensure refs are populated
+    requestAnimationFrame(() => {
+      requestAnimationFrame(scrollToPage);
+    });
   }, [pendingScroll, totalPages]);
 
   const onDocumentLoadSuccess = ({ numPages }) => {
