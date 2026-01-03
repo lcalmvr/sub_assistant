@@ -75,7 +75,8 @@ def submit_coverage_mapping(
 
     try:
         with conn.cursor() as cur:
-            # Try to insert, on conflict return existing
+            # Try to insert, on conflict update coverage_normalized if better than existing
+            # This allows AI normalization to improve "Other" mappings
             cur.execute("""
                 INSERT INTO coverage_catalog (
                     carrier_name, policy_form, coverage_original, coverage_normalized,
@@ -83,7 +84,16 @@ def submit_coverage_mapping(
                     source_quote_id, source_submission_id
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (carrier_name, policy_form, coverage_original)
-                DO UPDATE SET updated_at = now()
+                DO UPDATE SET
+                    coverage_normalized = CASE
+                        -- Only update if new value is better (existing is just ["Other"])
+                        WHEN coverage_catalog.coverage_normalized = ARRAY['Other']::text[]
+                             AND EXCLUDED.coverage_normalized <> ARRAY['Other']::text[]
+                        THEN EXCLUDED.coverage_normalized
+                        ELSE coverage_catalog.coverage_normalized
+                    END,
+                    coverage_description = COALESCE(EXCLUDED.coverage_description, coverage_catalog.coverage_description),
+                    updated_at = now()
                 RETURNING id
             """, (
                 carrier_name,

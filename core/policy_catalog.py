@@ -17,11 +17,48 @@ from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import os
 import re
 
 from sqlalchemy import text
 from core.db import get_conn
 from core.document_router import detect_form_numbers, find_key_pages
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Coverage Normalization Constants (same as sublimit_intel.py)
+# ─────────────────────────────────────────────────────────────────────────────
+
+STANDARD_COVERAGE_TAGS = [
+    "Network Security Liability",
+    "Privacy Liability",
+    "Privacy Regulatory Defense",
+    "Privacy Regulatory Penalties",
+    "PCI DSS Assessment",
+    "Media Liability",
+    "Business Interruption",
+    "System Failure (Non-Malicious BI)",
+    "Dependent BI - IT Providers",
+    "Dependent BI - Non-IT Providers",
+    "Cyber Extortion / Ransomware",
+    "Data Recovery / Restoration",
+    "Reputational Harm",
+    "Crisis Management / PR",
+    "Technology E&O",
+    "Social Engineering",
+    "Invoice Manipulation",
+    "Funds Transfer Fraud",
+    "Telecommunications Fraud",
+    "Breach Response / Notification",
+    "Forensics",
+    "Credit Monitoring",
+    "Cryptojacking",
+    "Betterment",
+    "Bricking",
+    "Event Response",
+    "Computer Fraud",
+    "Other",
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +103,111 @@ class FillInValue:
     bbox: Optional[dict] = None
     form_number: Optional[str] = None
     confidence: Optional[float] = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Coverage Normalization
+# ─────────────────────────────────────────────────────────────────────────────
+
+def normalize_coverage_tags(coverages: List[dict]) -> List[dict]:
+    """
+    Normalize coverage names to standard tags using AI.
+
+    This uses the same standard tags as parse_coverages_from_document()
+    in sublimit_intel.py to ensure consistency.
+
+    Args:
+        coverages: List of coverage dicts with 'name' or 'coverage' field
+
+    Returns:
+        Same list with 'coverage_normalized' array added to each
+    """
+    if not coverages:
+        return coverages
+
+    try:
+        from openai import OpenAI
+
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            # Fallback: return coverages with ["Other"] tags
+            return [
+                {**cov, "coverage_normalized": ["Other"]}
+                for cov in coverages
+            ]
+
+        client = OpenAI(api_key=key)
+        model = os.getenv("TOWER_AI_MODEL", "gpt-5.1")
+
+        # Build prompt with coverage list
+        coverage_list = []
+        for i, cov in enumerate(coverages):
+            name = cov.get("name") or cov.get("coverage", "")
+            desc = cov.get("description", "")
+            coverage_list.append(f"{i+1}. {name}: {desc}" if desc else f"{i+1}. {name}")
+
+        system_prompt = """You are an expert insurance policy analyst. Map carrier-specific coverage names to standardized industry tags.
+
+For each coverage, provide an array of standardized tags that best describe it. One coverage may map to multiple tags if it covers multiple areas.
+
+Standard tags to use:
+""" + "\n".join(f"- {tag}" for tag in STANDARD_COVERAGE_TAGS)
+
+        user_prompt = f"""Map these coverages to standard tags:
+
+{chr(10).join(coverage_list)}
+
+Return JSON with this schema:
+{{
+  "mappings": [
+    {{
+      "index": 1,
+      "coverage_normalized": ["Tag1", "Tag2"]
+    }}
+  ]
+}}
+
+Rules:
+- Use ONLY tags from the standard list above
+- Use "Other" only if no standard tag fits
+- One coverage can have multiple tags (e.g., "Privacy Liability" + "Privacy Regulatory Defense")
+- Be specific: prefer "Privacy Liability" over generic "Other"
+"""
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+
+        content = response.choices[0].message.content or "{}"
+        data = json.loads(content)
+        mappings = {m["index"]: m["coverage_normalized"] for m in data.get("mappings", [])}
+
+        # Apply mappings to coverages
+        result = []
+        for i, cov in enumerate(coverages):
+            normalized = mappings.get(i + 1, ["Other"])
+            # Validate tags against standard list
+            validated = [t for t in normalized if t in STANDARD_COVERAGE_TAGS]
+            if not validated:
+                validated = ["Other"]
+            result.append({**cov, "coverage_normalized": validated})
+
+        return result
+
+    except Exception as e:
+        # On error, return with "Other" tags but log the error
+        import logging
+        logging.warning(f"Coverage normalization failed: {e}")
+        return [
+            {**cov, "coverage_normalized": ["Other"]}
+            for cov in coverages
+        ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -649,6 +791,7 @@ def sync_form_coverages_to_catalog(
     policy_form: str,
     coverages: List[dict],
     source_submission_id: Optional[str] = None,
+    use_ai_normalization: bool = True,
 ) -> int:
     """
     Sync coverage grants from a policy form to the coverage catalog.
@@ -662,6 +805,7 @@ def sync_form_coverages_to_catalog(
         policy_form: Form identifier (e.g., "CY 01 2023")
         coverages: List of coverage dicts with 'coverage' and optional 'coverage_normalized'
         source_submission_id: Submission where form was found
+        use_ai_normalization: If True, use AI to normalize coverages that don't have tags
 
     Returns:
         Number of coverages submitted to catalog
@@ -669,9 +813,29 @@ def sync_form_coverages_to_catalog(
     # Import here to avoid circular dependency
     from pages_components.coverage_catalog_db import submit_coverage_mapping
 
+    # Check if any coverages need normalization
+    needs_normalization = any(
+        not cov.get("coverage_normalized") or cov.get("coverage_normalized") == ["Other"]
+        for cov in coverages
+    )
+
+    # Apply AI normalization if needed
+    if needs_normalization and use_ai_normalization:
+        # Convert to format expected by normalize_coverage_tags
+        cov_list = [
+            {"name": cov.get("name") or cov.get("coverage", ""), "description": cov.get("description", "")}
+            for cov in coverages
+        ]
+        normalized_list = normalize_coverage_tags(cov_list)
+
+        # Merge normalized tags back into original coverages
+        for i, cov in enumerate(coverages):
+            if i < len(normalized_list):
+                cov["coverage_normalized"] = normalized_list[i].get("coverage_normalized", ["Other"])
+
     count = 0
     for cov in coverages:
-        coverage_name = cov.get("coverage", "")
+        coverage_name = cov.get("name") or cov.get("coverage", "")
         normalized = cov.get("coverage_normalized", ["Other"])
 
         if coverage_name:
@@ -688,6 +852,57 @@ def sync_form_coverages_to_catalog(
                 count += 1
 
     return count
+
+
+def resync_form_coverages(
+    form_id: str,
+    source_submission_id: Optional[str] = None,
+) -> int:
+    """
+    Re-sync coverages from a cataloged form, applying AI normalization.
+
+    This is useful when a form was initially synced with ["Other"] tags
+    and needs to be re-normalized.
+
+    Args:
+        form_id: The policy_form_catalog entry ID
+        source_submission_id: Optional submission context
+
+    Returns:
+        Number of coverages updated
+    """
+    # Get the form from catalog
+    with get_conn() as conn:
+        result = conn.execute(text("""
+            SELECT form_number, carrier, coverage_grants
+            FROM policy_form_catalog
+            WHERE id = :form_id
+        """), {"form_id": form_id})
+
+        row = result.mappings().fetchone()
+        if not row:
+            return 0
+
+        form_number = row["form_number"]
+        carrier = row["carrier"]
+        coverage_grants = row["coverage_grants"] or []
+
+        # Parse if JSON string
+        if isinstance(coverage_grants, str):
+            coverage_grants = json.loads(coverage_grants)
+
+        if not coverage_grants or not carrier:
+            return 0
+
+        # Re-sync with AI normalization forced on
+        return sync_form_coverages_to_catalog(
+            form_id=form_id,
+            carrier=carrier,
+            policy_form=form_number,
+            coverages=coverage_grants,
+            source_submission_id=source_submission_id,
+            use_ai_normalization=True,
+        )
 
 
 def get_form_coverages_from_catalog(

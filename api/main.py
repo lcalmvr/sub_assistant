@@ -1308,6 +1308,18 @@ def get_form_extraction_queue(status: Optional[str] = None):
             return [dict(row) for row in cur.fetchall()]
 
 
+@app.post("/api/policy-form-catalog/{form_id}/resync-coverages")
+def resync_form_coverages_endpoint(form_id: str):
+    """Re-sync coverages from a cataloged form with AI normalization."""
+    from core.policy_catalog import resync_form_coverages
+
+    try:
+        count = resync_form_coverages(form_id)
+        return {"success": True, "coverages_synced": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─────────────────────────────────────────────────────────────
 # Quote Options Endpoints
 # ─────────────────────────────────────────────────────────────
@@ -4251,7 +4263,7 @@ def create_brkr_address(data: dict):
 # Coverage Catalog
 # ─────────────────────────────────────────────────────────────
 
-# Standard normalized tags
+# Standard normalized tags (keep in sync with policy_catalog.py)
 COVERAGE_STANDARD_TAGS = [
     "Network Security Liability",
     "Privacy Liability",
@@ -4278,6 +4290,8 @@ COVERAGE_STANDARD_TAGS = [
     "Cryptojacking",
     "Betterment",
     "Bricking",
+    "Event Response",
+    "Computer Fraud",
     "Other",
 ]
 
@@ -4312,6 +4326,73 @@ def get_coverage_catalog_stats():
 def get_coverage_standard_tags():
     """Get the list of standard normalized tags."""
     return COVERAGE_STANDARD_TAGS
+
+
+@app.post("/api/coverage-catalog/{coverage_id}/explain")
+def explain_coverage_classification(coverage_id: str):
+    """
+    Use AI to explain why a coverage was classified with its current tags.
+    Returns a detailed explanation of the reasoning.
+    """
+    import os
+    from openai import OpenAI
+
+    # Get the coverage mapping
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT coverage_original, coverage_normalized, carrier_name, policy_form, coverage_description
+                FROM coverage_catalog WHERE id = %s
+            """, (coverage_id,))
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Coverage mapping not found")
+
+    coverage_original = row["coverage_original"]
+    coverage_normalized = row["coverage_normalized"] or []
+    carrier_name = row["carrier_name"]
+    policy_form = row["policy_form"]
+    description = row["coverage_description"]
+
+    # Build context for AI
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        raise HTTPException(status_code=500, detail="AI service not configured")
+
+    client = OpenAI(api_key=key)
+    model = os.getenv("TOWER_AI_MODEL", "gpt-5.1")
+
+    tags_str = ", ".join(coverage_normalized) if coverage_normalized else "None"
+
+    prompt = f"""You are an expert insurance policy analyst. A coverage from a cyber insurance policy was classified with the following normalized tags. Explain why these tags are appropriate (or if they might be incorrect, explain that too).
+
+**Carrier:** {carrier_name}
+**Policy Form:** {policy_form or 'Unknown'}
+**Original Coverage Name:** "{coverage_original}"
+{f'**Description:** {description}' if description else ''}
+**Assigned Tags:** {tags_str}
+
+**Standard Tags Available:**
+{chr(10).join(f"- {tag}" for tag in COVERAGE_STANDARD_TAGS)}
+
+Provide a concise explanation (2-4 sentences) of:
+1. Why the assigned tags are appropriate based on the coverage name and common industry understanding
+2. If any tags seem incorrect or if additional tags might be more appropriate
+
+Be specific and educational. Focus on helping an underwriter understand the classification."""
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_completion_tokens=300,
+        )
+        explanation = response.choices[0].message.content or "Unable to generate explanation."
+        return {"explanation": explanation}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
 
 
 @app.get("/api/coverage-catalog/pending")

@@ -755,6 +755,14 @@ def _apply_extracted_coverages(result: dict, session_key: str, quote_id: str, sh
             source_quote_id=quote_id,
         )
 
+    # Queue policy form for catalog matching if detected
+    if policy_form and carrier_name:
+        _queue_policy_form_for_catalog(
+            form_number=policy_form,
+            carrier=carrier_name,
+            coverages=result.get("sublimits", []),
+        )
+
     # Clean up preview
     sub_id = quote_id or "default"
     st.session_state.pop(f"coverage_preview_{sub_id}", None)
@@ -791,6 +799,65 @@ def _submit_to_coverage_catalog(
         )
     except Exception:
         # Silently fail - catalog submission should never block UW work
+        pass
+
+
+def _queue_policy_form_for_catalog(
+    form_number: str,
+    carrier: str,
+    coverages: Optional[list] = None,
+):
+    """
+    Queue a detected policy form for catalog matching/extraction.
+
+    If the form is already in the catalog, great - we're done.
+    If not, queue it for extraction so we can catalog it for future use.
+
+    This runs silently - doesn't block UW workflow.
+    """
+    try:
+        from core.policy_catalog import match_form, add_form_to_catalog, sync_form_coverages_to_catalog
+
+        # Try to match against catalog (will queue if not found)
+        match = match_form(
+            form_number=form_number,
+            carrier=carrier,
+        )
+
+        # If we already have coverages extracted with normalized tags,
+        # and this is a new queue entry, we can pre-populate the catalog
+        if match.status == "queued_new" and coverages:
+            # We already extracted this form, so we can add it directly to catalog
+            # instead of waiting for queue processing
+            coverage_grants = [
+                {
+                    "name": cov.get("coverage", ""),
+                    "description": cov.get("notes", ""),
+                    "coverage_normalized": cov.get("coverage_normalized", []),
+                }
+                for cov in coverages
+            ]
+
+            catalog_id = add_form_to_catalog(
+                form_number=form_number,
+                form_type="base_policy",  # Assume base policy since it's from quote page
+                carrier=carrier,
+                coverage_grants=coverage_grants,
+                extraction_source="quote_page_scan",
+            )
+
+            # Sync coverages to coverage catalog with AI normalization
+            if catalog_id and coverage_grants:
+                sync_form_coverages_to_catalog(
+                    form_id=catalog_id,
+                    carrier=carrier,
+                    policy_form=form_number,
+                    coverages=coverage_grants,
+                    use_ai_normalization=True,
+                )
+
+    except Exception:
+        # Silently fail - form catalog is non-blocking
         pass
 
 

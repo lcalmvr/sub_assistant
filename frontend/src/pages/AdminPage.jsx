@@ -18,6 +18,7 @@ import {
   getPolicyFormCatalog,
   getPolicyForm,
   getFormExtractionQueue,
+  resyncFormCoverages,
 } from '../api/client';
 
 // Format currency
@@ -842,11 +843,13 @@ function EndorsementComponentTemplatesTab() {
 
 // Policy Form Catalog Tab
 function PolicyFormCatalogTab() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [carrierFilter, setCarrierFilter] = useState('');
   const [formTypeFilter, setFormTypeFilter] = useState('');
   const [selectedForm, setSelectedForm] = useState(null);
   const [queueView, setQueueView] = useState(false);
+  const [resyncStatus, setResyncStatus] = useState(null);
 
   const { data: catalogData, isLoading } = useQuery({
     queryKey: ['policy-form-catalog', search, carrierFilter, formTypeFilter],
@@ -863,6 +866,18 @@ function PolicyFormCatalogTab() {
     queryKey: ['form-extraction-queue'],
     queryFn: () => getFormExtractionQueue().then(res => res.data),
     enabled: queueView,
+  });
+
+  const resyncMutation = useMutation({
+    mutationFn: (formId) => resyncFormCoverages(formId),
+    onSuccess: (response) => {
+      const count = response.data?.coverages_synced || 0;
+      setResyncStatus({ type: 'success', message: `Re-synced ${count} coverages with AI normalization` });
+      queryClient.invalidateQueries({ queryKey: ['policy-form', selectedForm] });
+    },
+    onError: (error) => {
+      setResyncStatus({ type: 'error', message: error.message || 'Failed to resync coverages' });
+    },
   });
 
   const formTypeLabels = {
@@ -1107,6 +1122,34 @@ function PolicyFormCatalogTab() {
                     {formDetail.definitions.terms.length > 20 && (
                       <span className="px-2 py-0.5 text-gray-500 text-xs">+{formDetail.definitions.terms.length - 20} more</span>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Resync Coverages Button */}
+              {formDetail.coverage_grants?.length > 0 && (
+                <div className="pt-4 border-t">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-600">
+                        Re-sync coverages to coverage catalog with AI normalization
+                      </p>
+                      {resyncStatus && (
+                        <p className={`text-xs mt-1 ${resyncStatus.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                          {resyncStatus.message}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setResyncStatus(null);
+                        resyncMutation.mutate(selectedForm);
+                      }}
+                      disabled={resyncMutation.isPending}
+                      className="btn btn-primary btn-sm"
+                    >
+                      {resyncMutation.isPending ? 'Re-syncing...' : 'Resync Coverages'}
+                    </button>
                   </div>
                 </div>
               )}

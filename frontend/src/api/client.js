@@ -305,6 +305,7 @@ export const resetCoverageMapping = (id) => api.post(`/coverage-catalog/${id}/re
 export const updateCoverageTags = (id, tags) => api.patch(`/coverage-catalog/${id}/tags`, { coverage_normalized: tags });
 export const deleteCoverageMapping = (id) => api.delete(`/coverage-catalog/${id}`);
 export const deleteRejectedCoverages = () => api.delete('/coverage-catalog/rejected');
+export const explainCoverageClassification = (id) => api.post(`/coverage-catalog/${id}/explain`);
 
 // Document Library
 export const getDocumentLibraryEntries = (params = {}) => {
@@ -339,5 +340,7 @@ export const getFormExtractionQueue = (status = null) => {
   const params = status ? `?status=${status}` : '';
   return api.get(`/policy-form-catalog/queue${params}`);
 };
+
+export const resyncFormCoverages = (formId) => api.post(`/policy-form-catalog/${formId}/resync-coverages`);
 
 export default api;

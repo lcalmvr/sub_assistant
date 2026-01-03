@@ -14,6 +14,7 @@ import {
   updateCoverageTags,
   deleteCoverageMapping,
   deleteRejectedCoverages,
+  explainCoverageClassification,
 } from '../api/client';
 
 // ─────────────────────────────────────────────────────────────
@@ -137,6 +138,8 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
     if (typeof tags === 'string') return tags ? [tags] : [];
     return [];
   });
+  const [explanation, setExplanation] = useState(null);
+  const [isExplaining, setIsExplaining] = useState(false);
 
   const currentTags = Array.isArray(item.coverage_normalized)
     ? item.coverage_normalized
@@ -145,6 +148,26 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
   const handleSaveTags = () => {
     onUpdateTags(selectedTags);
     setIsEditingTags(false);
+  };
+
+  const toggleTag = (tag) => {
+    setSelectedTags(prev =>
+      prev.includes(tag)
+        ? prev.filter(t => t !== tag)
+        : [...prev, tag]
+    );
+  };
+
+  const handleExplain = async () => {
+    setIsExplaining(true);
+    try {
+      const response = await explainCoverageClassification(item.id);
+      setExplanation(response.data.explanation);
+    } catch (error) {
+      setExplanation('Unable to generate explanation: ' + (error.message || 'Unknown error'));
+    } finally {
+      setIsExplaining(false);
+    }
   };
 
   return (
@@ -185,20 +208,23 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
         <div className="flex-1">
           <div className="text-sm text-gray-500 mb-1">Normalized Tags</div>
           {isEditingTags ? (
-            <div className="space-y-2">
-              <select
-                multiple
-                className="form-select w-full h-32"
-                value={selectedTags}
-                onChange={(e) => {
-                  const options = Array.from(e.target.selectedOptions, opt => opt.value);
-                  setSelectedTags(options);
-                }}
-              >
+            <div className="space-y-3">
+              {/* Pill/chip style tag selector */}
+              <div className="flex flex-wrap gap-2">
                 {standardTags.map(tag => (
-                  <option key={tag} value={tag}>{tag}</option>
+                  <button
+                    key={tag}
+                    onClick={() => toggleTag(tag)}
+                    className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                      selectedTags.includes(tag)
+                        ? 'bg-purple-100 border-purple-400 text-purple-700'
+                        : 'bg-white border-gray-300 text-gray-700 hover:border-gray-400'
+                    }`}
+                  >
+                    {selectedTags.includes(tag) && '✓ '}{tag}
+                  </button>
                 ))}
-              </select>
+              </div>
               <div className="flex gap-2">
                 <button
                   className="btn btn-primary text-sm"
@@ -220,24 +246,54 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
           ) : (
             <div>
               {currentTags.length > 0 ? (
-                <ul className="list-disc list-inside text-gray-900">
+                <div className="flex flex-wrap gap-1.5 mb-2">
                   {currentTags.map((tag, idx) => (
-                    <li key={idx}>{tag}</li>
+                    <span
+                      key={idx}
+                      className="px-2.5 py-1 bg-purple-100 text-purple-700 rounded-full text-sm"
+                    >
+                      {tag}
+                    </span>
                   ))}
-                </ul>
+                </div>
               ) : (
                 <span className="text-gray-400">No tags assigned</span>
               )}
-              <button
-                className="text-purple-600 hover:text-purple-800 text-sm mt-2"
-                onClick={() => setIsEditingTags(true)}
-              >
-                Edit tags
-              </button>
+              <div className="flex gap-3 mt-2">
+                <button
+                  className="text-purple-600 hover:text-purple-800 text-sm"
+                  onClick={() => setIsEditingTags(true)}
+                >
+                  Edit tags
+                </button>
+                <button
+                  className="text-blue-600 hover:text-blue-800 text-sm"
+                  onClick={handleExplain}
+                  disabled={isExplaining}
+                >
+                  {isExplaining ? 'Thinking...' : 'Why these tags?'}
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* AI Explanation */}
+      {explanation && (
+        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium text-blue-700">AI Explanation</span>
+            <button
+              className="text-xs text-blue-600 hover:text-blue-800"
+              onClick={() => setExplanation(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+          <p className="text-sm text-blue-900">{explanation}</p>
+        </div>
+      )}
 
       {/* Metadata */}
       {(item.submitted_by || item.submitted_at || item.notes) && (
