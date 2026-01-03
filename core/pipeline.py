@@ -1866,6 +1866,21 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
             except Exception as e:
                 print(f"[pipeline] Quote processing failed: {e}")
 
+    # ───────────── Intelligent Document Extraction ─────────────
+    # Use the extraction orchestrator for documents that benefit from
+    # intelligent routing and policy form catalog
+    if document_classifications:
+        try:
+            from core.extraction_orchestrator import process_submission_documents
+            print(f"[pipeline] Running intelligent extraction orchestrator...")
+            extraction_results = process_submission_documents(sid_str, document_classifications)
+            if extraction_results:
+                print(f"[pipeline] Orchestrator processed {len(extraction_results)} documents")
+        except ImportError as e:
+            print(f"[pipeline] Extraction orchestrator not available: {e}")
+        except Exception as e:
+            print(f"[pipeline] Extraction orchestrator failed: {e}")
+
     return sid
 
 # ───────────── CLI (optional for local testing) ─────────────

@@ -4,6 +4,7 @@ Exposes the existing database and business logic via REST API.
 """
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional, List, Any
 import json
@@ -317,9 +318,11 @@ def get_submission_documents(submission_id: str):
                     "url": None,  # Will be populated if storage is configured
                 }
 
-                # Generate signed URL if document has storage_key
-                if use_storage and r["doc_metadata"]:
-                    metadata = r["doc_metadata"] if isinstance(r["doc_metadata"], dict) else {}
+                # Generate URL for document
+                metadata = r["doc_metadata"] if isinstance(r["doc_metadata"], dict) else {}
+
+                # Try storage URL first
+                if use_storage:
                     storage_key = metadata.get("storage_key")
                     if storage_key:
                         try:
@@ -327,12 +330,168 @@ def get_submission_documents(submission_id: str):
                         except Exception as e:
                             print(f"[api] Failed to get URL for {r['filename']}: {e}")
 
+                # Fallback to local file URL if no storage URL
+                if not doc["url"]:
+                    file_path = metadata.get("file_path")
+                    if file_path and os.path.exists(file_path):
+                        doc["url"] = f"http://localhost:8001/api/documents/{r['id']}/file"
+
                 documents.append(doc)
 
             return {
                 "count": len(documents),
                 "documents": documents,
             }
+
+
+@app.get("/api/documents/{document_id}/file")
+def serve_document_file(document_id: str):
+    """Serve a local document file by ID."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT filename, doc_metadata
+                FROM documents
+                WHERE id = %s
+            """, (document_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Document not found")
+
+            metadata = row["doc_metadata"] if isinstance(row["doc_metadata"], dict) else {}
+            file_path = metadata.get("file_path")
+
+            if not file_path or not os.path.exists(file_path):
+                raise HTTPException(status_code=404, detail="Document file not found on disk")
+
+            # Determine content type
+            if file_path.lower().endswith('.pdf'):
+                media_type = "application/pdf"
+            elif file_path.lower().endswith('.png'):
+                media_type = "image/png"
+            elif file_path.lower().endswith('.jpg') or file_path.lower().endswith('.jpeg'):
+                media_type = "image/jpeg"
+            else:
+                media_type = "application/octet-stream"
+
+            return FileResponse(file_path, media_type=media_type, filename=row["filename"])
+
+
+@app.post("/api/submissions/{submission_id}/documents")
+async def upload_submission_document(
+    submission_id: str,
+    file: UploadFile = File(...),
+    document_type: Optional[str] = None,
+    run_extraction: bool = True,
+):
+    """
+    Upload a document to an existing submission.
+
+    - Saves file to local storage
+    - Classifies document type (or uses provided document_type override)
+    - Optionally triggers extraction via the orchestrator
+
+    document_type options: application, policy, loss_run, financial, other
+    """
+    import tempfile
+    import shutil
+    from pathlib import Path
+
+    # Verify submission exists
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM submissions WHERE id = %s", (submission_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+    # Save uploaded file
+    uploads_dir = Path("uploads") / submission_id
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = uploads_dir / file.filename
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Get page count for PDFs
+    page_count = None
+    if file.filename.lower().endswith('.pdf'):
+        try:
+            import fitz
+            doc = fitz.open(str(file_path))
+            page_count = len(doc)
+            doc.close()
+        except Exception:
+            pass
+    elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        page_count = 1
+
+    # Classify document type (use override if provided)
+    if document_type:
+        doc_type = document_type
+    else:
+        doc_type = "other"
+        try:
+            from ai.document_classifier import classify_document
+            classification = classify_document(str(file_path))
+            if classification:
+                doc_type = classification.get("document_type", "other")
+        except Exception as e:
+            print(f"[api] Classification failed for {file.filename}: {e}")
+            # Fallback: guess from filename
+            fname_lower = file.filename.lower()
+            if "app" in fname_lower or "application" in fname_lower:
+                doc_type = "application"
+            elif "policy" in fname_lower or "dec" in fname_lower:
+                doc_type = "policy"
+            elif "loss" in fname_lower:
+                doc_type = "loss_run"
+
+    # Insert document record
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO documents (submission_id, filename, document_type, page_count, doc_metadata)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                submission_id,
+                file.filename,
+                doc_type,
+                page_count,
+                json.dumps({"file_path": str(file_path), "ingest_source": "api_upload"})
+            ))
+            doc_id = str(cur.fetchone()["id"])
+            conn.commit()
+
+    result = {
+        "id": doc_id,
+        "filename": file.filename,
+        "document_type": doc_type,
+        "page_count": page_count,
+        "file_path": str(file_path),
+    }
+
+    # Run extraction if requested
+    if run_extraction and doc_type in ("application", "policy", "loss_run"):
+        try:
+            from core.extraction_orchestrator import extract_document
+            extraction = extract_document(
+                document_id=doc_id,
+                file_path=str(file_path),
+                doc_type=doc_type,
+                submission_id=submission_id,
+            )
+            result["extraction"] = {
+                "status": "completed" if not extraction.errors else "error",
+                "strategy": extraction.strategy_used,
+                "pages_processed": extraction.pages_extracted,
+                "cost": extraction.cost,
+                "errors": extraction.errors,
+            }
+        except Exception as e:
+            result["extraction"] = {"status": "error", "error": str(e)}
+
+    return result
 
 
 # ─────────────────────────────────────────────────────────────
@@ -675,6 +834,74 @@ def accept_extraction_value(extraction_id: str):
             }
 
 
+class TextractRequest(BaseModel):
+    document_id: Optional[str] = None
+
+
+@app.post("/api/submissions/{submission_id}/extract-textract")
+def trigger_textract_extraction(submission_id: str, request: TextractRequest = None):
+    """
+    Trigger Textract extraction with bounding box coordinates for highlighting.
+
+    Returns extraction data with bbox coordinates for each field.
+    """
+    from datetime import datetime
+    import os
+
+    document_id = request.document_id if request else None
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Find the document to extract from
+            if document_id:
+                cur.execute("""
+                    SELECT id, filename, doc_metadata
+                    FROM documents
+                    WHERE id = %s AND submission_id = %s
+                """, (document_id, submission_id))
+            else:
+                cur.execute("""
+                    SELECT id, filename, doc_metadata
+                    FROM documents
+                    WHERE submission_id = %s
+                    ORDER BY is_priority DESC, created_at DESC
+                    LIMIT 1
+                """, (submission_id,))
+
+            doc = cur.fetchone()
+            if not doc:
+                raise HTTPException(status_code=404, detail="No document found for extraction")
+
+            # Determine file path from metadata
+            metadata = doc.get("doc_metadata") or {}
+            file_path = metadata.get("file_path") or metadata.get("storage_key")
+            if not file_path or not os.path.exists(file_path):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Document file not found on disk. Re-upload the document."
+                )
+
+            # Run Textract extraction
+            try:
+                from ai.textract_extractor import extract_from_pdf
+
+                start_time = datetime.utcnow()
+                result = extract_from_pdf(file_path)
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+                return {
+                    "status": "success",
+                    "document_id": str(doc["id"]),
+                    "filename": doc["filename"],
+                    "pages": result.pages,
+                    "duration_ms": duration_ms,
+                    "extraction": result.to_dict(),
+                }
+
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Textract extraction failed: {str(e)}")
+
+
 # ─────────────────────────────────────────────────────────────
 # Feedback Tracking Endpoints
 # ─────────────────────────────────────────────────────────────
@@ -816,6 +1043,269 @@ def get_feedback_analytics():
                     for r in daily_volume
                 ],
             }
+
+
+# ─────────────────────────────────────────────────────────────
+# Extraction Stats Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/extraction/stats")
+def get_extraction_stats(days: int = 30):
+    """Get extraction statistics for monitoring and cost tracking."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Overall stats
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total_extractions,
+                    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                    COUNT(*) FILTER (WHERE status = 'failed') as failed,
+                    COALESCE(SUM(pages_processed), 0) as total_pages,
+                    COALESCE(SUM(actual_cost), 0) as total_cost,
+                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms
+                FROM extraction_logs
+                WHERE created_at > NOW() - INTERVAL '%s days'
+            """ % days)
+            overall = cur.fetchone()
+
+            # By strategy
+            cur.execute("""
+                SELECT
+                    strategy,
+                    COUNT(*) as extractions,
+                    COALESCE(SUM(pages_processed), 0) as pages,
+                    COALESCE(SUM(actual_cost), 0) as cost,
+                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
+                    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                    COUNT(*) FILTER (WHERE status = 'failed') as failed
+                FROM extraction_logs
+                WHERE created_at > NOW() - INTERVAL '%s days'
+                GROUP BY strategy
+                ORDER BY extractions DESC
+            """ % days)
+            by_strategy = cur.fetchall()
+
+            # Daily breakdown
+            cur.execute("""
+                SELECT
+                    DATE_TRUNC('day', created_at)::date as date,
+                    COUNT(*) as extractions,
+                    COALESCE(SUM(pages_processed), 0) as pages,
+                    COALESCE(SUM(actual_cost), 0) as cost
+                FROM extraction_logs
+                WHERE created_at > NOW() - INTERVAL '%s days'
+                GROUP BY DATE_TRUNC('day', created_at)
+                ORDER BY date DESC
+            """ % days)
+            daily = cur.fetchall()
+
+            # Recent extractions
+            cur.execute("""
+                SELECT
+                    filename,
+                    document_type,
+                    strategy,
+                    pages_processed,
+                    actual_cost,
+                    duration_ms,
+                    status,
+                    error_message,
+                    created_at
+                FROM extraction_logs
+                ORDER BY created_at DESC
+                LIMIT 20
+            """)
+            recent = cur.fetchall()
+
+            # Policy form catalog stats
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total_forms,
+                    COUNT(*) FILTER (WHERE form_type = 'base_policy') as base_policies,
+                    COUNT(*) FILTER (WHERE form_type = 'endorsement') as endorsements,
+                    COUNT(DISTINCT carrier) as carriers,
+                    COALESCE(SUM(times_referenced), 0) as total_references
+                FROM policy_form_catalog
+            """)
+            catalog = cur.fetchone()
+
+            # Extraction queue
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+                    COUNT(*) FILTER (WHERE status = 'processing') as processing,
+                    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                    COUNT(*) FILTER (WHERE status = 'failed') as failed
+                FROM form_extraction_queue
+            """)
+            queue = cur.fetchone()
+
+            return {
+                "period_days": days,
+                "overall": {
+                    "total_extractions": overall["total_extractions"],
+                    "completed": overall["completed"],
+                    "failed": overall["failed"],
+                    "total_pages": overall["total_pages"],
+                    "total_cost": float(overall["total_cost"]) if overall["total_cost"] else 0,
+                    "avg_duration_ms": float(overall["avg_duration_ms"]) if overall["avg_duration_ms"] else 0,
+                },
+                "by_strategy": [
+                    {
+                        "strategy": r["strategy"],
+                        "extractions": r["extractions"],
+                        "pages": r["pages"],
+                        "cost": float(r["cost"]) if r["cost"] else 0,
+                        "avg_duration_ms": float(r["avg_duration_ms"]) if r["avg_duration_ms"] else 0,
+                        "completed": r["completed"],
+                        "failed": r["failed"],
+                    }
+                    for r in by_strategy
+                ],
+                "daily": [
+                    {
+                        "date": r["date"].isoformat() if r["date"] else None,
+                        "extractions": r["extractions"],
+                        "pages": r["pages"],
+                        "cost": float(r["cost"]) if r["cost"] else 0,
+                    }
+                    for r in daily
+                ],
+                "recent": [
+                    {
+                        "filename": r["filename"],
+                        "document_type": r["document_type"],
+                        "strategy": r["strategy"],
+                        "pages": r["pages_processed"],
+                        "cost": float(r["actual_cost"]) if r["actual_cost"] else 0,
+                        "duration_ms": r["duration_ms"],
+                        "status": r["status"],
+                        "error": r["error_message"],
+                        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    }
+                    for r in recent
+                ],
+                "catalog": {
+                    "total_forms": catalog["total_forms"],
+                    "base_policies": catalog["base_policies"],
+                    "endorsements": catalog["endorsements"],
+                    "carriers": catalog["carriers"],
+                    "total_references": catalog["total_references"],
+                },
+                "queue": {
+                    "pending": queue["pending"],
+                    "processing": queue["processing"],
+                    "completed": queue["completed"],
+                    "failed": queue["failed"],
+                },
+            }
+
+
+# ─────────────────────────────────────────────────────────────
+# Policy Form Catalog Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/policy-form-catalog")
+def get_policy_form_catalog(
+    carrier: Optional[str] = None,
+    form_type: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    """Get policy form catalog entries with optional filters."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            conditions = ["1=1"]
+            params = []
+
+            if carrier:
+                conditions.append("carrier ILIKE %s")
+                params.append(f"%{carrier}%")
+
+            if form_type:
+                conditions.append("form_type = %s")
+                params.append(form_type)
+
+            if search:
+                conditions.append("(form_number ILIKE %s OR form_name ILIKE %s OR carrier ILIKE %s)")
+                params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+
+            where_clause = " AND ".join(conditions)
+
+            cur.execute(f"""
+                SELECT
+                    id, form_number, form_name, form_type, carrier,
+                    edition_date, page_count, times_referenced,
+                    extraction_source, extraction_cost,
+                    created_at, updated_at
+                FROM policy_form_catalog
+                WHERE {where_clause}
+                ORDER BY times_referenced DESC, created_at DESC
+            """, params)
+
+            forms = cur.fetchall()
+
+            # Get carrier counts for filter
+            cur.execute("""
+                SELECT carrier, COUNT(*) as count
+                FROM policy_form_catalog
+                WHERE carrier IS NOT NULL
+                GROUP BY carrier
+                ORDER BY count DESC
+            """)
+            carriers = cur.fetchall()
+
+            return {
+                "forms": [dict(f) for f in forms],
+                "count": len(forms),
+                "carriers": [{"name": c["carrier"], "count": c["count"]} for c in carriers],
+            }
+
+
+@app.get("/api/policy-form-catalog/{form_id}")
+def get_policy_form(form_id: str):
+    """Get a single policy form with full details."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id, form_number, form_name, form_type, carrier,
+                    edition_date, page_count, times_referenced,
+                    coverage_grants, exclusions, definitions, conditions,
+                    key_provisions, sublimit_fields,
+                    extraction_source, extraction_cost,
+                    created_at, updated_at
+                FROM policy_form_catalog
+                WHERE id = %s
+            """, (form_id,))
+            form = cur.fetchone()
+            if not form:
+                raise HTTPException(status_code=404, detail="Form not found")
+            return dict(form)
+
+
+@app.get("/api/policy-form-catalog/queue")
+def get_form_extraction_queue(status: Optional[str] = None):
+    """Get form extraction queue entries."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if status:
+                cur.execute("""
+                    SELECT q.*, d.filename as source_filename
+                    FROM form_extraction_queue q
+                    LEFT JOIN documents d ON d.id = q.source_document_id
+                    WHERE q.status = %s
+                    ORDER BY q.created_at DESC
+                """, (status,))
+            else:
+                cur.execute("""
+                    SELECT q.*, d.filename as source_filename
+                    FROM form_extraction_queue q
+                    LEFT JOIN documents d ON d.id = q.source_document_id
+                    ORDER BY q.created_at DESC
+                    LIMIT 50
+                """)
+
+            return [dict(row) for row in cur.fetchall()]
 
 
 # ─────────────────────────────────────────────────────────────

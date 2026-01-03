@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions, acceptExtraction } from '../api/client';
+import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions, acceptExtraction, triggerTextractExtraction, uploadSubmissionDocument } from '../api/client';
 import DocumentViewer from '../components/review/DocumentViewer';
 import ExtractionPanel from '../components/review/ExtractionPanel';
+import PdfHighlighter from '../components/review/PdfHighlighter';
 
 // Decision badge component
 function DecisionBadge({ decision }) {
@@ -199,44 +200,167 @@ function ConflictsList({ conflicts, submissionId }) {
   );
 }
 
-// Document selector for the split view
-function DocumentSelector({ documents, selectedId, onSelect }) {
-  if (!documents || documents.count === 0) {
-    return (
-      <div className="text-sm text-gray-500 p-4">
-        No documents available
-      </div>
-    );
-  }
+// Document selector for the split view with upload capability
+function DocumentSelector({ documents, selectedId, onSelect, onUpload, isUploading }) {
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedType, setSelectedType] = useState('');
+  const fileInputRef = useState(null);
 
   const typeIcons = {
     'Application Form': '📋',
+    'application': '📋',
     'Loss Runs': '📊',
+    'loss_run': '📊',
     'Financial Statement': '💰',
+    'financial': '💰',
+    'policy': '📜',
     'Email': '📧',
     'Other': '📄',
+    'other': '📄',
+  };
+
+  const documentTypes = [
+    { value: '', label: 'Auto-detect' },
+    { value: 'application', label: 'Application' },
+    { value: 'policy', label: 'Policy' },
+    { value: 'loss_run', label: 'Loss Run' },
+    { value: 'financial', label: 'Financial Statement' },
+    { value: 'other', label: 'Other' },
+  ];
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setShowUploadModal(true);
+    }
+  };
+
+  const handleUpload = () => {
+    if (selectedFile && onUpload) {
+      onUpload(selectedFile, selectedType || null);
+      setShowUploadModal(false);
+      setSelectedFile(null);
+      setSelectedType('');
+    }
+  };
+
+  const handleCancel = () => {
+    setShowUploadModal(false);
+    setSelectedFile(null);
+    setSelectedType('');
   };
 
   return (
-    <div className="flex flex-wrap gap-2 p-2 bg-gray-50 border-b">
-      {documents.documents.map((doc) => (
-        <button
-          key={doc.id}
-          onClick={() => onSelect(doc)}
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
-            selectedId === doc.id
-              ? 'bg-purple-100 text-purple-700 border border-purple-300'
-              : 'bg-white hover:bg-gray-100 border border-gray-200'
-          }`}
-        >
-          <span>{typeIcons[doc.type] || typeIcons.Other}</span>
-          <span className="font-medium">{doc.filename}</span>
-          {doc.is_priority && (
-            <span className="px-1 py-0.5 text-xs bg-purple-200 text-purple-700 rounded">Primary</span>
+    <>
+      <div className="flex flex-wrap items-center gap-2 p-2 bg-gray-50 border-b">
+        {documents?.documents?.map((doc) => (
+          <button
+            key={doc.id}
+            onClick={() => onSelect(doc)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+              selectedId === doc.id
+                ? 'bg-purple-100 text-purple-700 border border-purple-300'
+                : 'bg-white hover:bg-gray-100 border border-gray-200'
+            }`}
+          >
+            <span>{typeIcons[doc.type] || typeIcons.Other}</span>
+            <span className="font-medium truncate max-w-[150px]">{doc.filename}</span>
+            {doc.is_priority && (
+              <span className="px-1 py-0.5 text-xs bg-purple-200 text-purple-700 rounded">Primary</span>
+            )}
+          </button>
+        ))}
+
+        {/* Upload button */}
+        <label className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors ${
+          isUploading
+            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            : 'bg-white hover:bg-purple-50 border border-dashed border-purple-300 text-purple-600'
+        }`}>
+          {isUploading ? (
+            <>
+              <span className="animate-spin h-4 w-4 border-2 border-purple-600 border-t-transparent rounded-full"></span>
+              <span>Uploading...</span>
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Add Document</span>
+            </>
           )}
-        </button>
-      ))}
-    </div>
+          <input
+            type="file"
+            className="hidden"
+            accept=".pdf,.png,.jpg,.jpeg"
+            onChange={handleFileSelect}
+            disabled={isUploading}
+          />
+        </label>
+
+        {(!documents || documents.count === 0) && (
+          <span className="text-sm text-gray-500 ml-2">No documents yet</span>
+        )}
+      </div>
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Upload Document</h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">File</label>
+                <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg border">
+                  <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-sm text-gray-900 truncate">{selectedFile?.name}</span>
+                  <span className="text-xs text-gray-500 ml-auto">
+                    {selectedFile && (selectedFile.size / 1024).toFixed(0)} KB
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Document Type</label>
+                <select
+                  value={selectedType}
+                  onChange={(e) => setSelectedType(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  {documentTypes.map((type) => (
+                    <option key={type.value} value={type.value}>{type.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Select a type to ensure correct processing, or let the system auto-detect
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={handleCancel}
+                className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpload}
+                className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-lg transition-colors"
+              >
+                Upload & Process
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -288,6 +412,28 @@ export default function ReviewPage() {
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [highlightPage, setHighlightPage] = useState(null);
   const [viewMode, setViewMode] = useState('split'); // 'split', 'documents', 'extractions'
+  const [activeHighlight, setActiveHighlight] = useState(null);
+  // Load Textract cache from sessionStorage on mount
+  const [textractCache, setTextractCache] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem(`textract-${submissionId}`);
+      return cached ? JSON.parse(cached) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [textractLoading, setTextractLoading] = useState(false);
+
+  // Persist Textract cache to sessionStorage
+  useEffect(() => {
+    if (Object.keys(textractCache).length > 0) {
+      try {
+        sessionStorage.setItem(`textract-${submissionId}`, JSON.stringify(textractCache));
+      } catch (e) {
+        console.warn('Failed to cache Textract data:', e);
+      }
+    }
+  }, [textractCache, submissionId]);
 
   const { data: submission, isLoading } = useQuery({
     queryKey: ['submission', submissionId],
@@ -319,6 +465,32 @@ export default function ReviewPage() {
     setHasInitialized(true);
   }
 
+  // Auto-run Textract when a document with URL is selected (for bbox highlighting)
+  useEffect(() => {
+    if (!selectedDocument?.url || !selectedDocument?.id) return;
+    if (textractCache[selectedDocument.id]) return; // Already cached
+    if (textractLoading) return; // Already loading
+
+    const runTextract = async () => {
+      setTextractLoading(true);
+      try {
+        const response = await triggerTextractExtraction(submissionId, selectedDocument.id);
+        if (response.data?.extraction) {
+          setTextractCache(prev => ({
+            ...prev,
+            [selectedDocument.id]: response.data.extraction
+          }));
+        }
+      } catch (err) {
+        console.error('Textract extraction failed:', err);
+      } finally {
+        setTextractLoading(false);
+      }
+    };
+
+    runTextract();
+  }, [selectedDocument?.id, selectedDocument?.url, submissionId, textractCache, textractLoading]);
+
   const updateMutation = useMutation({
     mutationFn: (data) => updateSubmission(submissionId, data),
     onSuccess: () => {
@@ -333,8 +505,107 @@ export default function ReviewPage() {
     },
   });
 
+  const uploadDocumentMutation = useMutation({
+    mutationFn: ({ file, documentType }) => uploadSubmissionDocument(submissionId, file, documentType),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries(['documents', submissionId]);
+      // Auto-select the newly uploaded document
+      if (response?.data) {
+        setSelectedDocument({
+          id: response.data.id,
+          filename: response.data.filename,
+          type: response.data.document_type,
+          page_count: response.data.page_count,
+          url: response.data.file_path ? `/api/documents/${response.data.id}/file` : null,
+        });
+      }
+    },
+  });
+
   const handleAcceptValue = async (extractionId) => {
     await acceptExtractionMutation.mutateAsync(extractionId);
+  };
+
+  const handleDocumentUpload = (file, documentType) => {
+    uploadDocumentMutation.mutate({ file, documentType });
+  };
+
+  // Helper to find bbox from Textract data matching extraction value
+  const findBboxForExtraction = (textractData, extractionValue, sourceText, page) => {
+    if (!textractData) return null;
+
+    const kvPairs = Object.entries(textractData.key_value_pairs || {})
+      .filter(([_, val]) => val.page === page);
+
+    if (kvPairs.length === 0) return null;
+
+    // Normalize the extraction value for comparison
+    const normalizeValue = (v) => {
+      if (v === true || v === 'True' || v === 'true') return 'true';
+      if (v === false || v === 'False' || v === 'false') return 'false';
+      return String(v || '').toLowerCase().trim();
+    };
+
+    const targetValue = normalizeValue(extractionValue);
+    const sourceWords = (sourceText || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
+
+    // First try: exact value match
+    for (const [key, val] of kvPairs) {
+      const textractValue = normalizeValue(val.value);
+      if (textractValue === targetValue && targetValue !== '') {
+        return val.bbox;
+      }
+    }
+
+    // Second try: key contains words from source text
+    for (const [key, val] of kvPairs) {
+      const keyLower = key.toLowerCase();
+      const matchingWords = sourceWords.filter(w => keyLower.includes(w));
+      if (matchingWords.length >= 2) {
+        return val.bbox;
+      }
+    }
+
+    // Third try: just return first bbox on this page (better than nothing)
+    if (kvPairs.length > 0) {
+      return kvPairs[0][1].bbox;
+    }
+
+    return null;
+  };
+
+  const handleShowSource = (pageNumber, documentId, extractionValue, sourceText) => {
+    setHighlightPage(pageNumber);
+
+    // Switch to the correct document if specified
+    let targetDocId = documentId;
+    if (documentId && documents?.documents?.length > 0) {
+      const targetDoc = documents.documents.find(d => d.id === documentId);
+      if (targetDoc) {
+        setSelectedDocument(targetDoc);
+        targetDocId = targetDoc.id;
+      }
+    }
+
+    // Try to find bbox from Textract cache
+    const textractData = textractCache[targetDocId || selectedDocument?.id];
+    const bbox = findBboxForExtraction(textractData, extractionValue, sourceText, pageNumber);
+
+    if (bbox) {
+      setActiveHighlight({
+        page: pageNumber,
+        bbox,
+        color: 'rgba(147, 51, 234, 0.5)', // Purple for active
+      });
+    } else {
+      setActiveHighlight(null); // Clear highlight if no match
+    }
+
+    // Fallback: auto-select primary document if none selected
+    if (!selectedDocument && documents?.documents?.length > 0) {
+      const primary = documents.documents.find(d => d.is_priority) || documents.documents[0];
+      setSelectedDocument(primary);
+    }
   };
 
   const handleDecision = (decision) => {
@@ -350,25 +621,6 @@ export default function ReviewPage() {
     }
 
     updateMutation.mutate(payload);
-  };
-
-  const handleShowSource = (pageNumber, documentId) => {
-    setHighlightPage(pageNumber);
-
-    // Switch to the correct document if specified
-    if (documentId && documents?.documents?.length > 0) {
-      const targetDoc = documents.documents.find(d => d.id === documentId);
-      if (targetDoc) {
-        setSelectedDocument(targetDoc);
-        return;
-      }
-    }
-
-    // Fallback: auto-select primary document if none selected
-    if (!selectedDocument && documents?.documents?.length > 0) {
-      const primary = documents.documents.find(d => d.is_priority) || documents.documents[0];
-      setSelectedDocument(primary);
-    }
   };
 
   if (isLoading) {
@@ -435,35 +687,44 @@ export default function ReviewPage() {
                   documents={documents}
                   selectedId={selectedDocument?.id}
                   onSelect={setSelectedDocument}
+                  onUpload={handleDocumentUpload}
+                  isUploading={uploadDocumentMutation.isPending}
                 />
                 {selectedDocument ? (
                   selectedDocument.url ? (
-                    // PDF viewer with iframe when URL is available
+                    // PDF viewer with highlighting support
                     <div className="flex-1 flex flex-col bg-gray-100">
                       <div className="flex items-center justify-between px-3 py-2 bg-white border-b">
-                        <span className="text-sm font-medium text-gray-700">
-                          {selectedDocument.filename}
-                        </span>
                         <div className="flex items-center gap-2">
-                          {highlightPage && (
-                            <span className="text-xs text-purple-600">
-                              Page {highlightPage}
+                          <span className="text-sm font-medium text-gray-700">
+                            {selectedDocument.filename}
+                          </span>
+                          {textractLoading && (
+                            <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded flex items-center gap-1">
+                              <span className="animate-spin h-3 w-3 border-2 border-purple-700 border-t-transparent rounded-full"></span>
+                              Scanning...
                             </span>
                           )}
-                          <a
-                            href={selectedDocument.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
-                          >
-                            Open in new tab
-                          </a>
+                          {textractCache[selectedDocument.id] && !textractLoading && (
+                            <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
+                              Ready for highlights
+                            </span>
+                          )}
                         </div>
+                        <a
+                          href={selectedDocument.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-600"
+                        >
+                          Open in new tab
+                        </a>
                       </div>
-                      <iframe
-                        src={`${selectedDocument.url}${highlightPage ? `#page=${highlightPage}` : ''}`}
-                        className="flex-1 w-full border-0"
-                        title={selectedDocument.filename}
+                      <PdfHighlighter
+                        url={selectedDocument.url}
+                        highlight={activeHighlight}
+                        initialPage={highlightPage || 1}
+                        className="flex-1"
                       />
                     </div>
                   ) : (

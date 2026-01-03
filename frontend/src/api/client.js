@@ -26,6 +26,8 @@ export const correctExtraction = (extractionId, correctedValue, reason = null) =
   api.post(`/extractions/${extractionId}/correct`, { corrected_value: correctedValue, reason });
 export const acceptExtraction = (extractionId) =>
   api.post(`/extractions/${extractionId}/accept`);
+export const triggerTextractExtraction = (submissionId, documentId = null) =>
+  api.post(`/submissions/${submissionId}/extract-textract`, { document_id: documentId });
 
 // Feedback tracking
 export const saveFeedback = (submissionId, feedback) =>
@@ -34,9 +36,22 @@ export const getSubmissionFeedback = (submissionId) =>
   api.get(`/submissions/${submissionId}/feedback`);
 export const getFeedbackAnalytics = () => api.get('/feedback/analytics');
 
+// Extraction stats
+export const getExtractionStats = (days = 30) => api.get(`/extraction/stats?days=${days}`);
+
 // Document content (for PDF viewer)
 export const getDocumentContent = (documentId) => api.get(`/documents/${documentId}/content`, { responseType: 'blob' });
 export const getDocumentUrl = (documentId) => `/api/documents/${documentId}/content`;
+
+// Document upload
+export const uploadSubmissionDocument = (submissionId, file, documentType = null) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const params = documentType ? `?document_type=${encodeURIComponent(documentType)}` : '';
+  return api.post(`/submissions/${submissionId}/documents${params}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+};
 
 // Quote Options
 export const getQuoteOptions = (submissionId) => api.get(`/submissions/${submissionId}/quotes`);
@@ -309,5 +324,20 @@ export const createDocumentLibraryEntry = (data) => api.post('/document-library'
 export const updateDocumentLibraryEntry = (entryId, data) => api.patch(`/document-library/${entryId}`, data);
 export const activateDocumentLibraryEntry = (entryId) => api.post(`/document-library/${entryId}/activate`);
 export const archiveDocumentLibraryEntry = (entryId) => api.post(`/document-library/${entryId}/archive`);
+
+// Policy Form Catalog
+export const getPolicyFormCatalog = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.carrier) query.append('carrier', params.carrier);
+  if (params.form_type) query.append('form_type', params.form_type);
+  if (params.search) query.append('search', params.search);
+  const queryStr = query.toString();
+  return api.get(`/policy-form-catalog${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getPolicyForm = (formId) => api.get(`/policy-form-catalog/${formId}`);
+export const getFormExtractionQueue = (status = null) => {
+  const params = status ? `?status=${status}` : '';
+  return api.get(`/policy-form-catalog/queue${params}`);
+};
 
 export default api;
