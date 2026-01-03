@@ -495,6 +495,76 @@ async def upload_submission_document(
         except Exception as e:
             result["extraction"] = {"status": "error", "error": str(e)}
 
+    # For applications, also run Claude extraction to populate extraction_provenance
+    is_application = doc_type.lower() in ("application", "application form", "application_supplemental", "application_acord")
+    if run_extraction and is_application and str(file_path).lower().endswith('.pdf'):
+        try:
+            from ai.application_extractor import extract_from_pdf
+            from datetime import datetime
+
+            start_time = datetime.utcnow()
+            ai_result = extract_from_pdf(str(file_path))
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    # Save extraction run
+                    cur.execute("""
+                        INSERT INTO extraction_runs
+                        (submission_id, model_used, input_tokens, output_tokens, duration_ms,
+                         fields_extracted, high_confidence_count, low_confidence_count, status, completed_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'completed', NOW())
+                        RETURNING id
+                    """, (
+                        submission_id,
+                        ai_result.model_used,
+                        ai_result.extraction_metadata.get("input_tokens"),
+                        ai_result.extraction_metadata.get("output_tokens"),
+                        duration_ms,
+                        sum(len(fields) for fields in ai_result.data.values()),
+                        sum(1 for s in ai_result.data.values() for f in s.values() if f.confidence >= 0.8),
+                        sum(1 for s in ai_result.data.values() for f in s.values() if f.confidence < 0.5 and f.is_present),
+                    ))
+
+                    # Save provenance records
+                    for record in ai_result.to_provenance_records(submission_id):
+                        cur.execute("""
+                            INSERT INTO extraction_provenance
+                            (submission_id, field_name, extracted_value, confidence,
+                             source_document_id, source_page, source_text, is_present, model_used)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (submission_id, field_name, source_document_id)
+                            DO UPDATE SET
+                                extracted_value = EXCLUDED.extracted_value,
+                                confidence = EXCLUDED.confidence,
+                                source_page = EXCLUDED.source_page,
+                                source_text = EXCLUDED.source_text,
+                                is_present = EXCLUDED.is_present,
+                                model_used = EXCLUDED.model_used,
+                                created_at = NOW()
+                        """, (
+                            record["submission_id"],
+                            record["field_name"],
+                            json.dumps(record["extracted_value"]) if record["extracted_value"] is not None else None,
+                            record["confidence"],
+                            doc_id,
+                            record["source_page"],
+                            record["source_text"],
+                            record["is_present"],
+                            ai_result.model_used,
+                        ))
+
+                    conn.commit()
+
+            result["ai_extraction"] = {
+                "status": "completed",
+                "fields_extracted": sum(len(fields) for fields in ai_result.data.values()),
+                "model": ai_result.model_used,
+            }
+        except Exception as e:
+            print(f"[api] AI extraction failed for {file.filename}: {e}")
+            result["ai_extraction"] = {"status": "error", "error": str(e)}
+
     return result
 
 
