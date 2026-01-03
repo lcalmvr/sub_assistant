@@ -38,6 +38,9 @@ export default function PdfHighlighter({
     return () => observer.disconnect();
   }, []);
 
+  // Calculate scale to fit container width (must be before useEffects that use it)
+  const scale = pageSize.width ? Math.min(containerWidth / pageSize.width, 1.5) : 1;
+
   // Track pending scroll when trigger changes
   useEffect(() => {
     if (scrollTrigger > 0 && initialPage) {
@@ -95,9 +98,6 @@ export default function PdfHighlighter({
       setPageSize({ width: page.originalWidth, height: page.originalHeight });
     }
   };
-
-  // Calculate scale to fit container width
-  const scale = pageSize.width ? Math.min(containerWidth / pageSize.width, 1.5) : 1;
 
   return (
     <div
