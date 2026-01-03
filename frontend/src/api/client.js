@@ -36,6 +36,10 @@ export const getSubmissionFeedback = (submissionId) =>
   api.get(`/submissions/${submissionId}/feedback`);
 export const getFeedbackAnalytics = () => api.get('/feedback/analytics');
 
+// Loss History
+export const getLossHistory = (submissionId) =>
+  api.get(`/submissions/${submissionId}/loss-history`);
+
 // Extraction stats
 export const getExtractionStats = (days = 30) => api.get(`/extraction/stats?days=${days}`);
 
@@ -356,5 +360,20 @@ export const getFormExtractionQueue = (status = null) => {
 };
 
 export const resyncFormCoverages = (formId) => api.post(`/policy-form-catalog/${formId}/resync-coverages`);
+
+// Extraction Schemas
+export const getSchemas = () => api.get('/schemas');
+export const getActiveSchema = () => api.get('/schemas/active');
+export const getSchema = (schemaId) => api.get(`/schemas/${schemaId}`);
+export const createSchema = (data) => api.post('/schemas', data);
+export const updateSchema = (schemaId, data) => api.patch(`/schemas/${schemaId}`, data);
+export const addSchemaField = (schemaId, category, fieldKey, fieldDef) =>
+  api.post(`/schemas/${schemaId}/fields`, { category, field_key: fieldKey, field_def: fieldDef });
+export const removeSchemaField = (schemaId, fieldKey) =>
+  api.delete(`/schemas/${schemaId}/fields/${fieldKey}`);
+export const getSchemaRecommendations = (status = 'pending') =>
+  api.get(`/schemas/recommendations?status=${status}`);
+export const actionSchemaRecommendation = (recId, action, notes = null) =>
+  api.post(`/schemas/recommendations/${recId}`, { action, notes });
 
 export default api;

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, saveFeedback } from '../api/client';
+import { getSubmission, updateSubmission, saveFeedback, getLossHistory } from '../api/client';
 
 // Editable section component for AI-generated content
 function EditableSection({ title, value, fieldName, submissionId, onSave, children }) {
@@ -264,6 +264,126 @@ function ExposureItem({ exposure }) {
   );
 }
 
+// Format currency
+function formatCurrency(value) {
+  if (!value && value !== 0) return '—';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+// Loss History Section
+function LossHistorySection({ submissionId }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const { data: lossData, isLoading } = useQuery({
+    queryKey: ['loss-history', submissionId],
+    queryFn: () => getLossHistory(submissionId).then(res => res.data),
+  });
+
+  const summary = lossData?.summary;
+  const claims = lossData?.claims || [];
+
+  return (
+    <div className="card">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center justify-between"
+      >
+        <div>
+          <h3 className="form-section-title mb-0 pb-0 border-0">Loss History</h3>
+          <p className="text-xs text-gray-500 mt-1">Source documents available in Review tab</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {lossData?.count > 0 && (
+            <span className="text-sm text-gray-500">{lossData.count} claims</span>
+          )}
+          <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
+        </div>
+      </button>
+
+      {isExpanded && (
+        <div className="mt-4">
+          {isLoading ? (
+            <p className="text-gray-500">Loading...</p>
+          ) : claims.length === 0 ? (
+            <div className="bg-gray-50 rounded-lg p-6 text-center">
+              <p className="text-gray-500">No loss history records found for this submission.</p>
+            </div>
+          ) : (
+            <>
+              {/* Summary Metrics */}
+              <div className="grid grid-cols-4 gap-4 mb-4">
+                <div className="metric-card">
+                  <div className="metric-label">Total Paid</div>
+                  <div className="metric-value text-lg">{formatCurrency(summary?.total_paid)}</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-label">Total Incurred</div>
+                  <div className="metric-value text-lg">{formatCurrency(summary?.total_incurred)}</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-label">Closed Claims</div>
+                  <div className="metric-value text-lg">{summary?.closed_claims || 0}</div>
+                </div>
+                <div className="metric-card">
+                  <div className="metric-label">Avg per Claim</div>
+                  <div className="metric-value text-lg">{formatCurrency(summary?.avg_paid)}</div>
+                </div>
+              </div>
+
+              {/* Claims Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="table-header">Date</th>
+                      <th className="table-header">Type</th>
+                      <th className="table-header">Description</th>
+                      <th className="table-header">Status</th>
+                      <th className="table-header text-right">Paid</th>
+                      <th className="table-header">Carrier</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {claims.map((claim) => (
+                      <tr key={claim.id} className="hover:bg-gray-50">
+                        <td className="table-cell text-gray-600">
+                          {claim.loss_date ? new Date(claim.loss_date).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="table-cell">{claim.loss_type || '—'}</td>
+                        <td className="table-cell text-gray-600 max-w-[200px] truncate" title={claim.description}>
+                          {claim.description || '—'}
+                        </td>
+                        <td className="table-cell">
+                          <span className={`badge ${
+                            claim.status?.toUpperCase() === 'CLOSED' ? 'badge-quoted' :
+                            claim.status?.toUpperCase() === 'OPEN' ? 'badge-pending' :
+                            'badge-received'
+                          }`}>
+                            {claim.status || '—'}
+                          </span>
+                        </td>
+                        <td className="table-cell text-right font-medium">
+                          {formatCurrency(claim.paid_amount)}
+                        </td>
+                        <td className="table-cell text-gray-600">{claim.carrier || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function UWPage() {
   const { submissionId } = useParams();
   const queryClient = useQueryClient();
@@ -436,6 +556,9 @@ export default function UWPage() {
           <p className="text-sm text-green-600 mt-2">Saved</p>
         )}
       </div>
+
+      {/* Loss History */}
+      <LossHistorySection submissionId={submissionId} />
 
       <div className="grid grid-cols-2 gap-6">
         {/* Business Summary */}

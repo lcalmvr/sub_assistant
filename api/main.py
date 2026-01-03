@@ -10,7 +10,7 @@ from typing import Optional, List, Any
 import json
 import os
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -21,7 +21,7 @@ app = FastAPI(title="Underwriting Assistant API")
 # CORS for local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1085,6 +1085,56 @@ def get_extractions(submission_id: str):
                 if f.get("has_conflict")
             )
 
+            # Load active schema to identify unmapped fields
+            cur.execute("""
+                SELECT schema_definition FROM extraction_schemas WHERE is_active = true LIMIT 1
+            """)
+            schema_row = cur.fetchone()
+            schema_def = schema_row["schema_definition"] if schema_row else {}
+
+            # Build set of valid schema field paths
+            schema_fields = set()
+            schema_sections = set()
+            for section_key, section_data in schema_def.items():
+                schema_sections.add(section_key)
+                if isinstance(section_data, dict) and "fields" in section_data:
+                    for field_key in section_data["fields"]:
+                        schema_fields.add(f"{section_key}.{field_key}")
+
+            # Mark sections and fields as in_schema or not
+            unmapped_sections = {}
+            mapped_sections = {}
+
+            for section_name, fields in sections.items():
+                is_schema_section = section_name in schema_sections
+
+                # Check each field
+                mapped_fields = {}
+                unmapped_fields = {}
+
+                for field_name, field_data in fields.items():
+                    full_path = f"{section_name}.{field_name}"
+                    if full_path in schema_fields:
+                        field_data["in_schema"] = True
+                        mapped_fields[field_name] = field_data
+                    else:
+                        field_data["in_schema"] = False
+                        unmapped_fields[field_name] = field_data
+
+                if mapped_fields:
+                    mapped_sections[section_name] = mapped_fields
+                if unmapped_fields:
+                    if "_unmapped" not in unmapped_sections:
+                        unmapped_sections["_unmapped"] = {}
+                    for fname, fdata in unmapped_fields.items():
+                        # Store with original section prefix for clarity
+                        unmapped_sections["_unmapped"][f"{section_name}.{fname}"] = fdata
+
+            # Merge mapped sections with unmapped section at the end
+            final_sections = mapped_sections
+            if unmapped_sections.get("_unmapped"):
+                final_sections["_unmapped"] = unmapped_sections["_unmapped"]
+
             return {
                 "has_extractions": len(rows) > 0,
                 "summary": {
@@ -1094,8 +1144,9 @@ def get_extractions(submission_id: str):
                     "low_confidence": summary["low_confidence"] if summary else 0,
                     "avg_confidence": float(summary["avg_confidence"]) if summary and summary["avg_confidence"] else None,
                     "conflict_count": conflict_count,
+                    "unmapped_count": len(unmapped_sections.get("_unmapped", {})),
                 },
-                "sections": sections,
+                "sections": final_sections,
             }
 
 
@@ -1442,6 +1493,58 @@ def get_submission_feedback(submission_id: str):
                         "time_to_edit_seconds": r["time_to_edit_seconds"],
                         "edited_by": r["edited_by"],
                         "edited_at": r["edited_at"].isoformat() if r["edited_at"] else None,
+                    }
+                    for r in rows
+                ],
+            }
+
+
+@app.get("/api/submissions/{submission_id}/loss-history")
+def get_loss_history(submission_id: str):
+    """Get loss history records for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, loss_date, loss_type, loss_description, loss_amount,
+                       claim_status, claim_number, carrier_name, policy_period_start,
+                       policy_period_end, deductible, reserve_amount, paid_amount,
+                       recovery_amount, loss_ratio
+                FROM loss_history
+                WHERE submission_id = %s
+                ORDER BY loss_date DESC
+            """, (submission_id,))
+            rows = cur.fetchall()
+
+            # Calculate summary metrics
+            total_paid = sum(float(r["paid_amount"] or 0) for r in rows)
+            total_incurred = sum(float(r["loss_amount"] or 0) for r in rows)
+            closed_count = sum(1 for r in rows if (r["claim_status"] or "").upper() == "CLOSED")
+
+            return {
+                "count": len(rows),
+                "summary": {
+                    "total_paid": total_paid,
+                    "total_incurred": total_incurred,
+                    "closed_claims": closed_count,
+                    "open_claims": len(rows) - closed_count,
+                    "avg_paid": total_paid / len(rows) if rows else 0,
+                },
+                "claims": [
+                    {
+                        "id": r["id"],
+                        "loss_date": r["loss_date"].isoformat() if r["loss_date"] else None,
+                        "loss_type": r["loss_type"],
+                        "description": r["loss_description"],
+                        "loss_amount": float(r["loss_amount"]) if r["loss_amount"] else None,
+                        "status": r["claim_status"],
+                        "claim_number": r["claim_number"],
+                        "carrier": r["carrier_name"],
+                        "policy_period_start": r["policy_period_start"].isoformat() if r["policy_period_start"] else None,
+                        "policy_period_end": r["policy_period_end"].isoformat() if r["policy_period_end"] else None,
+                        "deductible": float(r["deductible"]) if r["deductible"] else None,
+                        "reserve_amount": float(r["reserve_amount"]) if r["reserve_amount"] else None,
+                        "paid_amount": float(r["paid_amount"]) if r["paid_amount"] else None,
+                        "recovery_amount": float(r["recovery_amount"]) if r["recovery_amount"] else None,
                     }
                     for r in rows
                 ],
@@ -6047,6 +6150,351 @@ def generate_quote_package(quote_id: str, request: PackageGenerateRequest):
     except Exception as e:
         import traceback
         raise HTTPException(status_code=500, detail=f"Package generation failed: {str(e)}")
+
+
+# ─────────────────────────────────────────────────────────────
+# Extraction Schema Management
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/schemas")
+def list_schemas():
+    """List all extraction schemas."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, version, description, is_active, created_at, updated_at, created_by
+                FROM extraction_schemas
+                ORDER BY name, version DESC
+            """)
+            rows = cur.fetchall()
+            return {
+                "count": len(rows),
+                "schemas": [dict(r) for r in rows]
+            }
+
+
+@app.get("/api/schemas/active")
+def get_active_schema():
+    """Get the currently active extraction schema."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, version, description, schema_definition, created_at, updated_at
+                FROM extraction_schemas
+                WHERE is_active = true
+                LIMIT 1
+            """)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="No active schema found")
+            return dict(row)
+
+
+@app.get("/api/schemas/{schema_id}")
+def get_schema(schema_id: str):
+    """Get a specific extraction schema by ID."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, version, description, is_active, schema_definition, created_at, updated_at, created_by
+                FROM extraction_schemas
+                WHERE id = %s
+            """, (schema_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Schema not found")
+            return dict(row)
+
+
+class SchemaCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    schema_definition: dict
+    set_active: bool = False
+
+
+@app.post("/api/schemas")
+def create_schema(schema: SchemaCreate):
+    """Create a new extraction schema (as a new version)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get next version number for this schema name
+            cur.execute("""
+                SELECT COALESCE(MAX(version), 0) + 1 as next_version
+                FROM extraction_schemas
+                WHERE name = %s
+            """, (schema.name,))
+            next_version = cur.fetchone()["next_version"]
+
+            # If setting as active, deactivate other schemas with same name
+            if schema.set_active:
+                cur.execute("""
+                    UPDATE extraction_schemas SET is_active = false WHERE name = %s
+                """, (schema.name,))
+
+            # Insert new schema
+            cur.execute("""
+                INSERT INTO extraction_schemas (name, version, description, is_active, schema_definition, created_by)
+                VALUES (%s, %s, %s, %s, %s, 'api')
+                RETURNING id, name, version, is_active, created_at
+            """, (schema.name, next_version, schema.description, schema.set_active, Json(schema.schema_definition)))
+
+            row = cur.fetchone()
+            return {
+                "message": "Schema created",
+                "schema": dict(row)
+            }
+
+
+class SchemaUpdate(BaseModel):
+    description: Optional[str] = None
+    schema_definition: Optional[dict] = None
+    is_active: Optional[bool] = None
+
+
+@app.patch("/api/schemas/{schema_id}")
+def update_schema(schema_id: str, updates: SchemaUpdate):
+    """Update an extraction schema."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Build dynamic update
+            set_clauses = ["updated_at = NOW()"]
+            params = []
+
+            if updates.description is not None:
+                set_clauses.append("description = %s")
+                params.append(updates.description)
+
+            if updates.schema_definition is not None:
+                set_clauses.append("schema_definition = %s")
+                params.append(Json(updates.schema_definition))
+
+            if updates.is_active is not None:
+                # If activating, deactivate others with same name first
+                if updates.is_active:
+                    cur.execute("""
+                        UPDATE extraction_schemas es
+                        SET is_active = false
+                        WHERE es.name = (SELECT name FROM extraction_schemas WHERE id = %s)
+                    """, (schema_id,))
+                set_clauses.append("is_active = %s")
+                params.append(updates.is_active)
+
+            params.append(schema_id)
+            cur.execute(f"""
+                UPDATE extraction_schemas
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING id, name, version, is_active, updated_at
+            """, params)
+
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Schema not found")
+            return {"message": "Schema updated", "schema": dict(row)}
+
+
+# Schema field management
+@app.post("/api/schemas/{schema_id}/fields")
+def add_schema_field(schema_id: str, category: str, field_key: str, field_def: dict):
+    """Add a field to a schema category."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT schema_definition FROM extraction_schemas WHERE id = %s", (schema_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Schema not found")
+
+            schema_def = row["schema_definition"]
+            if category not in schema_def:
+                raise HTTPException(status_code=400, detail=f"Category '{category}' not found in schema")
+
+            if "fields" not in schema_def[category]:
+                schema_def[category]["fields"] = {}
+
+            schema_def[category]["fields"][field_key] = field_def
+
+            cur.execute("""
+                UPDATE extraction_schemas
+                SET schema_definition = %s, updated_at = NOW()
+                WHERE id = %s
+            """, (Json(schema_def), schema_id))
+
+            return {"message": f"Field '{field_key}' added to category '{category}'"}
+
+
+@app.delete("/api/schemas/{schema_id}/fields/{field_key}")
+def remove_schema_field(schema_id: str, field_key: str):
+    """Remove a field from a schema."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT schema_definition FROM extraction_schemas WHERE id = %s", (schema_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Schema not found")
+
+            schema_def = row["schema_definition"]
+            found = False
+
+            for category in schema_def.values():
+                if "fields" in category and field_key in category["fields"]:
+                    del category["fields"][field_key]
+                    found = True
+                    break
+
+            if not found:
+                raise HTTPException(status_code=404, detail=f"Field '{field_key}' not found in schema")
+
+            cur.execute("""
+                UPDATE extraction_schemas
+                SET schema_definition = %s, updated_at = NOW()
+                WHERE id = %s
+            """, (Json(schema_def), schema_id))
+
+            return {"message": f"Field '{field_key}' removed"}
+
+
+# Schema recommendations
+@app.get("/api/schemas/recommendations")
+def list_recommendations(status: str = "pending"):
+    """List schema recommendations."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT r.*, s.name as schema_name, s.version as schema_version
+                FROM schema_recommendations r
+                LEFT JOIN extraction_schemas s ON r.schema_id = s.id
+                WHERE r.status = %s
+                ORDER BY r.created_at DESC
+            """, (status,))
+            rows = cur.fetchall()
+            return {
+                "count": len(rows),
+                "recommendations": [dict(r) for r in rows]
+            }
+
+
+class RecommendationAction(BaseModel):
+    action: str  # approve, reject, defer
+    notes: Optional[str] = None
+
+
+@app.post("/api/schemas/recommendations/{rec_id}")
+def action_recommendation(rec_id: str, action: RecommendationAction):
+    """Approve, reject, or defer a schema recommendation."""
+    if action.action not in ("approved", "rejected", "deferred"):
+        raise HTTPException(status_code=400, detail="Action must be: approved, rejected, or deferred")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get recommendation
+            cur.execute("SELECT * FROM schema_recommendations WHERE id = %s", (rec_id,))
+            rec = cur.fetchone()
+            if not rec:
+                raise HTTPException(status_code=404, detail="Recommendation not found")
+
+            # Update status
+            cur.execute("""
+                UPDATE schema_recommendations
+                SET status = %s, review_notes = %s, reviewed_at = NOW(), reviewed_by = 'api'
+                WHERE id = %s
+            """, (action.action, action.notes, rec_id))
+
+            # If approved, apply the change to the schema
+            if action.action == "approved" and rec["schema_id"]:
+                if rec["recommendation_type"] == "new_field":
+                    cur.execute("SELECT schema_definition FROM extraction_schemas WHERE id = %s", (rec["schema_id"],))
+                    schema_row = cur.fetchone()
+                    if schema_row:
+                        schema_def = schema_row["schema_definition"]
+                        category = rec["suggested_category"]
+
+                        if category not in schema_def:
+                            # Create new category
+                            schema_def[category] = {
+                                "displayName": category.replace("_", " ").title(),
+                                "description": "",
+                                "displayOrder": len(schema_def) + 1,
+                                "fields": {}
+                            }
+
+                        field_def = {
+                            "type": rec["suggested_type"] or "string",
+                            "displayName": rec["suggested_field_name"],
+                            "description": rec["suggested_description"] or ""
+                        }
+                        if rec["suggested_enum_values"]:
+                            field_def["enumValues"] = rec["suggested_enum_values"]
+
+                        schema_def[category]["fields"][rec["suggested_field_key"]] = field_def
+
+                        cur.execute("""
+                            UPDATE extraction_schemas
+                            SET schema_definition = %s, updated_at = NOW()
+                            WHERE id = %s
+                        """, (Json(schema_def), rec["schema_id"]))
+
+            return {"message": f"Recommendation {action.action}", "id": rec_id}
+
+
+@app.post("/api/schemas/analyze-document/{document_id}")
+def analyze_document_for_schema(document_id: str):
+    """Analyze a document for potential schema additions."""
+    from ai.schema_recommender import analyze_document_for_schema_gaps
+
+    # Get document text
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT d.id, d.filename, d.doc_metadata, t.raw_json
+                FROM documents d
+                LEFT JOIN textract_extractions t ON t.document_id = d.id
+                WHERE d.id = %s
+            """, (document_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Document not found")
+
+            # Get text from textract if available
+            doc_text = ""
+            if row.get("raw_json"):
+                raw = row["raw_json"]
+                if isinstance(raw, dict) and "Blocks" in raw:
+                    lines = [b.get("Text", "") for b in raw["Blocks"] if b.get("BlockType") == "LINE"]
+                    doc_text = "\n".join(lines)
+
+            if not doc_text:
+                # Try to get text from file
+                metadata = row.get("doc_metadata") or {}
+                file_path = metadata.get("file_path")
+                if file_path and os.path.exists(file_path):
+                    import pdfplumber
+                    with pdfplumber.open(file_path) as pdf:
+                        doc_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+            if not doc_text:
+                raise HTTPException(status_code=400, detail="Could not extract text from document")
+
+            # Analyze for gaps
+            recommendations = analyze_document_for_schema_gaps(
+                document_text=doc_text,
+                document_id=document_id,
+                document_name=row.get("filename"),
+            )
+
+            return {
+                "document_id": document_id,
+                "document_name": row.get("filename"),
+                "recommendations_created": len(recommendations),
+                "recommendations": recommendations,
+            }
+
+
+@app.get("/api/schemas/coverage")
+def get_schema_coverage(days: int = 30):
+    """Get field coverage statistics across recent extractions."""
+    from ai.schema_recommender import analyze_extraction_coverage
+    return analyze_extraction_coverage(days=days)
 
 
 # ─────────────────────────────────────────────────────────────
