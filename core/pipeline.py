@@ -1351,19 +1351,84 @@ def _merge_application_data(primary: dict, supplemental: dict) -> dict:
 
 # ───────────── Document Processing Helpers ─────────────
 
-def _extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from PDF using PyMuPDF."""
+def _extract_text_from_pdf(pdf_path: str, use_ocr_fallback: bool = True) -> str:
+    """
+    Extract text from PDF using PyMuPDF with OCR fallback for scanned documents.
+
+    Args:
+        pdf_path: Path to PDF file
+        use_ocr_fallback: If True, use Textract OCR when PDF appears scanned
+
+    Returns:
+        Extracted text
+    """
     try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(pdf_path)
-        text_parts = []
-        for page in doc:
-            text_parts.append(page.get_text())
-        doc.close()
-        return "\n".join(text_parts)
+        from ai.ocr_utils import extract_text_with_ocr_fallback
+
+        result = extract_text_with_ocr_fallback(pdf_path)
+
+        if result.is_scanned:
+            print(f"[pipeline] Scanned PDF detected, used {result.ocr_method} "
+                  f"(confidence: {result.ocr_confidence:.0%}, cost: ${result.extraction_cost:.4f})")
+
+        return result.text
+
+    except ImportError:
+        # Fallback if ocr_utils not available
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(pdf_path)
+            text_parts = []
+            for page in doc:
+                text_parts.append(page.get_text())
+            doc.close()
+            return "\n".join(text_parts)
+        except Exception as e:
+            print(f"[pipeline] Failed to extract text from {pdf_path}: {e}")
+            return ""
     except Exception as e:
         print(f"[pipeline] Failed to extract text from {pdf_path}: {e}")
         return ""
+
+
+def _extract_text_from_pdf_with_metadata(pdf_path: str) -> dict:
+    """
+    Extract text from PDF with full metadata including OCR info.
+
+    Returns:
+        {
+            "text": str,
+            "page_count": int,
+            "is_scanned": bool,
+            "ocr_method": str or None,
+            "ocr_confidence": float or None,
+            "extraction_cost": float
+        }
+    """
+    try:
+        from ai.ocr_utils import extract_text_with_ocr_fallback
+
+        result = extract_text_with_ocr_fallback(pdf_path)
+
+        return {
+            "text": result.text,
+            "page_count": result.page_count,
+            "is_scanned": result.is_scanned,
+            "ocr_method": result.ocr_method,
+            "ocr_confidence": result.ocr_confidence,
+            "extraction_cost": result.extraction_cost,
+        }
+
+    except Exception as e:
+        print(f"[pipeline] Failed to extract text from {pdf_path}: {e}")
+        return {
+            "text": "",
+            "page_count": 0,
+            "is_scanned": False,
+            "ocr_method": "failed",
+            "ocr_confidence": None,
+            "extraction_cost": 0.0,
+        }
 
 
 def _process_loss_runs(submission_id: str, loss_runs_docs: list[tuple[str, ClassificationResult]]) -> None:

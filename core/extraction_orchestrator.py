@@ -87,6 +87,8 @@ def _complete_extraction_log(
     forms_matched: int = 0,
     forms_queued: int = 0,
     phases_executed: Optional[List[str]] = None,
+    is_scanned: bool = False,
+    ocr_confidence: Optional[float] = None,
 ) -> None:
     """Mark an extraction log as completed."""
     with get_conn() as conn:
@@ -102,7 +104,9 @@ def _complete_extraction_log(
                 form_numbers_found = :forms_found,
                 forms_matched = :forms_matched,
                 forms_queued = :forms_queued,
-                phases_executed = :phases
+                phases_executed = :phases,
+                is_scanned = :is_scanned,
+                ocr_confidence = :ocr_confidence
             WHERE id = :log_id
         """), {
             "log_id": log_id,
@@ -115,6 +119,8 @@ def _complete_extraction_log(
             "forms_matched": forms_matched,
             "forms_queued": forms_queued,
             "phases": phases_executed,
+            "is_scanned": is_scanned,
+            "ocr_confidence": ocr_confidence,
         })
 
 
@@ -213,6 +219,8 @@ class ExtractionResult:
     declarations: Optional[Dict] = None
     fill_ins: Optional[List[Dict]] = None
     errors: Optional[List[str]] = None
+    is_scanned: bool = False  # True if document required OCR
+    ocr_confidence: Optional[float] = None  # OCR confidence (0-1)
 
 
 def extract_document(
@@ -343,6 +351,8 @@ def extract_document(
                     form_numbers_found=list(form_matches.keys()) if form_matches else None,
                     forms_matched=sum(1 for s in form_matches.values() if s == "matched"),
                     forms_queued=sum(1 for s in form_matches.values() if s in ("queued", "queued_new", "queued_for_extraction")),
+                    is_scanned=result.is_scanned,
+                    ocr_confidence=result.ocr_confidence,
                 )
             except Exception as e:
                 print(f"[orchestrator] Warning: Failed to complete extraction log: {e}")
@@ -422,24 +432,50 @@ def _extract_tiered_policy(
     """
     Tiered extraction for policy documents.
 
-    Phase 1: Cheap scan to find key pages and form numbers
+    Phase 1: Cheap scan to find key pages and form numbers (with OCR fallback)
     Phase 2: Full extraction on dec pages
     Phase 3: Full extraction on endorsement fill-ins
     Phase 4: Catalog lookup for known forms
     """
     import fitz
+    from ai.ocr_utils import extract_text_with_ocr_fallback, is_pdf_scanned
 
     errors = []
     total_cost = 0.0
+    is_scanned = False
+    ocr_confidence = None
 
-    # Phase 1: Cheap scan (extract text only)
+    # Phase 1: Cheap scan (extract text only, with OCR fallback)
     print("[orchestrator] Phase 1: Page scan for form numbers and key pages")
     pages_text = []
+
     try:
-        pdf = fitz.open(file_path)
-        for page in pdf:
-            pages_text.append(page.get_text())
-        pdf.close()
+        # Check if PDF is scanned
+        scanned, total_pages, chars = is_pdf_scanned(file_path)
+
+        if scanned:
+            print(f"[orchestrator] Scanned PDF detected, using OCR")
+            is_scanned = True
+
+            # Use OCR
+            ocr_result = extract_text_with_ocr_fallback(file_path)
+            total_cost += ocr_result.extraction_cost
+            ocr_confidence = ocr_result.ocr_confidence
+
+            # Split into pages (OCR result includes page markers)
+            import re
+            page_splits = re.split(r'--- Page \d+ ---', ocr_result.text)
+            pages_text = [p.strip() for p in page_splits if p.strip()]
+
+            if not pages_text:
+                pages_text = [ocr_result.text]  # Fallback to single page
+        else:
+            # Standard PyMuPDF extraction
+            pdf = fitz.open(file_path)
+            for page in pdf:
+                pages_text.append(page.get_text())
+            pdf.close()
+
     except Exception as e:
         errors.append(f"Phase 1 scan failed: {e}")
         return ExtractionResult(
@@ -526,6 +562,8 @@ def _extract_tiered_policy(
         declarations=declarations,
         fill_ins=fill_ins,
         errors=errors if errors else None,
+        is_scanned=is_scanned,
+        ocr_confidence=ocr_confidence,
     )
 
 
@@ -539,10 +577,11 @@ def _extract_quote_adaptive(
     """
     Adaptive extraction for quotes.
 
-    Short quotes (<=5 pages): Full Textract Forms
+    Short quotes (<=5 pages): Full Textract Forms (with OCR fallback if scanned)
     Long quotes: Dec pages only + scan for form numbers
     """
     import fitz
+    from ai.ocr_utils import is_pdf_scanned, extract_text_with_ocr_fallback
 
     # Get page count
     pdf = fitz.open(file_path)
@@ -552,9 +591,26 @@ def _extract_quote_adaptive(
     if page_count <= 5:
         # Short quote - extract everything
         print(f"[orchestrator] Short quote ({page_count} pages) - full extraction")
+
+        # Check if scanned first
+        scanned, _, _ = is_pdf_scanned(file_path)
+        if scanned:
+            print("[orchestrator] Scanned PDF detected, using OCR for short quote")
+            ocr_result = extract_text_with_ocr_fallback(file_path)
+            return ExtractionResult(
+                document_id=document_id,
+                document_type="quote",
+                strategy_used=plan.strategy.value,
+                pages_extracted=page_count,
+                cost=ocr_result.extraction_cost,
+                raw_text=ocr_result.text,
+                is_scanned=True,
+                ocr_confidence=ocr_result.ocr_confidence,
+            )
+
         return _extract_with_textract_forms(document_id, file_path, plan, submission_id)
     else:
-        # Long quote - use tiered approach
+        # Long quote - use tiered approach (already handles OCR)
         print(f"[orchestrator] Long quote ({page_count} pages) - tiered extraction")
         return _extract_tiered_policy(document_id, file_path, plan, submission_id, carrier)
 
@@ -764,6 +820,11 @@ def process_submission_documents(
             metadata["extraction_strategy"] = result.strategy_used
             metadata["extraction_cost"] = result.cost
             metadata["pages_extracted"] = result.pages_extracted
+
+            # OCR metadata - important for user visibility
+            if result.is_scanned:
+                metadata["is_scanned"] = True
+                metadata["ocr_confidence"] = result.ocr_confidence
 
             if result.form_matches:
                 metadata["form_matches"] = result.form_matches

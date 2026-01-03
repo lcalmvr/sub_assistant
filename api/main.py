@@ -308,6 +308,9 @@ def get_submission_documents(submission_id: str):
 
             documents = []
             for r in rows:
+                # Parse metadata
+                metadata = r["doc_metadata"] if isinstance(r["doc_metadata"], dict) else {}
+
                 doc = {
                     "id": str(r["id"]),
                     "filename": r["filename"],
@@ -316,10 +319,11 @@ def get_submission_documents(submission_id: str):
                     "is_priority": r["is_priority"],
                     "created_at": r["created_at"].isoformat() if r["created_at"] else None,
                     "url": None,  # Will be populated if storage is configured
+                    # OCR metadata for scanned documents
+                    "is_scanned": metadata.get("is_scanned", False),
+                    "ocr_confidence": metadata.get("ocr_confidence"),
+                    "extraction_strategy": metadata.get("extraction_strategy"),
                 }
-
-                # Generate URL for document
-                metadata = r["doc_metadata"] if isinstance(r["doc_metadata"], dict) else {}
 
                 # Try storage URL first
                 if use_storage:

@@ -270,6 +270,14 @@ function DocumentSelector({ documents, selectedId, onSelect, onUpload, isUploadi
             {doc.is_priority && (
               <span className="px-1 py-0.5 text-xs bg-purple-200 text-purple-700 rounded">Primary</span>
             )}
+            {doc.is_scanned && (
+              <span className="px-1 py-0.5 text-xs bg-amber-100 text-amber-700 rounded flex items-center gap-1" title={doc.ocr_confidence ? `OCR Confidence: ${Math.round(doc.ocr_confidence * 100)}%` : 'Scanned document'}>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                OCR
+              </span>
+            )}
           </button>
         ))}
 
@@ -699,6 +707,14 @@ export default function ReviewPage() {
                           <span className="text-sm font-medium text-gray-700">
                             {selectedDocument.filename}
                           </span>
+                          {selectedDocument.is_scanned && (
+                            <span className="text-xs px-2 py-1 bg-amber-100 text-amber-700 rounded flex items-center gap-1" title={selectedDocument.ocr_confidence ? `OCR Confidence: ${Math.round(selectedDocument.ocr_confidence * 100)}%` : 'Scanned document - text extracted via OCR'}>
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              Scanned{selectedDocument.ocr_confidence ? ` (${Math.round(selectedDocument.ocr_confidence * 100)}%)` : ''}
+                            </span>
+                          )}
                           {textractLoading && (
                             <span className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded flex items-center gap-1">
                               <span className="animate-spin h-3 w-3 border-2 border-purple-700 border-t-transparent rounded-full"></span>
@@ -738,6 +754,16 @@ export default function ReviewPage() {
                         <p className="text-sm mt-2">
                           {selectedDocument.page_count} pages · {selectedDocument.type || 'Document'}
                         </p>
+                        {selectedDocument.is_scanned && (
+                          <p className="text-sm mt-2">
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 text-amber-700 rounded">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                              </svg>
+                              Scanned Document{selectedDocument.ocr_confidence ? ` (${Math.round(selectedDocument.ocr_confidence * 100)}% OCR confidence)` : ''}
+                            </span>
+                          </p>
+                        )}
                         {highlightPage && (
                           <p className="text-sm mt-2 text-purple-600">
                             Jump to page {highlightPage}
