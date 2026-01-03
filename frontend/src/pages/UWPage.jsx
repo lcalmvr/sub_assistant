@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, saveFeedback, getLossHistory } from '../api/client';
+import { getSubmission, updateSubmission, saveFeedback, getLossHistory, updateClaimNotes } from '../api/client';
 
 // Editable section component for AI-generated content
 function EditableSection({ title, value, fieldName, submissionId, onSave, children }) {
@@ -275,6 +275,139 @@ function formatCurrency(value) {
   }).format(value);
 }
 
+// Claim Row with expandable notes
+function ClaimRow({ claim, submissionId }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [notes, setNotes] = useState(claim.uw_notes || '');
+  const [expectedTotal, setExpectedTotal] = useState(claim.expected_total || '');
+  const [noteSource, setNoteSource] = useState(claim.note_source || '');
+  const [showSaved, setShowSaved] = useState(false);
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (data) => updateClaimNotes(claim.id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loss-history', submissionId] });
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 2000);
+    },
+  });
+
+  const handleSave = () => {
+    mutation.mutate({
+      uw_notes: notes || null,
+      expected_total: expectedTotal ? parseFloat(expectedTotal) : null,
+      note_source: noteSource || null,
+    });
+  };
+
+  const hasNotes = claim.uw_notes || claim.expected_total || claim.note_source;
+
+  return (
+    <>
+      <tr
+        className={`hover:bg-gray-50 cursor-pointer ${isExpanded ? 'bg-purple-50' : ''}`}
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <td className="table-cell text-gray-600">
+          {claim.loss_date ? new Date(claim.loss_date).toLocaleDateString() : '—'}
+        </td>
+        <td className="table-cell">{claim.loss_type || '—'}</td>
+        <td className="table-cell text-gray-600 max-w-[200px]">
+          <div className="flex items-center gap-2">
+            <span className="truncate" title={claim.description}>{claim.description || '—'}</span>
+            {hasNotes && (
+              <span className="flex-shrink-0 w-2 h-2 bg-purple-500 rounded-full" title="Has UW notes" />
+            )}
+          </div>
+        </td>
+        <td className="table-cell">
+          <span className={`badge ${
+            claim.status?.toUpperCase() === 'CLOSED' ? 'badge-quoted' :
+            claim.status?.toUpperCase() === 'OPEN' ? 'badge-pending' :
+            'badge-received'
+          }`}>
+            {claim.status || '—'}
+          </span>
+        </td>
+        <td className="table-cell text-right font-medium">
+          <div>
+            {formatCurrency(claim.paid_amount)}
+            {claim.expected_total && claim.expected_total !== claim.paid_amount && (
+              <div className="text-xs text-orange-600">
+                Est: {formatCurrency(claim.expected_total)}
+              </div>
+            )}
+          </div>
+        </td>
+        <td className="table-cell text-gray-600">{claim.carrier || '—'}</td>
+      </tr>
+      {isExpanded && (
+        <tr className="bg-purple-50">
+          <td colSpan={6} className="px-4 py-3">
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-2">
+                  <label className="form-label">UW Notes</label>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Add context from broker calls, emails, etc..."
+                    className="form-input w-full h-20 text-sm"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="form-label">Expected Total</label>
+                    <input
+                      type="number"
+                      value={expectedTotal}
+                      onChange={(e) => setExpectedTotal(e.target.value)}
+                      placeholder="e.g., 1000000"
+                      className="form-input w-full text-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">UW estimate if different from formal</p>
+                  </div>
+                  <div>
+                    <label className="form-label">Source</label>
+                    <input
+                      type="text"
+                      value={noteSource}
+                      onChange={(e) => setNoteSource(e.target.value)}
+                      placeholder="e.g., Call with broker 1/3/25"
+                      className="form-input w-full text-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-gray-400">
+                  {claim.note_updated_at && (
+                    <>Last updated: {new Date(claim.note_updated_at).toLocaleString()}</>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {showSaved && <span className="text-sm text-green-600">Saved</span>}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleSave(); }}
+                    disabled={mutation.isPending}
+                    className="px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+                  >
+                    {mutation.isPending ? 'Saving...' : 'Save Notes'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 // Loss History Section
 function LossHistorySection({ submissionId }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -286,6 +419,7 @@ function LossHistorySection({ submissionId }) {
 
   const summary = lossData?.summary;
   const claims = lossData?.claims || [];
+  const claimsWithNotes = claims.filter(c => c.uw_notes || c.expected_total).length;
 
   return (
     <div className="card">
@@ -295,9 +429,14 @@ function LossHistorySection({ submissionId }) {
       >
         <div>
           <h3 className="form-section-title mb-0 pb-0 border-0">Loss History</h3>
-          <p className="text-xs text-gray-500 mt-1">Source documents available in Review tab</p>
+          <p className="text-xs text-gray-500 mt-1">Click a claim row to add UW notes</p>
         </div>
         <div className="flex items-center gap-3">
+          {claimsWithNotes > 0 && (
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+              {claimsWithNotes} with notes
+            </span>
+          )}
           {lossData?.count > 0 && (
             <span className="text-sm text-gray-500">{lossData.count} claims</span>
           )}
@@ -350,28 +489,7 @@ function LossHistorySection({ submissionId }) {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {claims.map((claim) => (
-                      <tr key={claim.id} className="hover:bg-gray-50">
-                        <td className="table-cell text-gray-600">
-                          {claim.loss_date ? new Date(claim.loss_date).toLocaleDateString() : '—'}
-                        </td>
-                        <td className="table-cell">{claim.loss_type || '—'}</td>
-                        <td className="table-cell text-gray-600 max-w-[200px] truncate" title={claim.description}>
-                          {claim.description || '—'}
-                        </td>
-                        <td className="table-cell">
-                          <span className={`badge ${
-                            claim.status?.toUpperCase() === 'CLOSED' ? 'badge-quoted' :
-                            claim.status?.toUpperCase() === 'OPEN' ? 'badge-pending' :
-                            'badge-received'
-                          }`}>
-                            {claim.status || '—'}
-                          </span>
-                        </td>
-                        <td className="table-cell text-right font-medium">
-                          {formatCurrency(claim.paid_amount)}
-                        </td>
-                        <td className="table-cell text-gray-600">{claim.carrier || '—'}</td>
-                      </tr>
+                      <ClaimRow key={claim.id} claim={claim} submissionId={submissionId} />
                     ))}
                   </tbody>
                 </table>

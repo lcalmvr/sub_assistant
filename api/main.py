@@ -1508,7 +1508,8 @@ def get_loss_history(submission_id: str):
                 SELECT id, loss_date, loss_type, loss_description, loss_amount,
                        claim_status, claim_number, carrier_name, policy_period_start,
                        policy_period_end, deductible, reserve_amount, paid_amount,
-                       recovery_amount, loss_ratio
+                       recovery_amount, loss_ratio,
+                       uw_notes, expected_total, note_source, note_updated_at, note_updated_by
                 FROM loss_history
                 WHERE submission_id = %s
                 ORDER BY loss_date DESC
@@ -1545,9 +1546,51 @@ def get_loss_history(submission_id: str):
                         "reserve_amount": float(r["reserve_amount"]) if r["reserve_amount"] else None,
                         "paid_amount": float(r["paid_amount"]) if r["paid_amount"] else None,
                         "recovery_amount": float(r["recovery_amount"]) if r["recovery_amount"] else None,
+                        # UW notes fields
+                        "uw_notes": r["uw_notes"],
+                        "expected_total": float(r["expected_total"]) if r["expected_total"] else None,
+                        "note_source": r["note_source"],
+                        "note_updated_at": r["note_updated_at"].isoformat() if r["note_updated_at"] else None,
+                        "note_updated_by": r["note_updated_by"],
                     }
                     for r in rows
                 ],
+            }
+
+
+class ClaimNotesUpdate(BaseModel):
+    uw_notes: str | None = None
+    expected_total: float | None = None
+    note_source: str | None = None
+
+
+@app.patch("/api/claims/{claim_id}/notes")
+def update_claim_notes(claim_id: int, notes: ClaimNotesUpdate):
+    """Update UW notes on a loss history claim."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE loss_history
+                SET uw_notes = %s,
+                    expected_total = %s,
+                    note_source = %s,
+                    note_updated_at = NOW(),
+                    note_updated_by = 'underwriter'
+                WHERE id = %s
+                RETURNING id, uw_notes, expected_total, note_source, note_updated_at
+            """, (notes.uw_notes, notes.expected_total, notes.note_source, claim_id))
+            result = cur.fetchone()
+            conn.commit()
+
+            if not result:
+                raise HTTPException(status_code=404, detail="Claim not found")
+
+            return {
+                "id": result["id"],
+                "uw_notes": result["uw_notes"],
+                "expected_total": float(result["expected_total"]) if result["expected_total"] else None,
+                "note_source": result["note_source"],
+                "note_updated_at": result["note_updated_at"].isoformat() if result["note_updated_at"] else None,
             }
 
 

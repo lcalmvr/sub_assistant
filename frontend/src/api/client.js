@@ -39,6 +39,8 @@ export const getFeedbackAnalytics = () => api.get('/feedback/analytics');
 // Loss History
 export const getLossHistory = (submissionId) =>
   api.get(`/submissions/${submissionId}/loss-history`);
+export const updateClaimNotes = (claimId, notes) =>
+  api.patch(`/claims/${claimId}/notes`, notes);
 
 // Extraction stats
 export const getExtractionStats = (days = 30) => api.get(`/extraction/stats?days=${days}`);
