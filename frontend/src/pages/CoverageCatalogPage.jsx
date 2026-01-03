@@ -364,12 +364,12 @@ function PendingReviewCard({ item, standardTags, onApprove, onReject, onUpdateTa
               {(policyForm.source_document_path || policyForm.source_document_id) && (
                 <div className="pt-4 border-t">
                   <a
-                    href={policyForm.source_document_path || `#doc-${policyForm.source_document_id}`}
+                    href={`${import.meta.env.VITE_API_URL || 'http://localhost:8001'}/api/policy-form-catalog/${policyForm.id}/document`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-purple-600 hover:text-purple-800 text-sm"
                   >
-                    View Source Document ↗
+                    View Source Document (PDF) ↗
                   </a>
                 </div>
               )}

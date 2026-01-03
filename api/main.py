@@ -1319,6 +1319,26 @@ def get_policy_form(form_id: str):
             return dict(form)
 
 
+@app.get("/api/policy-form-catalog/{form_id}/document")
+def get_policy_form_document(form_id: str):
+    """Serve the source document for a policy form."""
+    import os as os_module
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT source_document_path FROM policy_form_catalog WHERE id = %s
+            """, (form_id,))
+            row = cur.fetchone()
+            if not row or not row["source_document_path"]:
+                raise HTTPException(status_code=404, detail="Document not found")
+
+            path = row["source_document_path"]
+            if not os_module.path.exists(path):
+                raise HTTPException(status_code=404, detail="Document file not found")
+
+            return FileResponse(path, media_type="application/pdf", filename=os_module.path.basename(path))
+
+
 @app.get("/api/policy-form-catalog/queue")
 def get_form_extraction_queue(status: Optional[str] = None):
     """Get form extraction queue entries."""
