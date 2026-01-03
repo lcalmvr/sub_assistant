@@ -43,6 +43,15 @@ export const getExtractionStats = (days = 30) => api.get(`/extraction/stats?days
 export const getDocumentContent = (documentId) => api.get(`/documents/${documentId}/content`, { responseType: 'blob' });
 export const getDocumentUrl = (documentId) => `/api/documents/${documentId}/content`;
 
+// Document bbox data for highlighting
+export const getDocumentBbox = (documentId, searchText = null, page = null) => {
+  const params = new URLSearchParams();
+  if (searchText) params.append('search_text', searchText);
+  if (page) params.append('page', page);
+  const queryString = params.toString();
+  return api.get(`/documents/${documentId}/bbox${queryString ? '?' + queryString : ''}`);
+};
+
 // Document upload
 export const uploadSubmissionDocument = (submissionId, file, documentType = null) => {
   const formData = new FormData();

@@ -149,7 +149,7 @@ function FieldRow({ fieldName, extraction, onShowSource, onEdit, onAcceptValue }
         <div className="flex items-center gap-1 ml-2">
           {extraction.page && (
             <button
-              onClick={() => onShowSource?.(extraction.page, extraction.document_id, extraction.value, extraction.source_text)}
+              onClick={() => onShowSource?.(extraction.page, extraction.document_id, extraction.value, extraction.source_text, extraction.bbox)}
               className="text-xs px-2 py-1 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded"
               title={`View source on page ${extraction.page}`}
             >
@@ -190,7 +190,7 @@ function FieldRow({ fieldName, extraction, onShowSource, onEdit, onAcceptValue }
                 <div className="flex items-center gap-2">
                   {val.page && (
                     <button
-                      onClick={() => onShowSource?.(val.page, val.document_id, val.value, val.source_text)}
+                      onClick={() => onShowSource?.(val.page, val.document_id, val.value, val.source_text, val.bbox)}
                       className="text-xs px-2 py-1 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded"
                     >
                       View

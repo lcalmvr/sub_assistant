@@ -370,6 +370,68 @@ def extract_document(
         raise
 
 
+def _save_textract_bbox_data(document_id: str, key_value_pairs: dict) -> Dict[str, Dict]:
+    """
+    Save Textract key-value pairs with bbox to textract_extractions table.
+    Returns a mapping of field_key -> {id, value, page, bbox} for Claude to reference.
+    """
+    from core.db import get_conn
+
+    if not key_value_pairs:
+        return {}
+
+    textract_map: Dict[str, Dict] = {}
+
+    try:
+        with get_conn() as conn:
+            # Clear existing extractions for this document
+            conn.execute(
+                text("DELETE FROM textract_extractions WHERE document_id = :doc_id"),
+                {"doc_id": document_id}
+            )
+
+            # Insert new extractions and capture IDs
+            for field_key, data in key_value_pairs.items():
+                bbox = data.get("bbox", {})
+                result = conn.execute(
+                    text("""
+                        INSERT INTO textract_extractions
+                        (document_id, page_number, field_key, field_value, field_type,
+                         bbox_left, bbox_top, bbox_width, bbox_height, confidence)
+                        VALUES (:doc_id, :page, :key, :value, :type,
+                                :left, :top, :width, :height, :conf)
+                        RETURNING id
+                    """),
+                    {
+                        "doc_id": document_id,
+                        "page": data.get("page", 1),
+                        "key": field_key,
+                        "value": str(data.get("value", "")) if data.get("value") is not None else None,
+                        "type": data.get("type", "text"),
+                        "left": bbox.get("left"),
+                        "top": bbox.get("top"),
+                        "width": bbox.get("width"),
+                        "height": bbox.get("height"),
+                        "conf": data.get("confidence"),
+                    }
+                )
+                textract_id = str(result.fetchone()[0])
+
+                # Build mapping for Claude to reference
+                textract_map[field_key] = {
+                    "id": textract_id,
+                    "value": data.get("value"),
+                    "page": data.get("page", 1),
+                    "bbox": bbox,
+                }
+            conn.commit()
+            print(f"[orchestrator] Saved {len(key_value_pairs)} bbox entries for document {document_id}")
+    except Exception as e:
+        print(f"[orchestrator] Failed to save bbox data: {e}")
+
+    return textract_map
+
+
 def _extract_with_textract_forms(
     document_id: str,
     file_path: str,
@@ -384,6 +446,9 @@ def _extract_with_textract_forms(
 
     try:
         textract_result = extract_from_pdf(file_path)
+
+        # Save bbox data to database for highlighting
+        _save_textract_bbox_data(document_id, textract_result.key_value_pairs)
 
         return ExtractionResult(
             document_id=document_id,
@@ -852,6 +917,170 @@ def process_submission_documents(
     print(f"[orchestrator] Catalog: {stats['total_forms']} forms, {stats['queue']['pending']} pending extraction")
 
     return results
+
+
+def extract_application_with_bbox(
+    document_id: str,
+    file_path: str,
+    submission_id: Optional[str] = None,
+) -> Tuple[Optional[Dict], Dict[str, Dict]]:
+    """
+    Extract application data using Textract + Claude with bbox linking.
+
+    This runs Textract first to get key-value pairs with bounding boxes,
+    saves them to the database, then passes the data to Claude for
+    semantic extraction. Claude references which Textract entries
+    correspond to each extracted field.
+
+    Args:
+        document_id: UUID of the document record
+        file_path: Path to the PDF file
+        submission_id: Optional submission ID for context
+
+    Returns:
+        Tuple of (textract_kv_pairs, textract_map)
+        textract_map is dict of field_key -> {id, value, page, bbox}
+    """
+    from ai.textract_extractor import extract_from_pdf
+
+    textract_map = {}
+
+    try:
+        # Step 1: Run Textract to get key-value pairs with bbox
+        print(f"[orchestrator] Running Textract on {file_path}...")
+        textract_result = extract_from_pdf(file_path)
+
+        # Step 2: Save bbox data and get ID mapping
+        textract_map = _save_textract_bbox_data(document_id, textract_result.key_value_pairs)
+
+        print(f"[orchestrator] Saved {len(textract_map)} Textract entries with bbox")
+
+        return textract_result.key_value_pairs, textract_map
+
+    except Exception as e:
+        print(f"[orchestrator] Textract extraction failed: {e}")
+        return None, {}
+
+
+def link_provenance_to_textract(submission_id: str) -> int:
+    """
+    Link extraction_provenance records to textract_extractions using source_text matching.
+
+    This finds provenance records whose source_text matches Textract field_value,
+    and sets the textract_extraction_id for direct bbox lookup.
+
+    Args:
+        submission_id: The submission ID
+
+    Returns:
+        Number of records linked
+    """
+    linked_count = 0
+
+    try:
+        with get_conn() as conn:
+            # Get document IDs for this submission
+            doc_rows = conn.execute(
+                text("""
+                    SELECT id FROM documents WHERE submission_id = :sid
+                """),
+                {"sid": submission_id}
+            ).fetchall()
+
+            if not doc_rows:
+                return 0
+
+            doc_ids = [str(r[0]) for r in doc_rows]
+
+            # Get all textract extractions for these documents
+            # Use a subquery join instead of ANY to avoid UUID casting issues
+            textract_rows = conn.execute(
+                text("""
+                    SELECT te.id, te.document_id, te.page_number, te.field_key, te.field_value
+                    FROM textract_extractions te
+                    JOIN documents d ON d.id = te.document_id
+                    WHERE d.submission_id = :sid AND te.field_value IS NOT NULL
+                """),
+                {"sid": submission_id}
+            ).fetchall()
+
+            if not textract_rows:
+                return 0
+
+            # Build lookup dict
+            textract_entries = []
+            for row in textract_rows:
+                textract_entries.append({
+                    "id": str(row[0]),
+                    "document_id": str(row[1]),
+                    "page": row[2],
+                    "key": row[3],
+                    "value": str(row[4]).lower().strip() if row[4] else "",
+                })
+
+            # Get all provenance records for this submission that aren't linked yet
+            prov_rows = conn.execute(
+                text("""
+                    SELECT id, field_name, source_text, source_page, source_document_id
+                    FROM extraction_provenance
+                    WHERE submission_id = :sid
+                      AND source_text IS NOT NULL
+                      AND textract_extraction_id IS NULL
+                """),
+                {"sid": submission_id}
+            ).fetchall()
+
+            for row in prov_rows:
+                prov_id, field_name, source_text, source_page, source_doc_id = row
+
+                if not source_text:
+                    continue
+
+                source_text_lower = source_text.lower().strip()
+
+                # Find best matching Textract entry
+                best_match_id = None
+                best_score = 0
+
+                for entry in textract_entries:
+                    if not entry["value"]:
+                        continue
+
+                    # Prefer matches from same document
+                    same_doc = source_doc_id and str(source_doc_id) == entry["document_id"]
+                    same_page = source_page == entry["page"]
+
+                    # Exact match
+                    if source_text_lower == entry["value"]:
+                        score = 100 if same_doc and same_page else (90 if same_doc else 80)
+                        if score > best_score:
+                            best_score = score
+                            best_match_id = entry["id"]
+                    # Substring match
+                    elif entry["value"] in source_text_lower or source_text_lower in entry["value"]:
+                        score = 70 if same_doc and same_page else (60 if same_doc else 50)
+                        if score > best_score:
+                            best_score = score
+                            best_match_id = entry["id"]
+
+                if best_match_id:
+                    conn.execute(
+                        text("""
+                            UPDATE extraction_provenance
+                            SET textract_extraction_id = :tid
+                            WHERE id = :pid
+                        """),
+                        {"tid": best_match_id, "pid": prov_id}
+                    )
+                    linked_count += 1
+
+            conn.commit()
+            print(f"[orchestrator] Linked {linked_count} provenance records to Textract bbox")
+
+    except Exception as e:
+        print(f"[orchestrator] Failed to link provenance: {e}")
+
+    return linked_count
 
 
 def get_extraction_cost_estimate(

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions, acceptExtraction, uploadSubmissionDocument } from '../api/client';
+import { getSubmission, updateSubmission, getCredibility, getConflicts, resolveConflict, getSubmissionDocuments, getExtractions, acceptExtraction, uploadSubmissionDocument, getDocumentBbox } from '../api/client';
 import DocumentViewer from '../components/review/DocumentViewer';
 import ExtractionPanel from '../components/review/ExtractionPanel';
 import PdfHighlighter from '../components/review/PdfHighlighter';
@@ -417,6 +417,7 @@ export default function ReviewPage() {
   const [selectedDocument, setSelectedDocument] = useState(null);
   const [highlightPage, setHighlightPage] = useState(null);
   const [scrollTrigger, setScrollTrigger] = useState(0); // Increment to trigger scroll
+  const [activeHighlight, setActiveHighlight] = useState(null); // {page, bbox}
   const [viewMode, setViewMode] = useState('split'); // 'split', 'documents', 'extractions'
 
   const { data: submission, isLoading } = useQuery({
@@ -489,23 +490,59 @@ export default function ReviewPage() {
   };
 
   // Handle clicking a page link in extraction panel - scrolls PDF to that page
-  const handleShowSource = (pageNumber, documentId) => {
+  const handleShowSource = async (pageNumber, documentId, value, sourceText, bbox = null) => {
     // Switch to the correct document if specified
+    let targetDocId = documentId;
     if (documentId && documents?.documents?.length > 0) {
       const targetDoc = documents.documents.find(d => d.id === documentId);
       if (targetDoc) {
         setSelectedDocument(targetDoc);
+        targetDocId = targetDoc.id;
       }
     }
-
-    // Set the page to scroll to and trigger the scroll
-    setHighlightPage(pageNumber);
-    setScrollTrigger(prev => prev + 1);
 
     // If no document selected yet, select the primary or first one
     if (!selectedDocument && documents?.documents?.length > 0) {
       const primary = documents.documents.find(d => d.is_priority) || documents.documents[0];
       setSelectedDocument(primary);
+      targetDocId = primary.id;
+    }
+
+    // Set the page to scroll to and trigger the scroll
+    const targetPage = bbox?.page || pageNumber;
+    setHighlightPage(targetPage);
+    setScrollTrigger(prev => prev + 1);
+
+    // Use direct bbox if available (linked from textract_extractions)
+    if (bbox?.left != null) {
+      setActiveHighlight({
+        page: bbox.page || targetPage,
+        bbox: {
+          left: bbox.left,
+          top: bbox.top,
+          width: bbox.width,
+          height: bbox.height,
+        },
+      });
+    } else if (targetDocId && sourceText) {
+      // Fallback to fuzzy search if no direct bbox link
+      setActiveHighlight(null);
+      try {
+        const response = await getDocumentBbox(targetDocId, sourceText, pageNumber);
+        const matches = response.data?.extractions || [];
+        const bestMatch = matches[0];
+
+        if (bestMatch?.bbox?.left != null) {
+          setActiveHighlight({
+            page: bestMatch.page || pageNumber,
+            bbox: bestMatch.bbox,
+          });
+        }
+      } catch (err) {
+        console.warn('Failed to fetch bbox for highlighting:', err);
+      }
+    } else {
+      setActiveHighlight(null);
     }
 
     // Switch to split or documents view to show the PDF
@@ -645,6 +682,7 @@ export default function ReviewPage() {
                             url={selectedDocument.url}
                             initialPage={highlightPage || 1}
                             scrollTrigger={scrollTrigger}
+                            highlight={activeHighlight}
                             className="h-full"
                           />
                         </div>

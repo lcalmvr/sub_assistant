@@ -59,8 +59,24 @@ export default function PdfHighlighter({
 
       const pageRect = pageEl.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
-      const scrollTop = pageRect.top - containerRect.top + container.scrollTop - 8;
-      container.scrollTo({ top: scrollTop, behavior: 'smooth' });
+
+      // If we have a highlight on this page, scroll to center on it
+      let scrollTop;
+      if (highlight && highlight.page === pendingScroll && highlight.bbox && pageSize.height > 0) {
+        // Calculate highlight position within the page
+        const highlightTop = highlight.bbox.top * pageSize.height * scale;
+        const highlightHeight = highlight.bbox.height * pageSize.height * scale;
+        const highlightCenter = highlightTop + highlightHeight / 2;
+
+        // Scroll to put highlight in center of viewport
+        const containerHeight = containerRect.height;
+        scrollTop = pageRect.top - containerRect.top + container.scrollTop + highlightCenter - containerHeight / 2;
+      } else {
+        // No highlight, scroll to page top
+        scrollTop = pageRect.top - containerRect.top + container.scrollTop - 8;
+      }
+
+      container.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
       setPendingScroll(null);
     };
 
@@ -68,7 +84,7 @@ export default function PdfHighlighter({
     requestAnimationFrame(() => {
       requestAnimationFrame(scrollToPage);
     });
-  }, [pendingScroll, totalPages]);
+  }, [pendingScroll, totalPages, highlight, pageSize, scale]);
 
   const onDocumentLoadSuccess = ({ numPages }) => {
     setTotalPages(numPages);

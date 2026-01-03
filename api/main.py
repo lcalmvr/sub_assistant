@@ -381,6 +381,92 @@ def serve_document_file(document_id: str):
             return FileResponse(file_path, media_type=media_type, filename=row["filename"])
 
 
+@app.get("/api/documents/{document_id}/bbox")
+def get_document_bbox(document_id: str, search_text: Optional[str] = None, page: Optional[int] = None):
+    """
+    Get Textract bounding box data for a document.
+
+    Used for highlighting extracted fields on the PDF.
+
+    Args:
+        document_id: The document ID
+        search_text: Optional text to search for (fuzzy match on field_key and field_value)
+        page: Optional page number to filter by
+
+    Returns:
+        List of {field_key, field_value, page, bbox: {left, top, width, height}}
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if search_text:
+                # Search in both field_key and field_value using ILIKE and trigram
+                # If page is specified, prioritize matches on that page
+                cur.execute("""
+                    SELECT field_key, field_value, page_number, field_type,
+                           bbox_left, bbox_top, bbox_width, bbox_height,
+                           confidence,
+                           GREATEST(
+                               COALESCE(similarity(field_value, %s), 0),
+                               COALESCE(similarity(field_key, %s), 0)
+                           ) as sim,
+                           CASE WHEN page_number = %s THEN 1 ELSE 0 END as page_match
+                    FROM textract_extractions
+                    WHERE document_id = %s
+                      AND (
+                          field_value ILIKE %s
+                          OR field_key ILIKE %s
+                          OR similarity(field_value, %s) > 0.2
+                          OR similarity(field_key, %s) > 0.2
+                      )
+                    ORDER BY page_match DESC, sim DESC
+                    LIMIT 10
+                """, (search_text, search_text, page or 0, document_id,
+                      f"%{search_text}%", f"%{search_text}%", search_text, search_text))
+            elif page:
+                # Return all bbox data for a specific page
+                cur.execute("""
+                    SELECT field_key, field_value, page_number, field_type,
+                           bbox_left, bbox_top, bbox_width, bbox_height,
+                           confidence
+                    FROM textract_extractions
+                    WHERE document_id = %s AND page_number = %s
+                    ORDER BY bbox_top
+                """, (document_id, page))
+            else:
+                # Return all bbox data for the document
+                cur.execute("""
+                    SELECT field_key, field_value, page_number, field_type,
+                           bbox_left, bbox_top, bbox_width, bbox_height,
+                           confidence
+                    FROM textract_extractions
+                    WHERE document_id = %s
+                    ORDER BY page_number, bbox_top
+                """, (document_id,))
+
+            rows = cur.fetchall()
+
+            return {
+                "document_id": document_id,
+                "count": len(rows),
+                "extractions": [
+                    {
+                        "field_key": r["field_key"],
+                        "field_value": r["field_value"],
+                        "page": r["page_number"],
+                        "type": r["field_type"],
+                        "confidence": float(r["confidence"]) if r["confidence"] else None,
+                        "bbox": {
+                            "left": float(r["bbox_left"]) if r["bbox_left"] else None,
+                            "top": float(r["bbox_top"]) if r["bbox_top"] else None,
+                            "width": float(r["bbox_width"]) if r["bbox_width"] else None,
+                            "height": float(r["bbox_height"]) if r["bbox_height"] else None,
+                        }
+                    }
+                    for r in rows
+                ]
+            }
+
+
 @app.post("/api/submissions/{submission_id}/documents")
 async def upload_submission_document(
     submission_id: str,
@@ -590,7 +676,7 @@ def get_extractions(submission_id: str):
             """, (submission_id,))
             summary = cur.fetchone()
 
-            # Get all extractions with document info
+            # Get all extractions with document info and linked bbox
             cur.execute("""
                 SELECT
                     ep.id,
@@ -602,10 +688,17 @@ def get_extractions(submission_id: str):
                     ep.source_document_id,
                     ep.is_present,
                     ep.is_accepted,
+                    ep.textract_extraction_id,
                     d.filename as document_name,
-                    d.is_priority as is_priority_doc
+                    d.is_priority as is_priority_doc,
+                    te.bbox_left,
+                    te.bbox_top,
+                    te.bbox_width,
+                    te.bbox_height,
+                    te.page_number as bbox_page
                 FROM extraction_provenance ep
                 LEFT JOIN documents d ON d.id = ep.source_document_id
+                LEFT JOIN textract_extractions te ON te.id = ep.textract_extraction_id
                 WHERE ep.submission_id = %s
                 ORDER BY ep.field_name, d.is_priority DESC NULLS LAST, ep.confidence DESC
             """, (submission_id,))
@@ -625,6 +718,17 @@ def get_extractions(submission_id: str):
                 if full_field not in field_values:
                     field_values[full_field] = []
 
+                # Build bbox object if linked
+                bbox = None
+                if row.get("bbox_left") is not None:
+                    bbox = {
+                        "left": float(row["bbox_left"]),
+                        "top": float(row["bbox_top"]),
+                        "width": float(row["bbox_width"]),
+                        "height": float(row["bbox_height"]),
+                        "page": row["bbox_page"] or row["source_page"],
+                    }
+
                 field_values[full_field].append({
                     "id": str(row["id"]),
                     "value": row["extracted_value"],
@@ -636,6 +740,7 @@ def get_extractions(submission_id: str):
                     "is_priority_doc": row["is_priority_doc"],
                     "is_accepted": row["is_accepted"],
                     "is_present": row["is_present"],
+                    "bbox": bbox,
                 })
 
             # Build sections with primary value and conflicts
