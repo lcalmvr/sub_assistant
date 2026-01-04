@@ -1,10 +1,8 @@
-import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getSubmission,
-  updateSubmission,
-  getBrkrEmployments,
   getCredibility,
   getConflicts,
   resolveConflict,
@@ -20,36 +18,167 @@ import ExtractionPanel from '../components/review/ExtractionPanel';
 // Utility Functions
 // ─────────────────────────────────────────────────────────────
 
-function formatCurrency(value) {
-  if (!value) return '';
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(value);
+function formatCompact(value) {
+  if (!value) return '—';
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  return `$${value.toLocaleString()}`;
 }
 
-function parseCurrency(str) {
-  if (!str) return null;
-  const num = parseInt(str.replace(/[^0-9]/g, ''), 10);
-  return isNaN(num) ? null : num;
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 // ─────────────────────────────────────────────────────────────
-// Credibility Score Card
+// HITL Verification Checklist
 // ─────────────────────────────────────────────────────────────
 
-function CredibilityCard({ credibility }) {
+function VerificationChecklist({ submission, onVerify }) {
+  // Local state for verification (can be persisted to DB later)
+  const [verified, setVerified] = useState({});
+
+  const items = [
+    {
+      key: 'company',
+      label: 'Company Identity',
+      value: submission?.applicant_name,
+      description: 'AI analyzed the correct company',
+    },
+    {
+      key: 'revenue',
+      label: 'Revenue',
+      value: submission?.annual_revenue ? formatCompact(submission.annual_revenue) : null,
+      description: 'Extracted amount matches source',
+    },
+    {
+      key: 'broker',
+      label: 'Broker',
+      value: submission?.broker_name || submission?.broker_email,
+      description: 'Correct broker contact linked',
+    },
+    {
+      key: 'policy_period',
+      label: 'Policy Period',
+      value: submission?.effective_date && submission?.expiration_date
+        ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
+        : null,
+      description: 'Dates are accurate',
+    },
+    {
+      key: 'industry',
+      label: 'Industry',
+      value: submission?.naics_primary_title,
+      description: 'Classification is correct',
+    },
+  ];
+
+  const handleToggle = (key) => {
+    setVerified(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      onVerify?.(next);
+      return next;
+    });
+  };
+
+  const verifiedCount = Object.values(verified).filter(Boolean).length;
+  const totalCount = items.filter(i => i.value).length;
+  const allVerified = verifiedCount === totalCount && totalCount > 0;
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="form-section-title mb-0 pb-0 border-0">Verification Checklist</h3>
+        <div className="flex items-center gap-2">
+          {allVerified ? (
+            <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-full">
+              All verified
+            </span>
+          ) : (
+            <span className="text-sm text-gray-500">
+              {verifiedCount} of {totalCount} verified
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {items.map((item) => {
+          const hasValue = item.value != null;
+          const isVerified = verified[item.key];
+
+          return (
+            <div
+              key={item.key}
+              onClick={() => hasValue && handleToggle(item.key)}
+              className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                !hasValue
+                  ? 'bg-gray-50 border-gray-200 opacity-50'
+                  : isVerified
+                    ? 'bg-green-50 border-green-200 cursor-pointer hover:bg-green-100'
+                    : 'bg-white border-gray-200 cursor-pointer hover:bg-gray-50'
+              }`}
+            >
+              {/* Checkbox */}
+              <div className={`flex-shrink-0 w-5 h-5 rounded border-2 flex items-center justify-center ${
+                !hasValue
+                  ? 'border-gray-300 bg-gray-100'
+                  : isVerified
+                    ? 'border-green-500 bg-green-500'
+                    : 'border-gray-300 bg-white'
+              }`}>
+                {isVerified && (
+                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Label and value */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-medium ${isVerified ? 'text-green-800' : 'text-gray-900'}`}>
+                    {item.label}
+                  </span>
+                  <span className="text-xs text-gray-400">·</span>
+                  <span className="text-xs text-gray-500">{item.description}</span>
+                </div>
+                <div className={`text-sm mt-0.5 truncate ${isVerified ? 'text-green-700' : 'text-gray-600'}`}>
+                  {hasValue ? item.value : 'Not extracted'}
+                </div>
+              </div>
+
+              {/* Edit hint */}
+              {hasValue && !isVerified && (
+                <span className="text-xs text-gray-400">Click to verify</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-gray-500 mt-3">
+        Verify each item before proceeding to analysis. Click any item to mark as verified.
+      </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Application Quality Card (formerly Credibility)
+// ─────────────────────────────────────────────────────────────
+
+function ApplicationQualityCard({ credibility }) {
   if (!credibility?.has_score) {
     return (
       <div className="card bg-gray-50">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-gray-900">Application Credibility</h3>
-          <span className="text-sm text-gray-500">Not calculated</span>
+          <h3 className="form-section-title mb-0 pb-0 border-0">Application Quality</h3>
+          <span className="text-sm text-gray-500">Pending</span>
         </div>
         <p className="text-sm text-gray-500 mt-2">
-          Credibility score will be calculated when the application is processed.
+          Quality assessment will be available after document processing.
         </p>
       </div>
     );
@@ -75,10 +204,18 @@ function CredibilityCard({ credibility }) {
     return 'bg-red-500';
   };
 
+  // Capitalize dimension names
+  const formatDimensionName = (name) => {
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  };
+
   return (
     <div className={`card ${getBgColor(total_score)}`}>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Application Credibility</h3>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h3 className="form-section-title mb-0 pb-0 border-0">Application Quality</h3>
+          <p className="text-xs text-gray-500 mt-1">How complete and consistent is this application?</p>
+        </div>
         <div className="flex items-center gap-3">
           <span className={`text-2xl font-bold ${getScoreColor(total_score)}`}>
             {Math.round(total_score)}
@@ -89,12 +226,14 @@ function CredibilityCard({ credibility }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-4 mt-4">
         {dimensions && Object.entries(dimensions).map(([name, score]) => (
           <div key={name} className="bg-white/50 rounded-lg p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-medium text-gray-700 capitalize">{name}</span>
-              <span className={`text-sm font-semibold ${getScoreColor(score)}`}>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-sm font-medium text-gray-700 truncate">
+                {formatDimensionName(name)}
+              </span>
+              <span className={`text-sm font-semibold ${getScoreColor(score)} flex-shrink-0`}>
                 {score ? Math.round(score) : '—'}
               </span>
             </div>
@@ -108,10 +247,13 @@ function CredibilityCard({ credibility }) {
         ))}
       </div>
 
-      {issue_count > 0 && (
-        <p className="text-sm text-gray-600 mt-3">
-          {issue_count} issue{issue_count !== 1 ? 's' : ''} detected
-        </p>
+      {issue_count > 0 && total_score < 80 && (
+        <div className="mt-3 p-2 bg-white/50 rounded-lg">
+          <p className="text-sm text-gray-700">
+            <span className="font-medium">{issue_count} flag{issue_count !== 1 ? 's' : ''}</span>
+            <span className="text-gray-500"> — review recommended</span>
+          </p>
+        </div>
       )}
     </div>
   );
@@ -463,344 +605,6 @@ function DocumentSelector({ documents, selectedId, onSelect, onUpload, isUploadi
 }
 
 // ─────────────────────────────────────────────────────────────
-// Account Profile Form
-// ─────────────────────────────────────────────────────────────
-
-function AccountProfileForm({ submission, onSave, isSaving }) {
-  const { data: brokerEmployments } = useQuery({
-    queryKey: ['brkr-employments'],
-    queryFn: () => getBrkrEmployments({ active_only: true }).then(res => res.data),
-  });
-
-  const [formData, setFormData] = useState({
-    applicant_name: '',
-    website: '',
-    broker_employment_id: '',
-    broker_email: '',
-    annual_revenue: '',
-    naics_primary_title: '',
-    effective_date: '',
-    expiration_date: '',
-    opportunity_notes: '',
-  });
-  const [hasChanges, setHasChanges] = useState(false);
-  const [hasInitialized, setHasInitialized] = useState(false);
-  const [brokerSearch, setBrokerSearch] = useState('');
-  const [showBrokerDropdown, setShowBrokerDropdown] = useState(false);
-
-  // Initialize form from submission
-  useEffect(() => {
-    if (submission && !hasInitialized) {
-      setFormData({
-        applicant_name: submission.applicant_name || '',
-        website: submission.website || '',
-        broker_employment_id: submission.broker_employment_id || '',
-        broker_email: submission.broker_email || '',
-        annual_revenue: submission.annual_revenue ? formatCurrency(submission.annual_revenue) : '',
-        naics_primary_title: submission.naics_primary_title || '',
-        effective_date: submission.effective_date || '',
-        expiration_date: submission.expiration_date || '',
-        opportunity_notes: submission.opportunity_notes || '',
-      });
-      // Set broker search display
-      if (submission.broker_employment_id || submission.broker_email) {
-        const emp = brokerEmployments?.find(e =>
-          e.employment_id === submission.broker_employment_id ||
-          e.email === submission.broker_email
-        );
-        if (emp) {
-          setBrokerSearch(`${emp.person_name} - ${emp.org_name}`);
-        } else if (submission.broker_email) {
-          setBrokerSearch(submission.broker_email);
-        }
-      }
-      setHasInitialized(true);
-    }
-  }, [submission, hasInitialized, brokerEmployments]);
-
-  const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    setHasChanges(true);
-  };
-
-  const handleSelectBroker = (employment) => {
-    setFormData(prev => ({
-      ...prev,
-      broker_employment_id: employment.employment_id,
-      broker_email: employment.email,
-    }));
-    setBrokerSearch(`${employment.person_name} - ${employment.org_name}`);
-    setShowBrokerDropdown(false);
-    setHasChanges(true);
-  };
-
-  const filteredEmployments = brokerEmployments?.filter(emp => {
-    const search = brokerSearch.toLowerCase();
-    return (
-      (emp.email || '').toLowerCase().includes(search) ||
-      (emp.person_name || '').toLowerCase().includes(search) ||
-      (emp.org_name || '').toLowerCase().includes(search)
-    );
-  }) || [];
-
-  const handleSave = () => {
-    const updates = {};
-
-    if (formData.applicant_name !== (submission?.applicant_name || '')) {
-      updates.applicant_name = formData.applicant_name || null;
-    }
-    if (formData.website !== (submission?.website || '')) {
-      updates.website = formData.website || null;
-    }
-    if (formData.broker_email !== (submission?.broker_email || '')) {
-      updates.broker_email = formData.broker_email || null;
-    }
-    if (formData.broker_employment_id !== (submission?.broker_employment_id || '')) {
-      updates.broker_employment_id = formData.broker_employment_id || null;
-    }
-    if (formData.naics_primary_title !== (submission?.naics_primary_title || '')) {
-      updates.naics_primary_title = formData.naics_primary_title || null;
-    }
-    if (formData.effective_date !== (submission?.effective_date || '')) {
-      updates.effective_date = formData.effective_date || null;
-    }
-    if (formData.expiration_date !== (submission?.expiration_date || '')) {
-      updates.expiration_date = formData.expiration_date || null;
-    }
-    if (formData.opportunity_notes !== (submission?.opportunity_notes || '')) {
-      updates.opportunity_notes = formData.opportunity_notes || null;
-    }
-
-    const newRevenue = parseCurrency(formData.annual_revenue);
-    if (newRevenue !== submission?.annual_revenue) {
-      updates.annual_revenue = newRevenue;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      onSave(updates);
-      setHasChanges(false);
-    } else {
-      setHasChanges(false);
-    }
-  };
-
-  const handleCancel = () => {
-    setHasInitialized(false); // Force re-init
-    setHasChanges(false);
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Save Bar */}
-      {hasChanges && (
-        <div className="sticky top-0 z-10 bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center justify-between">
-          <span className="text-blue-800 text-sm font-medium">You have unsaved changes</span>
-          <div className="flex gap-2">
-            <button
-              className="btn bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-              onClick={handleCancel}
-              disabled={isSaving}
-            >
-              Cancel
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={handleSave}
-              disabled={isSaving}
-            >
-              {isSaving ? 'Saving...' : 'Save Changes'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Company Information */}
-      <div className="card">
-        <h3 className="form-section-title">Company Information</h3>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <label className="form-label">Applicant Name</label>
-            <input
-              type="text"
-              className="form-input"
-              value={formData.applicant_name}
-              onChange={(e) => handleChange('applicant_name', e.target.value)}
-              placeholder="Company name"
-            />
-          </div>
-          <div>
-            <label className="form-label">Website</label>
-            <input
-              type="text"
-              className="form-input"
-              value={formData.website}
-              onChange={(e) => handleChange('website', e.target.value)}
-              placeholder="example.com"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Broker Selection */}
-      <div className="card">
-        <h3 className="form-section-title">Broker</h3>
-        <div className="grid grid-cols-2 gap-6">
-          <div className="relative">
-            <label className="form-label">Broker Contact</label>
-            <input
-              type="text"
-              className="form-input"
-              value={brokerSearch}
-              onChange={(e) => {
-                setBrokerSearch(e.target.value);
-                setShowBrokerDropdown(true);
-              }}
-              onFocus={() => setShowBrokerDropdown(true)}
-              placeholder="Search by name, email, or organization..."
-            />
-            {showBrokerDropdown && (
-              <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-auto">
-                {filteredEmployments.length > 0 ? (
-                  filteredEmployments.map(emp => (
-                    <button
-                      key={emp.employment_id}
-                      type="button"
-                      className="w-full px-3 py-2 text-left hover:bg-gray-50 border-b border-gray-100 last:border-0"
-                      onClick={() => handleSelectBroker(emp)}
-                    >
-                      <div className="font-medium text-gray-900">{emp.person_name}</div>
-                      <div className="text-sm text-gray-500">{emp.email} · {emp.org_name}</div>
-                    </button>
-                  ))
-                ) : brokerSearch ? (
-                  <div className="px-3 py-4 text-center">
-                    <p className="text-sm text-gray-500 mb-2">No matching brokers found</p>
-                    <Link to="/brokers" className="text-sm text-purple-600 hover:text-purple-800 font-medium">
-                      Go to Broker Management to add new
-                    </Link>
-                  </div>
-                ) : (
-                  <div className="px-3 py-4 text-center text-sm text-gray-500">
-                    Start typing to search...
-                  </div>
-                )}
-              </div>
-            )}
-            {showBrokerDropdown && (
-              <div className="fixed inset-0 z-10" onClick={() => setShowBrokerDropdown(false)} />
-            )}
-          </div>
-          <div>
-            <label className="form-label">Submission Status</label>
-            <input
-              type="text"
-              className="form-input bg-gray-50"
-              value={submission?.submission_status?.replace(/_/g, ' ') || '—'}
-              readOnly
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Policy Period */}
-      <div className="card">
-        <h3 className="form-section-title">Policy Period</h3>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <label className="form-label">Effective Date</label>
-            <input
-              type="date"
-              className="form-input"
-              value={formData.effective_date}
-              onChange={(e) => handleChange('effective_date', e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="form-label">Expiration Date</label>
-            <input
-              type="date"
-              className="form-input"
-              value={formData.expiration_date}
-              onChange={(e) => handleChange('expiration_date', e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Opportunity Notes */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="form-section-title mb-0">Opportunity / Broker Request</h3>
-          <span className="text-xs text-gray-400">Displayed in pre-screen voting cards</span>
-        </div>
-        <textarea
-          className="form-input min-h-[100px]"
-          value={formData.opportunity_notes}
-          onChange={(e) => handleChange('opportunity_notes', e.target.value)}
-          placeholder="Enter opportunity details from broker request..."
-          rows={4}
-        />
-      </div>
-
-      {/* Financial Information */}
-      <div className="card">
-        <h3 className="form-section-title">Financial Information</h3>
-        <div className="grid grid-cols-2 gap-6">
-          <div>
-            <label className="form-label">Annual Revenue</label>
-            <input
-              type="text"
-              className="form-input"
-              value={formData.annual_revenue}
-              onChange={(e) => {
-                const raw = e.target.value.replace(/[^0-9]/g, '');
-                handleChange('annual_revenue', raw ? formatCurrency(parseInt(raw, 10)) : '');
-              }}
-              placeholder="$0"
-            />
-            <p className="text-xs text-gray-500 mt-1">Used for premium calculations</p>
-          </div>
-          <div>
-            <label className="form-label">Industry (NAICS)</label>
-            <input
-              type="text"
-              className="form-input"
-              value={formData.naics_primary_title}
-              onChange={(e) => handleChange('naics_primary_title', e.target.value)}
-              placeholder="e.g., Software Publishers"
-            />
-            <p className="text-xs text-gray-500 mt-1">Used for hazard class mapping</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Submission Metadata - read only */}
-      <div className="card">
-        <h3 className="form-section-title">Submission Details</h3>
-        <div className="grid grid-cols-3 gap-6">
-          <div className="metric-card">
-            <div className="metric-label">Submission ID</div>
-            <div className="text-sm font-mono text-gray-600 truncate" title={submission?.id}>
-              {submission?.id?.slice(0, 8)}...
-            </div>
-          </div>
-          <div className="metric-card">
-            <div className="metric-label">Created</div>
-            <div className="text-sm text-gray-900">
-              {submission?.created_at ? new Date(submission.created_at).toLocaleDateString() : '—'}
-            </div>
-          </div>
-          <div className="metric-card">
-            <div className="metric-label">NAICS Code</div>
-            <div className="text-sm text-gray-900">{submission?.naics_primary_code || '—'}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
 // Main Setup Page Component
 // ─────────────────────────────────────────────────────────────
 
@@ -842,13 +646,6 @@ export default function SetupPage() {
   });
 
   // Mutations
-  const updateMutation = useMutation({
-    mutationFn: (data) => updateSubmission(submissionId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries(['submission', submissionId]);
-    },
-  });
-
   const acceptExtractionMutation = useMutation({
     mutationFn: (extractionId) => acceptExtraction(extractionId),
     onSuccess: () => {
@@ -873,19 +670,45 @@ export default function SetupPage() {
   });
 
   // Handlers
+  const handleSelectDocument = (doc) => {
+    let url = `/api/documents/${doc.id}/file`; // Default fallback
+
+    if (doc.url) {
+      // Check if it's an external URL (e.g., Supabase storage) - use as-is
+      if (doc.url.startsWith('https://') && !doc.url.includes('localhost')) {
+        url = doc.url;
+      }
+      // Localhost URL - convert to relative path for Vite proxy
+      else if (doc.url.includes('localhost')) {
+        try {
+          const parsed = new URL(doc.url);
+          url = parsed.pathname;
+        } catch {
+          url = doc.url;
+        }
+      }
+      // Already a relative path
+      else if (doc.url.startsWith('/')) {
+        url = doc.url;
+      }
+    }
+
+    setSelectedDocument({ ...doc, url });
+  };
+
   const handleShowSource = async (pageNumber, documentId, value, sourceText, bbox = null, answer_bbox = null, question_bbox = null) => {
     let targetDocId = documentId;
     if (documentId && documents?.documents?.length > 0) {
       const targetDoc = documents.documents.find(d => d.id === documentId);
       if (targetDoc) {
-        setSelectedDocument(targetDoc);
+        handleSelectDocument(targetDoc);
         targetDocId = targetDoc.id;
       }
     }
 
     if (!selectedDocument && documents?.documents?.length > 0) {
       const primary = documents.documents.find(d => d.is_priority) || documents.documents[0];
-      setSelectedDocument(primary);
+      handleSelectDocument(primary);
       targetDocId = primary.id;
     }
 
@@ -893,10 +716,15 @@ export default function SetupPage() {
     setHighlightPage(targetPage);
     setScrollTrigger(prev => prev + 1);
 
+    // Question-only highlighting - more reliable since question text is cleaner in Textract
     let selectedBbox = null;
+
+    // Use question_bbox (most reliable)
     if (question_bbox?.left != null) {
       selectedBbox = question_bbox;
-    } else if (bbox?.left != null) {
+    }
+    // Legacy fallback
+    else if (bbox?.left != null) {
       selectedBbox = bbox;
     }
 
@@ -929,10 +757,6 @@ export default function SetupPage() {
     uploadDocumentMutation.mutate({ file, documentType });
   };
 
-  const handleAccountSave = (updates) => {
-    updateMutation.mutate(updates);
-  };
-
   if (isLoading) {
     return <div className="text-gray-500">Loading...</div>;
   }
@@ -941,13 +765,16 @@ export default function SetupPage() {
 
   return (
     <div className="space-y-6">
-      {/* Section 1: Credibility + Conflicts */}
+      {/* Section 1: Verification Checklist + Application Quality */}
       <div className="grid grid-cols-2 gap-6">
-        <CredibilityCard credibility={credibility} />
-        <ConflictsList conflicts={conflicts} submissionId={submissionId} />
+        <VerificationChecklist submission={submission} />
+        <ApplicationQualityCard credibility={credibility} />
       </div>
 
-      {/* Section 2: Document Verification - Always show */}
+      {/* Section 2: Conflicts - always show even if empty */}
+      <ConflictsList conflicts={conflicts} submissionId={submissionId} />
+
+      {/* Section 3: Document Verification - Always show */}
       <div className="card p-0 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 bg-gray-100 border-b">
           <h3 className="font-semibold text-gray-900">Document Verification</h3>
@@ -1008,7 +835,7 @@ export default function SetupPage() {
                 <DocumentSelector
                   documents={documents}
                   selectedId={selectedDocument?.id}
-                  onSelect={setSelectedDocument}
+                  onSelect={handleSelectDocument}
                   onUpload={handleDocumentUpload}
                   isUploading={uploadDocumentMutation.isPending}
                 />
@@ -1056,13 +883,6 @@ export default function SetupPage() {
           </div>
         )}
       </div>
-
-      {/* Section 3: Account Profile Form */}
-      <AccountProfileForm
-        submission={submission}
-        onSave={handleAccountSave}
-        isSaving={updateMutation.isPending}
-      />
     </div>
   );
 }
