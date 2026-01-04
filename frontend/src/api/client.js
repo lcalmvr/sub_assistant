@@ -416,4 +416,16 @@ export const markNotificationRead = (notificationId) =>
 export const markAllNotificationsRead = (userName) =>
   api.post('/workflow/notifications/read-all', null, { params: { user_name: userName } });
 
+// Pending Declines
+export const getPendingDeclines = () =>
+  api.get('/pending-declines');
+export const getPendingDecline = (declineId) =>
+  api.get(`/pending-declines/${declineId}`);
+export const updatePendingDecline = (declineId, data) =>
+  api.patch(`/pending-declines/${declineId}`, data);
+export const sendDecline = (declineId, userName) =>
+  api.post(`/pending-declines/${declineId}/send`, { user_name: userName });
+export const cancelPendingDecline = (declineId, userName) =>
+  api.post(`/pending-declines/${declineId}/cancel`, null, { params: { user_name: userName } });
+
 export default api;

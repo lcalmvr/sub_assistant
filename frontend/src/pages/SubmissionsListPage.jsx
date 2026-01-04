@@ -17,6 +17,7 @@ function StatusBadge({ status, isBound }) {
     declined: { label: 'Declined', class: 'badge-declined' },
     pending: { label: 'Pending', class: 'badge-pending' },
     pending_info: { label: 'Pending Info', class: 'badge-info-required' },
+    pending_decline: { label: 'Pending Decline', class: 'badge-declined' },
     renewal_expected: { label: 'Renewal Expected', class: 'badge-renewal' },
   };
 

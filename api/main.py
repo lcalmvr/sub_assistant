@@ -7024,7 +7024,7 @@ def record_workflow_vote(submission_id: str, vote_request: VoteRequest):
                         next_stage = 'uw_work'
                     elif winning_vote == 'pass':
                         next_stage = 'complete'
-                        final_decision = 'declined'
+                        final_decision = 'pending_decline'  # Not 'declined' yet - needs UW review
                 elif stage == 'formal':
                     if winning_vote == 'approve':
                         next_stage = 'complete'
@@ -7062,6 +7062,38 @@ def record_workflow_vote(submission_id: str, vote_request: VoteRequest):
                             SET submission_status = %s
                             WHERE id = %s
                         """, (final_decision, submission_id))
+
+                        # If pending_decline, create pending decline record with aggregated reasons
+                        if final_decision == 'pending_decline':
+                            # Get all decline reasons from pass voters
+                            cur.execute("""
+                                SELECT DISTINCT unnest(reasons) as reason
+                                FROM workflow_votes
+                                WHERE submission_id = %s AND stage = 'pre_screen' AND vote = 'pass'
+                                  AND reasons IS NOT NULL
+                            """, (submission_id,))
+                            all_reasons = [r['reason'] for r in cur.fetchall()]
+
+                            # Get comments from pass voters as additional notes
+                            cur.execute("""
+                                SELECT user_name, comment
+                                FROM workflow_votes
+                                WHERE submission_id = %s AND stage = 'pre_screen' AND vote = 'pass'
+                                  AND comment IS NOT NULL AND comment != ''
+                            """, (submission_id,))
+                            comments = [f"{r['user_name']}: {r['comment']}" for r in cur.fetchall()]
+                            additional_notes = "\n".join(comments) if comments else None
+
+                            # Create pending decline
+                            cur.execute("""
+                                INSERT INTO pending_declines (submission_id, decline_reasons, additional_notes)
+                                VALUES (%s, %s, %s)
+                                ON CONFLICT (submission_id) DO UPDATE
+                                SET decline_reasons = EXCLUDED.decline_reasons,
+                                    additional_notes = EXCLUDED.additional_notes,
+                                    status = 'pending',
+                                    updated_at = now()
+                            """, (submission_id, all_reasons or ['No specific reason provided'], additional_notes))
 
                     conn.commit()
                     result['stage_advanced'] = True
@@ -7358,6 +7390,232 @@ def get_uw_recommendation(submission_id: str):
                 return {"recommendation": None}
 
             return {"recommendation": rec}
+
+
+# ─────────────────────────────────────────────────────────────
+# Pending Declines
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/pending-declines")
+def list_pending_declines():
+    """List pending declines awaiting review."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    pd.id,
+                    pd.submission_id,
+                    s.applicant_name,
+                    s.broker_email,
+                    b.company_name as broker_company,
+                    pd.decline_reasons,
+                    pd.additional_notes,
+                    pd.status,
+                    pd.created_at,
+                    pd.reviewed_by_name,
+                    pd.reviewed_at,
+                    EXTRACT(EPOCH FROM (now() - pd.created_at)) / 3600 as hours_pending
+                FROM pending_declines pd
+                JOIN submissions s ON s.id = pd.submission_id
+                LEFT JOIN brokers b ON b.id = s.broker_id
+                WHERE pd.status = 'pending'
+                ORDER BY pd.created_at
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/pending-declines/{decline_id}")
+def get_pending_decline(decline_id: str):
+    """Get a specific pending decline."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    pd.*,
+                    s.applicant_name,
+                    s.broker_email,
+                    s.naics_primary_title,
+                    s.annual_revenue,
+                    b.company_name as broker_company,
+                    b.contact_email as broker_contact
+                FROM pending_declines pd
+                JOIN submissions s ON s.id = pd.submission_id
+                LEFT JOIN brokers b ON b.id = s.broker_id
+                WHERE pd.id = %s
+            """, (decline_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Pending decline not found")
+            return row
+
+
+class UpdatePendingDeclineRequest(BaseModel):
+    decline_reasons: Optional[List[str]] = None
+    additional_notes: Optional[str] = None
+    decline_letter: Optional[str] = None
+    reviewed_by_name: Optional[str] = None
+
+
+@app.patch("/api/pending-declines/{decline_id}")
+def update_pending_decline(decline_id: str, data: UpdatePendingDeclineRequest):
+    """Update a pending decline (edit reasons, letter, mark reviewed)."""
+    updates = data.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # If reviewed_by_name is provided, mark as reviewed
+    if 'reviewed_by_name' in updates:
+        updates['reviewed_at'] = 'now()'
+        updates['status'] = 'reviewed'
+
+    updates['updated_at'] = 'now()'
+
+    # Build SQL - handle the now() special case
+    set_parts = []
+    values = []
+    for k, v in updates.items():
+        if v == 'now()':
+            set_parts.append(f"{k} = now()")
+        else:
+            set_parts.append(f"{k} = %s")
+            values.append(v)
+
+    set_clause = ", ".join(set_parts)
+    values.append(decline_id)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE pending_declines SET {set_clause} WHERE id = %s RETURNING id",
+                values
+            )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Pending decline not found")
+            conn.commit()
+
+    return {"status": "updated", "id": decline_id}
+
+
+class SendDeclineRequest(BaseModel):
+    user_name: str
+
+
+@app.post("/api/pending-declines/{decline_id}/send")
+def send_decline(decline_id: str, data: SendDeclineRequest):
+    """Mark decline as sent and finalize the submission status."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get the pending decline
+            cur.execute("""
+                SELECT submission_id, status
+                FROM pending_declines
+                WHERE id = %s
+            """, (decline_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Pending decline not found")
+
+            if row['status'] == 'sent':
+                raise HTTPException(status_code=400, detail="Decline already sent")
+
+            submission_id = row['submission_id']
+
+            # Update pending decline status to sent
+            cur.execute("""
+                UPDATE pending_declines
+                SET status = 'sent',
+                    sent_at = now(),
+                    sent_by_name = %s,
+                    updated_at = now()
+                WHERE id = %s
+            """, (data.user_name, decline_id))
+
+            # Update submission status from pending_decline to declined
+            cur.execute("""
+                UPDATE submissions
+                SET submission_status = 'declined'
+                WHERE id = %s
+            """, (submission_id,))
+
+            # Update workflow final_decision to declined
+            cur.execute("""
+                UPDATE submission_workflow
+                SET final_decision = 'declined'
+                WHERE submission_id = %s
+            """, (submission_id,))
+
+            conn.commit()
+
+            return {
+                "status": "sent",
+                "submission_id": submission_id,
+                "message": "Decline sent to broker"
+            }
+
+
+@app.post("/api/pending-declines/{decline_id}/cancel")
+def cancel_pending_decline(decline_id: str, user_name: str):
+    """Cancel a pending decline (if team decides to pursue after all)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get the pending decline
+            cur.execute("""
+                SELECT submission_id, status
+                FROM pending_declines
+                WHERE id = %s
+            """, (decline_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Pending decline not found")
+
+            if row['status'] == 'sent':
+                raise HTTPException(status_code=400, detail="Cannot cancel - decline already sent")
+
+            submission_id = row['submission_id']
+
+            # Update pending decline status to cancelled
+            cur.execute("""
+                UPDATE pending_declines
+                SET status = 'cancelled',
+                    updated_at = now()
+                WHERE id = %s
+            """, (decline_id,))
+
+            # Move submission back to uw_work stage
+            cur.execute("""
+                UPDATE submission_workflow
+                SET current_stage = 'uw_work',
+                    stage_entered_at = now(),
+                    completed_at = NULL,
+                    final_decision = NULL,
+                    updated_at = now()
+                WHERE submission_id = %s
+            """, (submission_id,))
+
+            # Update submission status back to received
+            cur.execute("""
+                UPDATE submissions
+                SET submission_status = 'received'
+                WHERE id = %s
+            """, (submission_id,))
+
+            # Log transition
+            cur.execute("""
+                INSERT INTO workflow_transitions (
+                    submission_id, from_stage, to_stage, trigger,
+                    trigger_details, triggered_by_user_name
+                )
+                VALUES (%s, 'complete', 'uw_work', 'decline_cancelled',
+                        %s, %s)
+            """, (submission_id, Json({'cancelled_by': user_name}), user_name))
+
+            conn.commit()
+
+            return {
+                "status": "cancelled",
+                "submission_id": submission_id,
+                "message": "Decline cancelled - submission moved back to UW work"
+            }
 
 
 # ─────────────────────────────────────────────────────────────

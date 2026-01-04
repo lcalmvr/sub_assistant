@@ -206,6 +206,14 @@ CREATE OR REPLACE VIEW v_needs_votes AS
 SELECT
     s.id as submission_id,
     s.applicant_name,
+    s.naics_primary_title,
+    s.annual_revenue,
+    s.bullet_point_summary,
+    s.opportunity_notes,
+    s.broker_email,
+    b.company_name as broker_company,
+    s.effective_date,
+    s.expiration_date,
     s.created_at as submitted_at,
     sw.current_stage,
     sw.stage_entered_at,
@@ -214,15 +222,23 @@ SELECT
     sw.stage_entered_at + (ws.timeout_hours || ' hours')::INTERVAL as deadline,
     EXTRACT(EPOCH FROM (sw.stage_entered_at + (ws.timeout_hours || ' hours')::INTERVAL - now())) / 3600 as hours_remaining,
     COALESCE(vote_counts.total_votes, 0) as votes_cast,
-    ws.required_votes - COALESCE(vote_counts.total_votes, 0) as votes_needed
+    ws.required_votes - COALESCE(vote_counts.total_votes, 0) as votes_needed,
+    loss_summary.loss_count,
+    loss_summary.total_paid
 FROM submissions s
 JOIN submission_workflow sw ON sw.submission_id = s.id
 JOIN workflow_stages ws ON ws.stage_key = sw.current_stage
+LEFT JOIN brokers b ON b.id = s.broker_id
 LEFT JOIN (
     SELECT submission_id, stage, COUNT(*) as total_votes
     FROM workflow_votes
     GROUP BY submission_id, stage
 ) vote_counts ON vote_counts.submission_id = s.id AND vote_counts.stage = sw.current_stage
+LEFT JOIN (
+    SELECT submission_id, COUNT(*) as loss_count, SUM(COALESCE(paid_amount, 0)) as total_paid
+    FROM loss_history
+    GROUP BY submission_id
+) loss_summary ON loss_summary.submission_id = s.id
 WHERE sw.current_stage IN ('pre_screen', 'formal')
   AND sw.completed_at IS NULL
   AND ws.required_votes > 0;
@@ -590,6 +606,66 @@ FROM submissions s
 WHERE NOT EXISTS (
     SELECT 1 FROM submission_workflow sw WHERE sw.submission_id = s.id
 );
+
+
+-- ============================================================
+-- 10. PENDING DECLINES (For UW Review Before Sending to Broker)
+-- ============================================================
+-- When a submission is passed in pre-screen, create a pending decline
+-- for UW review before notifying the broker.
+
+CREATE TABLE IF NOT EXISTS pending_declines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    submission_id UUID NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+
+    -- Decline reasons aggregated from voters
+    decline_reasons TEXT[] NOT NULL,
+    additional_notes TEXT,
+
+    -- Draft decline letter (optional, for customization)
+    decline_letter TEXT,
+
+    -- Review status
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- 'pending', 'reviewed', 'sent', 'cancelled'
+
+    -- When reviewed
+    reviewed_by_id UUID,
+    reviewed_by_name VARCHAR(100),
+    reviewed_at TIMESTAMPTZ,
+
+    -- When sent to broker
+    sent_at TIMESTAMPTZ,
+    sent_by_name VARCHAR(100),
+
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+
+    UNIQUE(submission_id)  -- Only one pending decline per submission
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_declines_status ON pending_declines(status);
+CREATE INDEX IF NOT EXISTS idx_pending_declines_created ON pending_declines(created_at);
+
+
+-- View for pending declines queue
+CREATE OR REPLACE VIEW v_pending_declines AS
+SELECT
+    pd.id,
+    pd.submission_id,
+    s.applicant_name,
+    s.broker_email,
+    b.company_name as broker_company,
+    pd.decline_reasons,
+    pd.additional_notes,
+    pd.status,
+    pd.created_at,
+    pd.reviewed_by_name,
+    pd.reviewed_at,
+    EXTRACT(EPOCH FROM (now() - pd.created_at)) / 3600 as hours_pending
+FROM pending_declines pd
+JOIN submissions s ON s.id = pd.submission_id
+LEFT JOIN brokers b ON b.id = s.broker_id
+ORDER BY pd.created_at;
 
 
 -- ============================================================

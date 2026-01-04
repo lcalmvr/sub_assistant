@@ -8,6 +8,9 @@ import {
   recordVote,
   claimSubmission,
   getUwRecommendation,
+  getPendingDeclines,
+  sendDecline,
+  cancelPendingDecline,
 } from '../api/client';
 
 // Available users for the team
@@ -79,10 +82,24 @@ function VoteButton({ label, icon, onClick, disabled, variant = 'default', selec
   );
 }
 
+// Decline reasons for pass votes
+const DECLINE_REASONS = [
+  'Outside appetite',
+  'Industry exclusion',
+  'Revenue too small',
+  'Revenue too large',
+  'Loss history',
+  'Insufficient controls',
+  'Broker relationship',
+  'Capacity constraints',
+];
+
 // Pre-screen vote card
 function PreScreenCard({ item, onVote, isVoting }) {
   const [comment, setComment] = useState('');
   const [showComment, setShowComment] = useState(false);
+  const [showPassReasons, setShowPassReasons] = useState(false);
+  const [selectedReasons, setSelectedReasons] = useState([]);
   const hasVoted = !!item.my_vote;
 
   const handleVote = (vote) => {
@@ -90,7 +107,18 @@ function PreScreenCard({ item, onVote, isVoting }) {
       submissionId: item.submission_id,
       vote,
       comment: comment || null,
+      reasons: vote === 'pass' ? selectedReasons : null,
     });
+    setShowPassReasons(false);
+    setSelectedReasons([]);
+  };
+
+  const toggleReason = (reason) => {
+    setSelectedReasons(prev =>
+      prev.includes(reason)
+        ? prev.filter(r => r !== reason)
+        : [...prev, reason]
+    );
   };
 
   const hoursRemaining = item.hours_remaining;
@@ -115,6 +143,68 @@ function PreScreenCard({ item, onVote, isVoting }) {
           {isUrgent && <span className="mr-1">&#9888;</span>}
           {formatTimeRemaining(hoursRemaining)}
         </div>
+      </div>
+
+      {/* Submission context */}
+      <div className="px-4 py-3 border-b border-gray-100 space-y-2">
+        {/* Opportunity notes - prominent if present */}
+        {item.opportunity_notes && (
+          <div className="p-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+            {item.opportunity_notes}
+          </div>
+        )}
+
+        {/* Industry & Revenue */}
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          {item.naics_primary_title && (
+            <span className="truncate max-w-[200px]">{item.naics_primary_title}</span>
+          )}
+          {item.naics_primary_title && item.annual_revenue && (
+            <span className="text-gray-300">·</span>
+          )}
+          {item.annual_revenue && (
+            <span>{formatCurrency(item.annual_revenue)} revenue</span>
+          )}
+        </div>
+
+        {/* Broker & Dates */}
+        <div className="flex items-center gap-2 text-sm">
+          {(item.broker_company || item.broker_email) && (
+            <span className="text-gray-600">
+              {item.broker_company || item.broker_email?.split('@')[0]}
+            </span>
+          )}
+          {(item.broker_company || item.broker_email) && (item.effective_date || item.expiration_date) && (
+            <span className="text-gray-300">·</span>
+          )}
+          {item.effective_date && (
+            <span className="text-gray-500">
+              Eff: {new Date(item.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </span>
+          )}
+        </div>
+
+        {/* Loss history */}
+        {item.loss_count > 0 && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+              item.total_paid > 0 ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+            }`}>
+              {item.loss_count} {item.loss_count === 1 ? 'loss' : 'losses'}
+              {item.total_paid > 0 && ` · ${formatCurrency(item.total_paid)} paid`}
+            </span>
+          </div>
+        )}
+
+        {/* Summary */}
+        {item.bullet_point_summary && (
+          <p className="text-sm text-gray-500 line-clamp-2">{item.bullet_point_summary}</p>
+        )}
+
+        {/* Empty state */}
+        {!item.opportunity_notes && !item.naics_primary_title && !item.annual_revenue && !item.broker_company && !item.broker_email && !item.bullet_point_summary && (
+          <p className="text-sm text-gray-400 italic">No submission details available</p>
+        )}
       </div>
 
       {/* Vote tally */}
@@ -152,7 +242,7 @@ function PreScreenCard({ item, onVote, isVoting }) {
         )}
 
         {/* Vote buttons */}
-        {!hasVoted && (
+        {!hasVoted && !showPassReasons && (
           <div className="space-y-3">
             <div className="flex gap-2">
               <VoteButton
@@ -166,7 +256,7 @@ function PreScreenCard({ item, onVote, isVoting }) {
                 label="Pass"
                 icon="&#128078;"
                 variant="pass"
-                onClick={() => handleVote('pass')}
+                onClick={() => setShowPassReasons(true)}
                 disabled={isVoting}
               />
               <VoteButton
@@ -197,6 +287,50 @@ function PreScreenCard({ item, onVote, isVoting }) {
                 />
               )}
             </div>
+          </div>
+        )}
+
+        {/* Pass reason selection */}
+        {!hasVoted && showPassReasons && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">Why are we passing?</span>
+              <button
+                onClick={() => { setShowPassReasons(false); setSelectedReasons([]); }}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {DECLINE_REASONS.map(reason => (
+                <button
+                  key={reason}
+                  onClick={() => toggleReason(reason)}
+                  className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
+                    selectedReasons.includes(reason)
+                      ? 'bg-red-100 border-red-300 text-red-700'
+                      : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Additional notes (optional)..."
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-500"
+            />
+            <button
+              onClick={() => handleVote('pass')}
+              disabled={isVoting || selectedReasons.length === 0}
+              className="w-full px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isVoting ? 'Submitting...' : `Pass - ${selectedReasons.length === 0 ? 'Select reason(s)' : selectedReasons.join(', ')}`}
+            </button>
           </div>
         )}
       </div>
@@ -419,6 +553,104 @@ function MyWorkCard({ item }) {
   );
 }
 
+// Pending decline card
+function PendingDeclineCard({ item, onSend, onCancel, isSending, isCancelling }) {
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  return (
+    <div className="bg-white rounded-lg border border-red-200 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-1 text-xs font-medium bg-red-100 text-red-700 rounded">
+            PENDING DECLINE
+          </span>
+          <Link
+            to={`/submissions/${item.submission_id}/account`}
+            className="font-semibold text-gray-900 hover:text-purple-600"
+          >
+            {item.applicant_name}
+          </Link>
+        </div>
+        <div className="text-sm text-gray-500">
+          {Math.round(item.hours_pending || 0)}h ago
+        </div>
+      </div>
+
+      <div className="px-4 py-3">
+        {/* Decline reasons */}
+        <div className="flex flex-wrap gap-1 mb-2">
+          {item.decline_reasons?.map((reason, idx) => (
+            <span
+              key={idx}
+              className="px-2 py-0.5 text-xs bg-red-50 text-red-700 rounded-full"
+            >
+              {reason}
+            </span>
+          ))}
+        </div>
+
+        {/* Broker info */}
+        {(item.broker_company || item.broker_email) && (
+          <div className="text-sm text-gray-500 mb-3">
+            Broker: {item.broker_company || item.broker_email}
+          </div>
+        )}
+
+        {/* Additional notes */}
+        {item.additional_notes && (
+          <div className="text-sm text-gray-600 italic mb-3 p-2 bg-gray-50 rounded">
+            {item.additional_notes}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        {!showConfirm ? (
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowConfirm(true)}
+              disabled={isSending}
+              className="flex-1 px-3 py-2 bg-red-600 text-white text-sm rounded font-medium hover:bg-red-700 disabled:opacity-50"
+            >
+              Send Decline
+            </button>
+            <button
+              onClick={() => onCancel(item.id)}
+              disabled={isCancelling}
+              className="px-3 py-2 border border-gray-200 text-gray-600 text-sm rounded font-medium hover:bg-gray-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm text-gray-600">
+              Send decline letter to broker? This cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  onSend(item.id);
+                  setShowConfirm(false);
+                }}
+                disabled={isSending}
+                className="flex-1 px-3 py-2 bg-red-600 text-white text-sm rounded font-medium hover:bg-red-700 disabled:opacity-50"
+              >
+                {isSending ? 'Sending...' : 'Confirm Send'}
+              </button>
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="px-3 py-2 border border-gray-200 text-gray-600 text-sm rounded font-medium hover:bg-gray-50"
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Main page component
 export default function VoteQueuePage() {
   const queryClient = useQueryClient();
@@ -454,10 +686,17 @@ export default function VoteQueuePage() {
     refetchInterval: 60000,
   });
 
+  // Fetch pending declines
+  const { data: pendingDeclinesData } = useQuery({
+    queryKey: ['pending-declines'],
+    queryFn: () => getPendingDeclines().then(res => res.data),
+    refetchInterval: 30000,
+  });
+
   // Vote mutation
   const voteMutation = useMutation({
-    mutationFn: ({ submissionId, vote, comment }) =>
-      recordVote(submissionId, { user_name: currentUser, vote, comment }),
+    mutationFn: ({ submissionId, vote, comment, reasons }) =>
+      recordVote(submissionId, { user_name: currentUser, vote, comment, reasons }),
     onSuccess: () => {
       queryClient.invalidateQueries(['workflow-queue']);
       queryClient.invalidateQueries(['workflow-summary']);
@@ -473,9 +712,29 @@ export default function VoteQueuePage() {
     },
   });
 
+  // Send decline mutation
+  const sendDeclineMutation = useMutation({
+    mutationFn: (declineId) => sendDecline(declineId, currentUser),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['pending-declines']);
+      queryClient.invalidateQueries(['workflow-summary']);
+    },
+  });
+
+  // Cancel decline mutation
+  const cancelDeclineMutation = useMutation({
+    mutationFn: (declineId) => cancelPendingDecline(declineId, currentUser),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['pending-declines']);
+      queryClient.invalidateQueries(['workflow-queue']);
+      queryClient.invalidateQueries(['workflow-summary']);
+    },
+  });
+
   const needsVotes = queueData?.needs_votes || [];
   const readyToWork = queueData?.ready_to_work || [];
   const myWork = myWorkData?.my_work || [];
+  const pendingDeclines = pendingDeclinesData || [];
 
   // Separate pre-screen and formal review items
   const preScreenItems = needsVotes.filter(item => item.current_stage === 'pre_screen');
@@ -520,7 +779,7 @@ export default function VoteQueuePage() {
 
       {/* Summary Cards */}
       <div className="max-w-6xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-5 gap-4 mb-8">
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="text-3xl font-bold text-red-600">{needsMyVote.length}</div>
             <div className="text-sm text-gray-500">Need My Vote</div>
@@ -532,6 +791,10 @@ export default function VoteQueuePage() {
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="text-3xl font-bold text-purple-600">{readyToWork.length}</div>
             <div className="text-sm text-gray-500">Ready to Work</div>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <div className="text-3xl font-bold text-rose-600">{pendingDeclines.length}</div>
+            <div className="text-sm text-gray-500">Pending Declines</div>
           </div>
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="text-3xl font-bold text-green-600">
@@ -651,8 +914,33 @@ export default function VoteQueuePage() {
               </div>
             )}
 
+            {/* Pending Declines */}
+            {pendingDeclines.length > 0 && (
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <span className="w-3 h-3 bg-red-500 rounded-full"></span>
+                  Pending Declines
+                  <span className="text-sm font-normal text-gray-500">
+                    ({pendingDeclines.length} awaiting review)
+                  </span>
+                </h2>
+                <div className="space-y-3">
+                  {pendingDeclines.map((item) => (
+                    <PendingDeclineCard
+                      key={item.id}
+                      item={item}
+                      onSend={(id) => sendDeclineMutation.mutate(id)}
+                      onCancel={(id) => cancelDeclineMutation.mutate(id)}
+                      isSending={sendDeclineMutation.isPending}
+                      isCancelling={cancelDeclineMutation.isPending}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Empty state for work */}
-            {myWork.length === 0 && readyToWork.length === 0 && !myWorkLoading && (
+            {myWork.length === 0 && readyToWork.length === 0 && pendingDeclines.length === 0 && !myWorkLoading && (
               <div className="bg-white rounded-lg border border-gray-200 p-6 text-center">
                 <div className="text-gray-500 text-sm">
                   No accounts in work queue.
