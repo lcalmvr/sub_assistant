@@ -386,4 +386,34 @@ export const getSchemaRecommendations = (status = 'pending') =>
 export const actionSchemaRecommendation = (recId, action, notes = null) =>
   api.post(`/schemas/recommendations/${recId}`, { action, notes });
 
+// Collaborative Workflow
+export const getWorkflowStages = () => api.get('/workflow/stages');
+export const getWorkflowQueue = (userName = null) =>
+  api.get('/workflow/queue', { params: { user_name: userName } });
+export const getWorkflowSummary = () => api.get('/workflow/summary');
+export const getMyWork = (userName) =>
+  api.get('/workflow/my-work', { params: { user_name: userName } });
+export const getSubmissionWorkflow = (submissionId) =>
+  api.get(`/workflow/${submissionId}`);
+export const getWorkflowHistory = (submissionId) =>
+  api.get(`/workflow/${submissionId}/history`);
+export const startPrescreen = (submissionId) =>
+  api.post(`/workflow/${submissionId}/start-prescreen`);
+export const recordVote = (submissionId, vote) =>
+  api.post(`/workflow/${submissionId}/vote`, vote);
+export const claimSubmission = (submissionId, userName) =>
+  api.post(`/workflow/${submissionId}/claim`, { user_name: userName });
+export const unclaimSubmission = (submissionId, userName) =>
+  api.post(`/workflow/${submissionId}/unclaim`, { user_name: userName });
+export const submitForReview = (submissionId, recommendation) =>
+  api.post(`/workflow/${submissionId}/submit-for-review`, recommendation);
+export const getUwRecommendation = (submissionId) =>
+  api.get(`/workflow/${submissionId}/recommendation`);
+export const getWorkflowNotifications = (userName, unreadOnly = false) =>
+  api.get('/workflow/notifications', { params: { user_name: userName, unread_only: unreadOnly } });
+export const markNotificationRead = (notificationId) =>
+  api.post(`/workflow/notifications/${notificationId}/read`);
+export const markAllNotificationsRead = (userName) =>
+  api.post('/workflow/notifications/read-all', null, { params: { user_name: userName } });
+
 export default api;

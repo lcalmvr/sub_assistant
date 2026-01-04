@@ -57,6 +57,7 @@ import BrokersPage from './pages/BrokersPage';
 import CoverageCatalogPage from './pages/CoverageCatalogPage';
 import AccountDashboardPage from './pages/AccountDashboardPage';
 import DocumentLibraryPage from './pages/DocumentLibraryPage';
+import VoteQueuePage from './pages/VoteQueuePage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import UWPage from './pages/UWPage';
@@ -82,6 +83,9 @@ function App() {
           <Routes>
           {/* Submissions List */}
           <Route path="/" element={<SubmissionsListPage />} />
+
+          {/* Vote Queue */}
+          <Route path="/vote-queue" element={<VoteQueuePage />} />
 
           {/* Statistics */}
           <Route path="/stats" element={<StatsPage />} />

@@ -41,6 +41,35 @@ function DecisionBadge({ decision }) {
   return <span className={`badge ${badgeClass} ml-2`}>{label}</span>;
 }
 
+// Workflow stage badge component
+function WorkflowStageBadge({ stage, assignedTo }) {
+  if (!stage) {
+    return <span className="text-xs text-gray-400">—</span>;
+  }
+
+  const stageConfig = {
+    intake: { label: 'Intake', color: 'bg-gray-100 text-gray-600', icon: '○' },
+    pre_screen: { label: 'Pre-Screen', color: 'bg-blue-100 text-blue-700', icon: '◐' },
+    uw_work: { label: 'UW Work', color: 'bg-yellow-100 text-yellow-700', icon: '◑' },
+    formal: { label: 'Formal', color: 'bg-purple-100 text-purple-700', icon: '◕' },
+    complete: { label: 'Complete', color: 'bg-green-100 text-green-700', icon: '●' },
+  };
+
+  const config = stageConfig[stage] || { label: stage, color: 'bg-gray-100 text-gray-600', icon: '○' };
+
+  return (
+    <div className="flex flex-col">
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded ${config.color}`}>
+        <span>{config.icon}</span>
+        <span>{config.label}</span>
+      </span>
+      {assignedTo && stage === 'uw_work' && (
+        <span className="text-[10px] text-gray-500 mt-0.5">{assignedTo}</span>
+      )}
+    </div>
+  );
+}
+
 // Format currency
 function formatCurrency(value) {
   if (!value) return '—';
@@ -66,6 +95,7 @@ export default function SubmissionsListPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [boundFilter, setBoundFilter] = useState('');
+  const [workflowFilter, setWorkflowFilter] = useState('');
 
   const { data: submissions, isLoading, error } = useQuery({
     queryKey: ['submissions'],
@@ -84,6 +114,7 @@ export default function SubmissionsListPage() {
     if (statusFilter && sub.status !== statusFilter) return false;
     if (boundFilter === 'bound' && !sub.has_bound_quote) return false;
     if (boundFilter === 'unbound' && sub.has_bound_quote) return false;
+    if (workflowFilter && sub.workflow_stage !== workflowFilter) return false;
     return true;
   });
 
@@ -117,6 +148,9 @@ export default function SubmissionsListPage() {
           <h1 className="text-lg font-bold text-gray-900">Underwriting Portal</h1>
           <nav className="flex items-center gap-6">
             <Link to="/" className="nav-link-active">Submissions</Link>
+            <Link to="/vote-queue" className="nav-link flex items-center gap-1">
+              <span>Vote Queue</span>
+            </Link>
             <Link to="/stats" className="nav-link">Statistics</Link>
             <Link to="/admin" className="nav-link">Admin</Link>
             <Link to="/compliance" className="nav-link">Compliance</Link>
@@ -181,9 +215,17 @@ export default function SubmissionsListPage() {
               </select>
             </div>
             <div>
-              <label className="form-label">Outcome</label>
-              <select className="form-select">
-                <option value="">All Outcomes</option>
+              <label className="form-label">Workflow Stage</label>
+              <select
+                className="form-select"
+                value={workflowFilter}
+                onChange={(e) => setWorkflowFilter(e.target.value)}
+              >
+                <option value="">All Stages</option>
+                <option value="pre_screen">Pre-Screen</option>
+                <option value="uw_work">UW Work</option>
+                <option value="formal">Formal Review</option>
+                <option value="complete">Complete</option>
               </select>
             </div>
           </div>
@@ -195,6 +237,7 @@ export default function SubmissionsListPage() {
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="table-header">Account</th>
+                <th className="table-header">Workflow</th>
                 <th className="table-header">Status</th>
                 <th className="table-header">Decision</th>
                 <th className="table-header">Industry</th>
@@ -217,6 +260,9 @@ export default function SubmissionsListPage() {
                         {sub.bound_quote_name}
                       </div>
                     )}
+                  </td>
+                  <td className="table-cell">
+                    <WorkflowStageBadge stage={sub.workflow_stage} assignedTo={sub.assigned_to_name} />
                   </td>
                   <td className="table-cell">
                     <StatusBadge status={sub.status} isBound={sub.has_bound_quote} />

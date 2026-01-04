@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission } from '../api/client';
+import { getSubmission, updateSubmission, getSubmissionWorkflow, recordVote, claimSubmission, startPrescreen, submitForReview, getUwRecommendation } from '../api/client';
 import DocsPanel from '../components/DocsPanel';
 import AiCorrectionsPanel, { AiCorrectionsBadge } from '../components/AiCorrectionsPanel';
 
@@ -47,6 +47,23 @@ const LOST_REASONS = [
   'Price', 'Coverage terms', 'Competitor won', 'Insured declined coverage',
   'No response from broker', 'Renewal with incumbent',
 ];
+
+// Workflow stage configuration
+const WORKFLOW_STAGES = {
+  intake: { label: 'Intake', color: 'bg-gray-100 text-gray-600 border-gray-200', icon: '○' },
+  pre_screen: { label: 'Pre-Screen', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: '◐' },
+  uw_work: { label: 'UW Work', color: 'bg-yellow-100 text-yellow-700 border-yellow-200', icon: '◑' },
+  formal: { label: 'Formal Review', color: 'bg-purple-100 text-purple-700 border-purple-200', icon: '◕' },
+  complete: { label: 'Complete', color: 'bg-green-100 text-green-700 border-green-200', icon: '●' },
+};
+
+const TEAM_USERS = ['Sarah', 'Mike', 'Tom'];
+
+function getInitialUser() {
+  if (typeof window === 'undefined') return TEAM_USERS[0];
+  const saved = localStorage.getItem('currentUwUser');
+  return saved && TEAM_USERS.includes(saved) ? saved : TEAM_USERS[0];
+}
 
 function getSmartStatus(status, outcome) {
   if (status === 'quoted') {
@@ -215,10 +232,327 @@ function StatusPill({ submission }) {
   );
 }
 
+function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
+  const queryClient = useQueryClient();
+  const [isOpen, setIsOpen] = useState(false);
+  const popoverRef = useRef(null);
+
+  const { data: workflow, isLoading } = useQuery({
+    queryKey: ['workflow', submissionId],
+    queryFn: () => getSubmissionWorkflow(submissionId).then(res => res.data),
+    refetchInterval: 30000, // Refresh every 30s
+  });
+
+  // Fetch recommendation when in formal review stage
+  const { data: recommendationData } = useQuery({
+    queryKey: ['recommendation', submissionId],
+    queryFn: () => getUwRecommendation(submissionId).then(res => res.data),
+    enabled: workflow?.current_stage === 'formal',
+  });
+  const recommendation = recommendationData?.recommendation;
+
+  const voteMutation = useMutation({
+    mutationFn: (vote) => recordVote(submissionId, vote),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflow', submissionId] });
+      setIsOpen(false);
+    },
+  });
+
+  const claimMutation = useMutation({
+    mutationFn: () => claimSubmission(submissionId, currentUser),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflow', submissionId] });
+    },
+  });
+
+  const startPrescreenMutation = useMutation({
+    mutationFn: () => startPrescreen(submissionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflow', submissionId] });
+    },
+  });
+
+  const submitForReviewMutation = useMutation({
+    mutationFn: (recommendation) => submitForReview(submissionId, recommendation),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workflow', submissionId] });
+      setIsOpen(false);
+    },
+  });
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (popoverRef.current && !popoverRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isOpen]);
+
+  if (isLoading) {
+    return <span className="text-xs text-gray-400">...</span>;
+  }
+
+  if (!workflow) {
+    return (
+      <button
+        onClick={() => startPrescreenMutation.mutate()}
+        disabled={startPrescreenMutation.isPending}
+        className="px-2 py-0.5 text-xs font-medium rounded border bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 transition-colors"
+      >
+        {startPrescreenMutation.isPending ? '...' : 'Start Workflow'}
+      </button>
+    );
+  }
+
+  const stage = workflow.current_stage || 'intake';
+  const stageConfig = WORKFLOW_STAGES[stage] || WORKFLOW_STAGES.intake;
+  const votes = workflow.votes || [];
+  const myVote = votes.find(v => v.user_name === currentUser);
+  const needsVote = (stage === 'pre_screen' || stage === 'formal') && !myVote;
+  const isAssignedToMe = workflow.assigned_to_name === currentUser;
+  const canClaim = stage === 'uw_work' && !workflow.assigned_to_id;
+
+  // Count votes by type
+  const voteCounts = votes.reduce((acc, v) => {
+    acc[v.vote] = (acc[v.vote] || 0) + 1;
+    return acc;
+  }, {});
+
+  const handleVote = (vote) => {
+    voteMutation.mutate({
+      stage,
+      user_name: currentUser,
+      vote,
+    });
+  };
+
+  return (
+    <div className="relative flex items-center gap-2" ref={popoverRef}>
+      {/* User selector */}
+      <select
+        value={currentUser}
+        onChange={(e) => {
+          localStorage.setItem('currentUwUser', e.target.value);
+          onUserChange(e.target.value);
+        }}
+        className="text-xs border-0 bg-transparent text-gray-500 pr-5 cursor-pointer hover:text-gray-700 focus:ring-0"
+      >
+        {TEAM_USERS.map(user => (
+          <option key={user} value={user}>{user}</option>
+        ))}
+      </select>
+
+      {/* Stage badge */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={`px-2 py-0.5 text-xs font-medium rounded border cursor-pointer hover:opacity-80 transition-opacity flex items-center gap-1 ${stageConfig.color}`}
+      >
+        <span>{stageConfig.icon}</span>
+        <span>{stageConfig.label}</span>
+        {votes.length > 0 && (
+          <span className="ml-1 text-[10px] opacity-75">({votes.length}/3)</span>
+        )}
+      </button>
+
+      {/* Action indicators */}
+      {needsVote && (
+        <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" title="Your vote needed" />
+      )}
+      {isAssignedToMe && (
+        <span className="text-xs text-yellow-600 font-medium">Yours</span>
+      )}
+      {canClaim && (
+        <button
+          onClick={() => claimMutation.mutate()}
+          disabled={claimMutation.isPending}
+          className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+        >
+          {claimMutation.isPending ? '...' : 'Claim'}
+        </button>
+      )}
+      {stage === 'uw_work' && isAssignedToMe && (
+        <button
+          onClick={() => submitForReviewMutation.mutate({ recommendation: 'quote', user_name: currentUser })}
+          disabled={submitForReviewMutation.isPending}
+          className="px-2 py-0.5 text-xs font-medium rounded bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+        >
+          {submitForReviewMutation.isPending ? '...' : 'Submit for Review'}
+        </button>
+      )}
+
+      {/* Popover for voting and details */}
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-lg shadow-lg border z-50 p-3 space-y-3">
+          {/* Stage info */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-gray-900">{stageConfig.label}</span>
+              {workflow.assigned_to_name && (
+                <span className="text-xs text-gray-500">
+                  Assigned: {workflow.assigned_to_name}
+                </span>
+              )}
+            </div>
+
+            {/* Vote summary */}
+            {votes.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {Object.entries(voteCounts).map(([vote, count]) => (
+                  <span
+                    key={vote}
+                    className={`px-2 py-0.5 text-xs rounded-full ${
+                      vote === 'pursue' || vote === 'approve'
+                        ? 'bg-green-100 text-green-700'
+                        : vote === 'pass' || vote === 'decline'
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}
+                  >
+                    {vote}: {count}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Voting UI for pre_screen */}
+          {stage === 'pre_screen' && !myVote && (
+            <div className="space-y-2">
+              <div className="text-xs text-gray-500">Cast your vote:</div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleVote('pursue')}
+                  disabled={voteMutation.isPending}
+                  className="flex-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                >
+                  Pursue
+                </button>
+                <button
+                  onClick={() => handleVote('pass')}
+                  disabled={voteMutation.isPending}
+                  className="flex-1 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                >
+                  Pass
+                </button>
+                <button
+                  onClick={() => handleVote('unsure')}
+                  disabled={voteMutation.isPending}
+                  className="flex-1 px-3 py-1.5 text-sm bg-gray-500 text-white rounded hover:bg-gray-600 disabled:opacity-50"
+                >
+                  Unsure
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* UW Recommendation display for formal review */}
+          {stage === 'formal' && recommendation && (
+            <div className={`p-2 rounded-lg border ${
+              recommendation.recommendation === 'quote'
+                ? 'bg-green-50 border-green-200'
+                : 'bg-red-50 border-red-200'
+            }`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium text-gray-700">UW Recommendation</span>
+                <span className={`px-2 py-0.5 text-xs font-medium rounded ${
+                  recommendation.recommendation === 'quote'
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-red-100 text-red-700'
+                }`}>
+                  {recommendation.recommendation === 'quote' ? 'Quote' : 'Decline'}
+                </span>
+              </div>
+              <div className="text-xs text-gray-600">
+                by {recommendation.uw_name}
+              </div>
+              {recommendation.summary && (
+                <div className="text-xs text-gray-500 mt-1 line-clamp-2">
+                  {recommendation.summary}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Voting UI for formal review */}
+          {stage === 'formal' && !myVote && (
+            <div className="space-y-2">
+              <div className="text-xs text-gray-500">Cast your vote:</div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleVote('approve')}
+                  disabled={voteMutation.isPending}
+                  className="flex-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => handleVote('decline')}
+                  disabled={voteMutation.isPending}
+                  className="flex-1 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Submit for review UI */}
+          {stage === 'uw_work' && isAssignedToMe && (
+            <div className="space-y-2">
+              <div className="text-xs text-gray-500">Submit your recommendation:</div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => submitForReviewMutation.mutate({ recommendation: 'quote', user_name: currentUser })}
+                  disabled={submitForReviewMutation.isPending}
+                  className="flex-1 px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                >
+                  Quote
+                </button>
+                <button
+                  onClick={() => submitForReviewMutation.mutate({ recommendation: 'decline', user_name: currentUser })}
+                  disabled={submitForReviewMutation.isPending}
+                  className="flex-1 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                >
+                  Decline
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Already voted message */}
+          {(stage === 'pre_screen' || stage === 'formal') && myVote && (
+            <div className="text-xs text-gray-500">
+              You voted: <span className="font-medium">{myVote.vote}</span>
+            </div>
+          )}
+
+          {/* Vote queue link */}
+          <div className="pt-2 border-t">
+            <Link
+              to="/vote-queue"
+              className="text-xs text-blue-600 hover:text-blue-800"
+              onClick={() => setIsOpen(false)}
+            >
+              Open Vote Queue
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SubmissionLayout() {
   const { submissionId } = useParams();
   const [isDocsPanelOpen, setIsDocsPanelOpen] = useState(false);
   const [isCorrectionsPanelOpen, setIsCorrectionsPanelOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState(getInitialUser);
 
   const { data: submission } = useQuery({
     queryKey: ['submission', submissionId],
@@ -251,6 +585,12 @@ export default function SubmissionLayout() {
             <AiCorrectionsBadge
               submissionId={submissionId}
               onClick={() => setIsCorrectionsPanelOpen(true)}
+            />
+            <span className="text-gray-300 ml-2">|</span>
+            <WorkflowStatusBadge
+              submissionId={submissionId}
+              currentUser={currentUser}
+              onUserChange={setCurrentUser}
             />
           </div>
           <nav className="flex items-center gap-6">

@@ -42,7 +42,7 @@ def get_conn():
 
 @app.get("/api/submissions")
 def list_submissions():
-    """List all submissions with bound status."""
+    """List all submissions with bound status and workflow stage."""
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -55,7 +55,9 @@ def list_submissions():
                     s.created_at,
                     s.decision_tag,
                     COALESCE(bound.is_bound, false) as has_bound_quote,
-                    bound.quote_name as bound_quote_name
+                    bound.quote_name as bound_quote_name,
+                    sw.current_stage as workflow_stage,
+                    sw.assigned_uw_name as assigned_to_name
                 FROM submissions s
                 LEFT JOIN (
                     SELECT DISTINCT ON (submission_id)
@@ -64,6 +66,7 @@ def list_submissions():
                     WHERE is_bound = true
                     ORDER BY submission_id, created_at DESC
                 ) bound ON s.id = bound.submission_id
+                LEFT JOIN submission_workflow sw ON s.id = sw.submission_id
                 ORDER BY s.created_at DESC
                 LIMIT 100
             """)
@@ -6698,6 +6701,663 @@ def reject_ai_correction(correction_id: str, review: CorrectionReview = None):
                 "message": "AI correction rejected - reverted to original value",
                 "original_value": row["original_value"],
             }
+
+
+# ─────────────────────────────────────────────────────────────
+# Collaborative Workflow Endpoints
+# ─────────────────────────────────────────────────────────────
+
+class VoteRequest(BaseModel):
+    user_id: Optional[str] = None
+    user_name: str
+    vote: str  # pre_screen: 'pursue', 'pass', 'unsure' | formal: 'approve', 'decline', 'send_back'
+    comment: Optional[str] = None
+    reasons: Optional[List[str]] = None
+
+
+class ClaimRequest(BaseModel):
+    user_id: Optional[str] = None
+    user_name: str
+
+
+class SubmitForReviewRequest(BaseModel):
+    user_id: Optional[str] = None
+    user_name: str
+    recommendation: str  # 'quote' or 'decline'
+    summary: str
+    suggested_premium: Optional[float] = None
+    suggested_terms: Optional[dict] = None
+    decline_reasons: Optional[List[str]] = None
+
+
+@app.get("/api/workflow/stages")
+def get_workflow_stages():
+    """Get workflow stage configuration."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT stage_key, stage_name, stage_order, required_votes,
+                       timeout_hours, timeout_action, is_active
+                FROM workflow_stages
+                WHERE is_active = true
+                ORDER BY stage_order
+            """)
+            return {"stages": cur.fetchall()}
+
+
+@app.get("/api/workflow/queue")
+def get_workflow_queue(user_name: Optional[str] = None):
+    """Get the voting queue - items needing votes and ready to work."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get items needing votes
+            cur.execute("""
+                SELECT
+                    nv.submission_id,
+                    nv.applicant_name,
+                    nv.submitted_at,
+                    nv.current_stage,
+                    nv.stage_entered_at,
+                    nv.deadline,
+                    nv.hours_remaining,
+                    nv.votes_cast,
+                    nv.votes_needed,
+                    nv.required_votes
+                FROM v_needs_votes nv
+                ORDER BY nv.hours_remaining ASC
+            """)
+            needs_votes = cur.fetchall()
+
+            # Get items ready to work (unclaimed)
+            cur.execute("""
+                SELECT
+                    submission_id,
+                    applicant_name,
+                    submitted_at,
+                    stage_entered_at,
+                    hours_waiting
+                FROM v_ready_to_work
+                ORDER BY stage_entered_at ASC
+            """)
+            ready_to_work = cur.fetchall()
+
+            # Get current vote tallies for items needing votes
+            if needs_votes:
+                submission_ids = [str(n['submission_id']) for n in needs_votes]
+                cur.execute("""
+                    SELECT submission_id, current_stage, vote, vote_count, voters
+                    FROM v_vote_tally
+                    WHERE submission_id = ANY(%s::uuid[])
+                """, (submission_ids,))
+                tallies = cur.fetchall()
+
+                # Group tallies by submission
+                tally_map = {}
+                for t in tallies:
+                    sid = str(t['submission_id'])
+                    if sid not in tally_map:
+                        tally_map[sid] = {}
+                    if t['vote']:
+                        tally_map[sid][t['vote']] = {
+                            'count': t['vote_count'],
+                            'voters': t['voters']
+                        }
+
+                # Add tallies to needs_votes
+                for nv in needs_votes:
+                    nv['vote_tally'] = tally_map.get(str(nv['submission_id']), {})
+
+            # If user specified, mark which ones they've voted on
+            if user_name:
+                cur.execute("""
+                    SELECT submission_id, stage, vote
+                    FROM workflow_votes
+                    WHERE user_name = %s
+                """, (user_name,))
+                user_votes = {(str(v['submission_id']), v['stage']): v['vote'] for v in cur.fetchall()}
+
+                for nv in needs_votes:
+                    key = (str(nv['submission_id']), nv['current_stage'])
+                    nv['my_vote'] = user_votes.get(key)
+
+            return {
+                "needs_votes": needs_votes,
+                "ready_to_work": ready_to_work,
+                "summary": {
+                    "needs_votes_count": len(needs_votes),
+                    "ready_to_work_count": len(ready_to_work)
+                }
+            }
+
+
+@app.get("/api/workflow/my-work")
+def get_my_work(user_name: str):
+    """Get submissions I'm currently working on."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    s.id as submission_id,
+                    s.applicant_name,
+                    s.naics_primary_title,
+                    s.annual_revenue,
+                    sw.assigned_at,
+                    sw.work_started_at,
+                    EXTRACT(EPOCH FROM (now() - COALESCE(sw.work_started_at, sw.assigned_at))) / 60 as minutes_working
+                FROM submissions s
+                JOIN submission_workflow sw ON sw.submission_id = s.id
+                WHERE sw.current_stage = 'uw_work'
+                  AND sw.assigned_uw_name = %s
+                  AND sw.completed_at IS NULL
+                ORDER BY sw.assigned_at
+            """, (user_name,))
+            return {"my_work": cur.fetchall()}
+
+
+@app.get("/api/workflow/summary")
+def get_workflow_summary():
+    """Get workflow summary counts for dashboard."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT current_stage, count, assigned_count,
+                       ROUND(avg_hours_in_stage::numeric, 1) as avg_hours_in_stage
+                FROM v_workflow_summary
+                ORDER BY
+                    CASE current_stage
+                        WHEN 'intake' THEN 1
+                        WHEN 'pre_screen' THEN 2
+                        WHEN 'uw_work' THEN 3
+                        WHEN 'formal' THEN 4
+                        WHEN 'complete' THEN 5
+                        ELSE 6
+                    END
+            """)
+            stages = cur.fetchall()
+
+            # Get totals
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE completed_at IS NULL) as in_progress,
+                    COUNT(*) FILTER (WHERE final_decision = 'quoted') as quoted,
+                    COUNT(*) FILTER (WHERE final_decision = 'declined') as declined
+                FROM submission_workflow
+            """)
+            totals = cur.fetchone()
+
+            return {
+                "by_stage": stages,
+                "totals": totals
+            }
+
+
+@app.get("/api/workflow/{submission_id}")
+def get_submission_workflow(submission_id: str):
+    """Get workflow state for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get workflow state
+            cur.execute("""
+                SELECT
+                    sw.*,
+                    ws.stage_name,
+                    ws.required_votes,
+                    ws.timeout_hours,
+                    sw.stage_entered_at + (ws.timeout_hours || ' hours')::INTERVAL as deadline
+                FROM submission_workflow sw
+                JOIN workflow_stages ws ON ws.stage_key = sw.current_stage
+                WHERE sw.submission_id = %s
+            """, (submission_id,))
+            workflow = cur.fetchone()
+
+            if not workflow:
+                raise HTTPException(status_code=404, detail="Workflow not found for submission")
+
+            # Get votes for current stage
+            cur.execute("""
+                SELECT user_name, vote, comment, reasons, voted_at, is_recommender
+                FROM workflow_votes
+                WHERE submission_id = %s AND stage = %s
+                ORDER BY voted_at
+            """, (submission_id, workflow['current_stage']))
+            votes = cur.fetchall()
+
+            # Get vote tally
+            cur.execute("""
+                SELECT vote, vote_count, voters
+                FROM v_vote_tally
+                WHERE submission_id = %s AND current_stage = %s
+            """, (submission_id, workflow['current_stage']))
+            tally = {r['vote']: {'count': r['vote_count'], 'voters': r['voters']}
+                     for r in cur.fetchall() if r['vote']}
+
+            return {
+                "workflow": workflow,
+                "votes": votes,
+                "vote_tally": tally
+            }
+
+
+@app.get("/api/workflow/{submission_id}/history")
+def get_submission_workflow_history(submission_id: str):
+    """Get full workflow history/audit trail for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    event_type,
+                    event_at,
+                    event_detail,
+                    event_trigger,
+                    user_name,
+                    vote,
+                    comment
+                FROM v_submission_audit
+                WHERE submission_id = %s
+                ORDER BY event_at DESC
+            """, (submission_id,))
+            return {"history": cur.fetchall()}
+
+
+@app.post("/api/workflow/{submission_id}/vote")
+def record_workflow_vote(submission_id: str, vote_request: VoteRequest):
+    """Record a vote on a submission."""
+    from datetime import datetime
+    import uuid
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get current workflow state
+            cur.execute("""
+                SELECT sw.current_stage, ws.required_votes
+                FROM submission_workflow sw
+                JOIN workflow_stages ws ON ws.stage_key = sw.current_stage
+                WHERE sw.submission_id = %s
+            """, (submission_id,))
+            workflow = cur.fetchone()
+
+            if not workflow:
+                raise HTTPException(status_code=404, detail="Submission not in workflow")
+
+            stage = workflow['current_stage']
+
+            # Validate vote type for stage
+            valid_votes = {
+                'pre_screen': ['pursue', 'pass', 'unsure'],
+                'formal': ['approve', 'decline', 'send_back']
+            }
+
+            if stage not in valid_votes:
+                raise HTTPException(status_code=400, detail=f"Cannot vote in stage: {stage}")
+
+            if vote_request.vote not in valid_votes[stage]:
+                raise HTTPException(status_code=400,
+                    detail=f"Invalid vote '{vote_request.vote}' for stage '{stage}'. Valid: {valid_votes[stage]}")
+
+            # Generate user_id if not provided
+            user_id = vote_request.user_id or str(uuid.uuid4())
+
+            # Record the vote using the database function
+            cur.execute("""
+                SELECT record_vote(%s, %s, %s, %s, %s, %s, %s) as result
+            """, (
+                submission_id,
+                stage,
+                user_id,
+                vote_request.user_name,
+                vote_request.vote,
+                vote_request.comment,
+                vote_request.reasons
+            ))
+            result = cur.fetchone()['result']
+
+            conn.commit()
+
+            # If threshold met, auto-advance stage
+            if result.get('threshold_met'):
+                winning_vote = result.get('winning_vote')
+                next_stage = None
+                final_decision = None
+
+                if stage == 'pre_screen':
+                    if winning_vote == 'pursue':
+                        next_stage = 'uw_work'
+                    elif winning_vote == 'pass':
+                        next_stage = 'complete'
+                        final_decision = 'declined'
+                elif stage == 'formal':
+                    if winning_vote == 'approve':
+                        next_stage = 'complete'
+                        final_decision = 'quoted'
+                    elif winning_vote == 'decline':
+                        next_stage = 'complete'
+                        final_decision = 'declined'
+                    elif winning_vote == 'send_back':
+                        next_stage = 'uw_work'
+
+                if next_stage:
+                    cur.execute("""
+                        SELECT advance_workflow_stage(%s, %s, %s, %s, %s, %s)
+                    """, (
+                        submission_id,
+                        next_stage,
+                        'vote_threshold',
+                        Json(result),
+                        user_id,
+                        vote_request.user_name
+                    ))
+
+                    # Update final decision if completing
+                    if final_decision:
+                        cur.execute("""
+                            UPDATE submission_workflow
+                            SET completed_at = now(),
+                                final_decision = %s
+                            WHERE submission_id = %s
+                        """, (final_decision, submission_id))
+
+                        # Also update the submission status
+                        cur.execute("""
+                            UPDATE submissions
+                            SET submission_status = %s
+                            WHERE id = %s
+                        """, (final_decision, submission_id))
+
+                    conn.commit()
+                    result['stage_advanced'] = True
+                    result['new_stage'] = next_stage
+                    result['final_decision'] = final_decision
+
+            return result
+
+
+@app.post("/api/workflow/{submission_id}/claim")
+def claim_submission_for_work(submission_id: str, claim: ClaimRequest):
+    """Claim a submission for UW work."""
+    import uuid
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            user_id = claim.user_id or str(uuid.uuid4())
+
+            try:
+                cur.execute("""
+                    SELECT claim_submission(%s, %s, %s)
+                """, (submission_id, user_id, claim.user_name))
+                conn.commit()
+
+                return {
+                    "status": "claimed",
+                    "submission_id": submission_id,
+                    "claimed_by": claim.user_name
+                }
+            except Exception as e:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/workflow/{submission_id}/unclaim")
+def unclaim_submission(submission_id: str, claim: ClaimRequest):
+    """Release a claimed submission back to the queue."""
+    import uuid
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            user_id = claim.user_id or str(uuid.uuid4())
+
+            try:
+                cur.execute("""
+                    SELECT unclaim_submission(%s, %s, %s)
+                """, (submission_id, user_id, claim.user_name))
+                conn.commit()
+
+                return {
+                    "status": "unclaimed",
+                    "submission_id": submission_id,
+                    "released_by": claim.user_name
+                }
+            except Exception as e:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/workflow/{submission_id}/start-prescreen")
+def start_prescreen(submission_id: str):
+    """Move a submission from intake to pre-screen (called after AI extraction)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Check current stage
+            cur.execute("""
+                SELECT current_stage FROM submission_workflow
+                WHERE submission_id = %s
+            """, (submission_id,))
+            row = cur.fetchone()
+
+            if not row:
+                # Initialize workflow if not exists
+                cur.execute("SELECT init_submission_workflow(%s)", (submission_id,))
+                row = {'current_stage': 'intake'}
+
+            if row['current_stage'] != 'intake':
+                raise HTTPException(status_code=400,
+                    detail=f"Submission is in '{row['current_stage']}', not intake")
+
+            # Advance to pre-screen
+            cur.execute("""
+                SELECT advance_workflow_stage(%s, %s, %s, %s, %s, %s)
+            """, (
+                submission_id,
+                'pre_screen',
+                'ai_complete',
+                Json({'triggered_by': 'system'}),
+                None,
+                None
+            ))
+
+            conn.commit()
+
+            return {
+                "status": "started",
+                "submission_id": submission_id,
+                "new_stage": "pre_screen"
+            }
+
+
+@app.post("/api/workflow/{submission_id}/submit-for-review")
+def submit_for_formal_review(submission_id: str, request: SubmitForReviewRequest):
+    """Submit UW work for formal team review."""
+    import uuid
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Verify submission is in uw_work stage and claimed by this user
+            cur.execute("""
+                SELECT current_stage, assigned_uw_name
+                FROM submission_workflow
+                WHERE submission_id = %s
+            """, (submission_id,))
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Submission not in workflow")
+
+            if row['current_stage'] != 'uw_work':
+                raise HTTPException(status_code=400,
+                    detail=f"Submission is in '{row['current_stage']}', not uw_work")
+
+            if row['assigned_uw_name'] != request.user_name:
+                raise HTTPException(status_code=400,
+                    detail=f"Submission is assigned to {row['assigned_uw_name']}, not you")
+
+            user_id = request.user_id or str(uuid.uuid4())
+
+            # Save the recommendation
+            cur.execute("""
+                INSERT INTO uw_recommendations (
+                    submission_id, uw_id, uw_name, recommendation, summary,
+                    suggested_premium, suggested_terms, decline_reasons, submitted_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (submission_id) DO UPDATE SET
+                    recommendation = EXCLUDED.recommendation,
+                    summary = EXCLUDED.summary,
+                    suggested_premium = EXCLUDED.suggested_premium,
+                    suggested_terms = EXCLUDED.suggested_terms,
+                    decline_reasons = EXCLUDED.decline_reasons,
+                    submitted_at = now()
+            """, (
+                submission_id,
+                user_id,
+                request.user_name,
+                request.recommendation,
+                request.summary,
+                request.suggested_premium,
+                Json(request.suggested_terms) if request.suggested_terms else None,
+                request.decline_reasons
+            ))
+
+            # Advance to formal review
+            cur.execute("""
+                SELECT advance_workflow_stage(%s, %s, %s, %s, %s, %s)
+            """, (
+                submission_id,
+                'formal',
+                'submitted_for_review',
+                Json({
+                    'recommendation': request.recommendation,
+                    'submitted_by': request.user_name
+                }),
+                user_id,
+                request.user_name
+            ))
+
+            # The submitter automatically gets a vote as "recommender"
+            cur.execute("""
+                INSERT INTO workflow_votes (
+                    submission_id, stage, user_id, user_name, vote, comment, is_recommender
+                ) VALUES (%s, 'formal', %s, %s, %s, %s, true)
+                ON CONFLICT (submission_id, stage, user_id) DO UPDATE SET
+                    vote = EXCLUDED.vote,
+                    comment = EXCLUDED.comment,
+                    is_recommender = true
+            """, (
+                submission_id,
+                user_id,
+                request.user_name,
+                'approve' if request.recommendation == 'quote' else 'decline',
+                request.summary
+            ))
+
+            conn.commit()
+
+            return {
+                "status": "submitted",
+                "submission_id": submission_id,
+                "new_stage": "formal",
+                "recommendation": request.recommendation
+            }
+
+
+# ─────────────────────────────────────────────────────────────
+# Workflow Notifications
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/workflow/notifications")
+def get_notifications(user_name: str, unread_only: bool = False):
+    """Get notifications for a user."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            query = """
+                SELECT
+                    id, type, title, body, submission_id, workflow_stage,
+                    priority, read_at, acted_at, created_at, expires_at
+                FROM workflow_notifications
+                WHERE user_email = %s OR user_id::text = %s
+            """
+            if unread_only:
+                query += " AND read_at IS NULL"
+            query += " ORDER BY created_at DESC LIMIT 50"
+
+            cur.execute(query, (user_name, user_name))
+            notifications = cur.fetchall()
+
+            # Count unread
+            cur.execute("""
+                SELECT COUNT(*) as unread_count
+                FROM workflow_notifications
+                WHERE (user_email = %s OR user_id::text = %s)
+                  AND read_at IS NULL
+            """, (user_name, user_name))
+            unread_count = cur.fetchone()['unread_count']
+
+            return {
+                "notifications": notifications,
+                "unread_count": unread_count
+            }
+
+
+@app.post("/api/workflow/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str):
+    """Mark a notification as read."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE workflow_notifications
+                SET read_at = now()
+                WHERE id = %s AND read_at IS NULL
+                RETURNING id
+            """, (notification_id,))
+            result = cur.fetchone()
+            conn.commit()
+
+            if not result:
+                raise HTTPException(status_code=404, detail="Notification not found or already read")
+
+            return {"status": "read", "notification_id": notification_id}
+
+
+@app.post("/api/workflow/notifications/read-all")
+def mark_all_notifications_read(user_name: str):
+    """Mark all notifications as read for a user."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE workflow_notifications
+                SET read_at = now()
+                WHERE (user_email = %s OR user_id::text = %s)
+                  AND read_at IS NULL
+                RETURNING id
+            """, (user_name, user_name))
+            count = cur.rowcount
+            conn.commit()
+
+            return {"status": "read", "count": count}
+
+
+# ─────────────────────────────────────────────────────────────
+# UW Recommendations
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/workflow/{submission_id}/recommendation")
+def get_uw_recommendation(submission_id: str):
+    """Get the UW recommendation for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id, uw_name, recommendation, summary,
+                    suggested_premium, suggested_terms, decline_reasons,
+                    work_started_at, work_minutes, submitted_at
+                FROM uw_recommendations
+                WHERE submission_id = %s
+                ORDER BY submitted_at DESC
+                LIMIT 1
+            """, (submission_id,))
+            rec = cur.fetchone()
+
+            if not rec:
+                return {"recommendation": None}
+
+            return {"recommendation": rec}
 
 
 # ─────────────────────────────────────────────────────────────
