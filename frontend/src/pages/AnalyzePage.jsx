@@ -19,7 +19,8 @@ import CompsPage from './CompsPage';
 
 function formatCompact(value) {
   if (!value) return '—';
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(0)}M`;
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
   return `$${value}`;
 }
@@ -144,7 +145,344 @@ function FormattedText({ text }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Control Card Component
+// Decision Badge Component
+// ─────────────────────────────────────────────────────────────
+
+function DecisionBadge({ decision }) {
+  const config = {
+    accept: { label: 'Accepted', class: 'bg-green-100 text-green-700 border-green-200' },
+    decline: { label: 'Declined', class: 'bg-red-100 text-red-700 border-red-200' },
+    refer: { label: 'Referred', class: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
+    pending: { label: 'Pending', class: 'bg-gray-100 text-gray-600 border-gray-200' },
+  };
+  const { label, class: badgeClass } = config[decision] || config.pending;
+  return <span className={`px-2 py-1 text-xs font-medium rounded border ${badgeClass}`}>{label}</span>;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Underwriting Decision Section
+// ─────────────────────────────────────────────────────────────
+
+function DecisionSection({ submission, submissionId }) {
+  const [decisionReason, setDecisionReason] = useState(submission?.decision_reason || '');
+  const queryClient = useQueryClient();
+
+  const updateMutation = useMutation({
+    mutationFn: (data) => updateSubmission(submissionId, data),
+    onSuccess: () => queryClient.invalidateQueries(['submission', submissionId]),
+  });
+
+  const handleDecision = (decision) => {
+    const payload = {
+      decision_tag: decision,
+      decision_reason: decisionReason || null,
+    };
+    if (decision === 'decline') {
+      payload.submission_status = 'declined';
+      payload.submission_outcome = 'declined';
+      payload.outcome_reason = decisionReason || 'Declined by underwriter';
+    } else if (decision === 'accept') {
+      // Clear declined status if previously declined
+      payload.submission_status = 'pending_decision';
+      payload.submission_outcome = 'pending';
+      payload.outcome_reason = null;
+    } else if (decision === 'refer') {
+      payload.submission_status = 'pending_decision';
+      payload.submission_outcome = 'pending';
+    }
+    updateMutation.mutate(payload);
+  };
+
+  return (
+    <div className={`card ${
+      submission?.decision_tag === 'accept' ? 'bg-green-50 border-green-200' :
+      submission?.decision_tag === 'decline' ? 'bg-red-50 border-red-200' :
+      submission?.decision_tag === 'refer' ? 'bg-yellow-50 border-yellow-200' : ''
+    }`}>
+      <h3 className="form-section-title">Underwriting Decision</h3>
+
+      {/* Show decision badge if already decided */}
+      {submission?.decision_tag && submission.decision_tag !== 'pending' && (
+        <div className="flex items-center gap-2 mb-4">
+          <DecisionBadge decision={submission.decision_tag} />
+          {submission?.decided_at && (
+            <span className="text-sm text-gray-500">
+              {new Date(submission.decided_at).toLocaleDateString()}
+              {submission.decided_by && ` by ${submission.decided_by}`}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-6">
+        {/* AI Recommendation */}
+        <div className="bg-gray-50 rounded-lg p-4">
+          <h4 className="font-medium text-gray-900 mb-3">AI Recommendation</h4>
+          {submission?.ai_recommendation ? (
+            <FormattedText text={submission.ai_recommendation} />
+          ) : (
+            <p className="text-gray-500 italic">No AI recommendation available</p>
+          )}
+          {/* Inline Guideline Citations */}
+          {submission?.ai_guideline_citations && (
+            <details className="mt-4 pt-3 border-t border-gray-200">
+              <summary className="text-sm text-purple-600 cursor-pointer hover:text-purple-800">
+                View Guideline Citations
+              </summary>
+              <div className="mt-2 text-sm">
+                <FormattedText text={submission.ai_guideline_citations} />
+              </div>
+            </details>
+          )}
+        </div>
+
+        {/* Your Decision */}
+        <div className="bg-purple-50 rounded-lg p-4">
+          <h4 className="font-medium text-gray-900 mb-3">Your Decision</h4>
+          <div className="space-y-4">
+            <div>
+              <label className="form-label">Notes</label>
+              <textarea
+                className="form-input h-20 resize-none bg-white"
+                placeholder="Add notes about your decision..."
+                value={decisionReason}
+                onChange={(e) => setDecisionReason(e.target.value)}
+              />
+            </div>
+            <div className="flex gap-3">
+              <button
+                className={`btn flex-1 text-white ${
+                  submission?.decision_tag === 'accept'
+                    ? 'bg-green-700 ring-2 ring-green-400'
+                    : 'bg-green-600 hover:bg-green-700'
+                }`}
+                onClick={() => handleDecision('accept')}
+                disabled={updateMutation.isPending}
+              >
+                Accept
+              </button>
+              <button
+                className={`btn flex-1 text-white ${
+                  submission?.decision_tag === 'refer'
+                    ? 'bg-yellow-600 ring-2 ring-yellow-400'
+                    : 'bg-yellow-500 hover:bg-yellow-600'
+                }`}
+                onClick={() => handleDecision('refer')}
+                disabled={updateMutation.isPending}
+              >
+                Refer
+              </button>
+              <button
+                className={`btn flex-1 text-white ${
+                  submission?.decision_tag === 'decline'
+                    ? 'bg-red-700 ring-2 ring-red-400'
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
+                onClick={() => handleDecision('decline')}
+                disabled={updateMutation.isPending}
+              >
+                Decline
+              </button>
+            </div>
+            {updateMutation.isPending && <p className="text-sm text-gray-500 mt-2">Saving...</p>}
+            {updateMutation.isSuccess && <p className="text-sm text-green-600 mt-2">Decision saved</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Cyber Exposures Section
+// ─────────────────────────────────────────────────────────────
+
+function CyberExposuresSection({ submission, submissionId }) {
+  // Handle multiple data formats: array, JSON string, or markdown string
+  let content = null;
+  let exposures = [];
+
+  if (submission?.cyber_exposures) {
+    if (Array.isArray(submission.cyber_exposures)) {
+      exposures = submission.cyber_exposures;
+    } else if (typeof submission.cyber_exposures === 'string') {
+      // Try parsing as JSON first
+      try {
+        const parsed = JSON.parse(submission.cyber_exposures);
+        if (Array.isArray(parsed)) {
+          exposures = parsed;
+        } else {
+          // JSON object - just display as markdown
+          content = submission.cyber_exposures;
+        }
+      } catch {
+        // Not JSON - treat as markdown string
+        content = submission.cyber_exposures;
+      }
+    }
+  }
+
+  return (
+    <div className="card h-full">
+      <h3 className="form-section-title">Cyber Exposures</h3>
+      {content ? (
+        // Markdown string content - no max-height, flows naturally
+        <FormattedText text={content} />
+      ) : exposures.length > 0 ? (
+        // Array of exposures
+        <div className="space-y-2">
+          {exposures.map((exposure, idx) => {
+            if (typeof exposure === 'string') {
+              return (
+                <div key={idx} className="flex gap-2 text-gray-700 p-2 bg-purple-50 rounded">
+                  <span className="text-purple-500">•</span>
+                  <span>{exposure}</span>
+                </div>
+              );
+            }
+            return (
+              <div key={idx} className="p-3 bg-purple-50 rounded-lg border border-purple-200">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-purple-900">{exposure.name || exposure.type}</span>
+                  {exposure.severity && (
+                    <span className={`text-xs px-2 py-0.5 rounded ${
+                      exposure.severity === 'high' ? 'bg-red-100 text-red-700' :
+                      exposure.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-blue-100 text-blue-700'
+                    }`}>{exposure.severity}</span>
+                  )}
+                </div>
+                {exposure.description && <p className="text-sm text-purple-700">{exposure.description}</p>}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-gray-500 italic">No cyber exposures identified</p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Security Controls Section (with symbols)
+// ─────────────────────────────────────────────────────────────
+
+function SecurityControlsSection({ submission, submissionId }) {
+  // Parse NIST controls - could be array or object with emoji statuses
+  let controls = [];
+  if (submission?.nist_controls) {
+    if (Array.isArray(submission.nist_controls)) {
+      controls = submission.nist_controls;
+    } else if (typeof submission.nist_controls === 'object') {
+      controls = Object.entries(submission.nist_controls).map(([key, value]) => ({
+        name: key,
+        ...(typeof value === 'object' ? value : { status: value }),
+      }));
+    }
+  }
+
+  // Normalize status - handle both text and emoji formats
+  const normalizeStatus = (status) => {
+    if (!status) return 'unknown';
+    const s = String(status).toLowerCase().trim();
+    // Handle emoji statuses
+    if (s.includes('✅') || s.includes('✓') || s === 'implemented' || s === 'yes' || s === 'true') return 'implemented';
+    if (s.includes('⚠') || s === 'partial' || s === 'warning') return 'partial';
+    if (s.includes('❌') || s.includes('✗') || s === 'not_implemented' || s === 'no' || s === 'false') return 'not_implemented';
+    if (s.includes('—') || s === 'not_asked' || s === 'n/a') return 'not_asked';
+    return 'unknown';
+  };
+
+  const getStatusDisplay = (status) => {
+    const normalized = normalizeStatus(status);
+    const config = {
+      implemented: { icon: '✓', color: 'text-green-600', bg: 'bg-green-50 border-green-200', label: 'Implemented' },
+      partial: { icon: '⚠', color: 'text-yellow-600', bg: 'bg-yellow-50 border-yellow-200', label: 'Partial' },
+      not_implemented: { icon: '✗', color: 'text-red-600', bg: 'bg-red-50 border-red-200', label: 'Not Implemented' },
+      not_asked: { icon: '—', color: 'text-gray-400', bg: 'bg-gray-50 border-gray-200', label: 'Not Asked' },
+      unknown: { icon: '?', color: 'text-gray-400', bg: 'bg-gray-50 border-gray-200', label: 'Unknown' },
+    };
+    return config[normalized] || config.unknown;
+  };
+
+  return (
+    <div className="card h-full">
+      <h3 className="form-section-title">Security Controls</h3>
+      {submission?.nist_controls_summary && (
+        <div className="bg-gray-50 rounded-lg p-3 mb-4 text-sm max-h-48 overflow-y-auto">
+          <FormattedText text={submission.nist_controls_summary} />
+        </div>
+      )}
+      {controls.length > 0 ? (
+        <div className="space-y-2">
+          {controls.map((control, idx) => {
+            const statusDisplay = getStatusDisplay(control.status);
+            return (
+              <div key={idx} className={`flex items-center justify-between p-2 rounded border ${statusDisplay.bg}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`${statusDisplay.color} font-bold`} title={statusDisplay.label}>
+                    {statusDisplay.icon}
+                  </span>
+                  <span className="font-medium text-sm capitalize">{control.name}</span>
+                  {control.priority === 'high' && <span className="text-yellow-500" title="High Priority">★</span>}
+                </div>
+                <span className="text-xs text-gray-500">{statusDisplay.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : !submission?.nist_controls_summary ? (
+        <div className="bg-gray-50 rounded-lg p-4 text-center">
+          <p className="text-gray-500">No security controls data available</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Incumbent Carrier Section
+// ─────────────────────────────────────────────────────────────
+
+function IncumbentCarrierSection({ submission }) {
+  const hasIncumbent = submission?.incumbent_carrier || submission?.expiring_premium || submission?.years_with_carrier;
+
+  return (
+    <div className="card">
+      <h3 className="form-section-title">Incumbent Carrier</h3>
+      {hasIncumbent ? (
+        <>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <div className="text-sm text-gray-500">Carrier</div>
+              <div className="font-medium text-gray-900">{submission?.incumbent_carrier || '—'}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Expiring Premium</div>
+              <div className="font-medium text-gray-900">{formatCurrency(submission?.expiring_premium)}</div>
+            </div>
+            <div>
+              <div className="text-sm text-gray-500">Years with Carrier</div>
+              <div className="font-medium text-gray-900">{submission?.years_with_carrier || '—'}</div>
+            </div>
+          </div>
+          {submission?.expiring_limits && (
+            <div className="mt-4 pt-4 border-t">
+              <div className="text-sm text-gray-500 mb-1">Expiring Limits</div>
+              <div className="font-medium text-gray-900">{submission.expiring_limits}</div>
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="text-gray-500 italic">No incumbent carrier information available</p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Control Card Component (legacy - kept for compatibility)
 // ─────────────────────────────────────────────────────────────
 
 function ControlCard({ name, status, description }) {
@@ -183,15 +521,12 @@ function LossHistorySection({ submissionId }) {
 
   return (
     <div className="card">
-      <button onClick={() => setIsExpanded(!isExpanded)} className="w-full flex items-center justify-between">
-        <div>
-          <h3 className="form-section-title mb-0 pb-0 border-0">Loss History</h3>
-          <p className="text-xs text-gray-500 mt-1">Click to expand claims</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {lossData?.count > 0 && <span className="text-sm text-gray-500">{lossData.count} claims</span>}
-          <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
-        </div>
+      <h3 className="form-section-title">Loss History</h3>
+      <button onClick={() => setIsExpanded(!isExpanded)} className="w-full flex items-center justify-between text-left">
+        <p className="text-sm text-gray-600">
+          {lossData?.count > 0 ? `${lossData.count} claims on file` : 'Click to view claims'}
+        </p>
+        <span className="text-gray-400">{isExpanded ? '▼' : '▶'}</span>
       </button>
 
       {isExpanded && (
@@ -331,12 +666,13 @@ function PricingSection({ submissionId, submission }) {
     });
   };
 
-  // Comps summary stats
+  // Comps summary stats - use all comps with rate data
+  const compsWithRates = comparables?.filter(c => c.rate_per_mil) || [];
   const boundComps = comparables?.filter(c => c.is_bound) || [];
-  const avgRate = boundComps.length > 0 ? boundComps.reduce((sum, c) => sum + (c.rate_per_mil || 0), 0) / boundComps.length : null;
-  const rateRange = boundComps.length > 0 ? {
-    min: Math.min(...boundComps.map(c => c.rate_per_mil).filter(Boolean)),
-    max: Math.max(...boundComps.map(c => c.rate_per_mil).filter(Boolean)),
+  const avgRate = compsWithRates.length > 0 ? compsWithRates.reduce((sum, c) => sum + c.rate_per_mil, 0) / compsWithRates.length : null;
+  const rateRange = compsWithRates.length > 0 ? {
+    min: Math.min(...compsWithRates.map(c => c.rate_per_mil)),
+    max: Math.max(...compsWithRates.map(c => c.rate_per_mil)),
   } : null;
 
   const retentionOptions = [
@@ -433,23 +769,38 @@ function PricingSection({ submissionId, submission }) {
             <h4 className="font-medium text-gray-900">Market Benchmark</h4>
             <span className="text-xs text-gray-500">{comparables?.length || 0} comps</span>
           </div>
-          {boundComps.length > 0 ? (
+          {comparables?.length > 0 ? (
             <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Avg Rate (bound)</span>
-                <span className="font-medium text-blue-700">${avgRate?.toFixed(0)}/mil</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Rate Range</span>
-                <span className="font-medium text-blue-700">${rateRange?.min?.toFixed(0)} - ${rateRange?.max?.toFixed(0)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm text-gray-600">Bound Comps</span>
-                <span className="font-medium">{boundComps.length}</span>
+              {/* Summary stats on top */}
+              {compsWithRates.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Avg Rate</span>
+                    <span className="font-medium text-blue-700">${avgRate?.toLocaleString(undefined, { maximumFractionDigits: 0 })}/mil</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Range</span>
+                    <span className="font-medium text-blue-700">${rateRange?.min?.toLocaleString(undefined, { maximumFractionDigits: 0 })} - ${rateRange?.max?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  </div>
+                </div>
+              )}
+              {/* Top 3 matches */}
+              <div className="pt-3 border-t border-blue-200">
+                <div className="text-xs text-gray-500 mb-2">Top 3 Matches</div>
+                <div className="space-y-2">
+                  {comparables.slice(0, 3).map((comp, idx) => (
+                    <div key={idx} className="flex justify-between items-center text-sm">
+                      <span className="text-gray-700 truncate flex-1 mr-2">{comp.applicant_name || comp.company_name || 'Unknown'}</span>
+                      <span className="text-blue-700 font-medium flex-shrink-0">
+                        {comp.rate_per_mil ? `$${comp.rate_per_mil.toLocaleString(undefined, { maximumFractionDigits: 0 })}/mil` : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           ) : (
-            <p className="text-sm text-gray-500">No bound comparables found</p>
+            <p className="text-sm text-gray-500">No comparables found</p>
           )}
           <button
             onClick={() => setShowCompsModal(true)}
@@ -484,113 +835,191 @@ function PricingSection({ submissionId, submission }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Quick Metrics Row Component (all 3 cards, shared edit state)
+// ─────────────────────────────────────────────────────────────
+
+function QuickMetricsRow({ submission, onUpdate }) {
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Parse industry tags
+  let industryTags = [];
+  if (submission?.industry_tags) {
+    if (Array.isArray(submission.industry_tags)) {
+      industryTags = submission.industry_tags;
+    } else if (typeof submission.industry_tags === 'string') {
+      try { industryTags = JSON.parse(submission.industry_tags); } catch { industryTags = []; }
+    }
+  }
+
+  const handleClick = () => setIsEditing(true);
+
+  return (
+    <div className="grid grid-cols-3 gap-4">
+      {/* Revenue Card */}
+      <div className="metric-card">
+        <div className="metric-label">Revenue</div>
+        {isEditing ? (
+          <input
+            type="text"
+            className="form-input mt-1"
+            defaultValue={submission?.annual_revenue?.toLocaleString() || ''}
+            onBlur={(e) => {
+              const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10);
+              if (!isNaN(val) && val !== submission?.annual_revenue) {
+                onUpdate({ annual_revenue: val });
+              }
+            }}
+            placeholder="e.g., 50000000"
+          />
+        ) : (
+          <div
+            className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
+            onClick={handleClick}
+          >
+            {formatCompact(submission?.annual_revenue)}
+          </div>
+        )}
+      </div>
+
+      {/* Industry Card */}
+      <div className="metric-card">
+        <div className="metric-label">Industry</div>
+        {isEditing ? (
+          <div className="mt-1 space-y-1">
+            {submission?.naics_primary_code && (
+              <div className="text-sm">
+                <span className="text-gray-500">Primary:</span>{' '}
+                <span className="font-medium">{submission.naics_primary_code} - {submission.naics_primary_title}</span>
+              </div>
+            )}
+            {submission?.naics_secondary_code && (
+              <div className="text-sm">
+                <span className="text-gray-500">Secondary:</span>{' '}
+                <span className="font-medium">{submission.naics_secondary_code} - {submission.naics_secondary_title}</span>
+              </div>
+            )}
+            {industryTags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {industryTags.map((tag, idx) => (
+                  <span key={idx} className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+            {!submission?.naics_primary_code && (
+              <p className="text-sm text-gray-500 italic">No classification</p>
+            )}
+          </div>
+        ) : (
+          <div
+            className="metric-value text-base leading-snug cursor-pointer hover:text-purple-600 transition-colors"
+            onClick={handleClick}
+          >
+            {submission?.naics_primary_title || '—'}
+          </div>
+        )}
+      </div>
+
+      {/* Policy Period Card */}
+      <div className="metric-card">
+        <div className="metric-label">Policy Period</div>
+        {isEditing ? (
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <input
+              type="date"
+              className="form-input text-sm"
+              value={submission?.effective_date || ''}
+              onChange={(e) => onUpdate({ effective_date: e.target.value })}
+            />
+            <input
+              type="date"
+              className="form-input text-sm"
+              value={submission?.expiration_date || ''}
+              onChange={(e) => onUpdate({ expiration_date: e.target.value })}
+            />
+          </div>
+        ) : (
+          <div
+            className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
+            onClick={handleClick}
+          >
+            {submission?.effective_date && submission?.expiration_date
+              ? `${new Date(submission.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(submission.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}`
+              : '—'}
+          </div>
+        )}
+      </div>
+
+      {/* Done button spans all 3 columns when editing */}
+      {isEditing && (
+        <div className="col-span-3">
+          <button
+            onClick={() => setIsEditing(false)}
+            className="w-full py-2 text-sm font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded border border-purple-200 transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main Analyze Page Component
 // ─────────────────────────────────────────────────────────────
 
 export default function AnalyzePage() {
   const { submissionId } = useParams();
+  const queryClient = useQueryClient();
 
   const { data: submission, isLoading } = useQuery({
     queryKey: ['submission', submissionId],
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
+  const updateMutation = useMutation({
+    mutationFn: (data) => updateSubmission(submissionId, data),
+    onSuccess: () => queryClient.invalidateQueries(['submission', submissionId]),
+  });
+
   if (isLoading) {
     return <div className="text-gray-500">Loading...</div>;
   }
 
-  // Parse NIST controls
-  let nistControls = [];
-  if (submission?.nist_controls) {
-    if (Array.isArray(submission.nist_controls)) {
-      nistControls = submission.nist_controls;
-    } else if (typeof submission.nist_controls === 'object') {
-      nistControls = Object.entries(submission.nist_controls).map(([key, value]) => ({
-        name: key,
-        ...(typeof value === 'object' ? value : { status: value }),
-      }));
-    }
-  }
-
   return (
     <div className="space-y-6">
-      {/* Quick Metrics */}
-      <div className="grid grid-cols-4 gap-4">
-        <div className="metric-card">
-          <div className="metric-label">Revenue</div>
-          <div className="metric-value">{formatCompact(submission?.annual_revenue)}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Industry</div>
-          <div className="metric-value text-base truncate" title={submission?.naics_primary_title}>
-            {submission?.naics_primary_title || '—'}
-          </div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">NAICS Code</div>
-          <div className="metric-value">{submission?.naics_primary_code || '—'}</div>
-        </div>
-        <div className="metric-card">
-          <div className="metric-label">Status</div>
-          <div className="metric-value text-base">{submission?.status?.replace(/_/g, ' ') || '—'}</div>
-        </div>
-      </div>
+      {/* Quick Metrics - Revenue, Industry, Policy Period (click any to edit all) */}
+      <QuickMetricsRow
+        submission={submission}
+        onUpdate={(data) => updateMutation.mutate(data)}
+      />
+
+      {/* Underwriting Decision */}
+      <DecisionSection submission={submission} submissionId={submissionId} />
 
       {/* Pricing Section (Calculated + Market Benchmark) */}
       <PricingSection submissionId={submissionId} submission={submission} />
 
+      {/* Business Summary - Full width, larger box */}
+      <EditableSection title="Business Summary" value={submission?.business_summary} fieldName="business_summary" submissionId={submissionId}>
+        <div className="bg-gray-50 rounded-lg p-4 min-h-[120px] max-h-[300px] overflow-y-auto">
+          <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{submission?.business_summary || 'No business summary available'}</p>
+        </div>
+      </EditableSection>
+
+      {/* Risk Profile: Cyber Exposures + Security Controls side by side */}
+      <div className="grid grid-cols-2 gap-6">
+        <CyberExposuresSection submission={submission} submissionId={submissionId} />
+        <SecurityControlsSection submission={submission} submissionId={submissionId} />
+      </div>
+
       {/* Loss History */}
       <LossHistorySection submissionId={submissionId} />
 
-      {/* Business Summary + Key Points */}
-      <div className="grid grid-cols-2 gap-6">
-        <EditableSection title="Business Summary" value={submission?.business_summary} fieldName="business_summary" submissionId={submissionId}>
-          <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
-            <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{submission?.business_summary || 'No business summary available'}</p>
-          </div>
-        </EditableSection>
-        <EditableSection title="Key Points" value={submission?.bullet_point_summary} fieldName="bullet_point_summary" submissionId={submissionId}>
-          <div className="bg-gray-50 rounded-lg p-4 max-h-64 overflow-y-auto">
-            <FormattedText text={submission?.bullet_point_summary} />
-          </div>
-        </EditableSection>
-      </div>
-
-      {/* Security Controls */}
-      <EditableSection title="Security Controls Assessment" value={submission?.nist_controls_summary} fieldName="nist_controls_summary" submissionId={submissionId}>
-        {submission?.nist_controls_summary && (
-          <div className="bg-gray-50 rounded-lg p-4 mb-4">
-            <FormattedText text={submission.nist_controls_summary} />
-          </div>
-        )}
-        {nistControls.length > 0 ? (
-          <div className="grid grid-cols-3 gap-3">
-            {nistControls.map((control, idx) => <ControlCard key={idx} name={control.name} status={control.status} description={control.description} />)}
-          </div>
-        ) : !submission?.nist_controls_summary ? (
-          <div className="bg-gray-50 rounded-lg p-4 text-center"><p className="text-gray-500">No security controls data available</p></div>
-        ) : null}
-      </EditableSection>
-
-      {/* AI Recommendation */}
-      {submission?.ai_recommendation && (
-        <div className="card">
-          <h3 className="form-section-title">AI Recommendation</h3>
-          <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-            <FormattedText text={submission.ai_recommendation} />
-          </div>
-        </div>
-      )}
-
-      {/* Guideline Citations */}
-      {submission?.ai_guideline_citations && (
-        <div className="card">
-          <h3 className="form-section-title">Guideline Citations</h3>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <FormattedText text={submission.ai_guideline_citations} />
-          </div>
-        </div>
-      )}
+      {/* Incumbent Carrier */}
+      <IncumbentCarrierSection submission={submission} />
     </div>
   );
 }

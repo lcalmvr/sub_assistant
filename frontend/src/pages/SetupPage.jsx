@@ -131,8 +131,19 @@ function ConflictsList({ conflicts, submissionId }) {
     },
   });
 
+  // Show empty state instead of hiding
   if (!conflicts || conflicts.pending_count === 0) {
-    return null;
+    return (
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="form-section-title mb-0 pb-0 border-0">Conflicts</h3>
+          <span className="text-sm text-green-600 font-medium">No conflicts</span>
+        </div>
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+          <p className="text-green-700">All extracted data has been verified with no conflicts.</p>
+        </div>
+      </div>
+    );
   }
 
   const priorityColors = {
@@ -227,7 +238,7 @@ function ConflictsList({ conflicts, submissionId }) {
 // Document Selector with Upload
 // ─────────────────────────────────────────────────────────────
 
-function DocumentSelector({ documents, selectedId, onSelect, onUpload, isUploading }) {
+function DocumentSelector({ documents, selectedId, onSelect, onUpload, isUploading, showUploadOnly = false }) {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedType, setSelectedType] = useState('');
@@ -276,6 +287,71 @@ function DocumentSelector({ documents, selectedId, onSelect, onUpload, isUploadi
     setSelectedFile(null);
     setSelectedType('');
   };
+
+  // Upload-only mode for empty state
+  if (showUploadOnly) {
+    return (
+      <>
+        <label className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm cursor-pointer transition-colors ${
+          isUploading
+            ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+            : 'bg-purple-600 hover:bg-purple-700 text-white'
+        }`}>
+          {isUploading ? (
+            <>
+              <span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
+              <span>Uploading...</span>
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Upload Document</span>
+            </>
+          )}
+          <input
+            type="file"
+            className="hidden"
+            accept=".pdf,.png,.jpg,.jpeg"
+            onChange={handleFileSelect}
+            disabled={isUploading}
+          />
+        </label>
+
+        {/* Upload Modal */}
+        {showUploadModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Upload Document</h3>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-gray-600 mb-2">Selected file:</p>
+                  <p className="font-medium text-gray-900">{selectedFile?.name}</p>
+                </div>
+                <div>
+                  <label className="form-label">Document Type</label>
+                  <select
+                    className="form-select"
+                    value={selectedType}
+                    onChange={(e) => setSelectedType(e.target.value)}
+                  >
+                    {documentTypes.map((type) => (
+                      <option key={type.value} value={type.value}>{type.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button onClick={handleCancel} className="btn btn-secondary flex-1">Cancel</button>
+                  <button onClick={handleUpload} className="btn btn-primary flex-1">Upload</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <>
@@ -871,11 +947,11 @@ export default function SetupPage() {
         <ConflictsList conflicts={conflicts} submissionId={submissionId} />
       </div>
 
-      {/* Section 2: Document Verification */}
-      {(hasExtractions || documents?.count > 0) && (
-        <div className="card p-0 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2 bg-gray-100 border-b">
-            <h3 className="font-semibold text-gray-900">Document Verification</h3>
+      {/* Section 2: Document Verification - Always show */}
+      <div className="card p-0 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2 bg-gray-100 border-b">
+          <h3 className="font-semibold text-gray-900">Document Verification</h3>
+          {(hasExtractions || documents?.count > 0) && (
             <div className="flex items-center gap-1 bg-gray-200 rounded-lg p-1">
               <button
                 onClick={() => setViewMode('split')}
@@ -902,8 +978,29 @@ export default function SetupPage() {
                 Extractions
               </button>
             </div>
-          </div>
+          )}
+        </div>
 
+        {/* Empty state when no documents */}
+        {!hasExtractions && (!documents || documents.count === 0) ? (
+          <div className="p-8 text-center bg-gray-50" style={{ minHeight: '300px' }}>
+            <div className="max-w-md mx-auto">
+              <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <h4 className="text-lg font-medium text-gray-900 mb-2">No Documents Uploaded</h4>
+              <p className="text-gray-500 mb-4">Upload submission documents to extract and verify application data.</p>
+              <DocumentSelector
+                documents={documents}
+                selectedId={null}
+                onSelect={() => {}}
+                onUpload={handleDocumentUpload}
+                isUploading={uploadDocumentMutation.isPending}
+                showUploadOnly
+              />
+            </div>
+          </div>
+        ) : (
           <div className={`grid ${viewMode === 'split' ? 'grid-cols-2' : 'grid-cols-1'} divide-x overflow-hidden`} style={{ height: '500px' }}>
             {/* Document Viewer */}
             {(viewMode === 'split' || viewMode === 'documents') && (
@@ -957,8 +1054,8 @@ export default function SetupPage() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Section 3: Account Profile Form */}
       <AccountProfileForm
