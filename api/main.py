@@ -6867,6 +6867,12 @@ class ClaimRequest(BaseModel):
     user_name: str
 
 
+class CommentRequest(BaseModel):
+    user_id: Optional[str] = None
+    user_name: str
+    comment: str
+
+
 class SubmitForReviewRequest(BaseModel):
     user_id: Optional[str] = None
     user_name: str
@@ -6909,8 +6915,22 @@ def get_workflow_queue(user_name: Optional[str] = None):
                     nv.hours_remaining,
                     nv.votes_cast,
                     nv.votes_needed,
-                    nv.required_votes
+                    nv.required_votes,
+                    s.opportunity_notes,
+                    s.naics_primary_title,
+                    s.annual_revenue,
+                    s.broker_email,
+                    s.bullet_point_summary,
+                    o.name as broker_company,
+                    CONCAT(p.first_name, ' ', p.last_name) as broker_person
                 FROM v_needs_votes nv
+                JOIN submissions s ON s.id = nv.submission_id
+                LEFT JOIN brkr_employments e ON (
+                    e.employment_id::text = s.broker_employment_id
+                    OR (s.broker_employment_id IS NULL AND e.email = s.broker_email)
+                )
+                LEFT JOIN brkr_organizations o ON o.org_id = e.org_id
+                LEFT JOIN brkr_people p ON p.person_id = e.person_id
                 ORDER BY nv.hours_remaining ASC
             """)
             needs_votes = cur.fetchall()
@@ -6967,6 +6987,34 @@ def get_workflow_queue(user_name: Optional[str] = None):
                     key = (str(nv['submission_id']), nv['current_stage'])
                     nv['my_vote'] = user_votes.get(key)
 
+            # Get comments for all needs_votes items
+            if needs_votes:
+                submission_ids = [str(n['submission_id']) for n in needs_votes]
+                cur.execute("""
+                    SELECT submission_id, user_name, comment, voted_at as created_at, vote
+                    FROM workflow_votes
+                    WHERE submission_id = ANY(%s::uuid[])
+                      AND comment IS NOT NULL AND comment != ''
+                    ORDER BY voted_at DESC
+                """, (submission_ids,))
+                all_comments = cur.fetchall()
+
+                # Group comments by submission
+                comment_map = {}
+                for c in all_comments:
+                    sid = str(c['submission_id'])
+                    if sid not in comment_map:
+                        comment_map[sid] = []
+                    comment_map[sid].append({
+                        'user_name': c['user_name'],
+                        'comment': c['comment'],
+                        'created_at': c['created_at'].isoformat() if c['created_at'] else None,
+                        'vote': c['vote']
+                    })
+
+                for nv in needs_votes:
+                    nv['comments'] = comment_map.get(str(nv['submission_id']), [])
+
             return {
                 "needs_votes": needs_votes,
                 "ready_to_work": ready_to_work,
@@ -6974,6 +7022,63 @@ def get_workflow_queue(user_name: Optional[str] = None):
                     "needs_votes_count": len(needs_votes),
                     "ready_to_work_count": len(ready_to_work)
                 }
+            }
+
+
+@app.post("/api/workflow/{submission_id}/comment")
+def add_workflow_comment(submission_id: str, request: CommentRequest):
+    """Add a comment to a submission without voting."""
+    import uuid as uuid_module
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get current stage
+            cur.execute("""
+                SELECT current_stage FROM submission_workflow
+                WHERE submission_id = %s
+            """, (submission_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Submission not in workflow")
+
+            stage = row['current_stage']
+            user_id = request.user_id or str(uuid_module.uuid4())
+
+            # Insert comment as a 'comment' type entry (not a vote)
+            cur.execute("""
+                INSERT INTO workflow_votes (submission_id, stage, user_id, user_name, vote, comment)
+                VALUES (%s, %s, %s, %s, 'comment', %s)
+            """, (submission_id, stage, user_id, request.user_name, request.comment))
+
+            conn.commit()
+
+            return {"status": "comment_added", "submission_id": submission_id}
+
+
+@app.get("/api/workflow/{submission_id}/comments")
+def get_workflow_comments(submission_id: str):
+    """Get all comments for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_name, comment, voted_at as created_at, vote
+                FROM workflow_votes
+                WHERE submission_id = %s
+                  AND comment IS NOT NULL AND comment != ''
+                ORDER BY voted_at DESC
+            """, (submission_id,))
+            comments = cur.fetchall()
+
+            return {
+                "comments": [
+                    {
+                        'user_name': c['user_name'],
+                        'comment': c['comment'],
+                        'created_at': c['created_at'].isoformat() if c['created_at'] else None,
+                        'vote': c['vote']
+                    }
+                    for c in comments
+                ]
             }
 
 

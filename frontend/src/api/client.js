@@ -407,6 +407,8 @@ export const startPrescreen = (submissionId) =>
   api.post(`/workflow/${submissionId}/start-prescreen`);
 export const recordVote = (submissionId, vote) =>
   api.post(`/workflow/${submissionId}/vote`, vote);
+export const addWorkflowComment = (submissionId, userName, comment) =>
+  api.post(`/workflow/${submissionId}/comment`, { user_name: userName, comment });
 export const claimSubmission = (submissionId, userName) =>
   api.post(`/workflow/${submissionId}/claim`, { user_name: userName });
 export const unclaimSubmission = (submissionId, userName) =>

@@ -6,6 +6,7 @@ import {
   getWorkflowSummary,
   getMyWork,
   recordVote,
+  addWorkflowComment,
   claimSubmission,
   getUwRecommendation,
   getPendingDeclines,
@@ -95,7 +96,7 @@ const DECLINE_REASONS = [
 ];
 
 // Pre-screen vote card
-function PreScreenCard({ item, onVote, isVoting }) {
+function PreScreenCard({ item, onVote, isVoting, onComment, isCommenting }) {
   const [comment, setComment] = useState('');
   const [showComment, setShowComment] = useState(false);
   const [showPassReasons, setShowPassReasons] = useState(false);
@@ -111,6 +112,16 @@ function PreScreenCard({ item, onVote, isVoting }) {
     });
     setShowPassReasons(false);
     setSelectedReasons([]);
+    setComment('');
+    setShowComment(false);
+  };
+
+  const handleSubmitComment = () => {
+    if (comment.trim()) {
+      onComment({ submissionId: item.submission_id, comment: comment.trim() });
+      setComment('');
+      setShowComment(false);
+    }
   };
 
   const toggleReason = (reason) => {
@@ -167,22 +178,15 @@ function PreScreenCard({ item, onVote, isVoting }) {
           )}
         </div>
 
-        {/* Broker & Dates */}
-        <div className="flex items-center gap-2 text-sm">
-          {(item.broker_company || item.broker_email) && (
-            <span className="text-gray-600">
-              {item.broker_company || item.broker_email?.split('@')[0]}
-            </span>
-          )}
-          {(item.broker_company || item.broker_email) && (item.effective_date || item.expiration_date) && (
-            <span className="text-gray-300">·</span>
-          )}
-          {item.effective_date && (
-            <span className="text-gray-500">
-              Eff: {new Date(item.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-            </span>
-          )}
-        </div>
+        {/* Broker info: Company · Person */}
+        {(item.broker_company || item.broker_person || item.broker_email) && (
+          <div className="text-sm text-gray-600">
+            {[
+              item.broker_company,
+              item.broker_person || item.broker_email?.split('@')[0]
+            ].filter(Boolean).join(' · ')}
+          </div>
+        )}
 
         {/* Loss history */}
         {item.loss_count > 0 && (
@@ -202,7 +206,7 @@ function PreScreenCard({ item, onVote, isVoting }) {
         )}
 
         {/* Empty state */}
-        {!item.opportunity_notes && !item.naics_primary_title && !item.annual_revenue && !item.broker_company && !item.broker_email && !item.bullet_point_summary && (
+        {!item.opportunity_notes && !item.naics_primary_title && !item.annual_revenue && !item.broker_company && !item.broker_person && !item.broker_email && !item.bullet_point_summary && (
           <p className="text-sm text-gray-400 italic">No submission details available</p>
         )}
       </div>
@@ -268,7 +272,7 @@ function PreScreenCard({ item, onVote, isVoting }) {
               />
             </div>
 
-            {/* Comment toggle */}
+            {/* Comment section */}
             <div>
               {!showComment ? (
                 <button
@@ -278,15 +282,47 @@ function PreScreenCard({ item, onVote, isVoting }) {
                   + Add comment
                 </button>
               ) : (
-                <input
-                  type="text"
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  placeholder="Optional comment..."
-                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-500"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                    placeholder="Add comment..."
+                    className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    onKeyDown={(e) => e.key === 'Enter' && handleSubmitComment()}
+                  />
+                  <button
+                    onClick={handleSubmitComment}
+                    disabled={!comment.trim() || isCommenting}
+                    className="px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isCommenting ? '...' : 'Post'}
+                  </button>
+                </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Existing comments */}
+        {item.comments && item.comments.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+            <div className="text-xs font-medium text-gray-500 uppercase">Comments</div>
+            {item.comments.map((c, idx) => (
+              <div key={idx} className="text-sm">
+                <span className="font-medium text-gray-700">{c.user_name}</span>
+                {c.vote && c.vote !== 'comment' && (
+                  <span className={`ml-1 text-xs ${
+                    c.vote === 'pursue' ? 'text-green-600' :
+                    c.vote === 'pass' ? 'text-red-600' :
+                    c.vote === 'unsure' ? 'text-amber-600' : 'text-gray-500'
+                  }`}>
+                    ({c.vote})
+                  </span>
+                )}
+                <span className="text-gray-500">: {c.comment}</span>
+              </div>
+            ))}
           </div>
         )}
 
@@ -703,6 +739,15 @@ export default function VoteQueuePage() {
     },
   });
 
+  // Comment mutation (standalone comment without vote)
+  const commentMutation = useMutation({
+    mutationFn: ({ submissionId, comment }) =>
+      addWorkflowComment(submissionId, currentUser, comment),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['workflow-queue']);
+    },
+  });
+
   // Claim mutation
   const claimMutation = useMutation({
     mutationFn: (submissionId) => claimSubmission(submissionId, currentUser),
@@ -827,6 +872,8 @@ export default function VoteQueuePage() {
                       item={item}
                       onVote={(data) => voteMutation.mutate(data)}
                       isVoting={voteMutation.isPending}
+                      onComment={(data) => commentMutation.mutate(data)}
+                      isCommenting={commentMutation.isPending}
                     />
                   ))}
                 </div>
