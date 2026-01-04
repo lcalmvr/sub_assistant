@@ -12,6 +12,12 @@ export const getSubmissions = () => api.get('/submissions');
 export const getSubmission = (id) => api.get(`/submissions/${id}`);
 export const updateSubmission = (id, data) => api.patch(`/submissions/${id}`, data);
 
+// Brokers
+export const getBrokers = () => api.get('/brokers');
+export const getBrokerContacts = () => api.get('/broker-contacts');
+export const createBroker = (data) => api.post('/brokers', data);
+export const createBrokerContact = (data) => api.post('/broker-contacts', data);
+
 // Credibility & Conflicts
 export const getCredibility = (submissionId) => api.get(`/submissions/${submissionId}/credibility`);
 export const getConflicts = (submissionId) => api.get(`/submissions/${submissionId}/conflicts`);

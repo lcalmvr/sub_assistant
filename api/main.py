@@ -79,19 +79,26 @@ def get_submission(submission_id: str):
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, applicant_name, business_summary, annual_revenue,
-                       naics_primary_title, naics_primary_code,
-                       submission_status, submission_outcome, outcome_reason,
-                       bullet_point_summary, nist_controls_summary,
-                       hazard_override, control_overrides, default_retroactive_date,
-                       ai_recommendation, ai_guideline_citations,
-                       decision_tag, decision_reason, decided_at, decided_by,
-                       cyber_exposures, nist_controls,
-                       website, broker_email,
-                       effective_date, expiration_date,
-                       created_at
-                FROM submissions
-                WHERE id = %s
+                SELECT s.id, s.applicant_name, s.business_summary, s.annual_revenue,
+                       s.naics_primary_title, s.naics_primary_code,
+                       s.submission_status, s.submission_outcome, s.outcome_reason,
+                       s.bullet_point_summary, s.nist_controls_summary,
+                       s.hazard_override, s.control_overrides, s.default_retroactive_date,
+                       s.ai_recommendation, s.ai_guideline_citations,
+                       s.decision_tag, s.decision_reason, s.decided_at, s.decided_by,
+                       s.cyber_exposures, s.nist_controls,
+                       s.website, s.broker_email, s.broker_employment_id,
+                       s.effective_date, s.expiration_date,
+                       s.opportunity_notes,
+                       s.created_at,
+                       e.org_id as broker_org_id,
+                       o.name as broker_company,
+                       CONCAT(p.first_name, ' ', p.last_name) as broker_name
+                FROM submissions s
+                LEFT JOIN brkr_employments e ON e.employment_id::text = s.broker_employment_id
+                LEFT JOIN brkr_organizations o ON o.org_id = e.org_id
+                LEFT JOIN brkr_people p ON p.person_id = e.person_id
+                WHERE s.id = %s
             """, (submission_id,))
             row = cur.fetchone()
             if not row:
@@ -104,6 +111,7 @@ class SubmissionUpdate(BaseModel):
     applicant_name: Optional[str] = None
     website: Optional[str] = None
     broker_email: Optional[str] = None
+    broker_employment_id: Optional[str] = None
     # Financial
     annual_revenue: Optional[int] = None
     naics_primary_title: Optional[str] = None
@@ -126,6 +134,8 @@ class SubmissionUpdate(BaseModel):
     cyber_exposures: Optional[str] = None
     nist_controls_summary: Optional[str] = None
     bullet_point_summary: Optional[str] = None
+    # Opportunity/broker request
+    opportunity_notes: Optional[str] = None
 
 
 @app.patch("/api/submissions/{submission_id}")
@@ -164,6 +174,142 @@ def update_submission(submission_id: str, data: SubmissionUpdate):
                 raise HTTPException(status_code=404, detail="Submission not found")
             conn.commit()
     return {"status": "updated"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Brokers Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/brokers")
+def list_brokers():
+    """List all brokers with their primary contact."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    b.id,
+                    b.company_name,
+                    b.city,
+                    b.state,
+                    pc.email as primary_email,
+                    pc.first_name as primary_first_name,
+                    pc.last_name as primary_last_name
+                FROM brokers b
+                LEFT JOIN broker_contacts pc ON pc.broker_id = b.id AND pc.is_primary = true
+                ORDER BY b.company_name
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/broker-contacts")
+def list_broker_contacts():
+    """List all broker contacts (unique by email) for dropdown selection."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    bc.id,
+                    bc.broker_id,
+                    bc.email,
+                    bc.first_name,
+                    bc.last_name,
+                    bc.title,
+                    b.company_name as broker_company
+                FROM broker_contacts bc
+                JOIN brokers b ON b.id = bc.broker_id
+                ORDER BY b.company_name, bc.last_name, bc.first_name
+            """)
+            return cur.fetchall()
+
+
+class BrokerCreate(BaseModel):
+    company_name: str
+    city: Optional[str] = None
+    state: Optional[str] = None
+    # Primary contact info
+    contact_first_name: str
+    contact_last_name: str
+    contact_email: str
+    contact_title: Optional[str] = None
+
+
+@app.post("/api/brokers")
+def create_broker(data: BrokerCreate):
+    """Create a new broker with primary contact."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Check if email already exists
+            cur.execute("""
+                SELECT id FROM broker_contacts WHERE email = %s
+            """, (data.contact_email,))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="A contact with this email already exists")
+
+            # Create broker
+            cur.execute("""
+                INSERT INTO brokers (company_name, city, state)
+                VALUES (%s, %s, %s)
+                RETURNING id
+            """, (data.company_name, data.city, data.state))
+            broker_id = cur.fetchone()['id']
+
+            # Create primary contact
+            cur.execute("""
+                INSERT INTO broker_contacts (broker_id, first_name, last_name, email, title, is_primary)
+                VALUES (%s, %s, %s, %s, %s, true)
+                RETURNING id
+            """, (broker_id, data.contact_first_name, data.contact_last_name,
+                  data.contact_email, data.contact_title))
+            contact_id = cur.fetchone()['id']
+
+            conn.commit()
+
+            return {
+                "broker_id": str(broker_id),
+                "contact_id": str(contact_id),
+                "message": "Broker created successfully"
+            }
+
+
+class ContactCreate(BaseModel):
+    broker_id: str
+    first_name: str
+    last_name: str
+    email: str
+    title: Optional[str] = None
+
+
+@app.post("/api/broker-contacts")
+def create_broker_contact(data: ContactCreate):
+    """Add a contact to an existing broker."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Check if email already exists
+            cur.execute("""
+                SELECT id FROM broker_contacts WHERE email = %s
+            """, (data.email,))
+            if cur.fetchone():
+                raise HTTPException(status_code=400, detail="A contact with this email already exists")
+
+            # Check broker exists
+            cur.execute("SELECT id FROM brokers WHERE id = %s", (data.broker_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Broker not found")
+
+            # Create contact
+            cur.execute("""
+                INSERT INTO broker_contacts (broker_id, first_name, last_name, email, title)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (data.broker_id, data.first_name, data.last_name, data.email, data.title))
+            contact_id = cur.fetchone()['id']
+
+            conn.commit()
+
+            return {
+                "contact_id": str(contact_id),
+                "message": "Contact added successfully"
+            }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -4698,6 +4844,7 @@ def get_brkr_employments(org_id: str = None, office_id: str = None, active_only:
                     e.employment_id, e.person_id, e.org_id, e.office_id,
                     e.email, e.phone, e.active,
                     p.first_name, p.last_name,
+                    CONCAT(p.first_name, ' ', p.last_name) as person_name,
                     o.name as org_name,
                     off.office_name
                 FROM brkr_employments e

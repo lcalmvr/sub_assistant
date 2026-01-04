@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission } from '../api/client';
+import { getSubmission, updateSubmission, getBrkrEmployments } from '../api/client';
 
 // Format currency for display
 function formatCurrency(value) {
@@ -30,16 +30,28 @@ export default function AccountPage() {
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
+  // Fetch broker employments for dropdown
+  const { data: brokerEmployments } = useQuery({
+    queryKey: ['brkr-employments'],
+    queryFn: () => getBrkrEmployments({ active_only: true }).then(res => res.data),
+  });
+
   // Form state
   const [formData, setFormData] = useState({
     applicant_name: '',
     website: '',
+    broker_employment_id: '',
     broker_email: '',
     annual_revenue: '',
     naics_primary_title: '',
+    opportunity_notes: '',
   });
   const [hasChanges, setHasChanges] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
+
+  // Broker selector state
+  const [brokerSearch, setBrokerSearch] = useState('');
+  const [showBrokerDropdown, setShowBrokerDropdown] = useState(false);
 
   // Initialize form from submission data
   useEffect(() => {
@@ -47,13 +59,27 @@ export default function AccountPage() {
       setFormData({
         applicant_name: submission.applicant_name || '',
         website: submission.website || '',
+        broker_employment_id: submission.broker_employment_id || '',
         broker_email: submission.broker_email || '',
         annual_revenue: submission.annual_revenue ? formatCurrency(submission.annual_revenue) : '',
         naics_primary_title: submission.naics_primary_title || '',
+        opportunity_notes: submission.opportunity_notes || '',
       });
+      // Set search display to show current broker
+      if (submission.broker_employment_id || submission.broker_email) {
+        const emp = brokerEmployments?.find(e =>
+          e.employment_id === submission.broker_employment_id ||
+          e.email === submission.broker_email
+        );
+        if (emp) {
+          setBrokerSearch(`${emp.person_name} - ${emp.org_name}`);
+        } else if (submission.broker_email) {
+          setBrokerSearch(submission.broker_email);
+        }
+      }
       setHasInitialized(true);
     }
-  }, [submission, hasInitialized]);
+  }, [submission, hasInitialized, brokerEmployments]);
 
   // Update mutation
   const updateMutation = useMutation({
@@ -70,6 +96,28 @@ export default function AccountPage() {
     setHasChanges(true);
   };
 
+  // Handle broker selection
+  const handleSelectBroker = (employment) => {
+    setFormData(prev => ({
+      ...prev,
+      broker_employment_id: employment.employment_id,
+      broker_email: employment.email,
+    }));
+    setBrokerSearch(`${employment.person_name} - ${employment.org_name}`);
+    setShowBrokerDropdown(false);
+    setHasChanges(true);
+  };
+
+  // Filter broker employments based on search
+  const filteredEmployments = brokerEmployments?.filter(emp => {
+    const search = brokerSearch.toLowerCase();
+    return (
+      (emp.email || '').toLowerCase().includes(search) ||
+      (emp.person_name || '').toLowerCase().includes(search) ||
+      (emp.org_name || '').toLowerCase().includes(search)
+    );
+  }) || [];
+
   // Handle save
   const handleSave = () => {
     const updates = {};
@@ -84,6 +132,9 @@ export default function AccountPage() {
     if (formData.broker_email !== (submission?.broker_email || '')) {
       updates.broker_email = formData.broker_email || null;
     }
+    if (formData.broker_employment_id !== (submission?.broker_employment_id || '')) {
+      updates.broker_employment_id = formData.broker_employment_id || null;
+    }
     if (formData.naics_primary_title !== (submission?.naics_primary_title || '')) {
       updates.naics_primary_title = formData.naics_primary_title || null;
     }
@@ -92,6 +143,11 @@ export default function AccountPage() {
     const newRevenue = parseCurrency(formData.annual_revenue);
     if (newRevenue !== submission?.annual_revenue) {
       updates.annual_revenue = newRevenue;
+    }
+
+    // Opportunity notes
+    if (formData.opportunity_notes !== (submission?.opportunity_notes || '')) {
+      updates.opportunity_notes = formData.opportunity_notes || null;
     }
 
     if (Object.keys(updates).length > 0) {
@@ -107,10 +163,26 @@ export default function AccountPage() {
       setFormData({
         applicant_name: submission.applicant_name || '',
         website: submission.website || '',
+        broker_employment_id: submission.broker_employment_id || '',
         broker_email: submission.broker_email || '',
         annual_revenue: submission.annual_revenue ? formatCurrency(submission.annual_revenue) : '',
         naics_primary_title: submission.naics_primary_title || '',
+        opportunity_notes: submission.opportunity_notes || '',
       });
+      // Reset broker search display
+      if (submission.broker_employment_id || submission.broker_email) {
+        const emp = brokerEmployments?.find(e =>
+          e.employment_id === submission.broker_employment_id ||
+          e.email === submission.broker_email
+        );
+        if (emp) {
+          setBrokerSearch(`${emp.person_name} - ${emp.org_name}`);
+        } else if (submission.broker_email) {
+          setBrokerSearch(submission.broker_email);
+        }
+      } else {
+        setBrokerSearch('');
+      }
     }
     setHasChanges(false);
   };
@@ -191,30 +263,106 @@ export default function AccountPage() {
         </div>
       </div>
 
-      {/* Contact Information */}
+      {/* Broker Selection */}
       <div className="card">
-        <h3 className="form-section-title">Contact Information</h3>
+        <h3 className="form-section-title">Broker</h3>
         <div className="grid grid-cols-2 gap-6">
-          <div>
-            <label className="form-label">Broker Email</label>
+          <div className="relative">
+            <label className="form-label">Broker Contact</label>
             <input
-              type="email"
+              type="text"
               className="form-input"
-              value={formData.broker_email}
-              onChange={(e) => handleChange('broker_email', e.target.value)}
-              placeholder="broker@example.com"
+              value={brokerSearch}
+              onChange={(e) => {
+                setBrokerSearch(e.target.value);
+                setShowBrokerDropdown(true);
+              }}
+              onFocus={() => setShowBrokerDropdown(true)}
+              placeholder="Search by name, email, or organization..."
             />
+            {/* Dropdown */}
+            {showBrokerDropdown && (
+              <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-64 overflow-auto">
+                {filteredEmployments.length > 0 ? (
+                  filteredEmployments.map(emp => (
+                    <button
+                      key={emp.employment_id}
+                      type="button"
+                      className="w-full px-3 py-2 text-left hover:bg-gray-50 border-b border-gray-100 last:border-0"
+                      onClick={() => handleSelectBroker(emp)}
+                    >
+                      <div className="font-medium text-gray-900">
+                        {emp.person_name}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {emp.email} · {emp.org_name}
+                      </div>
+                    </button>
+                  ))
+                ) : brokerSearch ? (
+                  <div className="px-3 py-4 text-center">
+                    <p className="text-sm text-gray-500 mb-2">No matching brokers found</p>
+                    <Link
+                      to="/brokers"
+                      className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+                    >
+                      Go to Broker Management to add new
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="px-3 py-4 text-center text-sm text-gray-500">
+                    Start typing to search...
+                  </div>
+                )}
+                {filteredEmployments.length > 0 && (
+                  <div className="border-t border-gray-200 px-3 py-2">
+                    <Link
+                      to="/brokers"
+                      className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+                    >
+                      Manage brokers
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Click outside to close */}
+            {showBrokerDropdown && (
+              <div
+                className="fixed inset-0 z-10"
+                onClick={() => setShowBrokerDropdown(false)}
+              />
+            )}
           </div>
           <div>
             <label className="form-label">Submission Status</label>
             <input
               type="text"
               className="form-input bg-gray-50"
-              value={submission?.status?.replace(/_/g, ' ') || '—'}
+              value={submission?.submission_status?.replace(/_/g, ' ') || '—'}
               readOnly
             />
           </div>
         </div>
+      </div>
+
+      {/* Opportunity / Broker Request */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="form-section-title mb-0">Opportunity / Broker Request</h3>
+          <span className="text-xs text-gray-400">Displayed in pre-screen voting cards</span>
+        </div>
+        <textarea
+          className="form-input min-h-[100px]"
+          value={formData.opportunity_notes}
+          onChange={(e) => handleChange('opportunity_notes', e.target.value)}
+          placeholder="Enter opportunity details from broker request: expiring coverage, expected pricing, why they're shopping, any special circumstances..."
+          rows={4}
+        />
+        <p className="text-xs text-gray-500 mt-2">
+          This summary appears on pre-screen voting cards to help UWs make quick decisions.
+          Can be extracted from broker emails or entered manually.
+        </p>
       </div>
 
       {/* Financial Information */}
