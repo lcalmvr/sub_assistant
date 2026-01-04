@@ -19,6 +19,10 @@ import {
   getPolicyForm,
   getFormExtractionQueue,
   resyncFormCoverages,
+  getActiveSchema,
+  updateSchema,
+  getSchemaRecommendations,
+  actionSchemaRecommendation,
 } from '../api/client';
 
 // Format currency
@@ -1576,6 +1580,577 @@ function FeedbackAnalyticsTab() {
   );
 }
 
+// Edit Field Form Component
+function EditFieldForm({ field, fieldTypes, onSave, onCancel }) {
+  const [displayName, setDisplayName] = useState(field.displayName || '');
+  const [type, setType] = useState(field.type || 'string');
+  const [description, setDescription] = useState(field.description || '');
+  const [enumValues, setEnumValues] = useState(
+    field.enumValues ? field.enumValues.join(', ') : ''
+  );
+
+  const handleSave = () => {
+    const updates = {
+      displayName,
+      type,
+      description,
+    };
+    if (type === 'enum' || type === 'array') {
+      updates.enumValues = enumValues.split(',').map(v => v.trim()).filter(Boolean);
+    }
+    onSave(updates);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="text-sm font-medium text-purple-900 mb-2">
+        Editing: {field.key}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Display Name</label>
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className="form-input text-sm w-full"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="form-input text-sm w-full"
+          >
+            {fieldTypes.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="col-span-2">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="form-input text-sm w-full"
+            rows={2}
+            placeholder="Describe what this field captures and how AI should interpret related questions..."
+          />
+        </div>
+        {(type === 'enum' || type === 'array') && (
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Options (comma-separated)</label>
+            <input
+              type="text"
+              value={enumValues}
+              onChange={(e) => setEnumValues(e.target.value)}
+              className="form-input text-sm w-full"
+              placeholder="option1, option2, option3"
+            />
+          </div>
+        )}
+      </div>
+      <div className="flex justify-end gap-2 pt-2">
+        <button
+          onClick={onCancel}
+          className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          className="px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700"
+        >
+          Save Changes
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Schema Help Modal
+function SchemaHelpModal({ isOpen, onClose }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold text-gray-900">How Extraction Schemas Work</h2>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+          </div>
+
+          <div className="space-y-6 text-sm">
+            <div>
+              <p className="text-gray-600 mb-4">
+                The extraction schema tells our AI what data points to extract from insurance applications.
+                You define <strong>what</strong> to capture — the AI figures out <strong>how</strong> to find it.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs">1</span>
+                Define the Data Points You Care About
+              </h3>
+              <p className="text-gray-600 ml-8">
+                Add fields for each piece of information relevant to underwriting. For example: "hasMdr" (Yes/No)
+                to track whether applicants use Managed Detection & Response.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs">2</span>
+                Write Clear Descriptions
+              </h3>
+              <p className="text-gray-600 ml-8">
+                The description guides AI interpretation. Instead of just "Has MDR", write:
+                <em className="block mt-1 text-purple-700 bg-purple-50 px-2 py-1 rounded">
+                  "Uses managed detection and response service. True if they name an MDR provider, even without explicit yes/no question."
+                </em>
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs">3</span>
+                Let AI Handle the Interpretation
+              </h3>
+              <p className="text-gray-600 ml-8">
+                Different carriers phrase questions differently. You don't need to map every variation —
+                the AI understands that "Who is your MDR provider?" implies they have MDR.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs">4</span>
+                Review AI Suggestions
+              </h3>
+              <p className="text-gray-600 ml-8">
+                As the system processes more applications, it identifies questions that don't map to existing fields
+                and suggests additions. Review and approve to expand coverage.
+              </p>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg p-4 mt-4">
+              <h4 className="font-medium text-gray-900 mb-2">Quick Reference</h4>
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div>
+                  <div className="font-medium text-green-700 mb-1">Your Job</div>
+                  <ul className="text-gray-600 space-y-1">
+                    <li>• Define what data matters</li>
+                    <li>• Write semantic descriptions</li>
+                    <li>• Choose appropriate field types</li>
+                    <li>• Review AI recommendations</li>
+                  </ul>
+                </div>
+                <div>
+                  <div className="font-medium text-gray-400 mb-1">AI's Job</div>
+                  <ul className="text-gray-600 space-y-1">
+                    <li>• Interpret question phrasings</li>
+                    <li>• Handle carrier variations</li>
+                    <li>• Infer implied meanings</li>
+                    <li>• Suggest new fields</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 pt-4 border-t flex justify-end">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Extraction Schema Management Tab
+function ExtractionSchemaTab() {
+  const queryClient = useQueryClient();
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [showAddField, setShowAddField] = useState(false);
+  const [newField, setNewField] = useState({ key: '', displayName: '', type: 'string', description: '', enumValues: '' });
+  const [editingField, setEditingField] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
+
+  const { data: schema, isLoading } = useQuery({
+    queryKey: ['active-schema'],
+    queryFn: () => getActiveSchema().then(res => res.data),
+  });
+
+  const { data: recommendations } = useQuery({
+    queryKey: ['schema-recommendations'],
+    queryFn: () => getSchemaRecommendations().then(res => res.data),
+  });
+
+  const updateSchemaMutation = useMutation({
+    mutationFn: ({ schemaId, data }) => updateSchema(schemaId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['active-schema']);
+    },
+  });
+
+  const actionRecommendationMutation = useMutation({
+    mutationFn: ({ recId, action, notes }) => actionSchemaRecommendation(recId, action, notes),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['schema-recommendations']);
+      queryClient.invalidateQueries(['active-schema']);
+    },
+  });
+
+  if (isLoading) {
+    return <div className="text-center py-8 text-gray-500">Loading schema...</div>;
+  }
+
+  if (!schema) {
+    return <div className="text-center py-8 text-gray-500">No active schema found.</div>;
+  }
+
+  const categories = Object.entries(schema.schema_definition || {})
+    .map(([key, value]) => ({ key, ...value }))
+    .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+
+  const selectedCategoryData = selectedCategory
+    ? schema.schema_definition[selectedCategory]
+    : null;
+
+  const fields = selectedCategoryData?.fields
+    ? Object.entries(selectedCategoryData.fields).map(([key, value]) => ({ key, ...value }))
+    : [];
+
+  const handleAddField = () => {
+    if (!newField.key || !newField.displayName || !selectedCategory) return;
+
+    const fieldDef = {
+      type: newField.type,
+      displayName: newField.displayName,
+      description: newField.description,
+    };
+    if (newField.type === 'enum' || newField.type === 'array') {
+      fieldDef.enumValues = newField.enumValues.split(',').map(v => v.trim()).filter(Boolean);
+    }
+
+    const updatedSchema = { ...schema.schema_definition };
+    updatedSchema[selectedCategory].fields[newField.key] = fieldDef;
+
+    updateSchemaMutation.mutate({
+      schemaId: schema.id,
+      data: { schema_definition: updatedSchema },
+    });
+
+    setNewField({ key: '', displayName: '', type: 'string', description: '', enumValues: '' });
+    setShowAddField(false);
+  };
+
+  const handleDeleteField = (fieldKey) => {
+    if (!confirm(`Delete field "${fieldKey}"?`)) return;
+
+    const updatedSchema = { ...schema.schema_definition };
+    delete updatedSchema[selectedCategory].fields[fieldKey];
+
+    updateSchemaMutation.mutate({
+      schemaId: schema.id,
+      data: { schema_definition: updatedSchema },
+    });
+  };
+
+  const handleUpdateField = (fieldKey, updates) => {
+    const updatedSchema = { ...schema.schema_definition };
+    updatedSchema[selectedCategory].fields[fieldKey] = {
+      ...updatedSchema[selectedCategory].fields[fieldKey],
+      ...updates,
+    };
+
+    updateSchemaMutation.mutate({
+      schemaId: schema.id,
+      data: { schema_definition: updatedSchema },
+    });
+    setEditingField(null);
+  };
+
+  const fieldTypes = [
+    { value: 'string', label: 'Text' },
+    { value: 'boolean', label: 'Yes/No' },
+    { value: 'number', label: 'Number' },
+    { value: 'enum', label: 'Single Choice' },
+    { value: 'array', label: 'Multiple Choice' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Help Modal */}
+      <SchemaHelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
+
+      {/* Schema Info */}
+      <div className="bg-purple-50 rounded-lg p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-purple-900">{schema.name}</h3>
+            <p className="text-sm text-purple-700">Version {schema.version} {schema.is_active && '(Active)'}</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-purple-600">
+              {categories.length} categories, {categories.reduce((sum, cat) => sum + Object.keys(cat.fields || {}).length, 0)} fields
+            </div>
+            <button
+              onClick={() => setShowHelp(true)}
+              className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-1.5"
+            >
+              <span className="text-base leading-none">?</span>
+              How This Works
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Pending Recommendations */}
+      {recommendations?.count > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <h4 className="font-medium text-yellow-800 mb-3">
+            {recommendations.count} Pending Recommendation{recommendations.count !== 1 ? 's' : ''}
+          </h4>
+          <div className="space-y-2">
+            {recommendations.recommendations.slice(0, 3).map((rec) => (
+              <div key={rec.id} className="bg-white rounded p-3 border border-yellow-100">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="text-xs font-medium text-yellow-600 uppercase">{rec.recommendation_type}</span>
+                    <p className="font-medium text-gray-900">{rec.suggested_field_name || rec.suggested_field_key}</p>
+                    <p className="text-sm text-gray-500">Category: {rec.suggested_category}</p>
+                    {rec.ai_reasoning && (
+                      <p className="text-sm text-gray-600 mt-1">{rec.ai_reasoning}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => actionRecommendationMutation.mutate({ recId: rec.id, action: 'approved' })}
+                      className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => actionRecommendationMutation.mutate({ recId: rec.id, action: 'rejected' })}
+                      className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Two Column Layout */}
+      <div className="grid grid-cols-3 gap-6">
+        {/* Categories List */}
+        <div className="col-span-1">
+          <h4 className="font-medium text-gray-900 mb-3">Categories</h4>
+          <div className="space-y-1">
+            {categories.map((cat) => (
+              <button
+                key={cat.key}
+                onClick={() => setSelectedCategory(cat.key)}
+                className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                  selectedCategory === cat.key
+                    ? 'bg-purple-100 text-purple-900 font-medium'
+                    : 'hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <div>{cat.displayName || cat.key}</div>
+                <div className="text-xs text-gray-500">
+                  {Object.keys(cat.fields || {}).length} fields
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Fields */}
+        <div className="col-span-2">
+          {selectedCategory ? (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-medium text-gray-900">
+                  {selectedCategoryData?.displayName || selectedCategory}
+                </h4>
+                <button
+                  onClick={() => setShowAddField(true)}
+                  className="px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700"
+                >
+                  + Add Field
+                </button>
+              </div>
+
+              {selectedCategoryData?.description && (
+                <p className="text-sm text-gray-500 mb-4">{selectedCategoryData.description}</p>
+              )}
+
+              {/* Add Field Form */}
+              {showAddField && (
+                <div className="bg-gray-50 rounded-lg p-4 mb-4 border">
+                  <h5 className="font-medium text-gray-900 mb-3">Add New Field</h5>
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      type="text"
+                      placeholder="Field key (e.g., hasFirewall)"
+                      value={newField.key}
+                      onChange={(e) => setNewField({ ...newField, key: e.target.value })}
+                      className="form-input text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Display name"
+                      value={newField.displayName}
+                      onChange={(e) => setNewField({ ...newField, displayName: e.target.value })}
+                      className="form-input text-sm"
+                    />
+                    <select
+                      value={newField.type}
+                      onChange={(e) => setNewField({ ...newField, type: e.target.value })}
+                      className="form-input text-sm"
+                    >
+                      {fieldTypes.map((t) => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      placeholder="Description (optional)"
+                      value={newField.description}
+                      onChange={(e) => setNewField({ ...newField, description: e.target.value })}
+                      className="form-input text-sm"
+                    />
+                    {(newField.type === 'enum' || newField.type === 'array') && (
+                      <input
+                        type="text"
+                        placeholder="Options (comma-separated)"
+                        value={newField.enumValues}
+                        onChange={(e) => setNewField({ ...newField, enumValues: e.target.value })}
+                        className="form-input text-sm col-span-2"
+                      />
+                    )}
+                  </div>
+                  <div className="flex justify-end gap-2 mt-3">
+                    <button
+                      onClick={() => setShowAddField(false)}
+                      className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAddField}
+                      disabled={!newField.key || !newField.displayName}
+                      className="px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+                    >
+                      Add Field
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Fields Table */}
+              <div className="border rounded-lg overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Field</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {fields.map((field) => (
+                      editingField === field.key ? (
+                        <tr key={field.key} className="bg-purple-50">
+                          <td colSpan={4} className="px-4 py-4">
+                            <EditFieldForm
+                              field={field}
+                              fieldTypes={fieldTypes}
+                              onSave={(updates) => handleUpdateField(field.key, updates)}
+                              onCancel={() => setEditingField(null)}
+                            />
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={field.key}>
+                          <td className="px-4 py-3">
+                            <div className="font-medium text-gray-900 text-sm">{field.displayName}</div>
+                            <div className="text-xs text-gray-400">{field.key}</div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
+                              field.type === 'boolean' ? 'bg-blue-100 text-blue-700' :
+                              field.type === 'enum' ? 'bg-green-100 text-green-700' :
+                              field.type === 'array' ? 'bg-purple-100 text-purple-700' :
+                              field.type === 'number' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-gray-100 text-gray-700'
+                            }`}>
+                              {fieldTypes.find(t => t.value === field.type)?.label || field.type}
+                            </span>
+                            {field.enumValues && (
+                              <div className="text-xs text-gray-500 mt-1">
+                                {field.enumValues.slice(0, 3).join(', ')}
+                                {field.enumValues.length > 3 && ` +${field.enumValues.length - 3} more`}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-500 max-w-xs">
+                            {field.description || '—'}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => setEditingField(field.key)}
+                              className="text-purple-600 hover:text-purple-800 text-sm mr-2"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteField(field.key)}
+                              className="text-red-600 hover:text-red-800 text-sm"
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    ))}
+                    {fields.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
+                          No fields in this category yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-12 text-gray-500">
+              Select a category to view and edit fields
+            </div>
+          )}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
@@ -1586,6 +2161,7 @@ export default function AdminPage() {
     { id: 'templates', label: 'Subjectivity Templates' },
     { id: 'endorsement-components', label: 'Endorsement Components' },
     { id: 'form-catalog', label: 'Form Catalog' },
+    { id: 'schemas', label: 'Extraction Schema' },
     { id: 'extraction', label: 'Extraction Stats' },
     { id: 'feedback', label: 'AI Feedback' },
   ];
@@ -1639,6 +2215,7 @@ export default function AdminPage() {
           {activeTab === 'templates' && <SubjectivityTemplatesTab />}
           {activeTab === 'endorsement-components' && <EndorsementComponentTemplatesTab />}
           {activeTab === 'form-catalog' && <PolicyFormCatalogTab />}
+          {activeTab === 'schemas' && <ExtractionSchemaTab />}
           {activeTab === 'extraction' && <ExtractionStatsTab />}
           {activeTab === 'feedback' && <FeedbackAnalyticsTab />}
         </div>

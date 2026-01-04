@@ -514,32 +514,16 @@ export default function ReviewPage() {
     setHighlightPage(targetPage);
     setScrollTrigger(prev => prev + 1);
 
-    // Option B: Single highlight - prefer answer bbox, fall back to question bbox
-    // Check if answer_bbox is meaningfully different from question_bbox
-    const bboxesAreSame = (a, b) => {
-      if (!a || !b) return false;
-      const tolerance = 0.02; // 2% tolerance for "same" position
-      return Math.abs((a.left || 0) - (b.left || 0)) < tolerance &&
-             Math.abs((a.top || 0) - (b.top || 0)) < tolerance;
-    };
-
+    // Question-only highlighting - more reliable since question text is cleaner in Textract
     let selectedBbox = null;
-    let highlightType = 'primary';
 
-    // Prefer answer_bbox if it exists and is different from question_bbox
-    if (answer_bbox?.left != null && !bboxesAreSame(answer_bbox, question_bbox)) {
-      selectedBbox = answer_bbox;
-      highlightType = 'answer';
-    }
-    // Fall back to question_bbox
-    else if (question_bbox?.left != null) {
+    // Use question_bbox (most reliable)
+    if (question_bbox?.left != null) {
       selectedBbox = question_bbox;
-      highlightType = 'question';
     }
     // Legacy fallback
     else if (bbox?.left != null) {
       selectedBbox = bbox;
-      highlightType = 'primary';
     }
 
     if (selectedBbox) {
@@ -551,9 +535,9 @@ export default function ReviewPage() {
           width: selectedBbox.width,
           height: selectedBbox.height,
         },
-        type: highlightType,
+        type: 'question',
       }];
-      console.log(`[bbox] Single highlight (${highlightType}):`, highlights[0]);
+      console.log('[bbox] Question highlight:', highlights[0]);
       setActiveHighlight({ highlights });
     } else {
       console.log('[bbox] No bbox available:', { pageNumber, sourceText: sourceText?.slice(0, 50) });

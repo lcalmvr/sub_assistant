@@ -215,13 +215,15 @@ function FieldRow({ fieldName, extraction, onShowSource, onEdit, onAcceptValue }
 }
 
 // Section component
-function ExtractionSection({ sectionName, fields, onShowSource, onEdit, onAcceptValue, defaultExpanded = true }) {
+function ExtractionSection({ sectionName, fields, onShowSource, onEdit, onAcceptValue, defaultExpanded = true, isUnmapped = false }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
 
-  const displayName = sectionName
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/^./, str => str.toUpperCase())
-    .trim();
+  const displayName = isUnmapped
+    ? 'Legacy / Unmapped Fields'
+    : sectionName
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, str => str.toUpperCase())
+        .trim();
 
   // Count present fields
   const presentFields = Object.values(fields).filter(f => f.is_present);
@@ -233,24 +235,33 @@ function ExtractionSection({ sectionName, fields, onShowSource, onEdit, onAccept
   }
 
   return (
-    <div className="border rounded-lg overflow-hidden">
+    <div className={`border rounded-lg overflow-hidden ${isUnmapped ? 'border-amber-300 bg-amber-50/30' : ''}`}>
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors"
+        className={`w-full flex items-center justify-between px-4 py-3 transition-colors ${
+          isUnmapped
+            ? 'bg-amber-50 hover:bg-amber-100'
+            : 'bg-gray-50 hover:bg-gray-100'
+        }`}
       >
         <div className="flex items-center gap-3">
           <svg
-            className={`w-4 h-4 text-gray-500 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+            className={`w-4 h-4 transition-transform ${isUnmapped ? 'text-amber-500' : 'text-gray-500'} ${isExpanded ? 'rotate-90' : ''}`}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
-          <span className="font-medium text-gray-900">{displayName}</span>
-          <span className="text-xs text-gray-500">
+          <span className={`font-medium ${isUnmapped ? 'text-amber-800' : 'text-gray-900'}`}>{displayName}</span>
+          <span className={`text-xs ${isUnmapped ? 'text-amber-600' : 'text-gray-500'}`}>
             {presentFields.length} field{presentFields.length !== 1 ? 's' : ''}
           </span>
+          {isUnmapped && (
+            <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full">
+              Not in current schema
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {highConfidenceCount > 0 && (
@@ -267,7 +278,12 @@ function ExtractionSection({ sectionName, fields, onShowSource, onEdit, onAccept
       </button>
 
       {isExpanded && (
-        <div className="px-4 py-2">
+        <div className={`px-4 py-2 ${isUnmapped ? 'bg-amber-50/50' : ''}`}>
+          {isUnmapped && (
+            <p className="text-xs text-amber-700 mb-3 pb-2 border-b border-amber-200">
+              These fields were extracted using a previous schema version or don't match the current schema definition.
+            </p>
+          )}
           {Object.entries(fields).map(([fieldName, extraction]) => (
             <FieldRow
               key={fieldName}
@@ -342,16 +358,32 @@ export default function ExtractionPanel({
 
       {/* Sections */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
-        {Object.entries(extractions).map(([sectionName, fields]) => (
+        {/* Mapped sections first */}
+        {Object.entries(extractions)
+          .filter(([sectionName]) => sectionName !== '_unmapped')
+          .map(([sectionName, fields]) => (
+            <ExtractionSection
+              key={sectionName}
+              sectionName={sectionName}
+              fields={fields}
+              onShowSource={onShowSource}
+              onEdit={onEdit}
+              onAcceptValue={onAcceptValue}
+            />
+          ))}
+
+        {/* Unmapped section last with special styling */}
+        {extractions._unmapped && Object.keys(extractions._unmapped).length > 0 && (
           <ExtractionSection
-            key={sectionName}
-            sectionName={sectionName}
-            fields={fields}
+            sectionName="_unmapped"
+            fields={extractions._unmapped}
             onShowSource={onShowSource}
             onEdit={onEdit}
             onAcceptValue={onAcceptValue}
+            defaultExpanded={false}
+            isUnmapped={true}
           />
-        ))}
+        )}
       </div>
     </div>
   );
