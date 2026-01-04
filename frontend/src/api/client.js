@@ -45,8 +45,8 @@ export const updateClaimNotes = (claimId, notes) =>
 // AI Corrections Review
 export const getAiCorrections = (submissionId) =>
   api.get(`/submissions/${submissionId}/ai-corrections`);
-export const acceptAiCorrection = (correctionId) =>
-  api.post(`/corrections/${correctionId}/accept`);
+export const acceptAiCorrection = (correctionId, editedValue = null) =>
+  api.post(`/corrections/${correctionId}/accept`, { edited_value: editedValue });
 export const rejectAiCorrection = (correctionId) =>
   api.post(`/corrections/${correctionId}/reject`);
 

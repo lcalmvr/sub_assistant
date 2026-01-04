@@ -21,6 +21,10 @@ function formatValue(value) {
 
 function CorrectionCard({ correction, onAccept, onReject, isProcessing }) {
   const isPending = correction.status === 'pending';
+  const [editedValue, setEditedValue] = useState(formatValue(correction.corrected_value));
+  const [isEditing, setIsEditing] = useState(false);
+
+  const hasEdits = editedValue !== formatValue(correction.corrected_value);
 
   return (
     <div className={`border rounded-lg p-4 ${isPending ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'}`}>
@@ -55,10 +59,30 @@ function CorrectionCard({ correction, onAccept, onReject, isProcessing }) {
               </span>
             </div>
             <div>
-              <span className="text-xs text-gray-500 block mb-1">AI Corrected</span>
-              <span className="text-sm font-mono bg-white px-2 py-1 rounded border border-purple-200 block">
-                {formatValue(correction.corrected_value)}
+              <span className="text-xs text-gray-500 block mb-1">
+                {isPending ? 'Corrected Value (editable)' : 'AI Corrected'}
               </span>
+              {isPending ? (
+                <input
+                  type="text"
+                  value={editedValue}
+                  onChange={(e) => setEditedValue(e.target.value)}
+                  onFocus={() => setIsEditing(true)}
+                  onBlur={() => setIsEditing(false)}
+                  className={`text-sm font-mono w-full px-2 py-1 rounded border ${
+                    hasEdits
+                      ? 'border-blue-400 bg-blue-50'
+                      : 'border-purple-200 bg-white'
+                  } focus:outline-none focus:ring-1 focus:ring-purple-500`}
+                />
+              ) : (
+                <span className="text-sm font-mono bg-white px-2 py-1 rounded border border-purple-200 block">
+                  {formatValue(correction.corrected_value)}
+                </span>
+              )}
+              {hasEdits && (
+                <p className="text-xs text-blue-600 mt-1">Modified from AI suggestion</p>
+              )}
             </div>
           </div>
 
@@ -78,7 +102,7 @@ function CorrectionCard({ correction, onAccept, onReject, isProcessing }) {
         {isPending && (
           <div className="flex gap-2 flex-shrink-0">
             <button
-              onClick={() => onAccept(correction.id)}
+              onClick={() => onAccept(correction.id, editedValue)}
               disabled={isProcessing}
               className="px-3 py-1.5 text-sm font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
             >
@@ -109,8 +133,8 @@ export default function AiCorrectionsPanel({ submissionId, className = '' }) {
   });
 
   const acceptMutation = useMutation({
-    mutationFn: acceptAiCorrection,
-    onMutate: (id) => setProcessingId(id),
+    mutationFn: ({ id, editedValue }) => acceptAiCorrection(id, editedValue),
+    onMutate: ({ id }) => setProcessingId(id),
     onSettled: () => setProcessingId(null),
     onSuccess: () => {
       queryClient.invalidateQueries(['ai-corrections', submissionId]);
@@ -176,7 +200,7 @@ export default function AiCorrectionsPanel({ submissionId, className = '' }) {
           <CorrectionCard
             key={correction.id}
             correction={correction}
-            onAccept={(id) => acceptMutation.mutate(id)}
+            onAccept={(id, editedValue) => acceptMutation.mutate({ id, editedValue })}
             onReject={(id) => rejectMutation.mutate(id)}
             isProcessing={processingId === correction.id}
           />

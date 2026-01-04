@@ -6596,11 +6596,12 @@ def get_ai_corrections(submission_id: str):
 
 class CorrectionReview(BaseModel):
     reviewed_by: Optional[str] = "underwriter"
+    edited_value: Optional[str] = None  # Allow UW to modify value before accepting
 
 
 @app.post("/api/corrections/{correction_id}/accept")
 def accept_ai_correction(correction_id: str, review: CorrectionReview = None):
-    """Accept an AI correction - keep the corrected value."""
+    """Accept an AI correction - keep the corrected value (or use edited value if provided)."""
     from datetime import datetime
 
     with get_conn() as conn:
@@ -6620,8 +6621,18 @@ def accept_ai_correction(correction_id: str, review: CorrectionReview = None):
             if row["status"] != "pending":
                 raise HTTPException(status_code=400, detail=f"Correction already {row['status']}")
 
-            # Mark as accepted
             reviewed_by = review.reviewed_by if review else "underwriter"
+            edited_value = review.edited_value if review else None
+
+            # If UW provided an edited value, update the provenance with that value
+            if edited_value is not None:
+                cur.execute("""
+                    UPDATE extraction_provenance
+                    SET extracted_value = %s
+                    WHERE id = %s
+                """, (Json(edited_value), row["provenance_id"]))
+
+            # Mark as accepted
             cur.execute("""
                 UPDATE extraction_corrections
                 SET status = 'accepted',
@@ -6635,7 +6646,8 @@ def accept_ai_correction(correction_id: str, review: CorrectionReview = None):
             return {
                 "status": "accepted",
                 "correction_id": correction_id,
-                "message": "AI correction accepted - corrected value kept",
+                "message": "AI correction accepted" + (" with edits" if edited_value else " - corrected value kept"),
+                "final_value": edited_value if edited_value else row["corrected_value"],
             }
 
 
