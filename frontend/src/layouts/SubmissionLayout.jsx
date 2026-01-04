@@ -3,6 +3,7 @@ import { NavLink, Outlet, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSubmission, updateSubmission } from '../api/client';
 import DocsPanel from '../components/DocsPanel';
+import AiCorrectionsPanel, { AiCorrectionsBadge } from '../components/AiCorrectionsPanel';
 
 const tabs = [
   { name: 'Account', path: 'account' },
@@ -217,6 +218,7 @@ function StatusPill({ submission }) {
 export default function SubmissionLayout() {
   const { submissionId } = useParams();
   const [isDocsPanelOpen, setIsDocsPanelOpen] = useState(false);
+  const [isCorrectionsPanelOpen, setIsCorrectionsPanelOpen] = useState(false);
 
   const { data: submission } = useQuery({
     queryKey: ['submission', submissionId],
@@ -246,6 +248,10 @@ export default function SubmissionLayout() {
               </svg>
               Docs
             </button>
+            <AiCorrectionsBadge
+              submissionId={submissionId}
+              onClick={() => setIsCorrectionsPanelOpen(true)}
+            />
           </div>
           <nav className="flex items-center gap-6">
             <Link to="/" className="nav-link">Submissions</Link>
@@ -285,6 +291,39 @@ export default function SubmissionLayout() {
         isOpen={isDocsPanelOpen}
         onClose={() => setIsDocsPanelOpen(false)}
       />
+
+      {/* AI Corrections Panel */}
+      {isCorrectionsPanelOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/30 z-40 transition-opacity"
+            onClick={() => setIsCorrectionsPanelOpen(false)}
+          />
+
+          {/* Panel */}
+          <div className="fixed right-4 top-4 bottom-4 w-[500px] bg-white shadow-2xl z-50 flex flex-col rounded-lg overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50 flex-shrink-0">
+              <h2 className="text-lg font-semibold text-gray-900">AI Corrections Review</h2>
+              <button
+                onClick={() => setIsCorrectionsPanelOpen(false)}
+                className="p-1 rounded hover:bg-gray-200 text-gray-500 hover:text-gray-700"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <AiCorrectionsPanel
+              submissionId={submissionId}
+              className="flex-1 overflow-hidden"
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

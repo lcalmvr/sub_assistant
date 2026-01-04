@@ -1388,13 +1388,19 @@ def _save_provenance_with_textract_ids(
     document_id: str,
     provenance_records: List[Dict],
 ):
-    """Save extraction provenance records with direct textract_extraction_id links."""
+    """Save extraction provenance records with direct textract_extraction_id links.
+
+    Also saves AI correction records when the extraction includes a correction flag.
+    """
     from core.db import get_conn
+
+    corrections_saved = 0
 
     try:
         with get_conn() as conn:
             for record in provenance_records:
-                conn.execute(
+                # Insert/update provenance record and get the ID back
+                result = conn.execute(
                     text("""
                         INSERT INTO extraction_provenance
                         (submission_id, source_document_id, field_name, extracted_value,
@@ -1411,6 +1417,7 @@ def _save_provenance_with_textract_ids(
                             is_present = EXCLUDED.is_present,
                             textract_extraction_id = EXCLUDED.textract_extraction_id,
                             question_textract_id = EXCLUDED.question_textract_id
+                        RETURNING id
                     """),
                     {
                         "sid": submission_id,
@@ -1425,8 +1432,38 @@ def _save_provenance_with_textract_ids(
                         "question_id": record.get("question_line_id"),  # Question bbox (secondary)
                     }
                 )
+                provenance_id = result.fetchone()[0]
+
+                # If this extraction has a correction, save it for UW review
+                correction = record.get("correction")
+                if correction and isinstance(correction, dict):
+                    original_value = correction.get("original")
+                    correction_reason = correction.get("reason")
+
+                    if original_value:
+                        # Insert AI correction for review (status = pending)
+                        conn.execute(
+                            text("""
+                                INSERT INTO extraction_corrections
+                                (provenance_id, original_value, corrected_value,
+                                 correction_reason, correction_type, status, corrected_by)
+                                VALUES (:prov_id, :original, :corrected, :reason, 'ai_auto', 'pending', 'claude')
+                                ON CONFLICT DO NOTHING
+                            """),
+                            {
+                                "prov_id": provenance_id,
+                                "original": json.dumps(original_value),
+                                "corrected": json.dumps(record["extracted_value"]),
+                                "reason": correction_reason,
+                            }
+                        )
+                        corrections_saved += 1
+                        print(f"[orchestrator] AI correction flagged: {record['field_name']} - {correction_reason}")
+
             conn.commit()
             print(f"[orchestrator] Saved {len(provenance_records)} provenance records with bbox links")
+            if corrections_saved > 0:
+                print(f"[orchestrator] Saved {corrections_saved} AI corrections for UW review")
 
     except Exception as e:
         print(f"[orchestrator] Failed to save provenance: {e}")

@@ -42,6 +42,14 @@ export const getLossHistory = (submissionId) =>
 export const updateClaimNotes = (claimId, notes) =>
   api.patch(`/claims/${claimId}/notes`, notes);
 
+// AI Corrections Review
+export const getAiCorrections = (submissionId) =>
+  api.get(`/submissions/${submissionId}/ai-corrections`);
+export const acceptAiCorrection = (correctionId) =>
+  api.post(`/corrections/${correctionId}/accept`);
+export const rejectAiCorrection = (correctionId) =>
+  api.post(`/corrections/${correctionId}/reject`);
+
 // Extraction stats
 export const getExtractionStats = (days = 30) => api.get(`/extraction/stats?days=${days}`);
 

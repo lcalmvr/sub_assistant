@@ -24,8 +24,50 @@ def _get_client() -> anthropic.Anthropic:
         raise ValueError("ANTHROPIC_API_KEY environment variable not set")
     return anthropic.Anthropic(api_key=key)
 
+
+def _load_active_schema() -> dict | None:
+    """Load the active extraction schema from the database."""
+    try:
+        from core.db import get_conn
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT schema_definition
+                    FROM extraction_schemas
+                    WHERE is_active = true
+                    LIMIT 1
+                """)
+                row = cur.fetchone()
+                if row and row.get("schema_definition"):
+                    return row["schema_definition"]
+    except Exception as e:
+        print(f"[extraction] Could not load schema from DB: {e}")
+    return None
+
+
+def _get_extraction_schema() -> dict:
+    """Get the extraction schema, preferring database schema over hardcoded."""
+    db_schema = _load_active_schema()
+    if db_schema:
+        # Convert database schema format to extraction format
+        extraction_schema = {}
+        for category_key, category_data in db_schema.items():
+            if isinstance(category_data, dict) and "fields" in category_data:
+                extraction_schema[category_key] = {}
+                for field_key, field_def in category_data["fields"].items():
+                    extraction_schema[category_key][field_key] = {
+                        "type": field_def.get("type", "string"),
+                        "description": field_def.get("description", field_def.get("displayName", field_key)),
+                    }
+                    if "enumValues" in field_def:
+                        extraction_schema[category_key][field_key]["enumValues"] = field_def["enumValues"]
+        return extraction_schema
+    # Fall back to hardcoded schema
+    return EXTRACTION_SCHEMA
+
+
 # ─────────────────────────────────────────────────────────────
-# Schema Definition
+# Schema Definition (fallback - prefer database schema)
 # ─────────────────────────────────────────────────────────────
 
 # The extraction schema - defines all fields we want to extract
@@ -103,6 +145,8 @@ class ExtractionResult:
     # Bbox linking: we store both question and answer locations
     question_line_id: Optional[str] = None  # LINE_xxx where question appears
     answer_id: Optional[str] = None  # LINE_xxx or KV_xxx where answer is found
+    # AI correction tracking - when Claude corrects an OCR error
+    correction: Optional[dict] = None  # {"original": "raw OCR text", "reason": "why corrected"}
 
     @property
     def textract_line_id(self) -> Optional[str]:
@@ -138,7 +182,7 @@ class ApplicationExtraction:
         records = []
         for section, fields in self.data.items():
             for field_name, extraction in fields.items():
-                records.append({
+                record = {
                     "submission_id": submission_id,
                     "field_name": f"{section}.{field_name}",
                     "extracted_value": extraction.value,
@@ -150,15 +194,20 @@ class ApplicationExtraction:
                     "textract_line_id": extraction.textract_line_id,
                     # Also include question location for Option 2 highlighting later
                     "question_line_id": extraction.question_line_id,
-                })
+                }
+                # Include correction if AI flagged one
+                if extraction.correction:
+                    record["correction"] = extraction.correction
+                records.append(record)
         return records
 
 
 def _build_extraction_prompt(text: str, page_markers: dict[int, int]) -> str:
     """Build the extraction prompt for Claude."""
+    schema = _get_extraction_schema()
 
     schema_description = []
-    for section, fields in EXTRACTION_SCHEMA.items():
+    for section, fields in schema.items():
         schema_description.append(f"\n### {section}")
         for field_name, field_info in fields.items():
             schema_description.append(
@@ -246,8 +295,9 @@ def _build_extraction_prompt_with_textract(
         textract_lines: List of {id, text, page, bbox} from Textract LINE blocks
         key_values: List of {id, key, value, type, page, bbox} from KEY_VALUE_SET
     """
+    schema = _get_extraction_schema()
     schema_description = []
-    for section, fields in EXTRACTION_SCHEMA.items():
+    for section, fields in schema.items():
         schema_description.append(f"\n### {section}")
         for field_name, field_info in fields.items():
             schema_description.append(
@@ -320,6 +370,12 @@ Extract these fields, organized by section:
    - 0.6-0.7: Inferred from context
    - 0.0-0.5: Uncertain
 
+5. **OCR CORRECTION FLAGGING**:
+   If you correct an obvious OCR error (e.g., date "1908" should be "2008", or "Reverue" → "Revenue"),
+   include a "correction" object with:
+   - **original**: The original OCR text exactly as written
+   - **reason**: Brief explanation of why it was corrected
+
 ## OUTPUT FORMAT
 
 Return JSON with this structure:
@@ -333,6 +389,18 @@ Return JSON with this structure:
       "answer_id": "LINE_8",
       "page": 1,
       "is_present": true
+    }},
+    "effectiveDate": {{
+      "value": "2024-01-15",
+      "confidence": 0.9,
+      "question_line_id": "LINE_12",
+      "answer_id": "LINE_13",
+      "page": 1,
+      "is_present": true,
+      "correction": {{
+        "original": "1/15/1024",
+        "reason": "OCR misread year - corrected obvious typo from 1024 to 2024"
+      }}
     }}
   }},
   "accessManagement": {{
@@ -349,6 +417,7 @@ Return JSON with this structure:
 ```
 
 Extract all fields. If not found: value=null, question_line_id=null, answer_id=null, is_present=false.
+Only include "correction" when you actually corrected an OCR error.
 Return ONLY valid JSON."""
 
 
@@ -444,9 +513,10 @@ def extract_application_data(
     raw_data = _parse_extraction_response(response_text)
 
     # Convert to ExtractionResult objects
+    schema = _get_extraction_schema()
     data: dict[str, dict[str, ExtractionResult]] = {}
 
-    for section, fields in EXTRACTION_SCHEMA.items():
+    for section, fields in schema.items():
         data[section] = {}
         section_data = raw_data.get(section, {})
 
@@ -460,6 +530,7 @@ def extract_application_data(
                     source_text=field_data.get("source_text"),
                     page_number=field_data.get("page"),
                     is_present=field_data.get("is_present", False),
+                    correction=field_data.get("correction"),  # AI correction if flagged
                 )
             else:
                 # Handle case where model returns just the value
@@ -540,9 +611,10 @@ def extract_with_textract_lines(
         return None
 
     # Convert to ExtractionResult objects
+    schema = _get_extraction_schema()
     data: dict[str, dict[str, ExtractionResult]] = {}
 
-    for section, fields in EXTRACTION_SCHEMA.items():
+    for section, fields in schema.items():
         data[section] = {}
         section_data = raw_data.get(section, {})
 
@@ -579,6 +651,7 @@ def extract_with_textract_lines(
                     is_present=field_data.get("is_present", False),
                     question_line_id=question_line_id,
                     answer_id=answer_id,
+                    correction=field_data.get("correction"),  # AI correction if flagged
                 )
             else:
                 # Handle case where model returns just the value
@@ -687,8 +760,9 @@ def extract_from_pdf_vision(
         })
 
     # Build the prompt
+    schema = _get_extraction_schema()
     schema_description = []
-    for section, fields in EXTRACTION_SCHEMA.items():
+    for section, fields in schema.items():
         schema_description.append(f"\n### {section}")
         for field_name, field_info in fields.items():
             schema_description.append(
@@ -757,9 +831,10 @@ Return ONLY valid JSON with this structure:
     raw_data = _parse_extraction_response(response_text)
 
     # Convert to ExtractionResult objects
+    schema = _get_extraction_schema()
     data: dict[str, dict[str, ExtractionResult]] = {}
 
-    for section, fields in EXTRACTION_SCHEMA.items():
+    for section, fields in schema.items():
         data[section] = {}
         section_data = raw_data.get(section, {})
 
@@ -773,6 +848,7 @@ Return ONLY valid JSON with this structure:
                     source_text=field_data.get("source_text"),
                     page_number=field_data.get("page"),
                     is_present=field_data.get("is_present", False),
+                    correction=field_data.get("correction"),  # AI correction if flagged
                 )
             else:
                 data[section][field_name] = ExtractionResult(

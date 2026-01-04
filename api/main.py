@@ -6541,6 +6541,154 @@ def get_schema_coverage(days: int = 30):
 
 
 # ─────────────────────────────────────────────────────────────
+# AI Correction Review Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/ai-corrections")
+def get_ai_corrections(submission_id: str):
+    """Get pending AI corrections for a submission that need UW review."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get pending corrections count
+            cur.execute("""
+                SELECT COUNT(*) as pending_count
+                FROM extraction_corrections ec
+                JOIN extraction_provenance ep ON ec.provenance_id = ep.id
+                WHERE ep.submission_id = %s
+                  AND ec.correction_type = 'ai_auto'
+                  AND ec.status = 'pending'
+            """, (submission_id,))
+            count_row = cur.fetchone()
+
+            # Get all AI corrections (pending first, then others)
+            cur.execute("""
+                SELECT
+                    ec.id,
+                    ec.provenance_id,
+                    ep.field_name,
+                    ec.original_value,
+                    ec.corrected_value,
+                    ec.correction_reason,
+                    ec.status,
+                    ec.reviewed_by,
+                    ec.reviewed_at,
+                    ec.corrected_at as detected_at,
+                    ep.source_document_id,
+                    ep.source_page,
+                    ep.source_text,
+                    ep.confidence,
+                    ep.source_bbox
+                FROM extraction_corrections ec
+                JOIN extraction_provenance ep ON ec.provenance_id = ep.id
+                WHERE ep.submission_id = %s
+                  AND ec.correction_type = 'ai_auto'
+                ORDER BY
+                    CASE ec.status WHEN 'pending' THEN 0 ELSE 1 END,
+                    ec.corrected_at DESC
+            """, (submission_id,))
+            corrections = cur.fetchall()
+
+            return {
+                "pending_count": count_row["pending_count"],
+                "corrections": corrections,
+            }
+
+
+class CorrectionReview(BaseModel):
+    reviewed_by: Optional[str] = "underwriter"
+
+
+@app.post("/api/corrections/{correction_id}/accept")
+def accept_ai_correction(correction_id: str, review: CorrectionReview = None):
+    """Accept an AI correction - keep the corrected value."""
+    from datetime import datetime
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Verify correction exists and is pending
+            cur.execute("""
+                SELECT ec.id, ec.status, ec.corrected_value, ep.id as provenance_id
+                FROM extraction_corrections ec
+                JOIN extraction_provenance ep ON ec.provenance_id = ep.id
+                WHERE ec.id = %s
+            """, (correction_id,))
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Correction not found")
+
+            if row["status"] != "pending":
+                raise HTTPException(status_code=400, detail=f"Correction already {row['status']}")
+
+            # Mark as accepted
+            reviewed_by = review.reviewed_by if review else "underwriter"
+            cur.execute("""
+                UPDATE extraction_corrections
+                SET status = 'accepted',
+                    reviewed_by = %s,
+                    reviewed_at = %s
+                WHERE id = %s
+            """, (reviewed_by, datetime.now(), correction_id))
+
+            conn.commit()
+
+            return {
+                "status": "accepted",
+                "correction_id": correction_id,
+                "message": "AI correction accepted - corrected value kept",
+            }
+
+
+@app.post("/api/corrections/{correction_id}/reject")
+def reject_ai_correction(correction_id: str, review: CorrectionReview = None):
+    """Reject an AI correction - revert to original value."""
+    from datetime import datetime
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get correction and provenance
+            cur.execute("""
+                SELECT ec.id, ec.status, ec.original_value, ep.id as provenance_id
+                FROM extraction_corrections ec
+                JOIN extraction_provenance ep ON ec.provenance_id = ep.id
+                WHERE ec.id = %s
+            """, (correction_id,))
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Correction not found")
+
+            if row["status"] != "pending":
+                raise HTTPException(status_code=400, detail=f"Correction already {row['status']}")
+
+            # Revert the extraction to original value
+            cur.execute("""
+                UPDATE extraction_provenance
+                SET extracted_value = %s
+                WHERE id = %s
+            """, (Json(row["original_value"]), row["provenance_id"]))
+
+            # Mark correction as rejected
+            reviewed_by = review.reviewed_by if review else "underwriter"
+            cur.execute("""
+                UPDATE extraction_corrections
+                SET status = 'rejected',
+                    reviewed_by = %s,
+                    reviewed_at = %s
+                WHERE id = %s
+            """, (reviewed_by, datetime.now(), correction_id))
+
+            conn.commit()
+
+            return {
+                "status": "rejected",
+                "correction_id": correction_id,
+                "message": "AI correction rejected - reverted to original value",
+                "original_value": row["original_value"],
+            }
+
+
+# ─────────────────────────────────────────────────────────────
 # Health Check
 # ─────────────────────────────────────────────────────────────
 
