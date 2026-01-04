@@ -62,6 +62,7 @@ import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
 import SetupPage from './pages/SetupPage';
 import UWPage from './pages/UWPage';
+import AnalyzePage from './pages/AnalyzePage';
 import CompsPage from './pages/CompsPage';
 import RatingPage from './pages/RatingPage';
 import QuotePage from './pages/QuotePage';
@@ -115,15 +116,17 @@ function App() {
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>
             <Route index element={<Navigate to="setup" replace />} />
-            {/* New consolidated Setup page (replaces Account + Review) */}
+            {/* Phase 1: Setup page (Account + Review merged) */}
             <Route path="setup" element={<SetupPage />} />
-            {/* Legacy routes redirect to Setup */}
+            {/* Phase 2: Analyze page (UW + Rating + Comps merged) */}
+            <Route path="analyze" element={<AnalyzePage />} />
+            {/* Legacy routes redirect */}
             <Route path="account" element={<Navigate to="../setup" replace />} />
             <Route path="review" element={<Navigate to="../setup" replace />} />
-            {/* Remaining pages (Rating/Comps will merge into Analyze in Phase 2) */}
-            <Route path="uw" element={<UWPage />} />
-            <Route path="comps" element={<CompsPage />} />
-            <Route path="rating" element={<RatingPage />} />
+            <Route path="uw" element={<Navigate to="../analyze" replace />} />
+            <Route path="comps" element={<Navigate to="../analyze" replace />} />
+            <Route path="rating" element={<Navigate to="../analyze" replace />} />
+            {/* Quote and Policy remain unchanged */}
             <Route path="quote" element={<QuotePage />} />
             <Route path="policy" element={<PolicyPage />} />
           </Route>

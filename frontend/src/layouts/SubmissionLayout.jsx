@@ -7,9 +7,7 @@ import AiCorrectionsPanel, { AiCorrectionsBadge } from '../components/AiCorrecti
 
 const tabs = [
   { name: 'Setup', path: 'setup' },
-  { name: 'UW', path: 'uw' },
-  { name: 'Comps', path: 'comps' },
-  { name: 'Rating', path: 'rating' },
+  { name: 'Analyze', path: 'analyze' },
   { name: 'Quote', path: 'quote' },
   { name: 'Policy', path: 'policy' },
 ];
