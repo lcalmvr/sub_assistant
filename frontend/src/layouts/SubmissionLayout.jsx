@@ -6,8 +6,7 @@ import DocsPanel from '../components/DocsPanel';
 import AiCorrectionsPanel, { AiCorrectionsBadge } from '../components/AiCorrectionsPanel';
 
 const tabs = [
-  { name: 'Account', path: 'account' },
-  { name: 'Review', path: 'review' },
+  { name: 'Setup', path: 'setup' },
   { name: 'UW', path: 'uw' },
   { name: 'Comps', path: 'comps' },
   { name: 'Rating', path: 'rating' },

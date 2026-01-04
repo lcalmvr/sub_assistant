@@ -60,6 +60,7 @@ import DocumentLibraryPage from './pages/DocumentLibraryPage';
 import VoteQueuePage from './pages/VoteQueuePage';
 import AccountPage from './pages/AccountPage';
 import ReviewPage from './pages/ReviewPage';
+import SetupPage from './pages/SetupPage';
 import UWPage from './pages/UWPage';
 import CompsPage from './pages/CompsPage';
 import RatingPage from './pages/RatingPage';
@@ -113,9 +114,13 @@ function App() {
 
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>
-            <Route index element={<Navigate to="account" replace />} />
-            <Route path="account" element={<AccountPage />} />
-            <Route path="review" element={<ReviewPage />} />
+            <Route index element={<Navigate to="setup" replace />} />
+            {/* New consolidated Setup page (replaces Account + Review) */}
+            <Route path="setup" element={<SetupPage />} />
+            {/* Legacy routes redirect to Setup */}
+            <Route path="account" element={<Navigate to="../setup" replace />} />
+            <Route path="review" element={<Navigate to="../setup" replace />} />
+            {/* Remaining pages (Rating/Comps will merge into Analyze in Phase 2) */}
             <Route path="uw" element={<UWPage />} />
             <Route path="comps" element={<CompsPage />} />
             <Route path="rating" element={<RatingPage />} />
