@@ -360,14 +360,21 @@ function ClaimRow({ claim, submissionId }) {
                 <div className="space-y-3">
                   <div>
                     <label className="form-label">Expected Total</label>
-                    <input
-                      type="number"
-                      value={expectedTotal}
-                      onChange={(e) => setExpectedTotal(e.target.value)}
-                      placeholder="e.g., 1000000"
-                      className="form-input w-full text-sm"
-                      onClick={(e) => e.stopPropagation()}
-                    />
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">$</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={expectedTotal ? Number(expectedTotal).toLocaleString() : ''}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/[^0-9]/g, '');
+                          setExpectedTotal(raw || '');
+                        }}
+                        placeholder="0"
+                        className="form-input w-full text-sm pl-7"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
                     <p className="text-xs text-gray-400 mt-1">UW estimate if different from formal</p>
                   </div>
                   <div>
@@ -421,6 +428,14 @@ function LossHistorySection({ submissionId }) {
   const claims = lossData?.claims || [];
   const claimsWithNotes = claims.filter(c => c.uw_notes || c.expected_total).length;
 
+  // Calculate estimated totals from UW notes
+  const totalExpected = claims.reduce((sum, c) => {
+    // Use expected_total if set, otherwise fall back to paid_amount
+    const amount = c.expected_total ?? c.paid_amount ?? 0;
+    return sum + amount;
+  }, 0);
+  const hasEstimates = claims.some(c => c.expected_total && c.expected_total !== c.paid_amount);
+
   return (
     <div className="card">
       <button
@@ -459,6 +474,11 @@ function LossHistorySection({ submissionId }) {
                 <div className="metric-card">
                   <div className="metric-label">Total Paid</div>
                   <div className="metric-value text-lg">{formatCurrency(summary?.total_paid)}</div>
+                  {hasEstimates && totalExpected !== summary?.total_paid && (
+                    <div className="text-sm text-orange-600 mt-1">
+                      Est: {formatCurrency(totalExpected)}
+                    </div>
+                  )}
                 </div>
                 <div className="metric-card">
                   <div className="metric-label">Total Incurred</div>
@@ -471,6 +491,11 @@ function LossHistorySection({ submissionId }) {
                 <div className="metric-card">
                   <div className="metric-label">Avg per Claim</div>
                   <div className="metric-value text-lg">{formatCurrency(summary?.avg_paid)}</div>
+                  {hasEstimates && (
+                    <div className="text-sm text-orange-600 mt-1">
+                      Est: {formatCurrency(totalExpected / Math.max(claims.length, 1))}
+                    </div>
+                  )}
                 </div>
               </div>
 
