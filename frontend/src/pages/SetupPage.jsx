@@ -20,6 +20,96 @@ import BrokerSelector from '../components/BrokerSelector';
 import DateRangePicker from '../components/DateRangePicker';
 
 // ─────────────────────────────────────────────────────────────
+// Submission Summary Card (orientation/context for UW)
+// ─────────────────────────────────────────────────────────────
+
+function SubmissionSummaryCard({ submission }) {
+  if (!submission) return null;
+
+  const formatRevenue = (value) => {
+    if (!value) return null;
+    if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
+    if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+    if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+    return `$${value.toLocaleString()}`;
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return null;
+    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const policyPeriod = submission.effective_date && submission.expiration_date
+    ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
+    : null;
+
+  return (
+    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-4 py-3">
+      <div className="flex items-center justify-between gap-4">
+        {/* Left: Company name and description */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold text-gray-900 truncate">
+              {submission.applicant_name || 'Unnamed Submission'}
+            </h2>
+            {submission.website && (
+              <a
+                href={submission.website.startsWith('http') ? submission.website : `https://${submission.website}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                {submission.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+              </a>
+            )}
+          </div>
+          {submission.naics_primary_title && (
+            <p className="text-sm text-gray-500 mt-0.5 truncate">{submission.naics_primary_title}</p>
+          )}
+        </div>
+
+        {/* Right: Key info pills */}
+        <div className="flex items-center gap-4 flex-shrink-0">
+          {/* Revenue */}
+          {submission.annual_revenue && (
+            <div className="text-center">
+              <div className="text-xs text-gray-500 uppercase tracking-wide">Revenue</div>
+              <div className="text-sm font-semibold text-gray-900">{formatRevenue(submission.annual_revenue)}</div>
+            </div>
+          )}
+
+          {/* Broker */}
+          {(submission.broker_name || submission.broker_company) && (
+            <div className="text-center border-l border-gray-200 pl-4">
+              <div className="text-xs text-gray-500 uppercase tracking-wide">Broker</div>
+              <div className="text-sm font-medium text-gray-900 max-w-[150px] truncate">
+                {submission.broker_name || submission.broker_company}
+              </div>
+              {submission.broker_name && submission.broker_company && (
+                <div className="text-xs text-gray-500 truncate max-w-[150px]">{submission.broker_company}</div>
+              )}
+            </div>
+          )}
+
+          {/* Policy Period */}
+          <div className="text-center border-l border-gray-200 pl-4">
+            <div className="text-xs text-gray-500 uppercase tracking-wide">Policy Period</div>
+            {policyPeriod ? (
+              <div className="text-sm font-medium text-gray-900">{policyPeriod}</div>
+            ) : (
+              <div className="text-sm text-purple-600 font-medium">12 month term</div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Header Bar (View Mode + Document Selector combined)
 // ─────────────────────────────────────────────────────────────
 
@@ -1841,26 +1931,34 @@ export default function SetupPage() {
 
   const hasDocuments = documents?.count > 0;
 
-  // Empty state
+  // Empty state - show summary card + upload prompt
   if (!hasDocuments) {
     return (
-      <div className="card p-8 text-center">
-        <div className="max-w-md mx-auto">
-          <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <h4 className="text-lg font-medium text-gray-900 mb-2">No Documents Uploaded</h4>
-          <p className="text-gray-500 mb-4">Upload submission documents to extract and verify application data.</p>
-          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm cursor-pointer bg-purple-600 hover:bg-purple-700 text-white">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+      <div className="space-y-4">
+        {/* Summary card - always show for context */}
+        <div className="card p-0 overflow-hidden">
+          <SubmissionSummaryCard submission={submission} />
+        </div>
+
+        {/* Upload prompt */}
+        <div className="card p-8 text-center">
+          <div className="max-w-md mx-auto">
+            <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <span>Upload Document</span>
-            <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) uploadDocumentMutation.mutate({ file, documentType: null });
-            }} />
-          </label>
+            <h4 className="text-lg font-medium text-gray-900 mb-2">No Documents Uploaded</h4>
+            <p className="text-gray-500 mb-4">Upload submission documents to extract and verify application data.</p>
+            <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm cursor-pointer bg-purple-600 hover:bg-purple-700 text-white">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Upload Document</span>
+              <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) uploadDocumentMutation.mutate({ file, documentType: null });
+              }} />
+            </label>
+          </div>
         </div>
       </div>
     );
@@ -1874,6 +1972,9 @@ export default function SetupPage() {
 
   return (
     <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 180px)', minHeight: '600px' }}>
+      {/* Submission Summary - orientation context */}
+      <SubmissionSummaryCard submission={submission} />
+
       {/* Header: View mode toggles + Document selector in one row */}
       <HeaderBar
         mode={viewMode}
