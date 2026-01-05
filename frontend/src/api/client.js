@@ -38,6 +38,8 @@ export const correctExtraction = (extractionId, correctedValue, reason = null) =
   api.post(`/extractions/${extractionId}/correct`, { corrected_value: correctedValue, reason });
 export const acceptExtraction = (extractionId) =>
   api.post(`/extractions/${extractionId}/accept`);
+export const unacceptExtraction = (extractionId) =>
+  api.post(`/extractions/${extractionId}/unaccept`);
 export const triggerTextractExtraction = (submissionId, documentId = null) =>
   api.post(`/submissions/${submissionId}/extract-textract`, { document_id: documentId });
 

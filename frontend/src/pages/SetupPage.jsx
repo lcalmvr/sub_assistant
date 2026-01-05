@@ -10,6 +10,7 @@ import {
   updateFieldVerification,
   uploadSubmissionDocument,
   acceptExtraction,
+  unacceptExtraction,
   createAiResearchTask,
   getAiResearchTasks,
   reviewAiResearchTask,
@@ -727,17 +728,18 @@ function RequiredVerificationItem({
   onShowSource,
   onUpdate,
   onAcceptValue,
+  onClearAcceptedValue,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
-  const [showConflicts, setShowConflicts] = useState(false);
   const queryClient = useQueryClient();
 
-  // Check if this field has conflicts and if any value is accepted
-  const hasMultipleValues = extraction?.has_conflict && extraction?.all_values?.length > 1;
+  // Check if this field has multiple extracted values (conflicts)
+  // Always show conflict UI if multiple values exist, regardless of has_conflict flag
+  const hasMultipleValues = extraction?.all_values?.length > 1;
   const acceptedConflictValue = extraction?.all_values?.find(v => v.is_accepted);
   const hasUnresolvedConflict = hasMultipleValues && !acceptedConflictValue;
-  // For backwards compat, keep hasConflict but it now means "has conflict UI to show"
+  // hasConflict = unresolved conflict (needs action), used for orange styling/badge
   const hasConflict = hasUnresolvedConflict;
 
   const verifyMutation = useMutation({
@@ -764,19 +766,44 @@ function RequiredVerificationItem({
     });
   };
 
-  const handleUnverify = () => {
+  const handleUnverify = async () => {
+    // Reset verification status
     verifyMutation.mutate({
       status: 'pending',
       original_value: null,
       corrected_value: null,
     });
+    // Also clear any accepted extraction to restore conflict state
+    if (acceptedConflictValue?.id) {
+      await onClearAcceptedValue?.(acceptedConflictValue.id);
+    }
   };
 
-  // Handle accepting a conflict value - accept extraction AND verify field
+  // Handle accepting a conflict value - update field, accept extraction, AND verify
   const handleAcceptConflictValue = async (extractionId, acceptedValue) => {
-    // First accept the extraction
+    // Map field key to database field
+    const fieldMap = {
+      company_name: 'applicant_name',
+      revenue: 'annual_revenue',
+      business_description: 'business_summary',
+      website: 'website',
+      industry: 'naics_primary_title',
+    };
+    const dbField = fieldMap[fieldKey];
+
+    // Update the submission field with the accepted value
+    if (dbField) {
+      let saveValue = acceptedValue;
+      if (fieldKey === 'revenue' && typeof acceptedValue === 'string') {
+        saveValue = parseInt(acceptedValue.replace(/[^0-9]/g, ''), 10) || null;
+      }
+      await updateMutation.mutateAsync({ [dbField]: saveValue });
+    }
+
+    // Accept the extraction
     await onAcceptValue?.(extractionId);
-    // Then verify the field
+
+    // Verify the field
     verifyMutation.mutate({
       status: 'confirmed',
       original_value: String(acceptedValue || ''),
@@ -1003,23 +1030,27 @@ function RequiredVerificationItem({
             </div>
           )}
 
-          {/* Conflict resolution UI - show for unresolved conflicts */}
-          {hasUnresolvedConflict && !isEditing && (
-            <div className="mt-2 p-2 bg-white border border-orange-200 rounded text-sm">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-orange-700">Different values found:</span>
-                <button
-                  onClick={() => setShowConflicts(!showConflicts)}
-                  className="text-xs text-orange-600 hover:text-orange-800"
-                >
-                  {showConflicts ? 'Hide' : 'Show'} ({extraction.all_values.length})
-                </button>
+          {/* Conflict resolution UI - always show when there are multiple values */}
+          {hasMultipleValues && !isEditing && (
+            <div className={`mt-2 p-2 rounded text-sm ${
+              acceptedConflictValue
+                ? 'bg-green-50 border border-green-200'
+                : 'bg-white border border-orange-200'
+            }`}>
+              <div className="mb-2">
+                <span className={`text-xs font-medium ${acceptedConflictValue ? 'text-green-700' : 'text-orange-700'}`}>
+                  {acceptedConflictValue
+                    ? `Selected from ${extraction.all_values.length} values found:`
+                    : `${extraction.all_values.length} different values found - select one:`}
+                </span>
               </div>
-              {showConflicts && extraction.all_values.map((val, idx) => (
-                <div key={idx} className="py-1.5 border-t border-orange-100">
+              {extraction.all_values.map((val, idx) => (
+                <div key={idx} className={`py-1.5 ${idx > 0 ? `border-t ${acceptedConflictValue ? 'border-green-100' : 'border-orange-100'}` : ''}`}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <span className="font-medium text-gray-900">{formatConflictValue(val.value)}</span>
+                      <span className={`font-medium ${val.is_accepted ? 'text-green-700' : 'text-gray-900'}`}>
+                        {formatConflictValue(val.value)}
+                      </span>
                       <span className="text-gray-500 ml-2 text-xs">
                         from {val.document_name || 'Unknown'}
                       </span>
@@ -1033,38 +1064,26 @@ function RequiredVerificationItem({
                           View
                         </button>
                       )}
-                      <button
-                        onClick={() => handleAcceptConflictValue(val.id, val.value)}
-                        className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200"
-                      >
-                        Accept
-                      </button>
+                      {val.is_accepted ? (
+                        <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Selected
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleAcceptConflictValue(val.id, val.value)}
+                          className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                        >
+                          Select
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
               ))}
             </div>
-          )}
-
-          {/* Show resolved conflict info - collapsed by default */}
-          {hasMultipleValues && acceptedConflictValue && !isEditing && (
-            <details className="mt-2 text-xs">
-              <summary className="text-gray-500 cursor-pointer hover:text-gray-700">
-                Resolved from {extraction.all_values.length} values
-              </summary>
-              <div className="mt-1 p-2 bg-gray-50 rounded border text-sm">
-                {extraction.all_values.map((val, idx) => (
-                  <div key={idx} className="py-1 flex items-center justify-between">
-                    <span className={val.is_accepted ? 'font-medium text-green-700' : 'text-gray-500'}>
-                      {formatConflictValue(val.value)}
-                    </span>
-                    {val.is_accepted && (
-                      <span className="text-xs text-green-600">Selected</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </details>
           )}
 
           {/* Description */}
@@ -1133,7 +1152,7 @@ function RequiredVerificationItem({
 // Required Verifications Panel
 // ─────────────────────────────────────────────────────────────
 
-function RequiredVerificationsPanel({ submission, extractions, verifications, submissionId, onShowSource, onAcceptValue }) {
+function RequiredVerificationsPanel({ submission, extractions, verifications, submissionId, onShowSource, onAcceptValue, onClearAcceptedValue }) {
   const queryClient = useQueryClient();
 
   const formatCompact = (value) => {
@@ -1347,6 +1366,7 @@ function RequiredVerificationsPanel({ submission, extractions, verifications, su
               submission={submission}
               submissionId={submissionId}
               onAcceptValue={onAcceptValue}
+              onClearAcceptedValue={onClearAcceptedValue}
               onShowSource={onShowSource}
               onUpdate={handleUpdate}
             />
@@ -1728,6 +1748,13 @@ export default function SetupPage() {
     },
   });
 
+  const unacceptExtractionMutation = useMutation({
+    mutationFn: (extractionId) => unacceptExtraction(extractionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['extractions', submissionId]);
+    },
+  });
+
   // Handlers
   const handleSelectDocument = (doc) => {
     let url = `/api/documents/${doc.id}/file`;
@@ -1843,6 +1870,7 @@ export default function SetupPage() {
             submissionId={submissionId}
             onShowSource={handleShowSource}
             onAcceptValue={(id) => acceptExtractionMutation.mutate(id)}
+            onClearAcceptedValue={(id) => unacceptExtractionMutation.mutateAsync(id)}
           />
         )}
 

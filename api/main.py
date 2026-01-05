@@ -1511,6 +1511,34 @@ def accept_extraction_value(extraction_id: str):
             }
 
 
+@app.post("/api/extractions/{extraction_id}/unaccept")
+def unaccept_extraction_value(extraction_id: str):
+    """
+    Clear the accepted flag from an extraction value.
+    Used when undoing a conflict resolution.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Clear accepted flag from this extraction
+            cur.execute("""
+                UPDATE extraction_provenance
+                SET is_accepted = NULL
+                WHERE id = %s
+                RETURNING field_name
+            """, (extraction_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Extraction not found")
+
+            conn.commit()
+
+            return {
+                "status": "unaccepted",
+                "extraction_id": extraction_id,
+                "field_name": row["field_name"],
+            }
+
+
 class TextractRequest(BaseModel):
     document_id: Optional[str] = None
 
