@@ -1792,71 +1792,101 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
         <h4 className="form-section-title">Policy Dates & Retro</h4>
 
         {/* Policy Period */}
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div>
-            <label className="form-label">Effective Date</label>
-            <div className="flex gap-2">
-              <input
-                type="date"
-                className="form-input flex-1"
-                key={`eff-${quote.id}-${submission.effective_date || 'none'}`}
-                defaultValue={submission.effective_date || ''}
-                onBlur={(e) => {
-                  const newDate = e.target.value || null;
-                  if (newDate !== submission.effective_date) {
-                    if (newDate) {
-                      // Calculate expiration as 12 months from effective (timezone-safe)
-                      const [year, month, day] = newDate.split('-').map(Number);
-                      const expYear = year + 1;
-                      const expDate = `${expYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                      updateSubmissionMutation.mutate({
-                        effective_date: newDate,
-                        expiration_date: expDate,
-                      });
-                    } else {
-                      // Clear both dates
+        <div className="mb-4">
+          {!submission.effective_date ? (
+            // No dates set - show "12 month policy period" with option to set specific dates
+            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-gray-700">Policy Period:</span>
+                <span className="px-2 py-1 bg-purple-100 text-purple-700 text-sm font-medium rounded">
+                  12 month policy period
+                </span>
+                <span className="text-xs text-gray-500">(dates to be determined)</span>
+              </div>
+              <button
+                type="button"
+                className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+                onClick={() => {
+                  // Set today as effective, +1 year as expiration
+                  const today = new Date();
+                  const eff = today.toISOString().split('T')[0];
+                  const exp = new Date(today.setFullYear(today.getFullYear() + 1)).toISOString().split('T')[0];
+                  updateSubmissionMutation.mutate({
+                    effective_date: eff,
+                    expiration_date: exp,
+                  });
+                }}
+              >
+                Set specific dates
+              </button>
+            </div>
+          ) : (
+            // Dates are set - show date inputs
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="form-label">Effective Date</label>
+                <div className="flex gap-2">
+                  <input
+                    type="date"
+                    className="form-input flex-1"
+                    key={`eff-${quote.id}-${submission.effective_date || 'none'}`}
+                    defaultValue={submission.effective_date || ''}
+                    onBlur={(e) => {
+                      const newDate = e.target.value || null;
+                      if (newDate !== submission.effective_date) {
+                        if (newDate) {
+                          // Calculate expiration as 12 months from effective (timezone-safe)
+                          const [year, month, day] = newDate.split('-').map(Number);
+                          const expYear = year + 1;
+                          const expDate = `${expYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                          updateSubmissionMutation.mutate({
+                            effective_date: newDate,
+                            expiration_date: expDate,
+                          });
+                        } else {
+                          // Clear both dates
+                          updateSubmissionMutation.mutate({
+                            effective_date: null,
+                            expiration_date: null,
+                          });
+                        }
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="px-2 text-gray-400 hover:text-red-500"
+                    title="Clear dates (use 12 month term)"
+                    onClick={() => {
                       updateSubmissionMutation.mutate({
                         effective_date: null,
                         expiration_date: null,
                       });
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Clear to use "12 month policy period"</p>
+              </div>
+              <div>
+                <label className="form-label">Expiration Date</label>
+                <input
+                  type="date"
+                  className="form-input"
+                  key={`exp-${quote.id}-${submission.expiration_date || 'none'}`}
+                  defaultValue={submission.expiration_date || ''}
+                  onBlur={(e) => {
+                    const newDate = e.target.value || null;
+                    if (newDate !== submission.expiration_date) {
+                      updateSubmissionMutation.mutate({ expiration_date: newDate });
                     }
-                  }
-                }}
-              />
-              {submission.effective_date && (
-                <button
-                  type="button"
-                  className="px-2 text-gray-400 hover:text-red-500"
-                  title="Clear dates"
-                  onClick={() => {
-                    updateSubmissionMutation.mutate({
-                      effective_date: null,
-                      expiration_date: null,
-                    });
                   }}
-                >
-                  ✕
-                </button>
-              )}
+                />
+                <p className="text-xs text-gray-500 mt-1">Auto-set from effective</p>
+              </div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">Leave blank for "12 month term"</p>
-          </div>
-          <div>
-            <label className="form-label">Expiration Date</label>
-            <input
-              type="date"
-              className="form-input"
-              key={`exp-${quote.id}-${submission.expiration_date || 'none'}`}
-              defaultValue={submission.expiration_date || ''}
-              onBlur={(e) => {
-                const newDate = e.target.value || null;
-                if (newDate !== submission.expiration_date) {
-                  updateSubmissionMutation.mutate({ expiration_date: newDate });
-                }
-              }}
-            />
-            <p className="text-xs text-gray-500 mt-1">Auto-set from effective</p>
-          </div>
+          )}
         </div>
 
         {/* Retro Schedule */}
