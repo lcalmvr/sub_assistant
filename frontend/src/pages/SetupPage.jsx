@@ -176,7 +176,7 @@ function SubmissionEditForm({ submission, onSave, onCancel }) {
  * Wrapper that shows SubmissionHeaderCard + edit modal
  * Maps raw submission data to the expected shape
  */
-function SubmissionSummaryCard({ submission, onUpdate }) {
+function SubmissionSummaryCard({ submission, onUpdate, dense = false }) {
   const [isEditing, setIsEditing] = useState(false);
 
   if (!submission) return null;
@@ -210,6 +210,7 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
       <SubmissionHeaderCard
         submission={headerProps}
         onEdit={() => setIsEditing(true)}
+        dense={dense}
       />
       {isEditing && (
         <SubmissionEditForm
@@ -2095,11 +2096,13 @@ export default function SetupPage() {
 
   return (
     <div className="space-y-4">
-      {/* Submission Summary - premium header card */}
-      <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} />
+      {/* Submission Summary - compact header card (sticky when viewing docs) */}
+      <div className="sticky top-0 z-20 bg-gray-50 -mx-4 px-4 -mt-4 pt-4 pb-2">
+        <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} dense />
+      </div>
 
       {/* Main content area */}
-      <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 280px)', minHeight: '500px' }}>
+      <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '500px' }}>
         {/* Header: View mode toggles + Document selector in one row */}
         <HeaderBar
         mode={viewMode}
