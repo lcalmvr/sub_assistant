@@ -51,9 +51,9 @@ function formatDateRange(start, end) {
 /**
  * Copy icon (inline SVG)
  */
-function CopyIcon({ className = "w-3 h-3" }) {
+function CopyIcon() {
   return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
         d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
     </svg>
@@ -63,7 +63,7 @@ function CopyIcon({ className = "w-3 h-3" }) {
 /**
  * Copiable text with feedback
  */
-function CopyableText({ text, label }) {
+function CopyableText({ text }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -78,15 +78,15 @@ function CopyableText({ text, label }) {
 
   return (
     <span className="inline-flex items-center gap-1 group">
-      <span className="truncate" title={text}>{label || text}</span>
+      <span className="truncate" title={text}>{text}</span>
       <button
         type="button"
         onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-slate-600 p-0.5"
+        className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-slate-600"
         title="Copy"
       >
         {copied ? (
-          <span className="text-xs text-green-600">Copied</span>
+          <span className="text-[10px] text-green-600">Copied</span>
         ) : (
           <CopyIcon />
         )}
@@ -96,31 +96,12 @@ function CopyableText({ text, label }) {
 }
 
 /**
- * Metadata cell component for consistent styling
- */
-function MetadataCell({ label, children }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[11px] font-medium text-slate-500 uppercase tracking-wide mb-0.5">
-        {label}
-      </div>
-      <div className="text-sm text-slate-800">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-/**
- * SubmissionHeaderCard - Premium underwriting-style header
+ * SubmissionHeaderCard - Clean, minimal header
  *
  * Props:
- *   submission: {
- *     insuredName, industryLabel, revenue,
- *     address1, address2, city, state, zip,
- *     brokerName, brokerCompany, brokerEmail, brokerPhone,
- *     policyStart, policyEnd, status, updatedAt
- *   }
+ *   submission: { insuredName, industryLabel, revenue, address1, city, state, zip,
+ *                 brokerName, brokerCompany, brokerEmail, brokerPhone,
+ *                 policyStart, policyEnd, status }
  *   onEdit: () => void
  *   dense: boolean - compact mode for doc-view
  */
@@ -145,14 +126,14 @@ export default function SubmissionHeaderCard({ submission, onEdit, dense = false
     status,
   } = submission;
 
-  // Format address
-  const addressParts = [address1, address2].filter(Boolean);
+  // Format address (allow 2 lines max)
+  const streetLine = [address1, address2].filter(Boolean).join(', ');
   const cityStateZip = [city, state].filter(Boolean).join(', ') + (zip ? ` ${zip}` : '');
-  if (cityStateZip) addressParts.push(cityStateZip);
-  const fullAddress = addressParts.join(', ') || null;
+  const fullAddress = [streetLine, cityStateZip].filter(Boolean).join(', ') || null;
 
-  // Format broker line
-  const brokerLine = [brokerName, brokerCompany].filter(Boolean).join(' — ') || null;
+  // Format broker
+  const brokerDisplay = brokerName || null;
+  const brokerFull = [brokerName, brokerCompany].filter(Boolean).join(', ') || null;
 
   // Format policy period
   const policyPeriod = formatDateRange(policyStart, policyEnd);
@@ -160,126 +141,134 @@ export default function SubmissionHeaderCard({ submission, onEdit, dense = false
   // Status display
   const displayStatus = status || 'Draft';
 
+  // Label style
+  const labelClass = "text-[11px] font-medium text-slate-500 uppercase tracking-wide";
+  const valueClass = "text-sm text-slate-800";
+
   // --- COMPACT MODE ---
   if (dense) {
     return (
-      <div className="rounded-xl border border-slate-200 border-l-4 border-l-violet-500/60 bg-slate-50 shadow-sm p-4">
-        <div className="flex items-center justify-between gap-4">
-          {/* Left: Title + pills */}
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <h2 className="text-lg font-semibold text-slate-900 truncate">
+      <div className="rounded-lg border border-slate-200 bg-slate-50 shadow-sm p-4">
+        {/* Single row: Name + Status + metadata + Edit */}
+        <div className="flex items-center gap-4">
+          {/* Left: Name + Status */}
+          <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
+            <h2 className="text-base font-semibold text-slate-900 truncate max-w-[240px]" title={insuredName}>
               {insuredName || 'Unnamed Submission'}
             </h2>
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600 flex-shrink-0">
-              {industryLabel || '—'}
-            </span>
-            {revenue && (
-              <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600 flex-shrink-0">
-                {formatMoneyShort(revenue)}
-              </span>
-            )}
-          </div>
-
-          {/* Center: Compact metadata */}
-          <div className="hidden md:flex items-center gap-4 text-xs text-slate-600 flex-shrink-0">
-            {fullAddress && (
-              <span className="truncate max-w-[180px]" title={fullAddress}>{fullAddress}</span>
-            )}
-            <span className="text-slate-300">|</span>
-            <span>{brokerName || '—'}</span>
-            <span className="text-slate-300">|</span>
-            <span>{policyPeriod || 'TBD'}</span>
-          </div>
-
-          {/* Right: Status + Edit */}
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <span className="inline-flex items-center rounded-full bg-slate-800 px-2 py-0.5 text-xs font-medium text-white">
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
               {displayStatus}
             </span>
-            <button
-              type="button"
-              onClick={onEdit}
-              className="inline-flex items-center justify-center rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400 transition-colors"
-            >
-              Edit
-            </button>
           </div>
+
+          {/* Center: Compact metadata (hidden on mobile) */}
+          <div className="hidden md:flex items-center gap-6 text-xs text-slate-600 flex-1 min-w-0">
+            {fullAddress && (
+              <span className="truncate max-w-[200px]" title={fullAddress}>{fullAddress}</span>
+            )}
+            {brokerDisplay && (
+              <span className="truncate max-w-[120px]" title={brokerFull}>{brokerDisplay}</span>
+            )}
+            {policyPeriod && (
+              <span className="flex-shrink-0">{policyPeriod}</span>
+            )}
+          </div>
+
+          {/* Right: Edit */}
+          <button
+            type="button"
+            onClick={onEdit}
+            className="ml-auto rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors flex-shrink-0"
+          >
+            Edit
+          </button>
         </div>
       </div>
     );
   }
 
-  // --- DEFAULT MODE ---
+  // --- DEFAULT (EXPANDED) MODE ---
   return (
-    <div className="rounded-xl border border-slate-200 border-l-4 border-l-violet-500/60 bg-slate-50 shadow-sm transition-shadow hover:shadow-md p-5 md:p-6">
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+    <div className="rounded-lg border border-slate-200 bg-slate-50 shadow-sm p-4 md:p-5">
+      {/* Title row: Name + Status (left), Edit (right) */}
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex items-center gap-3 min-w-0 flex-wrap">
+          <h2 className="text-xl font-semibold text-slate-900 truncate" title={insuredName}>
+            {insuredName || 'Unnamed Submission'}
+          </h2>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+            {displayStatus}
+          </span>
+          {/* Industry + Revenue pills (only if present) */}
+          {industryLabel && (
+            <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-xs text-slate-600 truncate max-w-[160px]" title={industryLabel}>
+              {industryLabel}
+            </span>
+          )}
+          {revenue && (
+            <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-xs text-slate-600">
+              {formatMoneyShort(revenue)}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors flex-shrink-0"
+        >
+          Edit
+        </button>
+      </div>
 
-        {/* Left Column */}
-        <div className="flex-1 min-w-0">
-          {/* Title row with pills - all on same row */}
-          <div className="flex items-center gap-3 flex-wrap mb-4">
-            <h2 className="text-xl md:text-2xl font-semibold text-slate-900 leading-tight">
-              {insuredName || 'Unnamed Submission'}
-            </h2>
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700">
-              {industryLabel || '—'}
-            </span>
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700">
-              {formatMoneyShort(revenue) || 'Revenue —'}
-            </span>
+      {/* Metadata grid: 2 columns on md+ */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-y-3 gap-x-10">
+        {/* Left column */}
+        <div className="space-y-3">
+          {/* Address */}
+          <div>
+            <div className={labelClass}>Address</div>
+            <div className={`${valueClass} truncate`} title={fullAddress || undefined}>
+              {fullAddress || <span className="text-slate-400">—</span>}
+            </div>
           </div>
-
-          {/* Metadata grid - 2x2 on md+, 1-col on mobile */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
-            <MetadataCell label="Address">
-              <span className="truncate block" title={fullAddress || undefined}>
-                {fullAddress || '—'}
-              </span>
-            </MetadataCell>
-
-            <MetadataCell label="Broker">
-              <span className="truncate block" title={brokerLine || undefined}>
-                {brokerLine || '—'}
-              </span>
-            </MetadataCell>
-
-            <MetadataCell label="Policy Period">
-              {policyPeriod || '—'}
-            </MetadataCell>
-
-            <MetadataCell label="Contact">
-              {brokerEmail || brokerPhone ? (
-                <div className="space-y-0.5">
-                  {brokerEmail && (
-                    <div className="truncate">
-                      <CopyableText text={brokerEmail} />
-                    </div>
-                  )}
-                  {brokerPhone && (
-                    <div className="truncate">
-                      <CopyableText text={brokerPhone} />
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <span>—</span>
-              )}
-            </MetadataCell>
+          {/* Policy Period */}
+          <div>
+            <div className={labelClass}>Policy Period</div>
+            <div className={valueClass}>
+              {policyPeriod || <span className="text-slate-400">—</span>}
+            </div>
           </div>
         </div>
 
-        {/* Right Column - Status + Edit */}
-        <div className="flex items-center gap-3 lg:flex-col lg:items-end lg:gap-2">
-          <span className="inline-flex items-center rounded-full bg-slate-900 px-2.5 py-1 text-xs font-medium text-white">
-            {displayStatus}
-          </span>
-          <button
-            type="button"
-            onClick={onEdit}
-            className="inline-flex items-center justify-center rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-violet-400 transition-colors"
-          >
-            Edit
-          </button>
+        {/* Right column */}
+        <div className="space-y-3">
+          {/* Broker */}
+          <div>
+            <div className={labelClass}>Broker</div>
+            <div className={`${valueClass} truncate`} title={brokerFull || undefined}>
+              {brokerFull || <span className="text-slate-400">—</span>}
+            </div>
+          </div>
+          {/* Contact */}
+          <div>
+            <div className={labelClass}>Contact</div>
+            {brokerEmail || brokerPhone ? (
+              <div className={`${valueClass} space-y-0.5`}>
+                {brokerEmail && (
+                  <div className="truncate">
+                    <CopyableText text={brokerEmail} />
+                  </div>
+                )}
+                {brokerPhone && (
+                  <div className="truncate">
+                    <CopyableText text={brokerPhone} />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className={valueClass}><span className="text-slate-400">—</span></div>
+            )}
+          </div>
         </div>
       </div>
     </div>
