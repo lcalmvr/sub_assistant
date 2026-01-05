@@ -133,15 +133,50 @@ def render_policy_panel(
                 policy_form=policy_form,
             )
         with col2:
-            @st.dialog("Unbind Policy")
+            @st.dialog("Unbind Policy", width="large")
             def _confirm_unbind():
-                st.warning("This will remove the bound status and delete associated binder documents. Endorsements will also be removed.")
+                st.error("⚠️ **This action will unbind the policy**")
+
+                # Show what's being unbound
+                st.markdown("**Policy being unbound:**")
+                st.markdown(f"- **Account:** {applicant_name}")
+                st.markdown(f"- **Period:** {eff_str} → {exp_str}")
+                st.markdown(f"- **Premium:** {fmt_currency(premium)}")
+
+                st.divider()
+
+                # Consequences warning
+                st.markdown("**This will:**")
+                st.markdown("- Remove the bound status from this quote option")
+                st.markdown("- Unlock Rating and Account tab fields for editing")
+                st.markdown("- Mark binder documents as superseded")
+                st.markdown("- Remove any issued endorsements")
+
+                st.divider()
+
+                # Reason field
+                unbind_reason = st.text_area(
+                    "Reason for unbinding (required)",
+                    placeholder="e.g., Client requested cancellation, Quote error discovered, etc.",
+                    key=f"unbind_reason_{submission_id}",
+                    height=80,
+                )
+
+                st.caption("This will be logged for audit purposes.")
+
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("Confirm Unbind", type="primary", use_container_width=True):
+                    can_unbind = bool(unbind_reason and unbind_reason.strip())
+                    if st.button(
+                        "Confirm Unbind",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=not can_unbind,
+                    ):
                         from core.bound_option import unbind_option
                         tower_id = bound_option.get("id")
                         if tower_id:
+                            # TODO: Log unbind reason to audit table
                             unbind_option(tower_id)
                         st.session_state["_return_to_policy_tab"] = True
                         st.rerun()

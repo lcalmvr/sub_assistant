@@ -1033,6 +1033,13 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
         with tab_rating:
             st.markdown("##### Premium Calculator")
 
+            # Check if submission is bound - lock rating inputs if so
+            from core.bound_option import has_bound_option
+            rating_is_bound = has_bound_option(sub_id)
+
+            if rating_is_bound:
+                st.info("🔒 Rating parameters are locked while a policy is bound. Unbind to make changes.")
+
             # Get submission data for rating
             with get_conn().cursor() as cur:
                 cur.execute("""
@@ -1187,6 +1194,7 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         index=retention_options.index(selected_retention) if selected_retention in retention_options else 1,
                         key=f"rating_retention_{sub_id}",
                         on_change=on_change_stay_on_rating,
+                        disabled=rating_is_bound,
                     )
 
                 with col_haz:
@@ -1200,8 +1208,9 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         index=hazard_idx,
                         key=f"rating_hazard_{sub_id}",
                         on_change=on_change_stay_on_rating,
+                        disabled=rating_is_bound,
                     )
-                    if new_hazard != current_hazard:
+                    if new_hazard != current_hazard and not rating_is_bound:
                         with get_conn().cursor() as cur:
                             cur.execute(
                                 "UPDATE submissions SET hazard_override = %s WHERE id = %s",
@@ -1221,8 +1230,9 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         index=adj_idx,
                         key=f"rating_ctrl_adj_{sub_id}",
                         on_change=on_change_stay_on_rating,
+                        disabled=rating_is_bound,
                     )
-                    if new_adj != current_adj:
+                    if new_adj != current_adj and not rating_is_bound:
                         with get_conn().cursor() as cur:
                             cur.execute(
                                 "UPDATE submissions SET control_overrides = %s WHERE id = %s",
@@ -1262,7 +1272,8 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                         index=default_idx,
                         key=f"retro_select_{sub_id}",
                         on_change=on_change_stay_on_rating,
-                        help="Applies to all quote options"
+                        help="Applies to all quote options",
+                        disabled=rating_is_bound,
                     )
 
                 with retro_col2:
@@ -1272,14 +1283,15 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
                             value=current_retro if is_custom else "",
                             key=f"retro_text_{sub_id}",
                             placeholder="e.g., 1/1/2020, Inception for Tech E&O",
+                            disabled=rating_is_bound,
                         )
                         final_retro = custom_retro.strip() if custom_retro else None
                     else:
                         final_retro = selected_retro if selected_retro else None
                         st.text("")  # Spacer
 
-                # Save if changed
-                if final_retro != current_retro:
+                # Save if changed (only when not bound)
+                if final_retro != current_retro and not rating_is_bound:
                     with get_conn().cursor() as cur:
                         cur.execute(
                             "UPDATE submissions SET default_retroactive_date = %s WHERE id = %s",
@@ -1540,7 +1552,10 @@ div[data-testid="stPopover"] button { white-space: nowrap; }
             latest_edits = latest_edits_map(sub_id)
 
             # ------------------- Unified Details Panel --------------------
-            render_details_panel(sub_id, applicant_name, website, get_conn=get_conn)
+            # Check if submission is bound - lock account edits if so
+            from core.bound_option import has_bound_option
+            account_is_bound = has_bound_option(sub_id)
+            render_details_panel(sub_id, applicant_name, website, get_conn=get_conn, readonly=account_is_bound)
 
         # =================== REVIEW QUEUE TAB ===================
         with tab_review:

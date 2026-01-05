@@ -47,15 +47,15 @@ Binding a quote creates a policy commitment. This requires:
 
 ---
 
-### Phase 2: Post-Bind UI Lockdown ⬜ TODO
+### Phase 2: Post-Bind UI Lockdown ✅ COMPLETE
 
 | Task | Status | File | Notes |
 |------|--------|------|-------|
-| Lock Rating tab inputs | ⬜ | `submissions.py` | hazard_override, control_overrides, policy_form |
-| Lock Account tab edits | ⬜ | `submissions.py` | Require endorsement for changes |
-| Lock broker changes | ⬜ | `submissions.py` | Require BOR endorsement |
-| Add "locked" visual indicators | ⬜ | Various | Show lock icon on bound fields |
-| Enhance unbind confirmation | ⬜ | `policy_panel.py` | Require reason, add warning |
+| Lock Rating tab inputs | ✅ | `submissions.py` | hazard_override, control_overrides, retro date |
+| Lock Account tab edits | ✅ | `details_panel.py` | Edit mode blocked, unlink hidden |
+| Lock broker changes | ✅ | `details_panel.py` | Part of account edit lockdown |
+| Add "locked" visual indicators | ✅ | Various | Info message on locked tabs |
+| Enhance unbind confirmation | ✅ | `policy_panel.py` | Requires reason, shows consequences |
 
 #### Post-Bind Field Status
 

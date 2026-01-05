@@ -10,16 +10,28 @@ import streamlit as st
 from typing import Optional
 
 
-def render_details_panel(sub_id: str, applicant_name: str, website: Optional[str] = None, get_conn=None):
-    """Render details panel with account information."""
+def render_details_panel(sub_id: str, applicant_name: str, website: Optional[str] = None, get_conn=None, readonly: bool = False):
+    """Render details panel with account information.
+
+    Args:
+        sub_id: Submission ID
+        applicant_name: Current applicant name
+        website: Current website
+        get_conn: Database connection getter
+        readonly: If True, editing is disabled (used when policy is bound)
+    """
     from core import account_management as acct
 
     if not sub_id:
         return
 
+    # Show locked message if readonly
+    if readonly:
+        st.info("🔒 Account information is locked while a policy is bound. Unbind to make changes.")
+
     # Check for edit mode (triggered from Load/Edit popover)
     edit_key = f"editing_parties_{sub_id}"
-    is_editing = st.session_state.get(edit_key, False)
+    is_editing = st.session_state.get(edit_key, False) and not readonly  # Block edit if readonly
 
     if is_editing:
         _render_edit_mode(sub_id, applicant_name, website, edit_key, get_conn)
@@ -29,12 +41,12 @@ def render_details_panel(sub_id: str, applicant_name: str, website: Optional[str
     current_account = acct.get_submission_account(sub_id)
 
     if current_account:
-        # Show account drilldown with full header and unlink option
+        # Show account drilldown with full header and unlink option (unless readonly)
         from pages_components.account_drilldown import render_account_drilldown
         render_account_drilldown(
             account_id=current_account["id"],
             current_submission_id=sub_id,
-            show_unlink=True,
+            show_unlink=not readonly,  # Hide unlink when bound
             show_metrics=True,
             show_header=True,
             compact=False,
@@ -44,8 +56,11 @@ def render_details_panel(sub_id: str, applicant_name: str, website: Optional[str
         from pages_components.show_prior_panel import render_yoy_changes
         render_yoy_changes(sub_id)
     else:
-        # No account linked - show linking options
-        _render_account_linking(sub_id, applicant_name, website)
+        # No account linked - show linking options (unless readonly)
+        if not readonly:
+            _render_account_linking(sub_id, applicant_name, website)
+        else:
+            st.caption("No account linked")
 
 
 def _render_edit_mode(sub_id: str, applicant_name: str, website: Optional[str], edit_key: str, get_conn):
