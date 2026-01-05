@@ -733,8 +733,12 @@ function RequiredVerificationItem({
   const [showConflicts, setShowConflicts] = useState(false);
   const queryClient = useQueryClient();
 
-  // Check if this field has conflicts
-  const hasConflict = extraction?.has_conflict && extraction?.all_values?.length > 1;
+  // Check if this field has conflicts and if any value is accepted
+  const hasMultipleValues = extraction?.has_conflict && extraction?.all_values?.length > 1;
+  const acceptedConflictValue = extraction?.all_values?.find(v => v.is_accepted);
+  const hasUnresolvedConflict = hasMultipleValues && !acceptedConflictValue;
+  // For backwards compat, keep hasConflict but it now means "has conflict UI to show"
+  const hasConflict = hasUnresolvedConflict;
 
   const verifyMutation = useMutation({
     mutationFn: (data) => updateFieldVerification(submissionId, fieldKey, data),
@@ -765,6 +769,17 @@ function RequiredVerificationItem({
       status: 'pending',
       original_value: null,
       corrected_value: null,
+    });
+  };
+
+  // Handle accepting a conflict value - accept extraction AND verify field
+  const handleAcceptConflictValue = async (extractionId, acceptedValue) => {
+    // First accept the extraction
+    await onAcceptValue?.(extractionId);
+    // Then verify the field
+    verifyMutation.mutate({
+      status: 'confirmed',
+      original_value: String(acceptedValue || ''),
     });
   };
 
@@ -988,8 +1003,8 @@ function RequiredVerificationItem({
             </div>
           )}
 
-          {/* Conflict resolution UI */}
-          {hasConflict && !isEditing && (
+          {/* Conflict resolution UI - show for unresolved conflicts */}
+          {hasUnresolvedConflict && !isEditing && (
             <div className="mt-2 p-2 bg-white border border-orange-200 rounded text-sm">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-medium text-orange-700">Different values found:</span>
@@ -1018,22 +1033,38 @@ function RequiredVerificationItem({
                           View
                         </button>
                       )}
-                      {!val.is_accepted && (
-                        <button
-                          onClick={() => onAcceptValue?.(val.id)}
-                          className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200"
-                        >
-                          Accept
-                        </button>
-                      )}
-                      {val.is_accepted && (
-                        <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">Accepted</span>
-                      )}
+                      <button
+                        onClick={() => handleAcceptConflictValue(val.id, val.value)}
+                        className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded hover:bg-green-200"
+                      >
+                        Accept
+                      </button>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
+          )}
+
+          {/* Show resolved conflict info - collapsed by default */}
+          {hasMultipleValues && acceptedConflictValue && !isEditing && (
+            <details className="mt-2 text-xs">
+              <summary className="text-gray-500 cursor-pointer hover:text-gray-700">
+                Resolved from {extraction.all_values.length} values
+              </summary>
+              <div className="mt-1 p-2 bg-gray-50 rounded border text-sm">
+                {extraction.all_values.map((val, idx) => (
+                  <div key={idx} className="py-1 flex items-center justify-between">
+                    <span className={val.is_accepted ? 'font-medium text-green-700' : 'text-gray-500'}>
+                      {formatConflictValue(val.value)}
+                    </span>
+                    {val.is_accepted && (
+                      <span className="text-xs text-green-600">Selected</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
           )}
 
           {/* Description */}
