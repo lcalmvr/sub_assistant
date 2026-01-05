@@ -36,7 +36,7 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
   if (!submission) return null;
 
   // --- Formatting helpers ---
-  const formatRevenueDisplay = (value) => {
+  const formatRevenue = (value) => {
     if (!value) return null;
     if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
     if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
@@ -44,7 +44,6 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
     return `$${value.toLocaleString()}`;
   };
 
-  // Format date WITHOUT timezone issues - parse YYYY-MM-DD directly
   const formatDate = (dateStr) => {
     if (!dateStr) return null;
     const [year, month, day] = dateStr.split('-').map(Number);
@@ -52,22 +51,19 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
     return `${months[month - 1]} ${day}, ${year}`;
   };
 
-  const policyPeriod = submission.effective_date && submission.expiration_date
-    ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
-    : null;
-
   const formatAddress = () => {
+    const parts = [submission.address_street, submission.address_city, submission.address_state, submission.address_zip].filter(Boolean);
+    if (parts.length === 0) return null;
     const street = submission.address_street || '';
-    const cityStateZip = [
-      submission.address_city,
-      submission.address_state,
-      submission.address_zip
-    ].filter(Boolean).join(submission.address_city && submission.address_state ? ', ' : ' ');
-    if (street && cityStateZip) return `${street}, ${cityStateZip}`;
-    return street || cityStateZip || null;
+    const csz = [submission.address_city, submission.address_state].filter(Boolean).join(', ') + (submission.address_zip ? ` ${submission.address_zip}` : '');
+    return street && csz ? `${street}, ${csz}` : street || csz;
   };
 
-  // --- Edit mode handlers ---
+  const policyPeriodDisplay = submission.effective_date && submission.expiration_date
+    ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
+    : '12 month term (TBD)';
+
+  // --- Edit handlers ---
   const handleStartEdit = () => {
     const hasDates = submission.effective_date && submission.expiration_date;
     setDraft({
@@ -91,18 +87,12 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
 
   const handleSave = () => {
     const updates = {};
-
-    // Address
     if (draft.address_street !== (submission.address_street || '')) updates.address_street = draft.address_street || null;
     if (draft.address_city !== (submission.address_city || '')) updates.address_city = draft.address_city || null;
     if (draft.address_state !== (submission.address_state || '')) updates.address_state = draft.address_state || null;
     if (draft.address_zip !== (submission.address_zip || '')) updates.address_zip = draft.address_zip || null;
-
-    // Revenue
     const parsedRevenue = parseInt(draft.annual_revenue.replace(/[^0-9]/g, ''), 10) || null;
     if (parsedRevenue !== submission.annual_revenue) updates.annual_revenue = parsedRevenue;
-
-    // Dates
     if (draft.dates_tbd) {
       if (submission.effective_date) updates.effective_date = null;
       if (submission.expiration_date) updates.expiration_date = null;
@@ -110,23 +100,17 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
       if (draft.effective_date !== (submission.effective_date || '')) updates.effective_date = draft.effective_date || null;
       if (draft.expiration_date !== (submission.expiration_date || '')) updates.expiration_date = draft.expiration_date || null;
     }
-
-    // Broker
     if (brokerDraft) {
       updates.broker_employment_id = brokerDraft.employment_id;
       updates.broker_email = brokerDraft.email;
     }
-
-    if (Object.keys(updates).length > 0) {
-      onUpdate?.(updates);
-    }
+    if (Object.keys(updates).length > 0) onUpdate?.(updates);
     setIsEditing(false);
     setBrokerDraft(null);
   };
 
   const handleEffectiveChange = (value) => {
     const newDraft = { ...draft, effective_date: value, dates_tbd: false };
-    // Auto-set expiration to +1 year
     if (value) {
       const [year, month, day] = value.split('-').map(Number);
       newDraft.expiration_date = `${year + 1}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -139,102 +123,50 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
     setDraft(prev => ({ ...prev, annual_revenue: raw ? parseInt(raw, 10).toLocaleString() : '' }));
   };
 
-  // Common cell style for the 4-column grid
-  const cellClass = "min-w-0";
-  const labelClass = "text-[11px] font-medium text-gray-500 uppercase tracking-wide mb-1";
-  const valueClass = "text-sm text-gray-900";
-  const placeholderClass = "text-sm text-gray-400";
+  // --- Shared styles ---
+  const labelStyle = "text-gray-500";
+  const dotSeparator = <span className="text-gray-300 mx-1">·</span>;
 
-  // --- Render ---
-  return (
-    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-6 py-4">
-      {/* Header row: Company name + website + Edit button */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <h2 className="text-lg font-semibold text-gray-900 truncate">
-            {submission.applicant_name || 'Unnamed Submission'}
-          </h2>
-          {submission.website && (
-            <a
-              href={submission.website.startsWith('http') ? submission.website : `https://${submission.website}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1 flex-shrink-0"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-              {submission.website.replace(/^https?:\/\//, '').replace(/\/$/, '')}
-            </a>
-          )}
-          {submission.naics_primary_title && (
-            <>
-              <span className="text-gray-300">·</span>
-              <span className="text-sm text-gray-500 truncate">{submission.naics_primary_title}</span>
-            </>
-          )}
-        </div>
-        {!isEditing && (
-          <button type="button" onClick={handleStartEdit}
-            className="text-xs text-purple-600 hover:text-purple-800 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-purple-100 transition-colors flex-shrink-0">
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-            </svg>
-            Edit
-          </button>
-        )}
-      </div>
-
-      {/* 4-column grid - same layout for view and edit */}
-      <div className="grid grid-cols-4 gap-6">
-        {/* Column 1: Address */}
-        <div className={cellClass}>
-          <div className={labelClass}>Address</div>
-          {isEditing ? (
-            <div className="space-y-1.5">
-              <input type="text" placeholder="Street address" value={draft.address_street}
-                onChange={(e) => setDraft(prev => ({ ...prev, address_street: e.target.value }))}
-                className={`${inputBase} w-full text-sm`} />
-              <div className="flex gap-1.5">
-                <input type="text" placeholder="City" value={draft.address_city}
-                  onChange={(e) => setDraft(prev => ({ ...prev, address_city: e.target.value }))}
-                  className={`${inputBase} flex-1 text-sm`} />
-                <input type="text" placeholder="ST" value={draft.address_state}
-                  onChange={(e) => setDraft(prev => ({ ...prev, address_state: e.target.value.toUpperCase().slice(0, 2) }))}
-                  className={`${inputBase} w-12 uppercase text-center text-sm`} />
-                <input type="text" placeholder="ZIP" value={draft.address_zip}
-                  onChange={(e) => setDraft(prev => ({ ...prev, address_zip: e.target.value }))}
-                  className={`${inputBase} w-16 text-sm`} />
-              </div>
-            </div>
-          ) : (
-            <div className={formatAddress() ? valueClass : placeholderClass}>
-              {formatAddress() || '—'}
-            </div>
-          )}
+  // --- EDIT MODE ---
+  if (isEditing) {
+    return (
+      <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-6 py-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">{submission.applicant_name || 'Unnamed Submission'}</h2>
         </div>
 
-        {/* Column 2: Revenue */}
-        <div className={cellClass}>
-          <div className={labelClass}>Revenue</div>
-          {isEditing ? (
+        <div className="space-y-3">
+          {/* Row 1: Address */}
+          <div className="flex items-center gap-2">
+            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Address</span>
+            <input type="text" placeholder="Street" value={draft.address_street}
+              onChange={(e) => setDraft(prev => ({ ...prev, address_street: e.target.value }))}
+              className={`${inputBase} flex-1 text-sm`} />
+            <input type="text" placeholder="City" value={draft.address_city}
+              onChange={(e) => setDraft(prev => ({ ...prev, address_city: e.target.value }))}
+              className={`${inputBase} w-32 text-sm`} />
+            <input type="text" placeholder="ST" value={draft.address_state}
+              onChange={(e) => setDraft(prev => ({ ...prev, address_state: e.target.value.toUpperCase().slice(0, 2) }))}
+              className={`${inputBase} w-14 text-sm text-center uppercase`} />
+            <input type="text" placeholder="ZIP" value={draft.address_zip}
+              onChange={(e) => setDraft(prev => ({ ...prev, address_zip: e.target.value }))}
+              className={`${inputBase} w-20 text-sm`} />
+          </div>
+
+          {/* Row 2: Revenue */}
+          <div className="flex items-center gap-2">
+            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Revenue</span>
             <div className="relative">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
               <input type="text" value={draft.annual_revenue} onChange={handleRevenueChange}
-                placeholder="12,000,000" className={`${inputBase} w-full pl-6 text-sm`} />
+                placeholder="12,000,000" className={`${inputBase} w-40 pl-6 text-sm`} />
             </div>
-          ) : (
-            <div className={submission.annual_revenue ? valueClass : placeholderClass}>
-              {submission.annual_revenue ? formatRevenueDisplay(submission.annual_revenue) : '—'}
-            </div>
-          )}
-        </div>
+          </div>
 
-        {/* Column 3: Broker */}
-        <div className={cellClass}>
-          <div className={labelClass}>Broker</div>
-          {isEditing ? (
-            <div>
+          {/* Row 3: Broker */}
+          <div className="flex items-center gap-2">
+            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Broker</span>
+            <div className="w-72">
               <BrokerSelector
                 value={submission.broker_employment_id}
                 brokerEmail={submission.broker_email}
@@ -243,70 +175,100 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
                 compact
                 placeholder="Search brokers..."
               />
-              {brokerDraft && (
-                <div className="text-xs text-green-600 mt-1">→ {brokerDraft.person_name}</div>
-              )}
             </div>
-          ) : (
-            <div>
-              <div className={submission.broker_name ? valueClass : placeholderClass}>
-                {submission.broker_name || '—'}
-              </div>
-              {submission.broker_company && (
-                <div className="text-xs text-gray-500">{submission.broker_company}</div>
-              )}
-              {submission.broker_contact_email && (
-                <a href={`mailto:${submission.broker_contact_email}`}
-                  className="text-xs text-purple-600 hover:text-purple-800 block truncate"
-                  title={submission.broker_contact_email}>
-                  {submission.broker_contact_email}
-                </a>
-              )}
-              {submission.broker_phone && (
-                <div className="text-xs text-gray-500">{submission.broker_phone}</div>
-              )}
-            </div>
-          )}
+            {brokerDraft && <span className="text-xs text-green-600">→ {brokerDraft.person_name}</span>}
+          </div>
+
+          {/* Row 4: Policy Period */}
+          <div className="flex items-center gap-2">
+            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Policy</span>
+            <label className="flex items-center gap-2 text-sm text-gray-600">
+              <input type="checkbox" checked={draft.dates_tbd}
+                onChange={(e) => setDraft(prev => ({ ...prev, dates_tbd: e.target.checked, effective_date: '', expiration_date: '' }))}
+                className="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+              <span>TBD</span>
+            </label>
+            {!draft.dates_tbd && (
+              <>
+                <input type="date" value={draft.effective_date}
+                  onChange={(e) => handleEffectiveChange(e.target.value)}
+                  className={`${inputBase} w-36 text-sm`} />
+                <span className="text-gray-400 text-sm">to</span>
+                <input type="date" value={draft.expiration_date}
+                  onChange={(e) => setDraft(prev => ({ ...prev, expiration_date: e.target.value }))}
+                  className={`${inputBase} w-36 text-sm`} />
+              </>
+            )}
+          </div>
         </div>
 
-        {/* Column 4: Policy Period */}
-        <div className={cellClass}>
-          <div className={labelClass}>Policy Period</div>
-          {isEditing ? (
-            <div className="space-y-1.5">
-              <label className="flex items-center gap-2 text-sm text-gray-600">
-                <input type="checkbox" checked={draft.dates_tbd}
-                  onChange={(e) => setDraft(prev => ({ ...prev, dates_tbd: e.target.checked, effective_date: '', expiration_date: '' }))}
-                  className="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
-                <span>TBD (12 month term)</span>
-              </label>
-              {!draft.dates_tbd && (
-                <div className="flex items-center gap-1.5">
-                  <input type="date" value={draft.effective_date}
-                    onChange={(e) => handleEffectiveChange(e.target.value)}
-                    className={`${inputBase} flex-1 text-sm`} />
-                  <span className="text-gray-400 text-xs">to</span>
-                  <input type="date" value={draft.expiration_date}
-                    onChange={(e) => setDraft(prev => ({ ...prev, expiration_date: e.target.value }))}
-                    className={`${inputBase} flex-1 text-sm`} />
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className={policyPeriod ? valueClass : 'text-sm text-purple-600'}>
-              {policyPeriod || '12 month term'}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Edit mode actions */}
-      {isEditing && (
+        {/* Actions */}
         <div className="flex justify-end gap-3 mt-4 pt-3 border-t border-purple-200/50">
           <button type="button" onClick={handleCancel} className={btnSecondary}>Cancel</button>
           <button type="button" onClick={handleSave} className={btnPrimary}>Save</button>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  // --- VIEW MODE ---
+  return (
+    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-6 py-4">
+      {/* Line 1: Company name · Industry · Revenue + Edit button */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center text-sm min-w-0">
+          <h2 className="text-lg font-semibold text-gray-900 truncate">{submission.applicant_name || 'Unnamed Submission'}</h2>
+          {submission.naics_primary_title && (
+            <><span className="text-gray-300 mx-2">·</span><span className="text-gray-500 truncate">{submission.naics_primary_title}</span></>
+          )}
+          {submission.annual_revenue && (
+            <><span className="text-gray-300 mx-2">·</span><span className="text-gray-700 font-medium">{formatRevenue(submission.annual_revenue)}</span></>
+          )}
+        </div>
+        <button type="button" onClick={handleStartEdit}
+          className="text-xs text-purple-600 hover:text-purple-800 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-purple-100 transition-colors flex-shrink-0 ml-4">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+          Edit
+        </button>
+      </div>
+
+      {/* Line 2: Address */}
+      <div className="text-sm text-gray-600 mt-1">
+        {formatAddress() || <span className="text-gray-400 italic">No address</span>}
+      </div>
+
+      {/* Line 3: Broker */}
+      <div className="text-sm mt-1 flex items-center flex-wrap">
+        <span className={labelStyle}>Broker:</span>
+        <span className="text-gray-900 ml-1">
+          {submission.broker_name || <span className="text-gray-400 italic">Not assigned</span>}
+          {submission.broker_company && <span className="text-gray-500">, {submission.broker_company}</span>}
+        </span>
+        {submission.broker_contact_email && (
+          <>
+            {dotSeparator}
+            <a href={`mailto:${submission.broker_contact_email}`} className="text-purple-600 hover:text-purple-800">
+              {submission.broker_contact_email}
+            </a>
+          </>
+        )}
+        {submission.broker_phone && (
+          <>
+            {dotSeparator}
+            <span className="text-gray-600">{submission.broker_phone}</span>
+          </>
+        )}
+      </div>
+
+      {/* Line 4: Policy period */}
+      <div className="text-sm mt-1">
+        <span className={labelStyle}>Policy:</span>
+        <span className={`ml-1 ${submission.effective_date ? 'text-gray-900' : 'text-purple-600'}`}>
+          {policyPeriodDisplay}
+        </span>
+      </div>
     </div>
   );
 }
