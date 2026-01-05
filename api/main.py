@@ -2672,10 +2672,79 @@ def clone_quote(quote_id: str):
             return {"id": row["id"], "quote_name": row["quote_name"], "created_at": row["created_at"]}
 
 
+@app.get("/api/quotes/{quote_id}/bind-validation")
+def validate_quote_for_bind(quote_id: str):
+    """
+    Check if a quote can be bound, returning errors and warnings.
+    Use this before attempting to bind to show users what's missing.
+    """
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.bind_validation import validate_can_bind
+
+    validation = validate_can_bind(quote_id)
+    return validation.to_dict()
+
+
+@app.get("/api/submissions/{submission_id}/bind-readiness")
+def get_submission_bind_readiness(submission_id: str):
+    """
+    Get bind readiness status for all quotes on a submission.
+    Shows which quotes are ready to bind and what's blocking others.
+    """
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.bind_validation import get_bind_readiness
+
+    return get_bind_readiness(submission_id)
+
+
+class BindQuoteRequest(BaseModel):
+    """Request body for binding a quote."""
+    force: bool = False  # If true, bind even with warnings
+
+
 @app.post("/api/quotes/{quote_id}/bind")
-def bind_quote(quote_id: str):
-    """Bind a quote option (and unbind others for the same submission)."""
+def bind_quote(quote_id: str, request: BindQuoteRequest = None):
+    """
+    Bind a quote option (and unbind others for the same submission).
+
+    Validates the quote before binding. Returns 400 with validation errors
+    if required fields are missing. Warnings don't block binding.
+
+    Pass force=true to acknowledge warnings and bind anyway.
+    """
     from datetime import datetime
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from core.bind_validation import validate_can_bind
+
+    # Validate before binding
+    validation = validate_can_bind(quote_id)
+
+    # If there are errors, reject the bind
+    if not validation.can_bind:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Cannot bind: missing required fields",
+                "errors": validation.errors,
+                "warnings": validation.warnings,
+            }
+        )
+
+    # If there are warnings and force is not set, return 400 with warnings
+    # (Frontend should show confirmation dialog and retry with force=true)
+    if validation.warnings and not (request and request.force):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Bind has warnings - confirm to proceed",
+                "requires_confirmation": True,
+                "errors": [],
+                "warnings": validation.warnings,
+            }
+        )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -2726,7 +2795,8 @@ def bind_quote(quote_id: str):
             return {
                 "status": "bound",
                 "quote_id": quote_id,
-                "linked_subjectivities": subj_count
+                "linked_subjectivities": subj_count,
+                "acknowledged_warnings": len(validation.warnings) if validation.warnings else 0,
             }
 
 

@@ -119,7 +119,9 @@ export const updateQuoteOption = (id, data) => api.patch(`/quotes/${id}`, data);
 export const deleteQuoteOption = (id) => api.delete(`/quotes/${id}`);
 export const cloneQuoteOption = (id) => api.post(`/quotes/${id}/clone`);
 export const applyToAllQuotes = (id, data) => api.post(`/quotes/${id}/apply-to-all`, data);
-export const bindQuoteOption = (id) => api.post(`/quotes/${id}/bind`);
+export const getBindValidation = (id) => api.get(`/quotes/${id}/bind-validation`);
+export const getBindReadiness = (submissionId) => api.get(`/submissions/${submissionId}/bind-readiness`);
+export const bindQuoteOption = (id, force = false) => api.post(`/quotes/${id}/bind`, { force });
 export const unbindQuoteOption = (id) => api.post(`/quotes/${id}/unbind`);
 
 // Documents

@@ -760,6 +760,11 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const [selectedEndorsement, setSelectedEndorsement] = useState('');
   const [showEndorsementOptions, setShowEndorsementOptions] = useState(false);
 
+  // Bind validation state
+  const [bindValidationErrors, setBindValidationErrors] = useState([]);
+  const [bindValidationWarnings, setBindValidationWarnings] = useState([]);
+  const [showBindConfirmation, setShowBindConfirmation] = useState(false);
+
   // Reset state when quote changes
   useEffect(() => {
     setTowerLayers(quote.tower_json || []);
@@ -769,6 +774,10 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     setEditingRetroSchedule(false);
     // Auto-show QS column if any layer has quota share
     setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
+    // Clear bind validation state
+    setBindValidationErrors([]);
+    setBindValidationWarnings([]);
+    setShowBindConfirmation(false);
   }, [quote.id]);
 
   const limit = getTowerLimit(quote);
@@ -886,13 +895,39 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
   // Bind quote mutation
   const bindMutation = useMutation({
-    mutationFn: () => bindQuoteOption(quote.id),
+    mutationFn: (force = false) => bindQuoteOption(quote.id, force),
     onSuccess: () => {
+      setBindValidationErrors([]);
+      setBindValidationWarnings([]);
+      setShowBindConfirmation(false);
       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
       queryClient.invalidateQueries({ queryKey: ['submission', submission.id] }); // Sync header pill
       onRefresh?.();
     },
+    onError: (error) => {
+      const detail = error.response?.data?.detail;
+      if (detail && typeof detail === 'object') {
+        // Structured validation error
+        setBindValidationErrors(detail.errors || []);
+        setBindValidationWarnings(detail.warnings || []);
+        // If there are only warnings (requires_confirmation), show confirmation dialog
+        if (detail.requires_confirmation && (!detail.errors || detail.errors.length === 0)) {
+          setShowBindConfirmation(true);
+        }
+      } else {
+        // Generic error
+        setBindValidationErrors([{ code: 'unknown', message: detail || 'Failed to bind quote' }]);
+        setBindValidationWarnings([]);
+      }
+    },
   });
+
+  // Handle bind with optional force for warnings
+  const handleBind = (force = false) => {
+    setBindValidationErrors([]);
+    setBindValidationWarnings([]);
+    bindMutation.mutate(force);
+  };
 
   // Unbind quote mutation
   const unbindMutation = useMutation({
@@ -1131,7 +1166,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             <>
               <span className="badge badge-quoted">QUOTED</span>
               <button
-                onClick={() => bindMutation.mutate()}
+                onClick={() => handleBind(false)}
                 disabled={bindMutation.isPending}
                 className="text-sm text-purple-600 hover:text-purple-800 font-medium transition-colors"
                 title="Bind this quote option"
@@ -1144,6 +1179,74 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
           )}
         </div>
       </div>
+
+      {/* Bind Validation Errors */}
+      {bindValidationErrors.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+          <div className="flex items-start gap-2">
+            <svg className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+            </svg>
+            <div className="flex-1">
+              <h4 className="text-sm font-medium text-red-800">Cannot bind - missing required fields</h4>
+              <ul className="mt-2 text-sm text-red-700 space-y-1">
+                {bindValidationErrors.map((err, idx) => (
+                  <li key={idx} className="flex items-center gap-2">
+                    <span className="text-xs text-red-500 bg-red-100 px-1.5 py-0.5 rounded">{err.tab || 'Quote'}</span>
+                    {err.message}
+                  </li>
+                ))}
+              </ul>
+              <button
+                onClick={() => setBindValidationErrors([])}
+                className="mt-3 text-xs text-red-600 hover:text-red-800"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bind Confirmation Dialog (warnings only) */}
+      {showBindConfirmation && bindValidationWarnings.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+          <div className="flex items-start gap-2">
+            <svg className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            <div className="flex-1">
+              <h4 className="text-sm font-medium text-amber-800">Confirm bind with warnings</h4>
+              <ul className="mt-2 text-sm text-amber-700 space-y-1">
+                {bindValidationWarnings.map((warn, idx) => (
+                  <li key={idx} className="flex items-center gap-2">
+                    <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded">{warn.tab || 'Quote'}</span>
+                    {warn.message}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => handleBind(true)}
+                  disabled={bindMutation.isPending}
+                  className="px-3 py-1 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50"
+                >
+                  {bindMutation.isPending ? 'Binding...' : 'Bind Anyway'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowBindConfirmation(false);
+                    setBindValidationWarnings([]);
+                  }}
+                  className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Premium Summary - Only for Primary quotes */}
       {position === 'primary' && (
