@@ -23,21 +23,38 @@ import DateRangePicker from '../components/DateRangePicker';
 // Submission Summary Card (orientation/context for UW)
 // ─────────────────────────────────────────────────────────────
 
+// Shared button styles
+const btnPrimary = "px-3 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors";
+const btnSecondary = "px-3 py-1.5 text-xs font-medium bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200 transition-colors";
+const btnDisabled = "px-3 py-1.5 text-xs font-medium bg-gray-100 text-gray-400 rounded-md cursor-not-allowed";
+const inputBase = "px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none";
+
 function SubmissionSummaryCard({ submission, onUpdate }) {
-  const [editingField, setEditingField] = useState(null); // 'broker', 'dates', 'address', 'revenue'
+  const [editingField, setEditingField] = useState(null);
   const [addressDraft, setAddressDraft] = useState({ street: '', city: '', state: '', zip: '' });
-  const [brokerDraft, setBrokerDraft] = useState(null); // Selected broker employment object
-  const [datesDraft, setDatesDraft] = useState({ effective: '', expiration: '' });
+  const [brokerDraft, setBrokerDraft] = useState(null);
+  const [datesDraft, setDatesDraft] = useState({ effective: '', expiration: '', isTbd: false });
   const [revenueDraft, setRevenueDraft] = useState('');
 
   if (!submission) return null;
 
-  const formatRevenue = (value) => {
+  // --- Formatting helpers ---
+  const formatRevenueDisplay = (value) => {
     if (!value) return null;
     if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
     if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
     if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
     return `$${value.toLocaleString()}`;
+  };
+
+  const formatRevenueInput = (value) => {
+    const num = parseInt(value.replace(/[^0-9]/g, ''), 10);
+    if (isNaN(num)) return '';
+    return num.toLocaleString();
+  };
+
+  const parseRevenueInput = (formatted) => {
+    return formatted.replace(/[^0-9]/g, '');
   };
 
   const formatDate = (dateStr) => {
@@ -49,7 +66,6 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
     ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
     : null;
 
-  // Format address from account
   const formatAddress = () => {
     const parts = [];
     if (submission.address_street) parts.push(submission.address_street);
@@ -65,39 +81,29 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
 
   const addressParts = formatAddress();
 
-  // --- Broker handlers ---
-  const handleBrokerEdit = () => {
-    setBrokerDraft(null);
-    setEditingField('broker');
-  };
-
-  const handleBrokerSelect = (employment) => {
-    setBrokerDraft(employment);
-  };
-
+  // --- Handlers ---
+  const handleBrokerEdit = () => { setBrokerDraft(null); setEditingField('broker'); };
+  const handleBrokerSelect = (employment) => { setBrokerDraft(employment); };
   const handleBrokerSave = () => {
     if (brokerDraft) {
-      onUpdate?.({
-        broker_employment_id: brokerDraft.employment_id,
-        broker_email: brokerDraft.email,
-      });
+      onUpdate?.({ broker_employment_id: brokerDraft.employment_id, broker_email: brokerDraft.email });
     }
     setEditingField(null);
     setBrokerDraft(null);
   };
 
-  // --- Dates handlers ---
   const handleDatesEdit = () => {
+    const hasDates = submission.effective_date && submission.expiration_date;
     setDatesDraft({
       effective: submission.effective_date || '',
       expiration: submission.expiration_date || '',
+      isTbd: !hasDates,
     });
     setEditingField('dates');
   };
 
   const handleEffectiveChange = (value) => {
-    const newDraft = { ...datesDraft, effective: value };
-    // Auto-set expiration to effective + 1 year if effective is set
+    const newDraft = { ...datesDraft, effective: value, isTbd: false };
     if (value) {
       const effDate = new Date(value);
       effDate.setFullYear(effDate.getFullYear() + 1);
@@ -110,15 +116,22 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
     setDatesDraft(prev => ({ ...prev, expiration: value }));
   };
 
+  const handleTbdToggle = (checked) => {
+    if (checked) {
+      setDatesDraft({ effective: '', expiration: '', isTbd: true });
+    } else {
+      setDatesDraft(prev => ({ ...prev, isTbd: false }));
+    }
+  };
+
   const handleDatesSave = () => {
     onUpdate?.({
-      effective_date: datesDraft.effective || null,
-      expiration_date: datesDraft.expiration || null,
+      effective_date: datesDraft.isTbd ? null : (datesDraft.effective || null),
+      expiration_date: datesDraft.isTbd ? null : (datesDraft.expiration || null),
     });
     setEditingField(null);
   };
 
-  // --- Address handlers ---
   const handleAddressEdit = () => {
     setAddressDraft({
       street: submission.address_street || '',
@@ -139,23 +152,39 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
     setEditingField(null);
   };
 
-  // --- Revenue handlers ---
   const handleRevenueEdit = () => {
-    setRevenueDraft(submission.annual_revenue ? String(submission.annual_revenue) : '');
+    setRevenueDraft(submission.annual_revenue ? submission.annual_revenue.toLocaleString() : '');
     setEditingField('revenue');
   };
 
   const handleRevenueSave = () => {
-    const parsed = parseInt(revenueDraft.replace(/[^0-9]/g, ''), 10);
+    const parsed = parseInt(parseRevenueInput(revenueDraft), 10);
     onUpdate?.({ annual_revenue: parsed || null });
     setEditingField(null);
   };
 
+  const handleRevenueInputChange = (e) => {
+    const raw = e.target.value.replace(/[^0-9]/g, '');
+    if (raw) {
+      setRevenueDraft(parseInt(raw, 10).toLocaleString());
+    } else {
+      setRevenueDraft('');
+    }
+  };
+
+  // Pencil icon
+  const PencilIcon = () => (
+    <svg className="w-3 h-3 inline ml-1.5 opacity-40 group-hover:opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+    </svg>
+  );
+
   return (
-    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-4 py-3 overflow-visible">
-      <div className="flex items-center justify-between gap-4 overflow-visible">
-        {/* Left: Company name, address, and description */}
-        <div className="min-w-0 flex-1">
+    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-6 py-4">
+      <div className="flex items-start justify-between gap-6">
+        {/* Left: Company info */}
+        <div className="min-w-0 flex-1 space-y-1">
+          {/* Company name & website */}
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-gray-900 truncate">
               {submission.applicant_name || 'Unnamed Submission'}
@@ -165,7 +194,7 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
                 href={submission.website.startsWith('http') ? submission.website : `https://${submission.website}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1"
+                className="text-sm text-purple-600 hover:text-purple-800 flex items-center gap-1 flex-shrink-0"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -174,125 +203,67 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
               </a>
             )}
           </div>
-          {/* Address line */}
-          <div className="text-sm text-gray-600 mt-0.5">
-            {editingField === 'address' ? (
-              <div className="flex items-center gap-2 flex-wrap">
-                <input
-                  type="text"
-                  placeholder="Street address"
-                  value={addressDraft.street}
-                  onChange={(e) => setAddressDraft(prev => ({ ...prev, street: e.target.value }))}
-                  className="px-2 py-1 text-sm border rounded w-48 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-                <input
-                  type="text"
-                  placeholder="City"
-                  value={addressDraft.city}
-                  onChange={(e) => setAddressDraft(prev => ({ ...prev, city: e.target.value }))}
-                  className="px-2 py-1 text-sm border rounded w-32 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-                <input
-                  type="text"
-                  placeholder="ST"
-                  value={addressDraft.state}
-                  onChange={(e) => setAddressDraft(prev => ({ ...prev, state: e.target.value.toUpperCase().slice(0, 2) }))}
-                  className="px-2 py-1 text-sm border rounded w-12 focus:ring-2 focus:ring-purple-500 focus:border-transparent uppercase"
-                />
-                <input
-                  type="text"
-                  placeholder="ZIP"
-                  value={addressDraft.zip}
-                  onChange={(e) => setAddressDraft(prev => ({ ...prev, zip: e.target.value }))}
-                  className="px-2 py-1 text-sm border rounded w-20 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddressSave}
-                  className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingField(null)}
-                  className="text-xs text-gray-500 hover:text-gray-700"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={handleAddressEdit}
-                className="hover:text-purple-600 transition-colors text-left"
-              >
-                {addressParts ? (
-                  <span className="truncate">{addressParts.join(' · ')}</span>
-                ) : (
-                  <span className="text-purple-600 italic">Add address</span>
-                )}
-                <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-              </button>
-            )}
-          </div>
+
+          {/* Address */}
+          {editingField === 'address' ? (
+            <div className="flex items-center gap-2 flex-wrap py-1">
+              <input type="text" placeholder="Street" value={addressDraft.street}
+                onChange={(e) => setAddressDraft(prev => ({ ...prev, street: e.target.value }))}
+                className={`${inputBase} w-44`} />
+              <input type="text" placeholder="City" value={addressDraft.city}
+                onChange={(e) => setAddressDraft(prev => ({ ...prev, city: e.target.value }))}
+                className={`${inputBase} w-28`} />
+              <input type="text" placeholder="ST" value={addressDraft.state}
+                onChange={(e) => setAddressDraft(prev => ({ ...prev, state: e.target.value.toUpperCase().slice(0, 2) }))}
+                className={`${inputBase} w-14 uppercase`} />
+              <input type="text" placeholder="ZIP" value={addressDraft.zip}
+                onChange={(e) => setAddressDraft(prev => ({ ...prev, zip: e.target.value }))}
+                className={`${inputBase} w-20`} />
+              <button type="button" onClick={handleAddressSave} className={btnPrimary}>Save</button>
+              <button type="button" onClick={() => setEditingField(null)} className={btnSecondary}>Cancel</button>
+            </div>
+          ) : (
+            <button type="button" onClick={handleAddressEdit}
+              className="group text-sm text-gray-600 hover:text-purple-600 transition-colors text-left">
+              {addressParts ? addressParts.join(' · ') : <span className="text-purple-600 italic">Add address</span>}
+              <PencilIcon />
+            </button>
+          )}
+
+          {/* Industry */}
           {submission.naics_primary_title && (
-            <p className="text-xs text-gray-500 mt-0.5 truncate">{submission.naics_primary_title}</p>
+            <p className="text-xs text-gray-500 truncate">{submission.naics_primary_title}</p>
           )}
         </div>
 
-        {/* Right: Key info pills (editable) */}
-        <div className="flex items-center gap-4 flex-shrink-0 overflow-visible">
-          {/* Revenue (editable) */}
-          <div className="text-center">
-            <div className="text-xs text-gray-500 uppercase tracking-wide">Revenue</div>
+        {/* Right: Key metrics */}
+        <div className="flex items-start gap-6 flex-shrink-0">
+          {/* Revenue */}
+          <div className="text-center min-w-[100px]">
+            <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Revenue</div>
             {editingField === 'revenue' ? (
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={revenueDraft}
-                  onChange={(e) => setRevenueDraft(e.target.value)}
-                  placeholder="e.g., 12000000"
-                  className="px-2 py-1 text-sm border rounded w-28 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-                <button
-                  type="button"
-                  onClick={handleRevenueSave}
-                  className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
-                >
-                  Save
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingField(null)}
-                  className="text-xs text-gray-500 hover:text-gray-700"
-                >
-                  Cancel
-                </button>
+              <div className="space-y-2">
+                <input type="text" value={revenueDraft} onChange={handleRevenueInputChange}
+                  placeholder="12,000,000" className={`${inputBase} w-32 text-center`} />
+                <div className="flex justify-center gap-2">
+                  <button type="button" onClick={handleRevenueSave} className={btnPrimary}>Save</button>
+                  <button type="button" onClick={() => setEditingField(null)} className={btnSecondary}>Cancel</button>
+                </div>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={handleRevenueEdit}
-                className={`text-sm font-semibold hover:text-purple-600 transition-colors ${
-                  !submission.annual_revenue ? 'text-purple-600' : 'text-gray-900'
-                }`}
-              >
-                {submission.annual_revenue ? formatRevenue(submission.annual_revenue) : 'Set revenue'}
-                <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
+              <button type="button" onClick={handleRevenueEdit}
+                className={`group text-sm font-semibold hover:text-purple-600 transition-colors ${!submission.annual_revenue ? 'text-purple-600' : 'text-gray-900'}`}>
+                {submission.annual_revenue ? formatRevenueDisplay(submission.annual_revenue) : 'Set'}
+                <PencilIcon />
               </button>
             )}
           </div>
 
-          {/* Broker (editable with explicit save) */}
-          <div className="text-center border-l border-gray-200 pl-4 relative">
-            <div className="text-xs text-gray-500 uppercase tracking-wide">Broker</div>
+          {/* Broker */}
+          <div className="text-center min-w-[140px] border-l border-purple-200/50 pl-6">
+            <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Broker</div>
             {editingField === 'broker' ? (
-              <div className="w-72">
+              <div className="space-y-2 w-80">
                 <BrokerSelector
                   value={submission.broker_employment_id}
                   brokerEmail={submission.broker_email}
@@ -302,100 +273,88 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
                   placeholder="Search brokers..."
                 />
                 {brokerDraft && (
-                  <div className="text-xs text-green-600 mt-1">
-                    Selected: {brokerDraft.person_name}
-                  </div>
+                  <div className="text-xs text-green-600 font-medium">Selected: {brokerDraft.person_name}</div>
                 )}
-                <div className="flex items-center justify-center gap-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={handleBrokerSave}
-                    disabled={!brokerDraft}
-                    className={`px-2 py-1 text-xs rounded ${
-                      brokerDraft
-                        ? 'bg-purple-600 text-white hover:bg-purple-700'
-                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setEditingField(null); setBrokerDraft(null); }}
-                    className="text-xs text-gray-500 hover:text-gray-700"
-                  >
-                    Cancel
-                  </button>
+                <div className="flex justify-center gap-2">
+                  <button type="button" onClick={handleBrokerSave} disabled={!brokerDraft}
+                    className={brokerDraft ? btnPrimary : btnDisabled}>Save</button>
+                  <button type="button" onClick={() => { setEditingField(null); setBrokerDraft(null); }}
+                    className={btnSecondary}>Cancel</button>
                 </div>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={handleBrokerEdit}
-                className={`text-sm font-medium hover:text-purple-600 transition-colors ${
-                  !submission.broker_name && !submission.broker_company ? 'text-purple-600' : 'text-gray-900'
-                }`}
-              >
-                {submission.broker_name || submission.broker_company || 'Set broker'}
-                <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-              </button>
-            )}
-            {submission.broker_name && submission.broker_company && editingField !== 'broker' && (
-              <div className="text-xs text-gray-500 truncate max-w-[150px]">{submission.broker_company}</div>
+              <div>
+                <button type="button" onClick={handleBrokerEdit}
+                  className={`group text-sm font-medium hover:text-purple-600 transition-colors ${!submission.broker_name && !submission.broker_company ? 'text-purple-600' : 'text-gray-900'}`}>
+                  {submission.broker_name || submission.broker_company || 'Set broker'}
+                  <PencilIcon />
+                </button>
+                {submission.broker_name && submission.broker_company && (
+                  <div className="text-xs text-gray-500 truncate">{submission.broker_company}</div>
+                )}
+                {/* Broker contact info */}
+                {(submission.broker_contact_email || submission.broker_phone) && (
+                  <div className="flex items-center justify-center gap-3 mt-1.5">
+                    {submission.broker_contact_email && (
+                      <a href={`mailto:${submission.broker_contact_email}`}
+                        className="text-xs text-purple-600 hover:text-purple-800 flex items-center gap-1"
+                        title={submission.broker_contact_email}>
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        Email
+                      </a>
+                    )}
+                    {submission.broker_phone && (
+                      <a href={`tel:${submission.broker_phone}`}
+                        className="text-xs text-purple-600 hover:text-purple-800 flex items-center gap-1"
+                        title={submission.broker_phone}>
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                        </svg>
+                        Call
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
-          {/* Policy Period (editable with auto-expiration) */}
-          <div className="text-center border-l border-gray-200 pl-4">
-            <div className="text-xs text-gray-500 uppercase tracking-wide">Policy Period</div>
+          {/* Policy Period */}
+          <div className="text-center min-w-[160px] border-l border-purple-200/50 pl-6">
+            <div className="text-xs text-gray-500 uppercase tracking-wide mb-1">Policy Period</div>
             {editingField === 'dates' ? (
-              <div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="date"
-                    value={datesDraft.effective}
-                    onChange={(e) => handleEffectiveChange(e.target.value)}
-                    className="px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  />
-                  <span className="text-gray-500 text-sm">to</span>
-                  <input
-                    type="date"
-                    value={datesDraft.expiration}
-                    onChange={(e) => handleExpirationChange(e.target.value)}
-                    className="px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  />
-                </div>
-                <div className="flex items-center justify-center gap-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={handleDatesSave}
-                    className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingField(null)}
-                    className="text-xs text-gray-500 hover:text-gray-700"
-                  >
-                    Cancel
-                  </button>
+              <div className="space-y-2">
+                {/* TBD Checkbox */}
+                <label className="flex items-center justify-center gap-2 text-sm text-gray-600">
+                  <input type="checkbox" checked={datesDraft.isTbd}
+                    onChange={(e) => handleTbdToggle(e.target.checked)}
+                    className="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                  <span>12 month term (TBD)</span>
+                </label>
+                {/* Date inputs */}
+                {!datesDraft.isTbd && (
+                  <div className="flex items-center gap-2 justify-center">
+                    <input type="date" value={datesDraft.effective}
+                      onChange={(e) => handleEffectiveChange(e.target.value)}
+                      className={`${inputBase} w-[130px]`} />
+                    <span className="text-gray-400">to</span>
+                    <input type="date" value={datesDraft.expiration}
+                      onChange={(e) => handleExpirationChange(e.target.value)}
+                      className={`${inputBase} w-[130px]`} />
+                  </div>
+                )}
+                <div className="flex justify-center gap-2">
+                  <button type="button" onClick={handleDatesSave} className={btnPrimary}>Save</button>
+                  <button type="button" onClick={() => setEditingField(null)} className={btnSecondary}>Cancel</button>
                 </div>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={handleDatesEdit}
-                className={`text-sm font-medium hover:text-purple-600 transition-colors ${
-                  !policyPeriod ? 'text-purple-600' : 'text-gray-900'
-                }`}
-              >
+              <button type="button" onClick={handleDatesEdit}
+                className={`group text-sm font-medium hover:text-purple-600 transition-colors ${!policyPeriod ? 'text-purple-600' : 'text-gray-900'}`}>
                 {policyPeriod || '12 month term'}
-                <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
+                <PencilIcon />
               </button>
             )}
           </div>

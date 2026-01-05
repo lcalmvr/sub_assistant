@@ -1,18 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { getBrkrEmployments } from '../api/client';
 
 /**
  * Reusable broker selector component with search and dropdown.
- *
- * Props:
- * - value: current broker_employment_id
- * - brokerEmail: current broker_email (for display when no employment match)
- * - brokerName: current broker display name (optional)
- * - onChange: (employment) => void - called with full employment object
- * - compact: boolean - if true, uses smaller styling
- * - placeholder: string - input placeholder text
+ * Uses portal for dropdown to avoid overflow clipping issues.
  */
 export default function BrokerSelector({
   value,
@@ -24,6 +18,8 @@ export default function BrokerSelector({
 }) {
   const [search, setSearch] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
+  const inputRef = useRef(null);
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
 
   // Fetch broker employments
   const { data: brokerEmployments } = useQuery({
@@ -47,6 +43,18 @@ export default function BrokerSelector({
     }
   }, [value, brokerEmail, brokerName, brokerEmployments]);
 
+  // Update dropdown position when showing
+  useEffect(() => {
+    if (showDropdown && inputRef.current) {
+      const rect = inputRef.current.getBoundingClientRect();
+      setDropdownPosition({
+        top: rect.bottom + window.scrollY + 4,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+      });
+    }
+  }, [showDropdown]);
+
   // Filter employments based on search
   const filteredEmployments = brokerEmployments?.filter(emp => {
     const searchLower = search.toLowerCase();
@@ -64,12 +72,66 @@ export default function BrokerSelector({
   };
 
   const inputClass = compact
-    ? "w-full px-2 py-1 text-sm border rounded focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+    ? "w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
     : "form-input";
+
+  const dropdownContent = showDropdown && (
+    <div
+      className="fixed bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto"
+      style={{
+        top: dropdownPosition.top,
+        left: dropdownPosition.left,
+        width: dropdownPosition.width,
+        zIndex: 9999,
+      }}
+    >
+      {filteredEmployments.length > 0 ? (
+        filteredEmployments.map((emp) => (
+          <button
+            key={emp.employment_id}
+            type="button"
+            className="w-full px-3 py-2.5 text-left hover:bg-purple-50 border-b border-gray-100 last:border-0"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => handleSelect(emp)}
+          >
+            <div className="font-medium text-gray-900">{emp.person_name}</div>
+            <div className="text-sm text-gray-500">
+              {emp.email} · {emp.org_name}
+            </div>
+          </button>
+        ))
+      ) : search ? (
+        <div className="px-3 py-4 text-center">
+          <p className="text-sm text-gray-500 mb-2">No matching brokers found</p>
+          <Link
+            to="/brokers"
+            className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+          >
+            Go to Broker Management to add new
+          </Link>
+        </div>
+      ) : (
+        <div className="px-3 py-4 text-center text-sm text-gray-500">
+          Start typing to search brokers
+        </div>
+      )}
+      {filteredEmployments.length > 0 && (
+        <div className="border-t border-gray-200 px-3 py-2">
+          <Link
+            to="/brokers"
+            className="text-sm text-purple-600 hover:text-purple-800 font-medium"
+          >
+            Manage brokers
+          </Link>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="relative">
       <input
+        ref={inputRef}
         type="text"
         className={inputClass}
         value={search}
@@ -81,51 +143,7 @@ export default function BrokerSelector({
         onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
         placeholder={placeholder}
       />
-
-      {showDropdown && (
-        <div className="absolute z-[100] w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto" style={{ top: '100%' }}>
-          {filteredEmployments.length > 0 ? (
-            filteredEmployments.map((emp) => (
-              <button
-                key={emp.employment_id}
-                type="button"
-                className="w-full px-3 py-2 text-left hover:bg-purple-50 border-b border-gray-100 last:border-0"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => handleSelect(emp)}
-              >
-                <div className="font-medium text-gray-900">{emp.person_name}</div>
-                <div className="text-sm text-gray-500">
-                  {emp.email} · {emp.org_name}
-                </div>
-              </button>
-            ))
-          ) : search ? (
-            <div className="px-3 py-4 text-center">
-              <p className="text-sm text-gray-500 mb-2">No matching brokers found</p>
-              <Link
-                to="/brokers"
-                className="text-sm text-purple-600 hover:text-purple-800 font-medium"
-              >
-                Go to Broker Management to add new
-              </Link>
-            </div>
-          ) : (
-            <div className="px-3 py-4 text-center text-sm text-gray-500">
-              Start typing to search brokers
-            </div>
-          )}
-          {filteredEmployments.length > 0 && (
-            <div className="border-t border-gray-200 px-3 py-2">
-              <Link
-                to="/brokers"
-                className="text-sm text-purple-600 hover:text-purple-800 font-medium"
-              >
-                Manage brokers
-              </Link>
-            </div>
-          )}
-        </div>
-      )}
+      {showDropdown && createPortal(dropdownContent, document.body)}
     </div>
   );
 }

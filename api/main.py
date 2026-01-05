@@ -185,6 +185,8 @@ def get_submission(submission_id: str):
                        e.org_id as broker_org_id,
                        o.name as broker_company,
                        CONCAT(p.first_name, ' ', p.last_name) as broker_name,
+                       e.email as broker_contact_email,
+                       e.phone as broker_phone,
                        -- Prefer submission address, fall back to account address
                        COALESCE(s.address_street, a.address_street) as address_street,
                        a.address_street2,
