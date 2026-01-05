@@ -211,26 +211,53 @@ function BusinessSummarySection({ submission }) {
 
 function SecurityControlRow({ control, config }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const hasContext = control.description || control.details || control.notes;
+  const hasContext = control.description || control.details || control.notes || control.one_liner;
   const contextText = control.description || control.details || control.notes || '';
-  const isLong = contextText.length > 80;
+
+  // Prefer one_liner if available, otherwise extract from description
+  const getSummaryText = (ctrl, text) => {
+    // Use structured one_liner if available (new format)
+    if (ctrl.one_liner) return ctrl.one_liner;
+
+    if (!text) return '';
+
+    // Fallback: extract from description text
+    const lines = text.split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !/^(implemented|weaknesses|unclear|gaps|missing):$/i.test(l));
+
+    for (const line of lines) {
+      if (/^(implemented|weaknesses|unclear|gaps|missing):?$/i.test(line)) continue;
+
+      let cleaned = line
+        .replace(/^(implemented|weaknesses|unclear|gaps|missing):\s*/i, '')
+        .replace(/^\*\*[^*]+\*\*[:\s]*/g, '')
+        .replace(/^[-•]\s*/, '')
+        .replace(/\*\*/g, '')
+        .trim();
+
+      if (cleaned.length > 15) return cleaned;
+    }
+    return '';
+  };
+
+  const summaryText = getSummaryText(control, contextText);
 
   return (
-    <div className={`p-4 ${config.bg}`}>
-      <div
-        className={`flex justify-between items-center ${hasContext ? 'cursor-pointer' : ''}`}
-        onClick={() => hasContext && setIsExpanded(!isExpanded)}
-      >
-        <div className="flex items-center gap-2 flex-1">
-          <div className={`w-2 h-2 rounded-full ${config.dot} flex-shrink-0`}></div>
-          <span className="font-semibold text-sm text-slate-800 capitalize">{control.name}</span>
-          {hasContext && !isExpanded && isLong && (
-            <span className="text-xs text-slate-400 truncate max-w-[200px]">
-              — {contextText.substring(0, 60)}...
-            </span>
+    <div
+      className={`p-4 ${config.bg} ${hasContext ? 'cursor-pointer' : ''}`}
+      onClick={() => hasContext && setIsExpanded(!isExpanded)}
+    >
+      {/* Row with inline text flow for natural wrapping */}
+      <div className="flex items-start gap-2">
+        <div className={`w-2 h-2 rounded-full ${config.dot} flex-shrink-0 mt-1`}></div>
+        <p className="flex-1 min-w-0 text-sm leading-snug">
+          <span className="font-semibold text-slate-800 capitalize">{control.name}</span>
+          {hasContext && !isExpanded && summaryText && (
+            <span className="text-xs text-slate-500"> — {summaryText}</span>
           )}
-        </div>
-        <div className="flex items-center gap-2">
+        </p>
+        <div className="flex items-center gap-2 flex-shrink-0">
           <span className={`text-xs font-bold px-2 py-0.5 rounded ${config.color}`}>
             {config.label}
           </span>
@@ -246,13 +273,12 @@ function SecurityControlRow({ control, config }) {
           )}
         </div>
       </div>
+
+      {/* Expanded full content */}
       {hasContext && isExpanded && (
         <div className="mt-2 ml-4 p-2 bg-white/50 rounded border border-gray-100">
           <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{contextText}</p>
         </div>
-      )}
-      {hasContext && !isExpanded && !isLong && (
-        <p className="text-xs text-slate-500 ml-4 mt-1">{contextText}</p>
       )}
     </div>
   );
@@ -293,18 +319,22 @@ function SecurityControlsSection({ submission }) {
 
   const summaryDetails = parseNistSummaryDetails(submission?.nist_controls_summary);
 
-  // Parse NIST controls (flags)
+  // Parse NIST controls (flags + optional one_liner)
   let controls = [];
   if (submission?.nist_controls) {
     if (Array.isArray(submission.nist_controls)) {
       controls = submission.nist_controls;
     } else if (typeof submission.nist_controls === 'object') {
-      controls = Object.entries(submission.nist_controls).map(([key, value]) => ({
-        name: key,
-        ...(typeof value === 'object' ? value : { status: value }),
-        // Inject parsed detail from summary
-        description: summaryDetails[key.toLowerCase()] || null,
-      }));
+      controls = Object.entries(submission.nist_controls).map(([key, value]) => {
+        const isStructured = typeof value === 'object';
+        return {
+          name: key,
+          status: isStructured ? value.status : value,
+          one_liner: isStructured ? value.one_liner : null,
+          // Inject parsed detail from summary as fallback
+          description: summaryDetails[key.toLowerCase()] || null,
+        };
+      });
     }
   }
 
