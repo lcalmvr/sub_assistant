@@ -1241,11 +1241,20 @@ function RequiredVerificationsPanel({ submission, extractions, verifications, su
     {
       key: 'policy_period',
       label: 'Policy Period',
-      value: submission?.effective_date && submission?.expiration_date ? 'set' : null,
+      // Value is 'set' if dates exist, 'tbd' if verified without dates, null otherwise
+      value: submission?.effective_date && submission?.expiration_date
+        ? 'set'
+        : verifications?.verifications?.policy_period?.status === 'confirmed' || verifications?.verifications?.policy_period?.status === 'corrected'
+          ? 'tbd'
+          : null,
       displayValue: submission?.effective_date && submission?.expiration_date
         ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
-        : null,
-      description: 'Confirm effective and expiration dates',
+        : verifications?.verifications?.policy_period?.status === 'confirmed' || verifications?.verifications?.policy_period?.status === 'corrected'
+          ? 'TBD (dates not yet determined)'
+          : null,
+      description: submission?.effective_date && submission?.expiration_date
+        ? 'Confirm effective and expiration dates'
+        : 'Set policy dates or confirm as TBD',
       extraction: findExtraction('effectiveDate', 'policyPeriod', 'inceptionDate'),
     },
     {
