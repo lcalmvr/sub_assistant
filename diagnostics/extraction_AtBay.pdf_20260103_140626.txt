@@ -1,0 +1,1170 @@
+
+======================================================================
+EXTRACTION DIAGNOSTIC: AtBay.pdf
+Timestamp: 2026-01-03T14:06:26.873743
+======================================================================
+
+─── TEXTRACT OUTPUT ───
+  Total LINE blocks: 324
+  Total KV pairs: 25
+  Raw checkboxes: 0
+  KV breakdown: 0 checkbox, 25 text
+
+─── KV PAIRS (first 20) ───
+  [KV_0] p10: "Page" → 10 of 36
+  [KV_1] p1: "Considerations:" → Wherever appearing throughout this Policy, the words "we," "us," and "our" refer to the insurer providing this insurance and "Declaration" and "Declarations" refer to the Cyber Insurance Policy Declarations. Terms which appear in bold face type shall have the meanings set forth in Section V. Definitions.
+  [KV_2] p3: "2." → Media Event Response We shall pay the Insured Organization for Public Relations Loss and Reward Expense the Insured Organization as a result of a Media Wrongful Act first discovered during
+  [KV_3] p2: "3." → We shall pay the Insured Organization for Technical Response Loss, Legal Services Loss, Public Relations Loss, Notification Loss, Reward Expense Loss, and Credit Monitoring Loss incurred by the Insured Organization as a result of an Information Privacy Event first discovered during the Policy
+  [KV_4] p2: "4." → We shall pay the Insured Organization, all PCI-DSS Penalties, PCI-DSS Response Expenses, and Claim Expenses resulting from a PCI-DSS Claim first made against the Insured Organization during the Policy
+  [KV_5] p6: "1." → 
+  [KV_6] p2: "B. NETWORK SECURITY" → Network Security Wrongful Act. We shall pay the Insured Organization for Technical Response Loss, Public Relations Loss, Data Recovery Loss, Reward Expense Loss, and System Restoration Loss incurred by the Insured Organization as a result of a Network Security Event first discovered during the Policy Period.
+  [KV_7] p2: "Event Response and Recovery" → 
+  [KV_8] p3: "2. Contingent Business Interruption" → We shall pay the Insured Organization for Contingent Business Interruption Loss, Extra Expense, Reward Expense Loss, and Public Relations Loss incurred by the Insured Organization as a direct result of a System Disruption which first occurs during the Policy Period.
+  [KV_9] p3: "1. Direct Business Interruption" → We shall pay the Insured Organization for Business Interruption Loss, Extra Expense, Reward Expense Loss, and Public Relations Loss incurred by the Insured Organization as a direct result of a System Disruption which first occurs during the Policy Period.
+  [KV_10] p3: "E. FINANCIAL FRAUD" → 1. Social Engineering We shall pay the Insured Organization for Fraudulent Inducement Loss and Reward Expense Loss incurred by the Insured Organization as a direct result of Fraudulent Inducement Instructions it receives and accepts and which are first discovered during the Policy Period. 2. Computer Fraud We shall pay the Insured Organization for Computer Crimes Loss and Reward Expense Loss incurred by the Insured Organization as a direct result of Computer Crimes first discovered during the Policy Period.
+  [KV_11] p3: "D. CYBER EXTORTION" → Loss, and Public Relations Threat first discovered during
+  [KV_12] p4: "A. AGGREGATE LIMIT OF INSURANCE" → 1. The Aggregate Limit of Insurance is our maximum liability under this Policy for the duration of the Policy Period or, if exercised, the Extended Reporting Period. 2. We shall have no further obligations or liability under this Policy upon exhaustion of the Aggregate Limit of Insurance, including the continuation of payment of Loss, Damages, or Claims Expenses or the duty to defend or investigate any Claim.
+  [KV_13] p5: "5. Solely with respect to Third Party Co" → not legally permitted to provide indemnification to such Insured Person; or unable to provide indemnification solely by reason of its financial insolvency, including such Insured Organization becoming a debtor in possession under Chapter 11 of the United States Bankruptcy Code, as amended, or the foreign equivalent of such; provided, however, that the applicable Insured Organization agrees to repay us any Retention amounts we pay on its behalf, as described in this paragraph III.5.b., at the time such Insured Organization emerges from financial insolvency or
+  [KV_14] p7: "4. Business Interruption Loss means the " → a. net profit before income taxes that would have been earned had no System Disruption of Insured Computer Systems occurred; b. net loss before income taxes that would have been avoided had no System Disruption of Insured Computer Systems occurred; C. the Insured Organization's continuing normal operating and payroll expenses; and d. costs to retain the services of a third party forensic accounting firm to determine the amounts of Business Interruption Loss described in paragraphs V.4.a.-V.4.c. above, subject to our prior consent.
+  [KV_15] p8: "9." → the
+  [KV_16] p8: "10." → Insured Computer Systems and External Computer
+  [KV_17] p8: "6. Claim means any:" → a. written demand, request, or assertion seeking monetary damages, or non-monetary or injunctive relief; b. civil proceeding, investigation, or suit commenced by service of a complaint, notice, request for information, or similar proceeding seeking monetary damages or non-monetary or injunctive relief; C. arbitration, mediation, or similar alternative dispute resolution proceeding commenced by the receipt of a complaint, written demand, or similar proceeding seeking monetary damages or non-monetary or injunctive relief; d. criminal proceeding commenced by the filing of charges, arrest or detainment, or a return of an indictment or similar document; e. request to toll or waive a statute of limitations applicable to a Claim referenced in paragraphs V.6.a.-V.6.d. above; f. formal appeal of a Claim referenced in paragraphs V.6.a.-V.6.d. above; g. with respect to Insuring Agreement I.A.2., any Claim referenced in paragraphs V.6.a.-V.6.f. above which is a Regulatory Claim; or h. with respect to Insuring Agreement I.A.4., any Claim referenced in paragraphs V.6.a.-V.6.f. above which is a PCI-DSS Claim.
+  [KV_18] p8: "8. Computer Crimes means the intentional" → a. Funds or Securities to be transferred, paid, or delivered; or b. an account of the Insured Organization, or of its customer, to be added, deleted, debited, or credited.
+  [KV_19] p9: "14. Credit Monitoring Loss means reasona" → 
+  ... and 5 more
+
+─── CLAUDE RESPONSE ANALYSIS ───
+  Total fields extracted: 39
+  Boolean fields: 39
+  Text fields: 0
+  Fields with problems: 0
+
+─── SUCCESSFUL BBOX LINKS (boolean fields using KV) ───
+  (none)
+
+─── SUMMARY ───
+  Fields with answer_id: 0/39 (0%)
+  Fields with question_id: 0/39
+  answer_id == question_id: 0 (should be ~0)
+  Boolean fields with KV answer: 0/0 (should be 0)
+
+======================================================================
+
+======================================================================
+RAW DATA (JSON)
+======================================================================
+
+--- KV PAIRS ---
+[
+  {
+    "id": "KV_0",
+    "key": "Page",
+    "value": "10 of 36",
+    "type": "text",
+    "page": 10,
+    "bbox": {
+      "left": 0.8632367253303528,
+      "top": 0.9482387900352478,
+      "width": 0.04697306454181671,
+      "height": 0.008539600297808647
+    }
+  },
+  {
+    "id": "KV_1",
+    "key": "Considerations:",
+    "value": "Wherever appearing throughout this Policy, the words \"we,\" \"us,\" and \"our\" refer to the insurer providing this insurance and \"Declaration\" and \"Declarations\" refer to the Cyber Insurance Policy Declarations. Terms which appear in bold face type shall have the meanings set forth in Section V. Definitions.",
+    "type": "text",
+    "page": 1,
+    "bbox": {
+      "left": 0.08743109554052353,
+      "top": 0.8088718056678772,
+      "width": 0.824113130569458,
+      "height": 0.04847588762640953
+    }
+  },
+  {
+    "id": "KV_2",
+    "key": "2.",
+    "value": "Media Event Response We shall pay the Insured Organization for Public Relations Loss and Reward Expense the Insured Organization as a result of a Media Wrongful Act first discovered during",
+    "type": "text",
+    "page": 3,
+    "bbox": {
+      "left": 0.1470845341682434,
+      "top": 0.8303783535957336,
+      "width": 0.6373751163482666,
+      "height": 0.051023952662944794
+    }
+  },
+  {
+    "id": "KV_3",
+    "key": "3.",
+    "value": "We shall pay the Insured Organization for Technical Response Loss, Legal Services Loss, Public Relations Loss, Notification Loss, Reward Expense Loss, and Credit Monitoring Loss incurred by the Insured Organization as a result of an Information Privacy Event first discovered during the Policy",
+    "type": "text",
+    "page": 2,
+    "bbox": {
+      "left": 0.15408729016780853,
+      "top": 0.5122359395027161,
+      "width": 0.7564494609832764,
+      "height": 0.04802367091178894
+    }
+  },
+  {
+    "id": "KV_4",
+    "key": "4.",
+    "value": "We shall pay the Insured Organization, all PCI-DSS Penalties, PCI-DSS Response Expenses, and Claim Expenses resulting from a PCI-DSS Claim first made against the Insured Organization during the Policy",
+    "type": "text",
+    "page": 2,
+    "bbox": {
+      "left": 0.155088409781456,
+      "top": 0.6182840466499329,
+      "width": 0.7554479837417603,
+      "height": 0.030015842989087105
+    }
+  },
+  {
+    "id": "KV_5",
+    "key": "1.",
+    "value": "",
+    "type": "text",
+    "page": 6,
+    "bbox": {
+      "left": 0.12707163393497467,
+      "top": 0.6372924447059631,
+      "width": 0.0010006037773564458,
+      "height": 0.001000440213829279
+    }
+  },
+  {
+    "id": "KV_6",
+    "key": "B. NETWORK SECURITY",
+    "value": "Network Security Wrongful Act. We shall pay the Insured Organization for Technical Response Loss, Public Relations Loss, Data Recovery Loss, Reward Expense Loss, and System Restoration Loss incurred by the Insured Organization as a result of a Network Security Event first discovered during the Policy Period.",
+    "type": "text",
+    "page": 2,
+    "bbox": {
+      "left": 0.11682799458503723,
+      "top": 0.73409104347229,
+      "width": 0.7947812676429749,
+      "height": 0.15750610828399658
+    }
+  },
+  {
+    "id": "KV_7",
+    "key": "Event Response and Recovery",
+    "value": "",
+    "type": "text",
+    "page": 2,
+    "bbox": {
+      "left": 0.14642329514026642,
+      "top": 0.8431339263916016,
+      "width": 0.7650341987609863,
+      "height": 0.04841706156730652
+    }
+  },
+  {
+    "id": "KV_8",
+    "key": "2. Contingent Business Interruption",
+    "value": "We shall pay the Insured Organization for Contingent Business Interruption Loss, Extra Expense, Reward Expense Loss, and Public Relations Loss incurred by the Insured Organization as a direct result of a System Disruption which first occurs during the Policy Period.",
+    "type": "text",
+    "page": 3,
+    "bbox": {
+      "left": 0.14622977375984192,
+      "top": 0.26415038108825684,
+      "width": 0.7656074166297913,
+      "height": 0.048051055520772934
+    }
+  },
+  {
+    "id": "KV_9",
+    "key": "1. Direct Business Interruption",
+    "value": "We shall pay the Insured Organization for Business Interruption Loss, Extra Expense, Reward Expense Loss, and Public Relations Loss incurred by the Insured Organization as a direct result of a System Disruption which first occurs during the Policy Period.",
+    "type": "text",
+    "page": 3,
+    "bbox": {
+      "left": 0.14616712927818298,
+      "top": 0.17597417533397675,
+      "width": 0.7654111385345459,
+      "height": 0.04901924729347229
+    }
+  },
+  {
+    "id": "KV_10",
+    "key": "E. FINANCIAL FRAUD",
+    "value": "1. Social Engineering We shall pay the Insured Organization for Fraudulent Inducement Loss and Reward Expense Loss incurred by the Insured Organization as a direct result of Fraudulent Inducement Instructions it receives and accepts and which are first discovered during the Policy Period. 2. Computer Fraud We shall pay the Insured Organization for Computer Crimes Loss and Reward Expense Loss incurred by the Insured Organization as a direct result of Computer Crimes first discovered during the Policy Period.",
+    "type": "text",
+    "page": 3,
+    "bbox": {
+      "left": 0.1167331263422966,
+      "top": 0.5169104933738708,
+      "width": 0.7951177954673767,
+      "height": 0.1564951092004776
+    }
+  },
+  {
+    "id": "KV_11",
+    "key": "D. CYBER EXTORTION",
+    "value": "Loss, and Public Relations Threat first discovered during",
+    "type": "text",
+    "page": 3,
+    "bbox": {
+      "left": 0.14603585004806519,
+      "top": 0.37928852438926697,
+      "width": 0.7659730911254883,
+      "height": 0.07090707868337631
+    }
+  },
+  {
+    "id": "KV_12",
+    "key": "A. AGGREGATE LIMIT OF INSURANCE",
+    "value": "1. The Aggregate Limit of Insurance is our maximum liability under this Policy for the duration of the Policy Period or, if exercised, the Extended Reporting Period. 2. We shall have no further obligations or liability under this Policy upon exhaustion of the Aggregate Limit of Insurance, including the continuation of payment of Loss, Damages, or Claims Expenses or the duty to defend or investigate any Claim.",
+    "type": "text",
+    "page": 4,
+    "bbox": {
+      "left": 0.11706511676311493,
+      "top": 0.2801244258880615,
+      "width": 0.7944720387458801,
+      "height": 0.09504783153533936
+    }
+  },
+  {
+    "id": "KV_13",
+    "key": "5. Solely with respect to Third Party Coverage and Insured Persons, the Retention shall not apply to an Insured Person if the Insured Organization is:",
+    "value": "not legally permitted to provide indemnification to such Insured Person; or unable to provide indemnification solely by reason of its financial insolvency, including such Insured Organization becoming a debtor in possession under Chapter 11 of the United States Bankruptcy Code, as amended, or the foreign equivalent of such; provided, however, that the applicable Insured Organization agrees to repay us any Retention amounts we pay on its behalf, as described in this paragraph III.5.b., at the time such Insured Organization emerges from financial insolvency or",
+    "type": "text",
+    "page": 5,
+    "bbox": {
+      "left": 0.17610253393650055,
+      "top": 0.4652124345302582,
+      "width": 0.7354346513748169,
+      "height": 0.10404791682958603
+    }
+  },
+  {
+    "id": "KV_14",
+    "key": "4. Business Interruption Loss means the following amounts incurred by an Insured Organization during the Period of Restoration:",
+    "value": "a. net profit before income taxes that would have been earned had no System Disruption of Insured Computer Systems occurred; b. net loss before income taxes that would have been avoided had no System Disruption of Insured Computer Systems occurred; C. the Insured Organization's continuing normal operating and payroll expenses; and d. costs to retain the services of a third party forensic accounting firm to determine the amounts of Business Interruption Loss described in paragraphs V.4.a.-V.4.c. above, subject to our prior consent.",
+    "type": "text",
+    "page": 7,
+    "bbox": {
+      "left": 0.11806678771972656,
+      "top": 0.592271089553833,
+      "width": 0.7924686670303345,
+      "height": 0.1330621838569641
+    }
+  },
+  {
+    "id": "KV_15",
+    "key": "9.",
+    "value": "the",
+    "type": "text",
+    "page": 8,
+    "bbox": {
+      "left": 0.3381984829902649,
+      "top": 0.8153733015060425,
+      "width": 0.024014227092266083,
+      "height": 0.010004624724388123
+    }
+  },
+  {
+    "id": "KV_16",
+    "key": "10.",
+    "value": "Insured Computer Systems and External Computer",
+    "type": "text",
+    "page": 8,
+    "bbox": {
+      "left": 0.3111826479434967,
+      "top": 0.8443852663040161,
+      "width": 0.3842269778251648,
+      "height": 0.013007315807044506
+    }
+  },
+  {
+    "id": "KV_17",
+    "key": "6. Claim means any:",
+    "value": "a. written demand, request, or assertion seeking monetary damages, or non-monetary or injunctive relief; b. civil proceeding, investigation, or suit commenced by service of a complaint, notice, request for information, or similar proceeding seeking monetary damages or non-monetary or injunctive relief; C. arbitration, mediation, or similar alternative dispute resolution proceeding commenced by the receipt of a complaint, written demand, or similar proceeding seeking monetary damages or non-monetary or injunctive relief; d. criminal proceeding commenced by the filing of charges, arrest or detainment, or a return of an indictment or similar document; e. request to toll or waive a statute of limitations applicable to a Claim referenced in paragraphs V.6.a.-V.6.d. above; f. formal appeal of a Claim referenced in paragraphs V.6.a.-V.6.d. above; g. with respect to Insuring Agreement I.A.2., any Claim referenced in paragraphs V.6.a.-V.6.f. above which is a Regulatory Claim; or h. with respect to Insuring Agreement I.A.4., any Claim referenced in paragraphs V.6.a.-V.6.f. above which is a PCI-DSS Claim.",
+    "type": "text",
+    "page": 8,
+    "bbox": {
+      "left": 0.11706364899873734,
+      "top": 0.19108527898788452,
+      "width": 0.794472873210907,
+      "height": 0.29113680124282837
+    }
+  },
+  {
+    "id": "KV_18",
+    "key": "8. Computer Crimes means the intentional, fraudulent, or unauthorized input, destruction, or modification of electronic data or computer instructions into Computer Systems by any entity which is not an Insured Organization or person who is not an Insured Person, provided that such Computer Crimes cause:",
+    "value": "a. Funds or Securities to be transferred, paid, or delivered; or b. an account of the Insured Organization, or of its customer, to be added, deleted, debited, or credited.",
+    "type": "text",
+    "page": 8,
+    "bbox": {
+      "left": 0.1173422783613205,
+      "top": 0.762007474899292,
+      "width": 0.7741943001747131,
+      "height": 0.03540267422795296
+    }
+  },
+  {
+    "id": "KV_19",
+    "key": "14. Credit Monitoring Loss means reasonable and necessary costs and expenses incurred or paid by an Insured Organization to:",
+    "value": "",
+    "type": "text",
+    "page": 9,
+    "bbox": {
+      "left": 0.9105358123779297,
+      "top": 0.5392434000968933,
+      "width": 0.0010005844524130225,
+      "height": 0.001000451622530818
+    }
+  },
+  {
+    "id": "KV_20",
+    "key": "11. Contingent Business Interruption Loss means the following amounts incurred by an Insured Organization during the Period of Restoration:",
+    "value": "net profit before income taxes that would have been earned had no System Disruption of External Computer Systems occurred; net loss before income taxes that would have been avoided had no System Disruption of External Computer Systems occurred; the Insured Organization's continuing normal operating and payroll expenses; and costs to retain the services of a third party forensic accounting firm to determine the amounts of Contingent Business Interruption Loss described in paragraphs V.11.a.-V.11.c. above, subject to our prior",
+    "type": "text",
+    "page": 9,
+    "bbox": {
+      "left": 0.14708232879638672,
+      "top": 0.161068856716156,
+      "width": 0.7644535899162292,
+      "height": 0.13306553661823273
+    }
+  },
+  {
+    "id": "KV_21",
+    "key": "15.",
+    "value": "Cyber Event means an Information Privacy Event, Network Security Event, Extortion Threat, Fraudulent Inducement Instructions, Computer Crimes, System Disruption, and, with respect to Insuring Agreement I.F.2. only, a Media Wrongful Act.",
+    "type": "text",
+    "page": 9,
+    "bbox": {
+      "left": 0.11722947657108307,
+      "top": 0.799635648727417,
+      "width": 0.795107364654541,
+      "height": 0.04835241287946701
+    }
+  },
+  {
+    "id": "KV_22",
+    "key": "16. Cyber Response Firm means:",
+    "value": "a. any firm listed on our pre-approved response provider list, available upon request from us; or b. a firm not part of paragraph V.16.a. above, but only with our prior written consent.",
+    "type": "text",
+    "page": 9,
+    "bbox": {
+      "left": 0.11761332303285599,
+      "top": 0.887470543384552,
+      "width": 0.7102688550949097,
+      "height": 0.036064255982637405
+    }
+  },
+  {
+    "id": "KV_23",
+    "key": "19. Employee means any natural",
+    "value": "",
+    "type": "text",
+    "page": 10,
+    "bbox": {
+      "left": 0.3351958990097046,
+      "top": 0.80136638879776,
+      "width": 0.0010005806107074022,
+      "height": 0.0010004432406276464
+    }
+  },
+  {
+    "id": "KV_24",
+    "key": "18. Data Recovery Loss means reasonable and necessary costs and expenses incurred or paid by an Insured Organization to:",
+    "value": "a. replace and restore corrupted, destroyed, lost, or stolen software; b. re-create and recover corrupted, destroyed, lost, or stolen data in electronic form which is, or was, stored on a Computer System; C. re-create and recover corrupted, destroyed, lost, or stolen data in non-electronic form for which there is no electronic source available; and d. to retain the services of a Cyber Response Firm to provide consultative and professional services related to Data Recovery Loss described in paragraphs V.18.a.-V.18.c. above.",
+    "type": "text",
+    "page": 10,
+    "bbox": {
+      "left": 0.11713065207004547,
+      "top": 0.641589343547821,
+      "width": 0.7944876551628113,
+      "height": 0.13358213007450104
+    }
+  }
+]
+
+--- PROVENANCE RECORDS ---
+[
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "generalInformation.applicantName",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "generalInformation.primaryWebsiteAndEmailDomains",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "generalInformation.primaryIndustry",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "generalInformation.annualRevenue",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "generalInformation.employeeCount",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "securityManagement.securityManagement",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "securityManagement.mdrThirdPartyIntervention",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "securityManagement.workloadInfrastructure",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "patchManagement.centralPatchManagement",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "patchManagement.criticalPatchTimeframe",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "patchManagement.normalPatchingTimeframe",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "accessManagement.singleSignOn",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "accessManagement.emailMfa",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "accessManagement.mfaForCriticalInfoAccess",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "accessManagement.passwordManager",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "accessManagement.endUserAdminRights",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "accessManagement.privilegedAccessManagement",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "networkSecurity.networkSecurityTechnologies",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "networkSecurity.networkSegmentation",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "endpointSecurity.endpointSecurityTechnologies",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "endpointSecurity.hasEdr",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "endpointSecurity.edrEndpointCoveragePercent",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "endpointSecurity.eppedrOnDomainControllers",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "remoteAccess.allowsRemoteAccess",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "remoteAccess.remoteAccessMfa",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "remoteAccess.remoteAccessSolutions",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "operationalTechnology.utilizesOperationalTechnology",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "operationalTechnology.itOtSegregated",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "trainingAndAwareness.conductsPhishingSimulations",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "trainingAndAwareness.phishingSimulationFrequency",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "trainingAndAwareness.mandatoryTrainingTopics",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.hasBackups",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.criticalInfoBackupFrequency",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.backupStorageLocation",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.offlineBackups",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.offsiteBackups",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.immutableBackups",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.encryptedBackups",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  },
+  {
+    "submission_id": "cd8b631f-ee62-45d3-b557-94e9b85b5a86",
+    "field_name": "backupAndRecovery.backupRestoreTestFrequency",
+    "extracted_value": null,
+    "confidence": 0.0,
+    "source_text": null,
+    "source_page": null,
+    "is_present": false,
+    "textract_line_id": null,
+    "question_line_id": null
+  }
+]
+
+--- LINE ID MAP ---
+{
+  "LINE_0": "af313477-a43d-4462-b656-966f467b1333",
+  "LINE_1": "295ac16b-a65e-4c08-994c-cda72c5b057a",
+  "LINE_2": "53893481-4a8e-491a-bbb0-2823e66eac9a",
+  "LINE_3": "baf4843d-71a7-4768-ab61-eba140c5ca62",
+  "LINE_4": "707c5b49-8579-4486-9c38-fa68c9588ae5",
+  "LINE_5": "f8d3790a-7dde-410e-8465-65462f536ada",
+  "LINE_6": "39b61283-790c-496e-9d8f-fb730a5277af",
+  "LINE_7": "422625b7-bd20-4f58-bdbe-53d3a7446c41",
+  "LINE_8": "b80616bf-56c7-4421-9719-d62eb638775a",
+  "LINE_9": "e5810289-de66-49c7-9b0e-110e0155b8b3",
+  "LINE_10": "3ecf3451-6d8a-4ca6-8cd1-90a98332b842",
+  "LINE_11": "d832392c-5524-4e09-9b30-482ecfa0dd24",
+  "LINE_12": "8649ce4d-eaa5-4c06-b2ac-3a85b21c219b",
+  "LINE_13": "25a92183-d6d8-4504-a527-91344f1a5b99",
+  "LINE_14": "234041d3-5734-4205-a9cc-a37411723f50",
+  "LINE_15": "431b38ed-4e4c-4375-9b2e-4180dfa6ca7f",
+  "LINE_16": "87d07455-0722-499d-b9ca-07a4f25400c3",
+  "LINE_17": "b054e1ab-199b-4017-a95d-d9b7ed34d9be",
+  "LINE_18": "03153ee2-a390-4332-9a70-6683bbaa4821",
+  "LINE_19": "eb0fc601-452e-46ef-9499-254484d21f17",
+  "LINE_20": "eed2a306-6e89-45ac-a01c-ccaa6f21256b",
+  "LINE_21": "fb05fd16-f65a-4cc9-888d-3db8bf1af5e4",
+  "LINE_22": "dba766f0-09be-4362-9302-ab9be45b892c",
+  "LINE_23": "765a3c0c-768c-429b-8cfc-4713eac57018",
+  "LINE_24": "b426d45f-406a-459d-b664-9e734dcba3c7",
+  "LINE_25": "e95a7824-71df-4892-a99c-d53e5147a4d1",
+  "LINE_26": "d81007f7-cccc-4728-a334-8de4fd332167",
+  "LINE_27": "365450a4-51f9-4da4-a1e3-14988c83b8c3",
+  "LINE_28": "255e1b69-74f6-4856-a853-f99038e45d47",
+  "LINE_29": "89b459d7-5b35-4bd1-a7dc-2b293630055a",
+  "LINE_30": "8210c1d5-4246-46c4-87eb-59dbae8185e9",
+  "LINE_31": "24383000-340a-475e-a7de-37e8cccbe9e7",
+  "LINE_32": "ae05e413-7b85-4af4-b0c3-9c5c85ce65fd",
+  "LINE_33": "51157516-10e9-401c-b8c0-f9e5236233f2",
+  "LINE_34": "c8474f5e-7b4d-47e3-a7f0-eb37c1414c54",
+  "LINE_35": "6e02e96d-6a4e-4781-87ec-77acd920b5d5",
+  "LINE_36": "d5e0cc1d-5b45-467e-8603-559b8e8700b8",
+  "LINE_37": "4eeb0dfe-e116-4717-bc91-7083bdd89c16",
+  "LINE_38": "49fc57b8-a314-4fbd-923c-e3db938d2413",
+  "LINE_39": "8ff78815-8119-4f10-953c-5a21dc442e62",
+  "LINE_40": "63e6c33e-6fc7-4d02-8fd8-51275c1b007c",
+  "LINE_41": "b1b2045f-1fed-4804-94b4-312acd931d8c",
+  "LINE_42": "2103a4d4-eaea-4b64-9484-3b109b0fb68d",
+  "LINE_43": "a22162fb-220e-4e42-9add-04f3cb0839f3",
+  "LINE_44": "38ce94f6-80ad-4490-9f2f-1437d8bdb8c7",
+  "LINE_45": "8c49d97f-f896-4595-a1cf-e8630073d5e7",
+  "LINE_46": "0973a043-a7ce-46d7-a12d-ae515274e9e9",
+  "LINE_47": "35b95372-6168-4161-a9d8-447d6dfe7b36",
+  "LINE_48": "dc1ce41b-309d-407c-8a73-f2aed4dc703c",
+  "LINE_49": "90ebedfc-a40f-4db5-a0d6-84c10599b448",
+  "LINE_50": "eac7d30b-5b54-408d-a503-39109541b5d1",
+  "LINE_51": "a3ed86fd-95d4-4c39-959f-3c48e10f5959",
+  "LINE_52": "6aef2d92-1a81-4f5e-ace7-137f7bf775fb",
+  "LINE_53": "d38d906c-992a-4df5-8904-85da1eb9742a",
+  "LINE_54": "e7ec15a5-1e6c-4a07-8734-bfd4325fa771",
+  "LINE_55": "59f02efc-75f3-4276-940e-670fe39b07cb",
+  "LINE_56": "3eba7e56-72d3-4c8d-a370-98c677c118d6",
+  "LINE_57": "cb02f1d7-9fd9-4985-ba33-12d2db010449",
+  "LINE_58": "bf4b15be-e69d-43c9-891b-eb12329e9597",
+  "LINE_59": "7166a23e-0e39-4c73-9458-9e9a08bf9c6b",
+  "LINE_60": "74f5d2d3-f799-4439-9b6d-9113622802e1",
+  "LINE_61": "a1010fd4-58df-4a9c-8cf8-830c621c7cef",
+  "LINE_62": "12570376-ae8d-481b-b5c9-4dffea68683b",
+  "LINE_63": "ba979f5e-0a9f-4b5a-a232-f3afb5eefcb4",
+  "LINE_64": "6f4d6f51-49d0-4c3c-b17a-0ad598950e22",
+  "LINE_65": "6489c449-2915-4737-a35a-a3f088a1b354",
+  "LINE_66": "87651b72-eca3-4d29-b7b3-410d9d27931c",
+  "LINE_67": "5e13b4d9-7b79-4b06-a5f6-54c1569629cd",
+  "LINE_68": "58967afb-c67b-4f80-bd30-b61234cfbf8b",
+  "LINE_69": "46825d10-41fb-4e79-a5c5-4f68e8daedc3",
+  "LINE_70": "bc29f734-2e4f-49b0-8aa8-65c4ef9e24eb",
+  "LINE_71": "3c883a04-c000-489c-ad0b-a5348924a382",
+  "LINE_72": "85f8b246-5260-4ad6-bddd-add3c9d28f5a",
+  "LINE_73": "9f675c5b-45ea-41e7-b5f9-e6e45a09c05b",
+  "LINE_74": "b193b661-7892-4b6a-ab11-9ff7467c3447",
+  "LINE_75": "3e4887a2-4607-4178-9cf3-ed9e43e6443e",
+  "LINE_76": "67ff9301-1e6b-40d9-8766-0fc40db1314d",
+  "LINE_77": "b5e326f1-5639-48c3-a654-3a7fb5ad0575",
+  "LINE_78": "981767ce-2186-4071-8211-39111afdc48e",
+  "LINE_79": "8470fe60-65fd-4bb4-a608-648480757d33",
+  "LINE_80": "b70d3052-2fd0-41b8-bcd7-2945f8866b66",
+  "LINE_81": "b5e661b7-e24a-47ab-81ab-d5f421b35aa5",
+  "LINE_82": "02b2b695-5857-43b1-9751-ff41b1cd7181",
+  "LINE_83": "51d7c4d5-59fb-499f-a386-85710040e964",
+  "LINE_84": "28651ea2-8ac6-4298-85c0-3d685f4dbe00",
+  "LINE_85": "8d2d2b11-247e-4dda-8306-de0c191a7d1f",
+  "LINE_86": "5c327a44-45e8-40dc-b13f-6bdf8d3bb04c",
+  "LINE_87": "c465928b-6560-4b77-b9b7-5f1cecaeb4b4",
+  "LINE_88": "7b382468-09fa-4b96-a3ba-8a4036404a15",
+  "LINE_89": "08ad598e-6ccb-4015-a6e5-cf557ea153e6",
+  "LINE_90": "696b33c8-8326-41d8-80fe-423d5731ce67",
+  "LINE_91": "c90fcf1b-abbd-4866-aac2-c308782d8cb3",
+  "LINE_92": "bdaa0b7c-6bc3-4ca6-b28b-f0cdc38aa814",
+  "LINE_93": "f08b6228-a1dc-4c3d-a95c-10dc88c83662",
+  "LINE_94": "e3610304-6e33-4303-8343-b2e2ab70c645",
+  "LINE_95": "b186837b-7694-49f3-8696-2cd09798cb06",
+  "LINE_96": "b9fdf5c8-ef90-4238-b1fb-343207491a9b",
+  "LINE_97": "ddb20600-78be-45c5-b6b9-1afd8c92f1ae",
+  "LINE_98": "986c6284-dab1-464f-a81f-30acbc02b55c",
+  "LINE_99": "adff66d6-633b-4c54-b073-c69528d715e3",
+  "LINE_100": "df0892f4-320a-4b92-b4db-5ff09f84d813",
+  "LINE_101": "9002819a-0082-4501-be7a-8d4a87c46663",
+  "LINE_102": "ef6218d1-a77d-453c-a445-72ac1f90d26f",
+  "LINE_103": "4847477b-8443-4d7a-80fe-f589a4a0fdd2",
+  "LINE_104": "b69e78e4-ba5e-42c8-af51-4be532d4e584",
+  "LINE_105": "b409a274-988c-4e93-9d7d-a807296fe2ce",
+  "LINE_106": "cb1b5a9f-960b-4e83-acf5-da3ca3ad1a9d",
+  "LINE_107": "c84b0f53-435f-459c-b9f2-7cd4788a7433",
+  "LINE_108": "3ecfe68e-41ac-4f7f-9951-8be9d61b8019",
+  "LINE_109": "cc2e73d1-5468-40d4-b23c-0fb2cb6081cf",
+  "LINE_110": "ac91fe5e-06eb-46c4-9137-797e1a6aef22",
+  "LINE_111": "d5b42104-8453-42d3-b5c6-802f8d415461",
+  "LINE_112": "f2318865-ba3a-491d-9211-2481683338f0",
+  "LINE_113": "2c5b23fa-159d-49a5-b6c4-ead0c9e336ed",
+  "LINE_114": "1bb9902b-d110-4603-a42b-bd6a7fdbd1b5",
+  "LINE_115": "4192b1f1-e2e0-4811-9641-c1fc89ea5cad",
+  "LINE_116": "da9bba41-793b-45fc-acd7-1d0a0f30a1bb",
+  "LINE_117": "93c75edd-e61d-4053-8fb5-d10075e4cd89",
+  "LINE_118": "4d5da01c-862e-48a2-b14f-49ed07723e30",
+  "LINE_119": "7eaab5c7-2e24-432f-9a92-543ba31ba9cc",
+  "LINE_120": "8a2062b4-4279-40a7-99f3-6f2a91790cb5",
+  "LINE_121": "e2720cb1-b2b4-4b8d-8211-7f2260dcbf25",
+  "LINE_122": "1d25bfb4-5053-402d-a9b5-5bef99b4f7be",
+  "LINE_123": "66696b45-6100-43ed-a4a1-21bf369f21fa",
+  "LINE_124": "ef13918b-2321-48d3-b7bd-8761db8b3fa3",
+  "LINE_125": "9d770073-e101-4042-82e2-1a73a8572247",
+  "LINE_126": "383a675b-44e8-4a9c-bb58-3c4a951a94d5",
+  "LINE_127": "540e955b-96fa-468a-ac06-88011b5d7918",
+  "LINE_128": "7319dfa8-094e-4a58-9706-8c7b7ff9cb1e",
+  "LINE_129": "7fd9e684-1e25-4a48-9e41-6a2c38272278",
+  "LINE_130": "6c99aa7c-3a78-4a93-b532-c984d74ac4f9",
+  "LINE_131": "c6d6c608-2636-4c50-bf35-3062be39f25e",
+  "LINE_132": "b1731651-3f62-404f-96d4-6c07bcb62108",
+  "LINE_133": "0a363c1b-7b5b-44c8-932d-840d0da78237",
+  "LINE_134": "2b1be10e-537e-4390-a5e8-f4cdeefd329f",
+  "LINE_135": "1c70e756-9170-4c2c-8370-e26e3096e566",
+  "LINE_136": "8e574743-484c-446b-8b16-ebaefe3ffaff",
+  "LINE_137": "15e506d0-4170-4c97-ac44-aa255501623a",
+  "LINE_138": "6e872b88-250e-4c62-aa0a-f6bc03c69c14",
+  "LINE_139": "f3a1a0e0-fae7-4032-b26d-174c2744a855",
+  "LINE_140": "8eec9402-0f0e-4a93-9bb7-49c2173d7940",
+  "LINE_141": "7d89caaf-fe52-40ea-a3e9-ecdcf14e4e45",
+  "LINE_142": "c94f4ff8-aedd-43aa-af30-654349962959",
+  "LINE_143": "18d788d6-9f8b-4bed-a6da-5d1c336d44ea",
+  "LINE_144": "b7870144-4b95-48c0-89ad-5a3fa99783a7",
+  "LINE_145": "ada23754-3fce-4a14-b06f-e90f0fb6ad99",
+  "LINE_146": "4c43be7e-3a41-4bc9-9534-4a5a8d4287b7",
+  "LINE_147": "c3565169-f879-4da8-9075-98bb1a6ec1f0",
+  "LINE_148": "ae20dbc4-2686-4489-8590-80ab26466d91",
+  "LINE_149": "88a979ca-2900-4e02-af71-40928390823a",
+  "LINE_150": "b666561a-ae98-468e-8973-ee56a8586239",
+  "LINE_151": "4939d28e-cd95-4b56-8c01-2510cffcef92",
+  "LINE_152": "13ce88ae-f5c9-4c2f-afda-c507060599b5",
+  "LINE_153": "806cad4e-8287-4d3a-9385-e1d1e758fabb",
+  "LINE_154": "d8a95a02-e75e-434a-9896-d8edb1ef842a",
+  "LINE_155": "4545ddef-f92c-4c11-b0bc-0a7c92aca475",
+  "LINE_156": "8942ae33-f458-4f6b-a33a-0567b2cecf70",
+  "LINE_157": "2902c892-b93d-4734-8f67-2c97b3fcd211",
+  "LINE_158": "18f890d4-c56a-4c92-9edb-33523c8244e8",
+  "LINE_159": "258182a5-acf7-4cad-a124-53a2ec2ac495",
+  "LINE_160": "c3988ff9-8a3f-4be5-b603-a260ca5f348f",
+  "LINE_161": "c7e9d662-4306-4d51-a72b-62afd38c0698",
+  "LINE_162": "e6d302ee-cdbd-48e8-adc0-658768681d6d",
+  "LINE_163": "87021936-0154-46c3-9ab2-b061b3a6b80a",
+  "LINE_164": "31f3947e-735e-4dd3-b426-4e8ad1eca321",
+  "LINE_165": "74c53882-e9df-4767-9799-dfac3406e169",
+  "LINE_166": "c70c8dbf-c525-4a5e-a218-842ac2fade17",
+  "LINE_167": "a3abf20a-49ba-4eff-b432-9c110dcc10a7",
+  "LINE_168": "6bb48fc5-cd81-4f67-ae9c-ec70fe0319e1",
+  "LINE_169": "5320b39d-628b-474a-9ad5-2286954b910b",
+  "LINE_170": "2f09ad67-8954-4412-991c-442736e8bb76",
+  "LINE_171": "3106f525-8696-4d98-a4dc-5b697cdb7ad3",
+  "LINE_172": "fd2658ad-f868-4da3-9011-05a9e2a8f1f4",
+  "LINE_173": "25fb8c8b-f110-43f0-b25d-81f428b9eada",
+  "LINE_174": "fdce3df8-3350-45a3-b168-3fb6b9da2c69",
+  "LINE_175": "62d88034-c898-4d23-9cda-fcccb12301ed",
+  "LINE_176": "901e11cd-6a6d-417c-9a03-b4d7e04930f4",
+  "LINE_177": "2ac34fa9-e021-4f87-bac0-e251246f4261",
+  "LINE_178": "b1254219-f928-42da-9923-09e1c71b4c7c",
+  "LINE_179": "ab7e0888-1674-489d-a2d1-33fa671f2426",
+  "LINE_180": "fd56ba81-fd19-4242-990c-263bb483e18e",
+  "LINE_181": "cc749de8-5747-45b0-89a2-ac25edb1574b",
+  "LINE_182": "a8a7aa13-358c-43c9-abc5-3a5ae51d3fad",
+  "LINE_183": "ab7c6d72-73c8-4349-ad11-0723307f6387",
+  "LINE_184": "d10d94d0-ed9f-4244-a00b-41ba0d2d252c",
+  "LINE_185": "05845ee7-8c50-4da6-8e8e-78843182596d",
+  "LINE_186": "938acd4d-e787-4d4e-8b30-aac6acfcee0b",
+  "LINE_187": "525f5578-564e-47c9-8f04-3189fd7cf716",
+  "LINE_188": "8c937559-a64f-4f20-a092-c96054226925",
+  "LINE_189": "f69f65a1-d18f-47ac-8ca3-3199a3f827e3",
+  "LINE_190": "016c1f7e-f98a-4d9e-8865-a0602608a9af",
+  "LINE_191": "70b7b5b3-8db6-4fb0-b2a9-1c65e8c1152b",
+  "LINE_192": "ec2c21e8-37f9-4a3d-80c2-a06f4ce07e71",
+  "LINE_193": "d0255715-bdc5-4ec7-8a8c-964f2a7fcd32",
+  "LINE_194": "79dddee7-d8a4-40c3-a699-402481e97e98",
+  "LINE_195": "c278e5c7-d119-47b7-a048-5a8cbd2a5434",
+  "LINE_196": "b7220321-1c2c-4048-8a6b-f14c32b20244",
+  "LINE_197": "4b06a153-73c6-4235-82a0-ee74a340fa58",
+  "LINE_198": "8511c358-9730-40f2-b85d-b22ef89e7014",
+  "LINE_199": "9c0c9c63-81c2-4726-9ea8-1a3a9df60411",
+  "LINE_200": "7fe47151-cc2d-4d37-94a8-53c9f547ed49",
+  "LINE_201": "a81fbae2-c0bd-4b20-8a74-d313fe8e2549",
+  "LINE_202": "6019b0b8-48f8-4781-9670-9a2ffc08460e",
+  "LINE_203": "c744c7f0-c31c-4830-9207-a6c869d72dff",
+  "LINE_204": "d9767adc-6eca-4f79-9b41-39fdc9c9ff23",
+  "LINE_205": "49d9c062-42fd-49a4-b287-3b8dbb070437",
+  "LINE_206": "81de00b4-3cf6-40d2-a2d8-9b0679bc11e8",
+  "LINE_207": "e5af21d9-554a-43bb-97b1-0b745b1a8229",
+  "LINE_208": "651ae794-e334-4966-bec6-d825f234cef7",
+  "LINE_209": "f1a2e90b-4f5b-4aa0-b65f-c0f6d73c472f",
+  "LINE_210": "11b88d25-14e4-4c71-8ba1-d41b4afbbe09",
+  "LINE_211": "92deb17a-cb3e-4b85-a5c2-c74712cd1ae9",
+  "LINE_212": "8d72adeb-2769-435b-8f8f-4cd8d47aa26c",
+  "LINE_213": "e2d494df-ba0f-4501-80e0-fa397b439444",
+  "LINE_214": "3cd4ffa9-ea27-4a37-85e5-599d03339f1a",
+  "LINE_215": "a825b5f2-6b20-482f-bdea-f1e54784437a",
+  "LINE_216": "fa73f6bc-9342-438c-ab77-5bf5598571bb",
+  "LINE_217": "ed431fbe-3ebd-4019-b6f0-2357f4aafcdc",
+  "LINE_218": "b6a20f20-c793-48ea-a5ef-261ff0fa06e2",
+  "LINE_219": "3c3ebda7-6abb-4fa7-bc97-deeb858b131a",
+  "LINE_220": "be3ee965-1598-4fa6-b498-c4f3788be863",
+  "LINE_221": "2fd1fc79-2355-4943-b227-d070547453ce",
+  "LINE_222": "79a0c69d-1861-47f0-92f1-e3aef69f76eb",
+  "LINE_223": "625d8dac-eec6-4002-a806-d2dc1b29f932",
+  "LINE_224": "67a484e8-bc37-4294-b010-370884cf08f7",
+  "LINE_225": "ee0ef994-f0c3-469c-8704-f49730c66735",
+  "LINE_226": "9b45eae3-b327-4c24-bbe5-bbf6dc57e9d8",
+  "LINE_227": "acc9b032-f0ce-4289-9824-dd31080466cd",
+  "LINE_228": "09f983b7-39e7-43e4-b54a-4e929c725a7d",
+  "LINE_229": "c362886f-3e90-4533-9016-5badc1a953a4",
+  "LINE_230": "1b622f9f-af5f-4696-95d0-f8b6324f2bf9",
+  "LINE_231": "22a014a5-27d9-4259-a250-4a2755170e8b",
+  "LINE_232": "46795f51-de67-48c6-b1b7-f23feb72f499",
+  "LINE_233": "dd25a5d1-4d3c-4120-bbdc-4e9b5d3bad7f",
+  "LINE_234": "bd4c0a79-a772-4584-8a08-7d35085813ed",
+  "LINE_235": "efdaf861-5b59-4cc0-8fa4-1808440deed6",
+  "LINE_236": "352eba61-ea7c-4403-9fb7-09f487700d01",
+  "LINE_237": "2ffbafb6-bcc7-47a6-910b-66a1305c1f62",
+  "LINE_238": "c694b7b8-e1fd-4234-9097-f5dfea8e57a7",
+  "LINE_239": "b4a7cd6a-1c45-4fb1-b3bb-c411b67c6ca2",
+  "LINE_240": "ffd80eb4-d799-4cfd-b831-5aae58a33654",
+  "LINE_241": "26728d88-1304-4d25-b708-fac0a28e9aa9",
+  "LINE_242": "c6c67894-40ff-40e2-a9ab-990e6ce8654c",
+  "LINE_243": "253d32ef-db73-49c6-84a8-0b6b97a16e4d",
+  "LINE_244": "826170e9-d553-4a3f-a65c-4f3b80520201",
+  "LINE_245": "ffa717f1-8a28-4565-a247-c32dd64de50c",
+  "LINE_246": "41ea541b-3868-431c-a492-eb523d009c71",
+  "LINE_247": "ce3d9d7a-e1ec-4e19-8dfb-d272cb4dea74",
+  "LINE_248": "3f744ebe-2775-4e1c-acbe-7a98c5c8fdac",
+  "LINE_249": "640640f8-9b2a-456f-bb80-f1baed3a9d73",
+  "LINE_250": "cb2a2dc0-911a-447c-99ec-0b652eadd2d4",
+  "LINE_251": "29f34a07-78b5-48e9-b06c-3d005e16899c",
+  "LINE_252": "d2c9b566-2f58-4f5b-b709-84d7e75e36fb",
+  "LINE_253": "b22159d1-1351-48ba-a4da-51151ac825b7",
+  "LINE_254": "2f2a1718-7806-440b-9668-497925b125ae",
+  "LINE_255": "d09c9e8d-52d6-481b-bca0-30ce403de9b4",
+  "LINE_256": "2de23f35-4b8b-4996-81d4-2025443352d3",
+  "LINE_257": "cc71700a-d574-4cf4-aa36-701b99522ca9",
+  "LINE_258": "3538b8c1-4e2f-4f9a-8856-c3f7b5d1cea1",
+  "LINE_259": "185cc97f-eeeb-4158-aba0-898dadec69ab",
+  "LINE_260": "b3372fb9-a3be-4109-b890-802d76218b8d",
+  "LINE_261": "d1120542-aaa3-407e-a798-2d5669c48f17",
+  "LINE_262": "551c36ce-cb34-4bda-a342-4f904eecc245",
+  "LINE_263": "307d628f-345b-46b5-a9e3-56e997233097",
+  "LINE_264": "4e0c3327-9202-463a-b3ba-4984d3e62a17",
+  "LINE_265": "c3a49b37-f3a4-42eb-bdcb-7cfc9ef2bb2f",
+  "LINE_266": "735acc63-ebfc-4739-869a-22899a1b3527",
+  "LINE_267": "3dca53d3-d900-4aba-b450-a39146fc2118",
+  "LINE_268": "6b6fc09b-ddd7-4d4e-9e5d-e69d5ab0d063",
+  "LINE_269": "08119457-9f47-4cbf-94ae-3a9fc4fd0273",
+  "LINE_270": "7668fb87-5491-4f98-861d-c521b48a150f",
+  "LINE_271": "9e26a12a-62c5-4fc2-a01e-d263818e263e",
+  "LINE_272": "93997437-8ca2-4d0e-8a87-a096d86924be",
+  "LINE_273": "dcd337fd-0390-4c47-aa20-99f5a42417d0",
+  "LINE_274": "7333d291-bf65-4454-8db5-651b0c853e1c",
+  "LINE_275": "62c852cd-65c0-47d5-8593-3a71ea035944",
+  "LINE_276": "ff2f6dae-325d-43b0-96a5-011c5f7d7940",
+  "LINE_277": "59a2b948-c5dd-4ad2-8ea0-b2071e8b5fd2",
+  "LINE_278": "2e0021d6-661a-49a3-bdbb-a9b0df50aaf4",
+  "LINE_279": "148dd96e-c506-4032-a1aa-b82d204a22bd",
+  "LINE_280": "3b10fc35-fa6c-4cbc-8efc-868607f6e27e",
+  "LINE_281": "3489f05b-ee4a-4b0c-ace6-73ed866dc4d5",
+  "LINE_282": "e1f4c75f-492c-4001-9a55-46a5983abd05",
+  "LINE_283": "9194330e-16d6-49c2-93ef-609cd5c2df69",
+  "LINE_284": "8d2cf84d-44cc-42c6-9536-377f2d574ace",
+  "LINE_285": "2d19e68e-8ba9-445e-a88d-037ad935e364",
+  "LINE_286": "6027654e-2112-43fa-bfc9-14c7b5a04702",
+  "LINE_287": "871ef7d2-36f1-4249-aa81-a2ca56978c42",
+  "LINE_288": "4e5a5125-a4f3-4b61-994d-c8362bf0316d",
+  "LINE_289": "d23564b6-722a-40e7-a371-1c52217c2bfa",
+  "LINE_290": "cf4e044b-1f81-427b-8acd-6ccc2230f6a7",
+  "LINE_291": "c0601aa8-376a-407d-8300-22f3ee1ce62d",
+  "LINE_292": "2181a99c-6dc2-41d3-930f-1c67ef82e5dc",
+  "LINE_293": "93ce48e4-9671-4e9c-b28a-b579c0a25f33",
+  "LINE_294": "3dc4e59b-b1a9-40fd-9098-f19d6e3b7f0e",
+  "LINE_295": "2fd9deaf-e0cb-41b3-88f4-162fa82455d2",
+  "LINE_296": "e3f2f033-af03-4d09-8b24-e6766b708746",
+  "LINE_297": "73a97ea4-edee-4633-9856-1d651c4cd5ba",
+  "LINE_298": "770029d5-84f6-4590-8fc2-229c7fa2110e",
+  "LINE_299": "28e58033-327c-4d9a-9674-1328fd42401b",
+  "LINE_300": "e3bc7ba7-0f97-4aa8-a3cd-b8d020f88039",
+  "LINE_301": "64293cdc-3cdb-4392-97c5-a1ef0c8fc2e4",
+  "LINE_302": "f7fd389e-6d7e-4084-b250-5417dd2011ef",
+  "LINE_303": "1a5669e5-4122-4f5f-a582-b385b52c204e",
+  "LINE_304": "a7aa3c48-a0bb-41dc-81ee-008c4fd567e4",
+  "LINE_305": "de15d600-65a0-43d9-8ace-784a68438cd0",
+  "LINE_306": "6464171e-bc6c-495e-80a2-54a21186cb4b",
+  "LINE_307": "d0e68ab4-ce69-401b-a97d-acd6ce7584a2",
+  "LINE_308": "4168b1db-5f84-48c0-8981-62604ad732cd",
+  "LINE_309": "0cd1c8fe-dab9-4150-94e3-9f332ccc5bd4",
+  "LINE_310": "980cf2c1-0a8d-4099-bfe2-db8b563a127d",
+  "LINE_311": "8bbdd055-a509-4af0-8287-c0d92265c87e",
+  "LINE_312": "8ac1e5e4-b598-4293-9240-53f724bcc445",
+  "LINE_313": "e3b9058c-4bdc-425a-84fc-98e627cd6332",
+  "LINE_314": "e0eb4b7e-dbe7-4004-850e-cae21f1dfe31",
+  "LINE_315": "1a9bb2f3-50db-4f99-8cc4-4e08a9574573",
+  "LINE_316": "0dd1b6e7-31f2-4d65-891d-d7985871dc48",
+  "LINE_317": "8741a73d-3286-49a0-b6e0-1343c1f0f8be",
+  "LINE_318": "9245e730-d0ee-4809-bcb7-27a63701f501",
+  "LINE_319": "d3fb9376-6366-4a5d-a0f1-c17d8a7e74b9",
+  "LINE_320": "b586175f-b077-40f8-a47b-943476d9f7e0",
+  "LINE_321": "11644ff3-f2ca-4f60-8b59-f4e83529dad1",
+  "LINE_322": "495dd3a4-d558-4603-a400-6a75fa7c2753",
+  "LINE_323": "265921a7-22c3-44e6-8689-077868699909",
+  "KV_0": "4fe2184f-608f-4c0d-97d8-e849604ac50a",
+  "KV_1": "021e087c-04e6-48fa-8700-85c177b68108",
+  "KV_2": "f6fc039b-4e1a-4f97-9503-df800b0b1699",
+  "KV_3": "ffe0fb2d-b8a1-4575-8816-0fa6ed89f60a",
+  "KV_4": "7e6c12d6-a4d9-4ac4-931c-3c3cc488ce0b",
+  "KV_5": "89f905c6-96f4-4ace-8757-eb16277a04e2",
+  "KV_6": "19bd902a-6188-4e52-9161-4684c90517bc",
+  "KV_7": "ffbccfec-c44e-411a-8cfd-d2737c99a0e7",
+  "KV_8": "7d68a9d9-40d2-4341-b742-e577e8ba62a4",
+  "KV_9": "cfa51698-8257-43b5-a8b9-4cad7b7ae53f",
+  "KV_10": "1f6c9325-6b3c-4b3a-a933-04d14b751ec0",
+  "KV_11": "0a7a71ba-1431-4484-8193-359497f6b977",
+  "KV_12": "97b461a3-9a6a-471f-a7db-3a40702340fd",
+  "KV_13": "fe42c485-39c7-4f34-b182-1f1edfd7103b",
+  "KV_14": "2c41f9c3-8f55-4b93-bf9a-cab160666cdf",
+  "KV_15": "1ab0d31c-ecc9-4fb8-b7e6-2bdee6a4ec3b",
+  "KV_16": "beec60d1-9ef4-413e-92f9-3d2c4e6e88c5",
+  "KV_17": "3959a870-33d0-4d33-b805-2ff6c45c04fd",
+  "KV_18": "a0062b15-2dc5-46cf-b72f-44b31c7b067e",
+  "KV_19": "eb4d19e0-f130-4ff9-860e-4315aeb13d74",
+  "KV_20": "8400697e-f771-4e9d-9d74-36b75188e213",
+  "KV_21": "7d4bec9a-cca5-4318-91bb-c8f7442adf8c",
+  "KV_22": "9de67d11-c56e-4cd6-906d-e9ee5c45a827",
+  "KV_23": "5d90c2b2-0f5b-4c0b-bf3d-8a90226394c4",
+  "KV_24": "4263f128-9641-45d2-b487-26062e151609"
+}
