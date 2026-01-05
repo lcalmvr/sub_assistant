@@ -57,10 +57,12 @@ VALIDATION_MESSAGES = {
 
     # Coverage errors
     "no_coverages": "At least one coverage must be included",
+
+    # Premium errors
+    "zero_premium": "Premium must be greater than zero",
 }
 
 VALIDATION_WARNINGS = {
-    "zero_premium": "Premium is $0 - confirm this is intentional",
     "open_subjectivities": "There are unresolved subjectivities",
 }
 
@@ -299,18 +301,21 @@ def validate_can_bind(quote_id: str) -> ValidationResult:
             })
 
         # ─────────────────────────────────────────────────────────────
-        # Warnings (non-blocking)
+        # Premium Validation
         # ─────────────────────────────────────────────────────────────
 
-        # Check for zero premium
         sold_premium = data.get("sold_premium")
         if not sold_premium or sold_premium <= 0:
-            warnings.append({
+            errors.append({
                 "code": "zero_premium",
-                "message": VALIDATION_WARNINGS["zero_premium"],
+                "message": VALIDATION_MESSAGES["zero_premium"],
                 "field": "sold_premium",
                 "tab": "Quote"
             })
+
+        # ─────────────────────────────────────────────────────────────
+        # Warnings (non-blocking)
+        # ─────────────────────────────────────────────────────────────
 
         # Check for open subjectivities (any status other than received/waived)
         subj_result = conn.execute(text("""
