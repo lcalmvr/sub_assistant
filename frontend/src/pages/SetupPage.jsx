@@ -18,95 +18,53 @@ import {
 import PdfHighlighter from '../components/review/PdfHighlighter';
 import BrokerSelector from '../components/BrokerSelector';
 import DateRangePicker from '../components/DateRangePicker';
+import SubmissionHeaderCard from '../components/SubmissionHeaderCard';
 
 // ─────────────────────────────────────────────────────────────
-// Submission Summary Card (orientation/context for UW)
-// Single edit mode for all fields
+// Submission Edit Form (modal/inline edit for submission details)
 // ─────────────────────────────────────────────────────────────
 
-const btnPrimary = "px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors";
-const btnSecondary = "px-4 py-2 text-sm font-medium bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200 transition-colors";
-const inputBase = "px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none";
+const btnPrimary = "px-4 py-2 text-sm font-medium bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors";
+const btnSecondary = "px-4 py-2 text-sm font-medium bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors";
+const inputBase = "px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-violet-400 focus:border-violet-400 outline-none";
 
-function SubmissionSummaryCard({ submission, onUpdate }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState({});
+/**
+ * Edit form for submission details - shown as modal overlay
+ */
+function SubmissionEditForm({ submission, onSave, onCancel }) {
+  const [draft, setDraft] = useState({
+    address_street: submission?.address_street || '',
+    address_city: submission?.address_city || '',
+    address_state: submission?.address_state || '',
+    address_zip: submission?.address_zip || '',
+    annual_revenue: submission?.annual_revenue ? submission.annual_revenue.toLocaleString() : '',
+    effective_date: submission?.effective_date || '',
+    expiration_date: submission?.expiration_date || '',
+    dates_tbd: !(submission?.effective_date && submission?.expiration_date),
+  });
   const [brokerDraft, setBrokerDraft] = useState(null);
-
-  if (!submission) return null;
-
-  // --- Formatting helpers ---
-  const formatRevenue = (value) => {
-    if (!value) return null;
-    if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1).replace(/\.0$/, '')}B`;
-    if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-    if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
-    return `$${value.toLocaleString()}`;
-  };
-
-  const formatDate = (dateStr) => {
-    if (!dateStr) return null;
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${months[month - 1]} ${day}, ${year}`;
-  };
-
-  const formatAddress = () => {
-    const parts = [submission.address_street, submission.address_city, submission.address_state, submission.address_zip].filter(Boolean);
-    if (parts.length === 0) return null;
-    const street = submission.address_street || '';
-    const csz = [submission.address_city, submission.address_state].filter(Boolean).join(', ') + (submission.address_zip ? ` ${submission.address_zip}` : '');
-    return street && csz ? `${street}, ${csz}` : street || csz;
-  };
-
-  const policyPeriodDisplay = submission.effective_date && submission.expiration_date
-    ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
-    : '12 month term (TBD)';
-
-  // --- Edit handlers ---
-  const handleStartEdit = () => {
-    const hasDates = submission.effective_date && submission.expiration_date;
-    setDraft({
-      address_street: submission.address_street || '',
-      address_city: submission.address_city || '',
-      address_state: submission.address_state || '',
-      address_zip: submission.address_zip || '',
-      annual_revenue: submission.annual_revenue ? submission.annual_revenue.toLocaleString() : '',
-      effective_date: submission.effective_date || '',
-      expiration_date: submission.expiration_date || '',
-      dates_tbd: !hasDates,
-    });
-    setBrokerDraft(null);
-    setIsEditing(true);
-  };
-
-  const handleCancel = () => {
-    setIsEditing(false);
-    setBrokerDraft(null);
-  };
 
   const handleSave = () => {
     const updates = {};
-    if (draft.address_street !== (submission.address_street || '')) updates.address_street = draft.address_street || null;
-    if (draft.address_city !== (submission.address_city || '')) updates.address_city = draft.address_city || null;
-    if (draft.address_state !== (submission.address_state || '')) updates.address_state = draft.address_state || null;
-    if (draft.address_zip !== (submission.address_zip || '')) updates.address_zip = draft.address_zip || null;
+    if (draft.address_street !== (submission?.address_street || '')) updates.address_street = draft.address_street || null;
+    if (draft.address_city !== (submission?.address_city || '')) updates.address_city = draft.address_city || null;
+    if (draft.address_state !== (submission?.address_state || '')) updates.address_state = draft.address_state || null;
+    if (draft.address_zip !== (submission?.address_zip || '')) updates.address_zip = draft.address_zip || null;
     const parsedRevenue = parseInt(draft.annual_revenue.replace(/[^0-9]/g, ''), 10) || null;
-    if (parsedRevenue !== submission.annual_revenue) updates.annual_revenue = parsedRevenue;
+    if (parsedRevenue !== submission?.annual_revenue) updates.annual_revenue = parsedRevenue;
     if (draft.dates_tbd) {
-      if (submission.effective_date) updates.effective_date = null;
-      if (submission.expiration_date) updates.expiration_date = null;
+      if (submission?.effective_date) updates.effective_date = null;
+      if (submission?.expiration_date) updates.expiration_date = null;
     } else {
-      if (draft.effective_date !== (submission.effective_date || '')) updates.effective_date = draft.effective_date || null;
-      if (draft.expiration_date !== (submission.expiration_date || '')) updates.expiration_date = draft.expiration_date || null;
+      if (draft.effective_date !== (submission?.effective_date || '')) updates.effective_date = draft.effective_date || null;
+      if (draft.expiration_date !== (submission?.expiration_date || '')) updates.expiration_date = draft.expiration_date || null;
     }
     if (brokerDraft) {
       updates.broker_employment_id = brokerDraft.employment_id;
       updates.broker_email = brokerDraft.email;
     }
-    if (Object.keys(updates).length > 0) onUpdate?.(updates);
-    setIsEditing(false);
-    setBrokerDraft(null);
+    if (Object.keys(updates).length > 0) onSave?.(updates);
+    else onCancel?.();
   };
 
   const handleEffectiveChange = (value) => {
@@ -123,153 +81,144 @@ function SubmissionSummaryCard({ submission, onUpdate }) {
     setDraft(prev => ({ ...prev, annual_revenue: raw ? parseInt(raw, 10).toLocaleString() : '' }));
   };
 
-  // --- Shared styles ---
-  const labelStyle = "text-gray-500";
-  const dotSeparator = <span className="text-gray-300 mx-1">·</span>;
-
-  // --- EDIT MODE ---
-  if (isEditing) {
-    return (
-      <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-6 py-4">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">{submission.applicant_name || 'Unnamed Submission'}</h2>
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-start justify-center pt-20 z-50" onClick={onCancel}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4" onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-200">
+          <h3 className="text-lg font-semibold text-slate-900">Edit Submission</h3>
+          <p className="text-sm text-slate-500 mt-0.5">{submission?.applicant_name || 'Unnamed Submission'}</p>
         </div>
 
-        <div className="space-y-3">
-          {/* Row 1: Address */}
-          <div className="flex items-center gap-2">
-            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Address</span>
-            <input type="text" placeholder="Street" value={draft.address_street}
-              onChange={(e) => setDraft(prev => ({ ...prev, address_street: e.target.value }))}
-              className={`${inputBase} flex-1 text-sm`} />
-            <input type="text" placeholder="City" value={draft.address_city}
-              onChange={(e) => setDraft(prev => ({ ...prev, address_city: e.target.value }))}
-              className={`${inputBase} w-32 text-sm`} />
-            <input type="text" placeholder="ST" value={draft.address_state}
-              onChange={(e) => setDraft(prev => ({ ...prev, address_state: e.target.value.toUpperCase().slice(0, 2) }))}
-              className={`${inputBase} w-14 text-sm text-center uppercase`} />
-            <input type="text" placeholder="ZIP" value={draft.address_zip}
-              onChange={(e) => setDraft(prev => ({ ...prev, address_zip: e.target.value }))}
-              className={`${inputBase} w-20 text-sm`} />
-          </div>
-
-          {/* Row 2: Revenue */}
-          <div className="flex items-center gap-2">
-            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Revenue</span>
-            <div className="relative">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-              <input type="text" value={draft.annual_revenue} onChange={handleRevenueChange}
-                placeholder="12,000,000" className={`${inputBase} w-40 pl-6 text-sm`} />
+        {/* Form */}
+        <div className="px-6 py-5 space-y-4">
+          {/* Address */}
+          <div>
+            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Address</label>
+            <div className="flex items-center gap-2">
+              <input type="text" placeholder="Street" value={draft.address_street}
+                onChange={(e) => setDraft(prev => ({ ...prev, address_street: e.target.value }))}
+                className={`${inputBase} flex-1`} />
+              <input type="text" placeholder="City" value={draft.address_city}
+                onChange={(e) => setDraft(prev => ({ ...prev, address_city: e.target.value }))}
+                className={`${inputBase} w-32`} />
+              <input type="text" placeholder="ST" value={draft.address_state}
+                onChange={(e) => setDraft(prev => ({ ...prev, address_state: e.target.value.toUpperCase().slice(0, 2) }))}
+                className={`${inputBase} w-14 text-center uppercase`} />
+              <input type="text" placeholder="ZIP" value={draft.address_zip}
+                onChange={(e) => setDraft(prev => ({ ...prev, address_zip: e.target.value }))}
+                className={`${inputBase} w-20`} />
             </div>
           </div>
 
-          {/* Row 3: Broker */}
-          <div className="flex items-center gap-2">
-            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Broker</span>
-            <div className="w-72">
+          {/* Revenue */}
+          <div>
+            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Revenue</label>
+            <div className="relative w-48">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+              <input type="text" value={draft.annual_revenue} onChange={handleRevenueChange}
+                placeholder="12,000,000" className={`${inputBase} w-full pl-7`} />
+            </div>
+          </div>
+
+          {/* Broker */}
+          <div>
+            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Broker</label>
+            <div className="w-80">
               <BrokerSelector
-                value={submission.broker_employment_id}
-                brokerEmail={submission.broker_email}
-                brokerName={submission.broker_name}
+                value={submission?.broker_employment_id}
+                brokerEmail={submission?.broker_email}
+                brokerName={submission?.broker_name}
                 onChange={setBrokerDraft}
                 compact
                 placeholder="Search brokers..."
               />
             </div>
-            {brokerDraft && <span className="text-xs text-green-600">→ {brokerDraft.person_name}</span>}
+            {brokerDraft && <span className="text-xs text-green-600 mt-1 block">Will change to: {brokerDraft.person_name}</span>}
           </div>
 
-          {/* Row 4: Policy Period */}
-          <div className="flex items-center gap-2">
-            <span className={`${labelStyle} text-sm w-16 flex-shrink-0`}>Policy</span>
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              <input type="checkbox" checked={draft.dates_tbd}
-                onChange={(e) => setDraft(prev => ({ ...prev, dates_tbd: e.target.checked, effective_date: '', expiration_date: '' }))}
-                className="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
-              <span>TBD</span>
-            </label>
-            {!draft.dates_tbd && (
-              <>
-                <input type="date" value={draft.effective_date}
-                  onChange={(e) => handleEffectiveChange(e.target.value)}
-                  className={`${inputBase} w-36 text-sm`} />
-                <span className="text-gray-400 text-sm">to</span>
-                <input type="date" value={draft.expiration_date}
-                  onChange={(e) => setDraft(prev => ({ ...prev, expiration_date: e.target.value }))}
-                  className={`${inputBase} w-36 text-sm`} />
-              </>
-            )}
+          {/* Policy Period */}
+          <div>
+            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Policy Period</label>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={draft.dates_tbd}
+                  onChange={(e) => setDraft(prev => ({ ...prev, dates_tbd: e.target.checked, effective_date: '', expiration_date: '' }))}
+                  className="rounded border-slate-300 text-violet-600 focus:ring-violet-400" />
+                <span>TBD (12 month term)</span>
+              </label>
+              {!draft.dates_tbd && (
+                <>
+                  <input type="date" value={draft.effective_date}
+                    onChange={(e) => handleEffectiveChange(e.target.value)}
+                    className={`${inputBase} w-36`} />
+                  <span className="text-slate-400">to</span>
+                  <input type="date" value={draft.expiration_date}
+                    onChange={(e) => setDraft(prev => ({ ...prev, expiration_date: e.target.value }))}
+                    className={`${inputBase} w-36`} />
+                </>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex justify-end gap-3 mt-4 pt-3 border-t border-purple-200/50">
-          <button type="button" onClick={handleCancel} className={btnSecondary}>Cancel</button>
-          <button type="button" onClick={handleSave} className={btnPrimary}>Save</button>
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
+          <button type="button" onClick={onCancel} className={btnSecondary}>Cancel</button>
+          <button type="button" onClick={handleSave} className={btnPrimary}>Save Changes</button>
         </div>
-      </div>
-    );
-  }
-
-  // --- VIEW MODE ---
-  return (
-    <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-6 py-4">
-      {/* Line 1: Company name · Industry · Revenue + Edit button */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center text-sm min-w-0">
-          <h2 className="text-lg font-semibold text-gray-900 truncate">{submission.applicant_name || 'Unnamed Submission'}</h2>
-          {submission.naics_primary_title && (
-            <><span className="text-gray-300 mx-2">·</span><span className="text-gray-500 truncate">{submission.naics_primary_title}</span></>
-          )}
-          {submission.annual_revenue && (
-            <><span className="text-gray-300 mx-2">·</span><span className="text-gray-700 font-medium">{formatRevenue(submission.annual_revenue)}</span></>
-          )}
-        </div>
-        <button type="button" onClick={handleStartEdit}
-          className="text-xs text-purple-600 hover:text-purple-800 font-medium flex items-center gap-1 px-2 py-1 rounded hover:bg-purple-100 transition-colors flex-shrink-0 ml-4">
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-          </svg>
-          Edit
-        </button>
-      </div>
-
-      {/* Line 2: Address */}
-      <div className="text-sm text-gray-600 mt-1">
-        {formatAddress() || <span className="text-gray-400 italic">No address</span>}
-      </div>
-
-      {/* Line 3: Broker */}
-      <div className="text-sm mt-1 flex items-center flex-wrap">
-        <span className={labelStyle}>Broker:</span>
-        <span className="text-gray-900 ml-1">
-          {submission.broker_name || <span className="text-gray-400 italic">Not assigned</span>}
-          {submission.broker_company && <span className="text-gray-500">, {submission.broker_company}</span>}
-        </span>
-        {submission.broker_contact_email && (
-          <>
-            {dotSeparator}
-            <a href={`mailto:${submission.broker_contact_email}`} className="text-purple-600 hover:text-purple-800">
-              {submission.broker_contact_email}
-            </a>
-          </>
-        )}
-        {submission.broker_phone && (
-          <>
-            {dotSeparator}
-            <span className="text-gray-600">{submission.broker_phone}</span>
-          </>
-        )}
-      </div>
-
-      {/* Line 4: Policy period */}
-      <div className="text-sm mt-1">
-        <span className={labelStyle}>Policy:</span>
-        <span className={`ml-1 ${submission.effective_date ? 'text-gray-900' : 'text-purple-600'}`}>
-          {policyPeriodDisplay}
-        </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * Wrapper that shows SubmissionHeaderCard + edit modal
+ * Maps raw submission data to the expected shape
+ */
+function SubmissionSummaryCard({ submission, onUpdate }) {
+  const [isEditing, setIsEditing] = useState(false);
+
+  if (!submission) return null;
+
+  // Map submission data to SubmissionHeaderCard expected shape
+  const headerProps = {
+    insuredName: submission.applicant_name,
+    industryLabel: submission.naics_primary_title,
+    revenue: submission.annual_revenue,
+    address1: submission.address_street,
+    city: submission.address_city,
+    state: submission.address_state,
+    zip: submission.address_zip,
+    brokerName: submission.broker_name,
+    brokerCompany: submission.broker_company,
+    brokerEmail: submission.broker_contact_email,
+    brokerPhone: submission.broker_phone,
+    policyStart: submission.effective_date,
+    policyEnd: submission.expiration_date,
+    status: submission.submission_status,
+    updatedAt: submission.updated_at,
+  };
+
+  const handleSave = (updates) => {
+    onUpdate?.(updates);
+    setIsEditing(false);
+  };
+
+  return (
+    <>
+      <SubmissionHeaderCard
+        submission={headerProps}
+        onEdit={() => setIsEditing(true)}
+      />
+      {isEditing && (
+        <SubmissionEditForm
+          submission={submission}
+          onSave={handleSave}
+          onCancel={() => setIsEditing(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -2112,9 +2061,7 @@ export default function SetupPage() {
     return (
       <div className="space-y-4">
         {/* Summary card - always show for context */}
-        <div className="card p-0 overflow-hidden">
-          <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} />
-        </div>
+        <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} />
 
         {/* Upload prompt */}
         <div className="card p-8 text-center">
@@ -2147,12 +2094,14 @@ export default function SetupPage() {
   const showConflicts = viewMode === 'conflicts';
 
   return (
-    <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 180px)', minHeight: '600px' }}>
-      {/* Submission Summary - orientation context */}
+    <div className="space-y-4">
+      {/* Submission Summary - premium header card */}
       <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} />
 
-      {/* Header: View mode toggles + Document selector in one row */}
-      <HeaderBar
+      {/* Main content area */}
+      <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 280px)', minHeight: '500px' }}>
+        {/* Header: View mode toggles + Document selector in one row */}
+        <HeaderBar
         mode={viewMode}
         onModeChange={setViewMode}
         verificationProgress={verifications?.progress}
@@ -2222,6 +2171,7 @@ export default function SetupPage() {
             </div>
           )}
         </div>
+      </div>
       </div>
     </div>
   );
