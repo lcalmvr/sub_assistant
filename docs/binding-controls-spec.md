@@ -79,15 +79,29 @@ Binding a quote creates a policy commitment. This requires:
 
 ---
 
-### Phase 3: API Protection ⬜ TODO
+### Phase 3: API Protection ✅ COMPLETE
 
 | Task | Status | File | Notes |
 |------|--------|------|-------|
-| Block quote updates when bound | ⬜ | `api/main.py` | Return 403 |
-| Block tower updates when bound | ⬜ | `api/main.py` | Return 403 |
-| Block coverage updates when bound | ⬜ | `api/main.py` | Return 403 |
-| Add unbind permission check | ⬜ | `api/main.py` | Require elevated role |
-| Log bind/unbind actions | ⬜ | `api/main.py` | Audit trail |
+| Block quote updates when bound | ✅ | `api/main.py:2555` | Protected fields return 403 |
+| Block apply-to-all when bound | ✅ | `api/main.py:2625` | Blocked if any quote bound |
+| Block delete quote when bound | ✅ | `api/main.py:2735` | Return 403 |
+| Block submission fields when bound | ✅ | `api/main.py:254` | Rating/broker fields protected |
+| Add unbind permission check | ⬜ | `api/main.py` | Requires auth system |
+| Log bind/unbind actions | ⬜ | `api/main.py` | Audit trail (Phase 5) |
+
+#### Protected Quote Fields (return 403 when bound)
+- `tower_json`, `coverages`, `sublimits`
+- `endorsements`, `subjectivities`, `retro_schedule`
+- `primary_retention`, `aggregate_limit`, `policy_form`, `position`
+
+#### Editable Quote Fields (allowed when bound)
+- `sold_premium`, `quote_notes`, `option_descriptor`
+
+#### Protected Submission Fields (return 403 when bound)
+- `hazard_override`, `control_overrides`, `default_policy_form`
+- `default_retroactive_date`
+- `account_id`, `broker_org_id`, `broker_employment_id`, `broker_email`
 
 ---
 

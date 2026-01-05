@@ -37,6 +37,94 @@ def get_conn():
 
 
 # ─────────────────────────────────────────────────────────────
+# Bound Quote Protection Helpers
+# ─────────────────────────────────────────────────────────────
+
+# Fields that are allowed to be updated even when a quote is bound
+BOUND_QUOTE_EDITABLE_FIELDS = {
+    "sold_premium",      # Can adjust final premium
+    "quote_notes",       # Notes are always editable
+    "option_descriptor", # Display descriptor
+}
+
+# Fields that require the quote to be unbound to edit
+BOUND_QUOTE_PROTECTED_FIELDS = {
+    "tower_json",
+    "coverages",
+    "sublimits",
+    "endorsements",
+    "subjectivities",
+    "retro_schedule",
+    "primary_retention",
+    "aggregate_limit",
+    "policy_form",
+    "position",
+}
+
+
+def check_quote_bound_for_update(quote_id: str, update_fields: set) -> None:
+    """
+    Check if a quote is bound and if the requested update is allowed.
+    Raises HTTPException if trying to update protected fields on a bound quote.
+
+    Args:
+        quote_id: The quote ID being updated
+        update_fields: Set of field names being updated
+    """
+    # Check if any protected fields are being updated
+    protected_updates = update_fields & BOUND_QUOTE_PROTECTED_FIELDS
+    if not protected_updates:
+        return  # Only updating editable fields, allow
+
+    # Check if quote is bound
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT is_bound FROM insurance_towers WHERE id = %s",
+                (quote_id,)
+            )
+            row = cur.fetchone()
+            if row and row["is_bound"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "message": "Cannot modify bound quote",
+                        "protected_fields": list(protected_updates),
+                        "hint": "Unbind the policy to make changes, or use the endorsement workflow."
+                    }
+                )
+
+
+def check_submission_has_bound_quote(submission_id: str) -> bool:
+    """Check if a submission has any bound quote options."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM insurance_towers WHERE submission_id = %s AND is_bound = true LIMIT 1",
+                (submission_id,)
+            )
+            return cur.fetchone() is not None
+
+
+def require_submission_not_bound(submission_id: str, action: str = "modify") -> None:
+    """
+    Raise HTTPException if submission has a bound quote.
+
+    Args:
+        submission_id: The submission ID to check
+        action: Description of the blocked action for error message
+    """
+    if check_submission_has_bound_quote(submission_id):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "message": f"Cannot {action} while a policy is bound",
+                "hint": "Unbind the policy first to make changes."
+            }
+        )
+
+
+# ─────────────────────────────────────────────────────────────
 # Submissions Endpoints
 # ─────────────────────────────────────────────────────────────
 
@@ -150,6 +238,32 @@ def update_submission(submission_id: str, data: SubmissionUpdate):
     provided_fields = data.model_dump(exclude_unset=True)
     if not provided_fields:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Fields that are protected when a policy is bound
+    BOUND_PROTECTED_SUBMISSION_FIELDS = {
+        "hazard_override",
+        "control_overrides",
+        "default_policy_form",
+        "default_retroactive_date",
+        "account_id",
+        "broker_org_id",
+        "broker_employment_id",
+        "broker_email",
+    }
+
+    # Check if any protected fields are being updated
+    protected_updates = set(provided_fields.keys()) & BOUND_PROTECTED_SUBMISSION_FIELDS
+    if protected_updates:
+        # Check if submission has a bound quote
+        if check_submission_has_bound_quote(submission_id):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": "Cannot modify these fields while a policy is bound",
+                    "protected_fields": list(protected_updates),
+                    "hint": "Unbind the policy to make changes, or use endorsements for broker/account changes."
+                }
+            )
 
     # Build updates - include None values for explicitly provided fields
     updates = provided_fields
@@ -2464,6 +2578,9 @@ def update_quote(quote_id: str, data: QuoteUpdate):
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    # Check if quote is bound and block protected field updates
+    check_quote_bound_for_update(quote_id, set(updates.keys()))
+
     set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
     values = list(updates.values()) + [quote_id]
 
@@ -2530,6 +2647,28 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
 
     if not request.endorsements and not request.subjectivities and not request.retro_schedule:
         raise HTTPException(status_code=400, detail="Must specify endorsements, subjectivities, or retro_schedule to apply")
+
+    # Block if source quote is bound (can't copy from bound quote)
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT submission_id, is_bound FROM insurance_towers WHERE id = %s", (quote_id,))
+            source_row = cur.fetchone()
+            if not source_row:
+                raise HTTPException(status_code=404, detail="Quote not found")
+
+            # Check if any quote in this submission is bound
+            cur.execute(
+                "SELECT 1 FROM insurance_towers WHERE submission_id = %s AND is_bound = true LIMIT 1",
+                (source_row["submission_id"],)
+            )
+            if cur.fetchone():
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "message": "Cannot apply to all while a policy is bound",
+                        "hint": "Unbind the policy first to synchronize quote options."
+                    }
+                )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -2619,9 +2758,21 @@ def delete_quote(quote_id: str):
     """Delete a quote option."""
     with get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM insurance_towers WHERE id = %s RETURNING id", (quote_id,))
-            if cur.fetchone() is None:
+            # Check if quote is bound - cannot delete bound quotes
+            cur.execute("SELECT is_bound FROM insurance_towers WHERE id = %s", (quote_id,))
+            row = cur.fetchone()
+            if row is None:
                 raise HTTPException(status_code=404, detail="Quote not found")
+            if row["is_bound"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "message": "Cannot delete bound quote",
+                        "hint": "Unbind the policy first to delete this quote option."
+                    }
+                )
+
+            cur.execute("DELETE FROM insurance_towers WHERE id = %s RETURNING id", (quote_id,))
             conn.commit()
     return {"status": "deleted"}
 
