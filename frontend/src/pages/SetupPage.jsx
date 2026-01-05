@@ -229,6 +229,7 @@ function BusinessDescriptionVerification({
   status,
   submissionId,
   onVerify,
+  onUnverify,
   onFlag,
   pendingTask,
   onReviewTask,
@@ -338,9 +339,18 @@ function BusinessDescriptionVerification({
               </>
             )}
             {isVerified && !hasPendingTask && !hasCompletedTask && (
-              <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
+              <div className="flex items-center gap-1">
+                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <button
+                  onClick={onUnverify}
+                  className="text-xs px-1.5 py-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                  title="Undo verification"
+                >
+                  Undo
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -750,6 +760,14 @@ function RequiredVerificationItem({
     });
   };
 
+  const handleUnverify = () => {
+    verifyMutation.mutate({
+      status: 'pending',
+      original_value: null,
+      corrected_value: null,
+    });
+  };
+
   const handleStartEdit = () => {
     setEditValue(value || '');
     setIsEditing(true);
@@ -1059,9 +1077,19 @@ function RequiredVerificationItem({
               </button>
             )}
             {isVerified && !hasConflict && (
-              <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
+              <div className="flex items-center gap-1">
+                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <button
+                  onClick={handleUnverify}
+                  disabled={verifyMutation.isPending}
+                  className="text-xs px-1.5 py-0.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                  title="Undo verification"
+                >
+                  Undo
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -1238,6 +1266,14 @@ function RequiredVerificationsPanel({ submission, extractions, verifications, su
     });
   };
 
+  const handleBusinessDescriptionUnverify = () => {
+    verifyMutation.mutate({
+      status: 'pending',
+      original_value: null,
+      corrected_value: null,
+    });
+  };
+
   const handleBusinessDescriptionFlag = async (flagType, context) => {
     await createTaskMutation.mutateAsync({ flagType, context });
   };
@@ -1259,6 +1295,7 @@ function RequiredVerificationsPanel({ submission, extractions, verifications, su
                 status={verifications?.verifications?.[item.key]?.status || 'pending'}
                 submissionId={submissionId}
                 onVerify={handleBusinessDescriptionVerify}
+                onUnverify={handleBusinessDescriptionUnverify}
                 onFlag={handleBusinessDescriptionFlag}
                 pendingTask={businessDescTask}
                 onReviewTask={handleReviewTask}
