@@ -6853,6 +6853,320 @@ def reject_ai_correction(correction_id: str, review: CorrectionReview = None):
 
 
 # ─────────────────────────────────────────────────────────────
+# AI Research Task Endpoints (for flagged business descriptions, etc.)
+# ─────────────────────────────────────────────────────────────
+
+class AIResearchTaskRequest(BaseModel):
+    task_type: str  # 'business_description', 'industry_classification'
+    flag_type: str  # 'wrong_company', 'inaccurate', 'other'
+    uw_context: Optional[str] = None
+    original_value: Optional[str] = None
+
+
+class AIResearchTaskReview(BaseModel):
+    review_outcome: str  # 'accepted', 'rejected', 'modified'
+    final_value: Optional[str] = None
+    reviewed_by: Optional[str] = "underwriter"
+
+
+@app.post("/api/submissions/{submission_id}/ai-research-tasks")
+def create_ai_research_task(submission_id: str, request: AIResearchTaskRequest):
+    """Create an AI research task when UW flags something for AI to investigate."""
+    from datetime import datetime
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get submission info for context
+            cur.execute("""
+                SELECT applicant_name, business_summary, website
+                FROM submissions WHERE id = %s
+            """, (submission_id,))
+            sub = cur.fetchone()
+
+            if not sub:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            # Determine original value if not provided
+            original_value = request.original_value
+            if not original_value and request.task_type == 'business_description':
+                original_value = sub.get('business_summary')
+
+            # Create the task
+            cur.execute("""
+                INSERT INTO ai_research_tasks (
+                    submission_id, task_type, flag_type,
+                    uw_context, original_value, status
+                ) VALUES (%s, %s, %s, %s, %s, 'pending')
+                RETURNING id, created_at
+            """, (submission_id, request.task_type, request.flag_type,
+                  request.uw_context, original_value))
+            task = cur.fetchone()
+            conn.commit()
+
+            # Trigger async AI research (in production, this would be a background job)
+            # For now, we'll do it synchronously
+            try:
+                _process_ai_research_task(task['id'], submission_id, request, sub, conn)
+            except Exception as e:
+                print(f"AI research task processing error: {e}")
+                # Task remains in pending state for retry
+
+            return {
+                "task_id": str(task['id']),
+                "status": "created",
+                "message": "AI research task created. Check back for results."
+            }
+
+
+def _process_ai_research_task(task_id, submission_id, request, submission, conn):
+    """Process an AI research task - research and propose a correction."""
+    import os
+    from datetime import datetime
+
+    # Mark as processing
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE ai_research_tasks SET status = 'processing' WHERE id = %s
+        """, (task_id,))
+        conn.commit()
+
+    try:
+        # Build prompt based on task type
+        if request.task_type == 'business_description':
+            proposed_value, reasoning, sources, confidence = _research_business_description(
+                submission, request.flag_type, request.uw_context
+            )
+        else:
+            # Generic fallback
+            proposed_value = None
+            reasoning = "Task type not yet supported"
+            sources = []
+            confidence = 0.0
+
+        # Update task with results
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE ai_research_tasks
+                SET status = 'completed',
+                    proposed_value = %s,
+                    ai_reasoning = %s,
+                    sources_consulted = %s,
+                    confidence = %s,
+                    processed_at = %s
+                WHERE id = %s
+            """, (proposed_value, reasoning, Json(sources), confidence,
+                  datetime.now(), task_id))
+            conn.commit()
+
+    except Exception as e:
+        # Mark as failed
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE ai_research_tasks
+                SET status = 'failed', ai_reasoning = %s, processed_at = %s
+                WHERE id = %s
+            """, (f"Error: {str(e)}", datetime.now(), task_id))
+            conn.commit()
+        raise
+
+
+def _research_business_description(submission, flag_type, uw_context):
+    """Use AI to research and propose a corrected business description."""
+    import os
+
+    company_name = submission.get('applicant_name', 'Unknown Company')
+    website = submission.get('website')
+    current_description = submission.get('business_summary', '')
+
+    # Build context for AI
+    context_parts = []
+    if flag_type == 'wrong_company':
+        context_parts.append(f"The underwriter believes this description is for the WRONG company, not {company_name}.")
+    elif flag_type == 'inaccurate':
+        context_parts.append(f"The underwriter believes this description is inaccurate or outdated for {company_name}.")
+    else:
+        context_parts.append(f"The underwriter has flagged an issue with the business description for {company_name}.")
+
+    if uw_context:
+        context_parts.append(f"UW's additional context: {uw_context}")
+
+    if website:
+        context_parts.append(f"Company website: {website}")
+
+    context_parts.append(f"Current description: {current_description[:500]}..." if len(current_description) > 500 else f"Current description: {current_description}")
+
+    # Try to use Claude for research
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic()
+        prompt = f"""You are helping an insurance underwriter verify company information.
+
+{chr(10).join(context_parts)}
+
+Please research {company_name} and provide:
+1. An accurate, factual business description (2-3 sentences)
+2. Focus on: what the company does, their main products/services, and industry sector
+3. Only include verifiable facts
+
+Respond in this exact format:
+DESCRIPTION: [Your proposed description here]
+REASONING: [Brief explanation of how you verified this]
+CONFIDENCE: [high/medium/low]
+SOURCES: [List any sources you'd recommend checking]"""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        response_text = response.content[0].text
+
+        # Parse response
+        proposed_value = ""
+        reasoning = ""
+        confidence = 0.7
+        sources = []
+
+        for line in response_text.split('\n'):
+            line = line.strip()
+            if line.startswith('DESCRIPTION:'):
+                proposed_value = line.replace('DESCRIPTION:', '').strip()
+            elif line.startswith('REASONING:'):
+                reasoning = line.replace('REASONING:', '').strip()
+            elif line.startswith('CONFIDENCE:'):
+                conf_text = line.replace('CONFIDENCE:', '').strip().lower()
+                if 'high' in conf_text:
+                    confidence = 0.9
+                elif 'medium' in conf_text:
+                    confidence = 0.7
+                else:
+                    confidence = 0.5
+            elif line.startswith('SOURCES:'):
+                sources = [s.strip() for s in line.replace('SOURCES:', '').split(',') if s.strip()]
+
+        return proposed_value, reasoning, sources, confidence
+
+    except Exception as e:
+        # Fallback if AI fails
+        return (
+            f"[AI research failed: {str(e)}] Please manually research {company_name}.",
+            f"AI research encountered an error: {str(e)}",
+            [],
+            0.0
+        )
+
+
+@app.get("/api/submissions/{submission_id}/ai-research-tasks")
+def get_ai_research_tasks(submission_id: str):
+    """Get all AI research tasks for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id, task_type, flag_type, uw_context,
+                    original_value, status, proposed_value,
+                    ai_reasoning, sources_consulted, confidence,
+                    reviewed_by, reviewed_at, review_outcome, final_value,
+                    created_at, processed_at
+                FROM ai_research_tasks
+                WHERE submission_id = %s
+                ORDER BY created_at DESC
+            """, (submission_id,))
+            tasks = cur.fetchall()
+
+            return {
+                "tasks": tasks,
+                "pending_count": sum(1 for t in tasks if t['status'] in ('pending', 'processing')),
+                "completed_count": sum(1 for t in tasks if t['status'] == 'completed'),
+            }
+
+
+@app.get("/api/ai-research-tasks/{task_id}")
+def get_ai_research_task(task_id: str):
+    """Get a single AI research task by ID."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    t.id, t.submission_id, t.task_type, t.flag_type, t.uw_context,
+                    t.original_value, t.status, t.proposed_value,
+                    t.ai_reasoning, t.sources_consulted, t.confidence,
+                    t.reviewed_by, t.reviewed_at, t.review_outcome, t.final_value,
+                    t.created_at, t.processed_at,
+                    s.applicant_name
+                FROM ai_research_tasks t
+                JOIN submissions s ON s.id = t.submission_id
+                WHERE t.id = %s
+            """, (task_id,))
+            task = cur.fetchone()
+
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            return task
+
+
+@app.post("/api/ai-research-tasks/{task_id}/review")
+def review_ai_research_task(task_id: str, review: AIResearchTaskReview):
+    """Review and accept/reject/modify an AI research task result."""
+    from datetime import datetime
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get task
+            cur.execute("""
+                SELECT id, submission_id, task_type, status, proposed_value
+                FROM ai_research_tasks WHERE id = %s
+            """, (task_id,))
+            task = cur.fetchone()
+
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            if task['status'] != 'completed':
+                raise HTTPException(status_code=400, detail="Task not ready for review")
+
+            # Determine final value
+            if review.review_outcome == 'accepted':
+                final_value = task['proposed_value']
+            elif review.review_outcome == 'modified':
+                final_value = review.final_value
+            else:  # rejected
+                final_value = None
+
+            # Update task
+            cur.execute("""
+                UPDATE ai_research_tasks
+                SET review_outcome = %s,
+                    final_value = %s,
+                    reviewed_by = %s,
+                    reviewed_at = %s
+                WHERE id = %s
+            """, (review.review_outcome, final_value, review.reviewed_by,
+                  datetime.now(), task_id))
+
+            # If accepted or modified, update the submission field
+            if final_value and task['task_type'] == 'business_description':
+                cur.execute("""
+                    UPDATE submissions SET business_summary = %s WHERE id = %s
+                """, (final_value, task['submission_id']))
+
+            conn.commit()
+
+            return {
+                "status": "reviewed",
+                "task_id": task_id,
+                "review_outcome": review.review_outcome,
+                "final_value": final_value,
+                "message": f"Task {review.review_outcome}" + (
+                    " - submission updated" if final_value else ""
+                )
+            }
+
+
+# ─────────────────────────────────────────────────────────────
 # Collaborative Workflow Endpoints
 # ─────────────────────────────────────────────────────────────
 
@@ -7869,6 +8183,148 @@ def cancel_pending_decline(decline_id: str, user_name: str):
                 "status": "cancelled",
                 "submission_id": submission_id,
                 "message": "Decline cancelled - submission moved back to UW work"
+            }
+
+
+# ─────────────────────────────────────────────────────────────
+# Field Verifications (SetupPage HITL workflow)
+# ─────────────────────────────────────────────────────────────
+
+REQUIRED_VERIFICATION_FIELDS = [
+    "company_name",
+    "revenue",
+    "business_description",
+    "website",
+    "broker",
+    "policy_period",
+    "industry",
+]
+
+
+@app.get("/api/submissions/{submission_id}/verifications")
+def get_field_verifications(submission_id: str):
+    """
+    Get verification status for all fields on a submission.
+    Returns both the verification records and progress stats.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all verifications for this submission
+            cur.execute("""
+                SELECT field_name, status, original_value, corrected_value,
+                       verified_by, verified_at
+                FROM field_verifications
+                WHERE submission_id = %s
+            """, (submission_id,))
+            rows = cur.fetchall()
+
+            # Build verifications dict
+            verifications = {}
+            for row in rows:
+                verifications[row["field_name"]] = {
+                    "status": row["status"],
+                    "original_value": row["original_value"],
+                    "corrected_value": row["corrected_value"],
+                    "verified_by": row["verified_by"],
+                    "verified_at": row["verified_at"].isoformat() if row["verified_at"] else None,
+                }
+
+            # Calculate progress for required fields
+            completed = sum(
+                1 for f in REQUIRED_VERIFICATION_FIELDS
+                if f in verifications and verifications[f]["status"] in ("confirmed", "corrected")
+            )
+
+            return {
+                "verifications": verifications,
+                "progress": {
+                    "completed": completed,
+                    "total": len(REQUIRED_VERIFICATION_FIELDS),
+                    "required_fields": REQUIRED_VERIFICATION_FIELDS,
+                }
+            }
+
+
+class FieldVerificationUpdate(BaseModel):
+    status: str  # 'confirmed' or 'corrected'
+    original_value: Optional[str] = None
+    corrected_value: Optional[str] = None
+    verified_by: Optional[str] = None
+
+
+@app.patch("/api/submissions/{submission_id}/verifications/{field_name}")
+def update_field_verification(
+    submission_id: str,
+    field_name: str,
+    data: FieldVerificationUpdate
+):
+    """
+    Update verification status for a single field.
+    Creates record if doesn't exist, updates if it does.
+    Also updates the submission field if corrected.
+    """
+    if data.status not in ("confirmed", "corrected", "pending"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Upsert the verification record
+            cur.execute("""
+                INSERT INTO field_verifications (
+                    submission_id, field_name, status,
+                    original_value, corrected_value, verified_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (submission_id, field_name)
+                DO UPDATE SET
+                    status = EXCLUDED.status,
+                    corrected_value = EXCLUDED.corrected_value,
+                    verified_by = EXCLUDED.verified_by,
+                    verified_at = NOW()
+                RETURNING *
+            """, (
+                submission_id,
+                field_name,
+                data.status,
+                data.original_value,
+                data.corrected_value,
+                data.verified_by,
+            ))
+            verification = cur.fetchone()
+
+            # If corrected, also update the actual submission field
+            if data.status == "corrected" and data.corrected_value is not None:
+                field_mapping = {
+                    "company_name": "applicant_name",
+                    "revenue": "annual_revenue",
+                    "business_description": "business_summary",
+                    "website": "website",
+                    "industry": "naics_primary_title",
+                    # broker and policy_period are compound - handle separately
+                }
+                if field_name in field_mapping:
+                    col = field_mapping[field_name]
+                    # Special handling for revenue (integer)
+                    if field_name == "revenue":
+                        try:
+                            val = int(data.corrected_value.replace(",", "").replace("$", ""))
+                        except ValueError:
+                            val = data.corrected_value
+                    else:
+                        val = data.corrected_value
+
+                    cur.execute(f"""
+                        UPDATE submissions
+                        SET {col} = %s
+                        WHERE id = %s
+                    """, (val, submission_id))
+
+            conn.commit()
+
+            return {
+                "field_name": field_name,
+                "status": verification["status"],
+                "verified_at": verification["verified_at"].isoformat() if verification["verified_at"] else None,
             }
 
 

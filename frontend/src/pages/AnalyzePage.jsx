@@ -10,6 +10,7 @@ import {
   calculatePremium,
   createQuoteOption,
   getComparables,
+  getCredibility,
 } from '../api/client';
 import CompsPage from './CompsPage';
 
@@ -33,6 +34,99 @@ function formatCurrency(value) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Application Quality Card
+// ─────────────────────────────────────────────────────────────
+
+function ApplicationQualityCard({ credibility }) {
+  if (!credibility?.has_score) {
+    return (
+      <div className="card bg-gray-50">
+        <div className="flex items-center justify-between">
+          <h3 className="form-section-title mb-0 pb-0 border-0">Application Quality</h3>
+          <span className="text-sm text-gray-500">Pending</span>
+        </div>
+        <p className="text-sm text-gray-500 mt-2">
+          Quality assessment will be available after document processing.
+        </p>
+      </div>
+    );
+  }
+
+  const { total_score, label, dimensions, issue_count } = credibility;
+
+  const getScoreColor = (score) => {
+    if (score >= 80) return 'text-green-600';
+    if (score >= 60) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const getBgColor = (score) => {
+    if (score >= 80) return 'bg-green-50 border-green-200';
+    if (score >= 60) return 'bg-yellow-50 border-yellow-200';
+    return 'bg-red-50 border-red-200';
+  };
+
+  const getBarColor = (score) => {
+    if (score >= 80) return 'bg-green-500';
+    if (score >= 60) return 'bg-yellow-500';
+    return 'bg-red-500';
+  };
+
+  const formatDimensionName = (name) => {
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  };
+
+  return (
+    <div className={`card ${getBgColor(total_score)}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h3 className="form-section-title mb-0 pb-0 border-0">Application Quality</h3>
+          <p className="text-xs text-gray-500 mt-1">How complete and consistent is this application?</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`text-2xl font-bold ${getScoreColor(total_score)}`}>
+            {Math.round(total_score)}
+          </span>
+          <span className={`px-2 py-1 text-sm font-medium rounded ${getBgColor(total_score)} ${getScoreColor(total_score)}`}>
+            {label}
+          </span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 mt-4">
+        {dimensions && Object.entries(dimensions).map(([name, score]) => (
+          <div key={name} className="bg-white/50 rounded-lg p-3">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-sm font-medium text-gray-700 truncate">
+                {formatDimensionName(name)}
+              </span>
+              <span className={`text-sm font-semibold ${getScoreColor(score)} flex-shrink-0`}>
+                {score ? Math.round(score) : '—'}
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2">
+              <div
+                className={`h-2 rounded-full ${getBarColor(score)}`}
+                style={{ width: `${score || 0}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {issue_count > 0 && total_score < 80 && (
+        <div className="mt-3 p-2 bg-white/50 rounded-lg">
+          <p className="text-sm text-gray-700">
+            <span className="font-medium">{issue_count} flag{issue_count !== 1 ? 's' : ''}</span>
+            <span className="text-gray-500"> — review recommended</span>
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -835,11 +929,12 @@ function PricingSection({ submissionId, submission }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Quick Metrics Row Component (all 3 cards, shared edit state)
+// Quick Metrics Row Component (4 cards: Revenue, Industry, Policy Period, App Quality)
 // ─────────────────────────────────────────────────────────────
 
-function QuickMetricsRow({ submission, onUpdate }) {
+function QuickMetricsRow({ submission, credibility, onUpdate }) {
   const [isEditing, setIsEditing] = useState(false);
+  const [qualityExpanded, setQualityExpanded] = useState(false);
 
   // Parse industry tags
   let industryTags = [];
@@ -853,113 +948,213 @@ function QuickMetricsRow({ submission, onUpdate }) {
 
   const handleClick = () => setIsEditing(true);
 
+  // Application Quality helpers
+  const getScoreColor = (score) => {
+    if (score >= 80) return 'text-green-600';
+    if (score >= 60) return 'text-yellow-600';
+    return 'text-red-600';
+  };
+
+  const getScoreBg = (score) => {
+    if (score >= 80) return 'bg-green-100 text-green-700';
+    if (score >= 60) return 'bg-yellow-100 text-yellow-700';
+    return 'bg-red-100 text-red-700';
+  };
+
+  const getBarColor = (score) => {
+    if (score >= 80) return 'bg-green-500';
+    if (score >= 60) return 'bg-yellow-500';
+    return 'bg-red-500';
+  };
+
+  const formatDimensionName = (name) => {
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  };
+
   return (
-    <div className="grid grid-cols-3 gap-4">
-      {/* Revenue Card */}
-      <div className="metric-card">
-        <div className="metric-label">Revenue</div>
-        {isEditing ? (
-          <input
-            type="text"
-            className="form-input mt-1"
-            defaultValue={submission?.annual_revenue?.toLocaleString() || ''}
-            onBlur={(e) => {
-              const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10);
-              if (!isNaN(val) && val !== submission?.annual_revenue) {
-                onUpdate({ annual_revenue: val });
-              }
-            }}
-            placeholder="e.g., 50000000"
-          />
-        ) : (
-          <div
-            className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
-            onClick={handleClick}
-          >
-            {formatCompact(submission?.annual_revenue)}
+    <div className="space-y-3">
+      <div className="grid grid-cols-4 gap-4">
+        {/* Revenue Card */}
+        <div className="metric-card">
+          <div className="metric-label">Revenue</div>
+          {isEditing ? (
+            <input
+              type="text"
+              className="form-input mt-1"
+              defaultValue={submission?.annual_revenue?.toLocaleString() || ''}
+              onBlur={(e) => {
+                const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10);
+                if (!isNaN(val) && val !== submission?.annual_revenue) {
+                  onUpdate({ annual_revenue: val });
+                }
+              }}
+              placeholder="e.g., 50000000"
+            />
+          ) : (
+            <div
+              className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
+              onClick={handleClick}
+            >
+              {formatCompact(submission?.annual_revenue)}
+            </div>
+          )}
+        </div>
+
+        {/* Industry Card */}
+        <div className="metric-card">
+          <div className="metric-label">Industry</div>
+          {isEditing ? (
+            <div className="mt-1 space-y-1">
+              {submission?.naics_primary_code && (
+                <div className="text-sm">
+                  <span className="text-gray-500">Primary:</span>{' '}
+                  <span className="font-medium">{submission.naics_primary_code} - {submission.naics_primary_title}</span>
+                </div>
+              )}
+              {submission?.naics_secondary_code && (
+                <div className="text-sm">
+                  <span className="text-gray-500">Secondary:</span>{' '}
+                  <span className="font-medium">{submission.naics_secondary_code} - {submission.naics_secondary_title}</span>
+                </div>
+              )}
+              {industryTags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {industryTags.map((tag, idx) => (
+                    <span key={idx} className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {!submission?.naics_primary_code && (
+                <p className="text-sm text-gray-500 italic">No classification</p>
+              )}
+            </div>
+          ) : (
+            <div
+              className="metric-value text-base leading-snug cursor-pointer hover:text-purple-600 transition-colors"
+              onClick={handleClick}
+            >
+              {submission?.naics_primary_title || '—'}
+            </div>
+          )}
+        </div>
+
+        {/* Policy Period Card */}
+        <div className="metric-card">
+          <div className="metric-label">Policy Period</div>
+          {isEditing ? (
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              <input
+                type="date"
+                className="form-input text-sm"
+                value={submission?.effective_date || ''}
+                onChange={(e) => onUpdate({ effective_date: e.target.value })}
+              />
+              <input
+                type="date"
+                className="form-input text-sm"
+                value={submission?.expiration_date || ''}
+                onChange={(e) => onUpdate({ expiration_date: e.target.value })}
+              />
+            </div>
+          ) : (
+            <div
+              className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
+              onClick={handleClick}
+            >
+              {submission?.effective_date && submission?.expiration_date
+                ? `${new Date(submission.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(submission.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}`
+                : '—'}
+            </div>
+          )}
+        </div>
+
+        {/* Application Quality Card (click to expand) */}
+        <div
+          className={`metric-card cursor-pointer transition-colors ${qualityExpanded ? 'ring-2 ring-purple-300' : 'hover:bg-gray-50'}`}
+          onClick={() => credibility?.has_score && setQualityExpanded(!qualityExpanded)}
+        >
+          <div className="flex items-center justify-between">
+            <div className="metric-label">Application Quality</div>
+            {credibility?.has_score && (
+              <svg
+                className={`w-4 h-4 text-gray-400 transition-transform ${qualityExpanded ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            )}
+          </div>
+          {credibility?.has_score ? (
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`text-2xl font-bold ${getScoreColor(credibility.total_score)}`}>
+                {Math.round(credibility.total_score)}
+              </span>
+              <span className={`px-2 py-0.5 text-xs font-medium rounded ${getScoreBg(credibility.total_score)}`}>
+                {credibility.label}
+              </span>
+            </div>
+          ) : (
+            <div className="metric-value text-base text-gray-400">Pending</div>
+          )}
+        </div>
+
+        {/* Done button spans all 4 columns when editing */}
+        {isEditing && (
+          <div className="col-span-4">
+            <button
+              onClick={() => setIsEditing(false)}
+              className="w-full py-2 text-sm font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded border border-purple-200 transition-colors"
+            >
+              Done
+            </button>
           </div>
         )}
       </div>
 
-      {/* Industry Card */}
-      <div className="metric-card">
-        <div className="metric-label">Industry</div>
-        {isEditing ? (
-          <div className="mt-1 space-y-1">
-            {submission?.naics_primary_code && (
-              <div className="text-sm">
-                <span className="text-gray-500">Primary:</span>{' '}
-                <span className="font-medium">{submission.naics_primary_code} - {submission.naics_primary_title}</span>
-              </div>
-            )}
-            {submission?.naics_secondary_code && (
-              <div className="text-sm">
-                <span className="text-gray-500">Secondary:</span>{' '}
-                <span className="font-medium">{submission.naics_secondary_code} - {submission.naics_secondary_title}</span>
-              </div>
-            )}
-            {industryTags.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1">
-                {industryTags.map((tag, idx) => (
-                  <span key={idx} className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
-                    {tag}
+      {/* Expanded Application Quality Details */}
+      {qualityExpanded && credibility?.has_score && (
+        <div className="card bg-gray-50 border-gray-200">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-gray-600">How complete and consistent is this application?</p>
+            <button
+              onClick={() => setQualityExpanded(false)}
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              Collapse
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            {credibility.dimensions && Object.entries(credibility.dimensions).map(([name, score]) => (
+              <div key={name} className="bg-white rounded-lg p-3 border border-gray-200">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-sm font-medium text-gray-700 truncate">
+                    {formatDimensionName(name)}
                   </span>
-                ))}
+                  <span className={`text-sm font-semibold ${getScoreColor(score)} flex-shrink-0`}>
+                    {score ? Math.round(score) : '—'}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full ${getBarColor(score)}`}
+                    style={{ width: `${score || 0}%` }}
+                  />
+                </div>
               </div>
-            )}
-            {!submission?.naics_primary_code && (
-              <p className="text-sm text-gray-500 italic">No classification</p>
-            )}
+            ))}
           </div>
-        ) : (
-          <div
-            className="metric-value text-base leading-snug cursor-pointer hover:text-purple-600 transition-colors"
-            onClick={handleClick}
-          >
-            {submission?.naics_primary_title || '—'}
-          </div>
-        )}
-      </div>
-
-      {/* Policy Period Card */}
-      <div className="metric-card">
-        <div className="metric-label">Policy Period</div>
-        {isEditing ? (
-          <div className="grid grid-cols-2 gap-2 mt-1">
-            <input
-              type="date"
-              className="form-input text-sm"
-              value={submission?.effective_date || ''}
-              onChange={(e) => onUpdate({ effective_date: e.target.value })}
-            />
-            <input
-              type="date"
-              className="form-input text-sm"
-              value={submission?.expiration_date || ''}
-              onChange={(e) => onUpdate({ expiration_date: e.target.value })}
-            />
-          </div>
-        ) : (
-          <div
-            className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
-            onClick={handleClick}
-          >
-            {submission?.effective_date && submission?.expiration_date
-              ? `${new Date(submission.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(submission.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}`
-              : '—'}
-          </div>
-        )}
-      </div>
-
-      {/* Done button spans all 3 columns when editing */}
-      {isEditing && (
-        <div className="col-span-3">
-          <button
-            onClick={() => setIsEditing(false)}
-            className="w-full py-2 text-sm font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded border border-purple-200 transition-colors"
-          >
-            Done
-          </button>
+          {credibility.issue_count > 0 && credibility.total_score < 80 && (
+            <div className="mt-3 p-2 bg-white rounded-lg border border-yellow-200">
+              <p className="text-sm text-gray-700">
+                <span className="font-medium text-yellow-700">{credibility.issue_count} flag{credibility.issue_count !== 1 ? 's' : ''}</span>
+                <span className="text-gray-500"> — review recommended</span>
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -979,6 +1174,11 @@ export default function AnalyzePage() {
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
+  const { data: credibility } = useQuery({
+    queryKey: ['credibility', submissionId],
+    queryFn: () => getCredibility(submissionId).then(res => res.data),
+  });
+
   const updateMutation = useMutation({
     mutationFn: (data) => updateSubmission(submissionId, data),
     onSuccess: () => queryClient.invalidateQueries(['submission', submissionId]),
@@ -990,13 +1190,14 @@ export default function AnalyzePage() {
 
   return (
     <div className="space-y-6">
-      {/* Quick Metrics - Revenue, Industry, Policy Period (click any to edit all) */}
+      {/* Quick Metrics - Revenue, Industry, Policy Period, App Quality (click any to edit all) */}
       <QuickMetricsRow
         submission={submission}
+        credibility={credibility}
         onUpdate={(data) => updateMutation.mutate(data)}
       />
 
-      {/* Underwriting Decision */}
+      {/* Underwriting Decision - full width */}
       <DecisionSection submission={submission} submissionId={submissionId} />
 
       {/* Pricing Section (Calculated + Market Benchmark) */}

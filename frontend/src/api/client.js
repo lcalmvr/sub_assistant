@@ -24,6 +24,12 @@ export const getConflicts = (submissionId) => api.get(`/submissions/${submission
 export const resolveConflict = (submissionId, conflictId, data) =>
   api.post(`/submissions/${submissionId}/conflicts/${conflictId}/resolve`, data);
 
+// Field Verifications (SetupPage HITL workflow)
+export const getFieldVerifications = (submissionId) =>
+  api.get(`/submissions/${submissionId}/verifications`);
+export const updateFieldVerification = (submissionId, fieldName, data) =>
+  api.patch(`/submissions/${submissionId}/verifications/${fieldName}`, data);
+
 // Extractions
 export const getExtractions = (submissionId) => api.get(`/submissions/${submissionId}/extractions`);
 export const triggerExtraction = (submissionId, documentId = null) =>
@@ -55,6 +61,24 @@ export const acceptAiCorrection = (correctionId, editedValue = null) =>
   api.post(`/corrections/${correctionId}/accept`, { edited_value: editedValue });
 export const rejectAiCorrection = (correctionId) =>
   api.post(`/corrections/${correctionId}/reject`);
+
+// AI Research Tasks (flagged items for AI to investigate)
+export const createAiResearchTask = (submissionId, taskType, flagType, uwContext = null, originalValue = null) =>
+  api.post(`/submissions/${submissionId}/ai-research-tasks`, {
+    task_type: taskType,
+    flag_type: flagType,
+    uw_context: uwContext,
+    original_value: originalValue,
+  });
+export const getAiResearchTasks = (submissionId) =>
+  api.get(`/submissions/${submissionId}/ai-research-tasks`);
+export const getAiResearchTask = (taskId) =>
+  api.get(`/ai-research-tasks/${taskId}`);
+export const reviewAiResearchTask = (taskId, reviewOutcome, finalValue = null) =>
+  api.post(`/ai-research-tasks/${taskId}/review`, {
+    review_outcome: reviewOutcome,
+    final_value: finalValue,
+  });
 
 // Extraction stats
 export const getExtractionStats = (days = 30) => api.get(`/extraction/stats?days=${days}`);
