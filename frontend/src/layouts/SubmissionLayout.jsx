@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react';
-import { NavLink, Outlet, useParams, Link } from 'react-router-dom';
+import { NavLink, Outlet, useParams, Link, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSubmission, updateSubmission, getSubmissionWorkflow, recordVote, claimSubmission, startPrescreen, submitForReview, getUwRecommendation } from '../api/client';
 import DocsPanel from '../components/DocsPanel';
 import AiCorrectionsPanel, { AiCorrectionsBadge } from '../components/AiCorrectionsPanel';
+import UnifiedHeader from '../components/UnifiedHeader';
 
 const tabs = [
   { name: 'Setup', path: 'setup' },
   { name: 'Analyze', path: 'analyze' },
+  { name: 'Analyze V2', path: 'analyze-v2' },
   { name: 'Quote', path: 'quote' },
   { name: 'Policy', path: 'policy' },
 ];
@@ -45,13 +47,13 @@ const LOST_REASONS = [
   'No response from broker', 'Renewal with incumbent',
 ];
 
-// Workflow stage configuration
+// Workflow stage configuration (dark header compatible)
 const WORKFLOW_STAGES = {
-  intake: { label: 'Intake', color: 'bg-gray-100 text-gray-600 border-gray-200', icon: '○' },
-  pre_screen: { label: 'Pre-Screen', color: 'bg-blue-100 text-blue-700 border-blue-200', icon: '◐' },
-  uw_work: { label: 'UW Work', color: 'bg-yellow-100 text-yellow-700 border-yellow-200', icon: '◑' },
-  formal: { label: 'Formal Review', color: 'bg-purple-100 text-purple-700 border-purple-200', icon: '◕' },
-  complete: { label: 'Complete', color: 'bg-green-100 text-green-700 border-green-200', icon: '●' },
+  intake: { label: 'Intake', color: 'bg-gray-500/20 text-gray-300 border-gray-500/30', icon: '○' },
+  pre_screen: { label: 'Pre-Screen', color: 'bg-blue-500/20 text-blue-300 border-blue-500/30', icon: '◐' },
+  uw_work: { label: 'UW Work', color: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30', icon: '◑' },
+  formal: { label: 'Formal Review', color: 'bg-purple-500/20 text-purple-300 border-purple-500/30', icon: '◕' },
+  complete: { label: 'Complete', color: 'bg-green-500/20 text-green-300 border-green-500/30', icon: '●' },
 };
 
 const TEAM_USERS = ['Sarah', 'Mike', 'Tom'];
@@ -292,7 +294,7 @@ function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
   }, [isOpen]);
 
   if (isLoading) {
-    return <span className="text-xs text-gray-400">...</span>;
+    return <span className="text-xs text-slate-400">...</span>;
   }
 
   if (!workflow) {
@@ -300,7 +302,7 @@ function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
       <button
         onClick={() => startPrescreenMutation.mutate()}
         disabled={startPrescreenMutation.isPending}
-        className="px-2 py-0.5 text-xs font-medium rounded border bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 transition-colors"
+        className="px-2 py-0.5 text-xs font-medium rounded border bg-blue-500/20 text-blue-300 border-blue-500/30 hover:bg-blue-500/30 transition-colors"
       >
         {startPrescreenMutation.isPending ? '...' : 'Start Workflow'}
       </button>
@@ -338,10 +340,10 @@ function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
           localStorage.setItem('currentUwUser', e.target.value);
           onUserChange(e.target.value);
         }}
-        className="text-xs border-0 bg-transparent text-gray-500 pr-5 cursor-pointer hover:text-gray-700 focus:ring-0"
+        className="text-xs border-0 bg-transparent text-slate-300 pr-5 cursor-pointer hover:text-white focus:ring-0"
       >
         {TEAM_USERS.map(user => (
-          <option key={user} value={user}>{user}</option>
+          <option key={user} value={user} className="text-slate-900">{user}</option>
         ))}
       </select>
 
@@ -362,13 +364,13 @@ function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
         <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" title="Your vote needed" />
       )}
       {isAssignedToMe && (
-        <span className="text-xs text-yellow-600 font-medium">Yours</span>
+        <span className="text-xs text-yellow-300 font-medium">Yours</span>
       )}
       {canClaim && (
         <button
           onClick={() => claimMutation.mutate()}
           disabled={claimMutation.isPending}
-          className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+          className="text-xs text-blue-300 hover:text-blue-100 font-medium"
         >
           {claimMutation.isPending ? '...' : 'Claim'}
         </button>
@@ -377,7 +379,7 @@ function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
         <button
           onClick={() => submitForReviewMutation.mutate({ recommendation: 'quote', user_name: currentUser })}
           disabled={submitForReviewMutation.isPending}
-          className="px-2 py-0.5 text-xs font-medium rounded bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+          className="px-2 py-0.5 text-xs font-medium rounded bg-purple-500 text-white hover:bg-purple-400 transition-colors"
         >
           {submitForReviewMutation.isPending ? '...' : 'Submit for Review'}
         </button>
@@ -547,6 +549,7 @@ function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
 
 export default function SubmissionLayout() {
   const { submissionId } = useParams();
+  const location = useLocation();
   const [isDocsPanelOpen, setIsDocsPanelOpen] = useState(false);
   const [isCorrectionsPanelOpen, setIsCorrectionsPanelOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(getInitialUser);
@@ -556,69 +559,34 @@ export default function SubmissionLayout() {
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
-  return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link to="/" className="text-lg font-bold text-gray-900 hover:text-gray-700">
-              Underwriting Portal
-            </Link>
-            <span className="text-gray-300">›</span>
-            <span className="text-gray-600">{submission?.applicant_name || 'Loading...'}</span>
-            <span className="text-gray-300">›</span>
-            <StatusPill submission={submission} />
-            <span className="text-gray-300 ml-2">|</span>
-            <button
-              onClick={() => setIsDocsPanelOpen(true)}
-              className="ml-2 px-3 py-1 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors flex items-center gap-1"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Docs
-            </button>
-            <AiCorrectionsBadge
-              submissionId={submissionId}
-              onClick={() => setIsCorrectionsPanelOpen(true)}
-            />
-            <span className="text-gray-300 ml-2">|</span>
-            <WorkflowStatusBadge
-              submissionId={submissionId}
-              currentUser={currentUser}
-              onUserChange={setCurrentUser}
-            />
-          </div>
-          <nav className="flex items-center gap-6">
-            <Link to="/" className="nav-link">Submissions</Link>
-            <span className="nav-link">Statistics</span>
-            <span className="nav-link">Settings</span>
-          </nav>
-        </div>
-      </header>
+  // Determine active tab from current path
+  const activeTab = tabs.find(tab => location.pathname.includes(tab.path))?.path || 'setup';
 
-      {/* Tab Navigation */}
-      <nav className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex space-x-8">
-            {tabs.map((tab) => (
-              <NavLink
-                key={tab.path}
-                to={tab.path}
-                className={({ isActive }) =>
-                  `tab-link ${isActive ? 'tab-link-active' : 'tab-link-inactive'}`
-                }
-              >
-                {tab.name}
-              </NavLink>
-            ))}
-          </div>
-        </div>
-      </nav>
+  return (
+    <div className="min-h-screen bg-gray-100 flex flex-col">
+      {/* Unified Header */}
+      <UnifiedHeader
+        submission={submission}
+        onDocsClick={() => setIsDocsPanelOpen(true)}
+        tabs={tabs}
+        activeTab={activeTab}
+        workflowBadge={
+          <WorkflowStatusBadge
+            submissionId={submissionId}
+            currentUser={currentUser}
+            onUserChange={setCurrentUser}
+          />
+        }
+        correctionsBadge={
+          <AiCorrectionsBadge
+            submissionId={submissionId}
+            onClick={() => setIsCorrectionsPanelOpen(true)}
+          />
+        }
+      />
 
       {/* Tab Content */}
-      <main className="max-w-7xl mx-auto px-6 py-6">
+      <main className="flex-1 max-w-7xl mx-auto px-6 py-6 w-full">
         <Outlet />
       </main>
 

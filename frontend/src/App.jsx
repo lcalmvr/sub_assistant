@@ -63,6 +63,7 @@ import ReviewPage from './pages/ReviewPage';
 import SetupPage from './pages/SetupPage';
 import UWPage from './pages/UWPage';
 import AnalyzePage from './pages/AnalyzePage';
+import AnalyzePageV2 from './pages/AnalyzePageV2';
 import CompsPage from './pages/CompsPage';
 import RatingPage from './pages/RatingPage';
 import QuotePage from './pages/QuotePage';
@@ -120,6 +121,8 @@ function App() {
             <Route path="setup" element={<SetupPage />} />
             {/* Phase 2: Analyze page (UW + Rating + Comps merged) */}
             <Route path="analyze" element={<AnalyzePage />} />
+            {/* V2 Analyze page for A/B testing */}
+            <Route path="analyze-v2" element={<AnalyzePageV2 />} />
             {/* Legacy routes redirect */}
             <Route path="account" element={<Navigate to="../setup" replace />} />
             <Route path="review" element={<Navigate to="../setup" replace />} />

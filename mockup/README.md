@@ -21,6 +21,8 @@ npm run dev
    - `'original'` - Original sidebar layout
    - `'v2'` - 3-column layout with extraction mode and conflicts panel
    - `'analyze'` - Analyze page with case file and workbench layout
+   - `'analyze2'` - Analyze page with interactive pricing matrix and slide-over comps modal
+   - `'workflow'` - Linear workflow navigation with step-by-step progression
    - `'mobile'` - Mobile-responsive drawer layout
 
 ## Features
@@ -32,6 +34,8 @@ npm run dev
 - **Desktop version** (`App.jsx`) - Sidebar layout
 - **Desktop version 2** (`App2.jsx`) - 3-column layout with extraction mode and conflicts panel
 - **Analyze page** (`AppAnalyze.jsx`) - Analyze tab with case file and workbench layout
+- **Analyze page v2** (`AppAnalyze2.jsx`) - Interactive pricing matrix with slide-over comparable analysis modal
+- **Workflow navigation** (`AppWorkflow.jsx`) - Linear workflow stepper with step-by-step progression
 - **Mobile version** (`AppMobile.jsx`) - Drawer/bottom sheet layout
 - **Comparison document** (`MOBILE_COMPARISON.md`) - Detailed analysis
 
