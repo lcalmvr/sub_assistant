@@ -732,6 +732,7 @@ function RequiredVerificationItem({
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
+  const [pendingBroker, setPendingBroker] = useState(null);
   const queryClient = useQueryClient();
 
   // Check if this field has multiple extracted values (conflicts)
@@ -839,16 +840,24 @@ function RequiredVerificationItem({
     });
   };
 
-  const handleBrokerChange = (employment) => {
+  const handleBrokerSelect = (employment) => {
+    // Just store the selection, don't save yet
+    setPendingBroker(employment);
+  };
+
+  const handleBrokerSave = () => {
+    if (!pendingBroker) return;
     updateMutation.mutate({
-      broker_employment_id: employment.employment_id,
-      broker_email: employment.email,
+      broker_employment_id: pendingBroker.employment_id,
+      broker_email: pendingBroker.email,
     });
     verifyMutation.mutate({
       status: 'corrected',
       original_value: submission?.broker_name || submission?.broker_email || '',
-      corrected_value: `${employment.person_name} - ${employment.org_name}`,
+      corrected_value: `${pendingBroker.person_name} - ${pendingBroker.org_name}`,
     });
+    setPendingBroker(null);
+    setIsEditing(false);
   };
 
   const handleDateChange = ({ effective_date, expiration_date }) => {
@@ -863,6 +872,7 @@ function RequiredVerificationItem({
   const handleCancel = () => {
     setIsEditing(false);
     setEditValue('');
+    setPendingBroker(null);
   };
 
   const hasValue = value != null && value !== '';
@@ -873,23 +883,32 @@ function RequiredVerificationItem({
   const renderEditComponent = () => {
     if (fieldKey === 'broker') {
       return (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 space-y-2">
           <div className="flex-1">
             <BrokerSelector
-              value={submission?.broker_employment_id}
-              brokerEmail={submission?.broker_email}
-              brokerName={submission?.broker_name}
-              onChange={handleBrokerChange}
+              value={pendingBroker?.employment_id || submission?.broker_employment_id}
+              brokerEmail={pendingBroker?.email || submission?.broker_email}
+              brokerName={pendingBroker ? `${pendingBroker.person_name} - ${pendingBroker.org_name}` : submission?.broker_name}
+              onChange={handleBrokerSelect}
               compact
               placeholder="Search broker..."
             />
           </div>
-          <button
-            onClick={handleCancel}
-            className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
-          >
-            Cancel
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleBrokerSave}
+              disabled={!pendingBroker || updateMutation.isPending}
+              className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Save
+            </button>
+            <button
+              onClick={handleCancel}
+              className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       );
     }
