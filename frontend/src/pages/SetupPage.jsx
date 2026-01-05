@@ -23,7 +23,15 @@ import DateRangePicker from '../components/DateRangePicker';
 // Submission Summary Card (orientation/context for UW)
 // ─────────────────────────────────────────────────────────────
 
-function SubmissionSummaryCard({ submission }) {
+function SubmissionSummaryCard({ submission, onUpdate }) {
+  const [editingField, setEditingField] = useState(null); // 'broker', 'dates', 'address'
+  const [addressDraft, setAddressDraft] = useState({
+    street: '',
+    city: '',
+    state: '',
+    zip: '',
+  });
+
   if (!submission) return null;
 
   const formatRevenue = (value) => {
@@ -43,10 +51,81 @@ function SubmissionSummaryCard({ submission }) {
     ? `${formatDate(submission.effective_date)} – ${formatDate(submission.expiration_date)}`
     : null;
 
+  // Format address from account
+  const formatAddress = () => {
+    const parts = [];
+    if (submission.address_street) parts.push(submission.address_street);
+    if (submission.address_street2) parts.push(submission.address_street2);
+    const cityStateZip = [
+      submission.address_city,
+      submission.address_state,
+      submission.address_zip
+    ].filter(Boolean).join(submission.address_city && submission.address_state ? ', ' : ' ');
+    if (cityStateZip) parts.push(cityStateZip);
+    return parts.length > 0 ? parts : null;
+  };
+
+  const addressParts = formatAddress();
+
+  const handleBrokerChange = (employment) => {
+    onUpdate?.({
+      broker_employment_id: employment.employment_id,
+      broker_email: employment.email,
+    });
+    setEditingField(null);
+  };
+
+  const handleDatesChange = ({ effective_date, expiration_date }) => {
+    onUpdate?.({ effective_date, expiration_date });
+  };
+
+  const handleAddressEdit = () => {
+    setAddressDraft({
+      street: submission.address_street || '',
+      city: submission.address_city || '',
+      state: submission.address_state || '',
+      zip: submission.address_zip || '',
+    });
+    setEditingField('address');
+  };
+
+  const handleAddressSave = () => {
+    onUpdate?.({
+      address_street: addressDraft.street || null,
+      address_city: addressDraft.city || null,
+      address_state: addressDraft.state || null,
+      address_zip: addressDraft.zip || null,
+    });
+    setEditingField(null);
+  };
+
+  // Editable cell wrapper
+  const EditableCell = ({ label, children, fieldKey, isEmpty, emptyText }) => (
+    <div className="text-center border-l border-gray-200 pl-4 first:border-l-0 first:pl-0">
+      <div className="text-xs text-gray-500 uppercase tracking-wide">{label}</div>
+      {editingField === fieldKey ? (
+        children
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditingField(fieldKey)}
+          className={`text-sm font-medium hover:text-purple-600 transition-colors ${
+            isEmpty ? 'text-purple-600' : 'text-gray-900'
+          }`}
+        >
+          {isEmpty ? emptyText : children}
+          <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-b border-purple-100 px-4 py-3">
       <div className="flex items-center justify-between gap-4">
-        {/* Left: Company name and description */}
+        {/* Left: Company name, address, and description */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-gray-900 truncate">
@@ -66,14 +145,78 @@ function SubmissionSummaryCard({ submission }) {
               </a>
             )}
           </div>
+          {/* Address line */}
+          <div className="text-sm text-gray-600 mt-0.5">
+            {editingField === 'address' ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="text"
+                  placeholder="Street address"
+                  value={addressDraft.street}
+                  onChange={(e) => setAddressDraft(prev => ({ ...prev, street: e.target.value }))}
+                  className="px-2 py-1 text-sm border rounded w-48 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+                <input
+                  type="text"
+                  placeholder="City"
+                  value={addressDraft.city}
+                  onChange={(e) => setAddressDraft(prev => ({ ...prev, city: e.target.value }))}
+                  className="px-2 py-1 text-sm border rounded w-32 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+                <input
+                  type="text"
+                  placeholder="ST"
+                  value={addressDraft.state}
+                  onChange={(e) => setAddressDraft(prev => ({ ...prev, state: e.target.value.toUpperCase().slice(0, 2) }))}
+                  className="px-2 py-1 text-sm border rounded w-12 focus:ring-2 focus:ring-purple-500 focus:border-transparent uppercase"
+                />
+                <input
+                  type="text"
+                  placeholder="ZIP"
+                  value={addressDraft.zip}
+                  onChange={(e) => setAddressDraft(prev => ({ ...prev, zip: e.target.value }))}
+                  className="px-2 py-1 text-sm border rounded w-20 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddressSave}
+                  className="px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingField(null)}
+                  className="text-xs text-gray-500 hover:text-gray-700"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleAddressEdit}
+                className="hover:text-purple-600 transition-colors text-left"
+              >
+                {addressParts ? (
+                  <span className="truncate">{addressParts.join(' · ')}</span>
+                ) : (
+                  <span className="text-purple-600 italic">Add address</span>
+                )}
+                <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            )}
+          </div>
           {submission.naics_primary_title && (
-            <p className="text-sm text-gray-500 mt-0.5 truncate">{submission.naics_primary_title}</p>
+            <p className="text-xs text-gray-500 mt-0.5 truncate">{submission.naics_primary_title}</p>
           )}
         </div>
 
-        {/* Right: Key info pills */}
+        {/* Right: Key info pills (editable) */}
         <div className="flex items-center gap-4 flex-shrink-0">
-          {/* Revenue */}
+          {/* Revenue (read-only for now) */}
           {submission.annual_revenue && (
             <div className="text-center">
               <div className="text-xs text-gray-500 uppercase tracking-wide">Revenue</div>
@@ -81,26 +224,78 @@ function SubmissionSummaryCard({ submission }) {
             </div>
           )}
 
-          {/* Broker */}
-          {(submission.broker_name || submission.broker_company) && (
-            <div className="text-center border-l border-gray-200 pl-4">
-              <div className="text-xs text-gray-500 uppercase tracking-wide">Broker</div>
-              <div className="text-sm font-medium text-gray-900 max-w-[150px] truncate">
-                {submission.broker_name || submission.broker_company}
+          {/* Broker (editable) */}
+          <div className="text-center border-l border-gray-200 pl-4">
+            <div className="text-xs text-gray-500 uppercase tracking-wide">Broker</div>
+            {editingField === 'broker' ? (
+              <div className="w-64">
+                <BrokerSelector
+                  value={submission.broker_employment_id}
+                  brokerEmail={submission.broker_email}
+                  brokerName={submission.broker_name}
+                  onChange={handleBrokerChange}
+                  compact
+                  placeholder="Search brokers..."
+                />
+                <button
+                  type="button"
+                  onClick={() => setEditingField(null)}
+                  className="text-xs text-gray-500 hover:text-gray-700 mt-1"
+                >
+                  Cancel
+                </button>
               </div>
-              {submission.broker_name && submission.broker_company && (
-                <div className="text-xs text-gray-500 truncate max-w-[150px]">{submission.broker_company}</div>
-              )}
-            </div>
-          )}
+            ) : (
+              <button
+                type="button"
+                onClick={() => setEditingField('broker')}
+                className={`text-sm font-medium hover:text-purple-600 transition-colors ${
+                  !submission.broker_name && !submission.broker_company ? 'text-purple-600' : 'text-gray-900'
+                }`}
+              >
+                {submission.broker_name || submission.broker_company || 'Set broker'}
+                <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            )}
+            {submission.broker_name && submission.broker_company && editingField !== 'broker' && (
+              <div className="text-xs text-gray-500 truncate max-w-[150px]">{submission.broker_company}</div>
+            )}
+          </div>
 
-          {/* Policy Period */}
+          {/* Policy Period (editable) */}
           <div className="text-center border-l border-gray-200 pl-4">
             <div className="text-xs text-gray-500 uppercase tracking-wide">Policy Period</div>
-            {policyPeriod ? (
-              <div className="text-sm font-medium text-gray-900">{policyPeriod}</div>
+            {editingField === 'dates' ? (
+              <div>
+                <DateRangePicker
+                  effectiveDate={submission.effective_date}
+                  expirationDate={submission.expiration_date}
+                  onChange={handleDatesChange}
+                  compact
+                />
+                <button
+                  type="button"
+                  onClick={() => setEditingField(null)}
+                  className="text-xs text-gray-500 hover:text-gray-700 mt-1"
+                >
+                  Done
+                </button>
+              </div>
             ) : (
-              <div className="text-sm text-purple-600 font-medium">12 month term</div>
+              <button
+                type="button"
+                onClick={() => setEditingField('dates')}
+                className={`text-sm font-medium hover:text-purple-600 transition-colors ${
+                  !policyPeriod ? 'text-purple-600' : 'text-gray-900'
+                }`}
+              >
+                {policyPeriod || '12 month term'}
+                <svg className="w-3 h-3 inline ml-1 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
             )}
           </div>
         </div>
@@ -1873,6 +2068,18 @@ export default function SetupPage() {
     },
   });
 
+  const updateSubmissionMutation = useMutation({
+    mutationFn: (data) => updateSubmission(submissionId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['submission', submissionId]);
+    },
+  });
+
+  // Handler for summary card updates (broker, dates)
+  const handleSummaryUpdate = (updates) => {
+    updateSubmissionMutation.mutate(updates);
+  };
+
   // Handlers
   const handleSelectDocument = (doc) => {
     let url = `/api/documents/${doc.id}/file`;
@@ -1937,7 +2144,7 @@ export default function SetupPage() {
       <div className="space-y-4">
         {/* Summary card - always show for context */}
         <div className="card p-0 overflow-hidden">
-          <SubmissionSummaryCard submission={submission} />
+          <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} />
         </div>
 
         {/* Upload prompt */}
@@ -1973,7 +2180,7 @@ export default function SetupPage() {
   return (
     <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 180px)', minHeight: '600px' }}>
       {/* Submission Summary - orientation context */}
-      <SubmissionSummaryCard submission={submission} />
+      <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} />
 
       {/* Header: View mode toggles + Document selector in one row */}
       <HeaderBar

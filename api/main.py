@@ -181,13 +181,21 @@ def get_submission(submission_id: str):
                        s.effective_date, s.expiration_date,
                        s.opportunity_notes,
                        s.created_at,
+                       s.account_id,
                        e.org_id as broker_org_id,
                        o.name as broker_company,
-                       CONCAT(p.first_name, ' ', p.last_name) as broker_name
+                       CONCAT(p.first_name, ' ', p.last_name) as broker_name,
+                       -- Prefer submission address, fall back to account address
+                       COALESCE(s.address_street, a.address_street) as address_street,
+                       a.address_street2,
+                       COALESCE(s.address_city, a.address_city) as address_city,
+                       COALESCE(s.address_state, a.address_state) as address_state,
+                       COALESCE(s.address_zip, a.address_zip) as address_zip
                 FROM submissions s
                 LEFT JOIN brkr_employments e ON e.employment_id::text = s.broker_employment_id
                 LEFT JOIN brkr_organizations o ON o.org_id = e.org_id
                 LEFT JOIN brkr_people p ON p.person_id = e.person_id
+                LEFT JOIN accounts a ON a.id = s.account_id
                 WHERE s.id = %s
             """, (submission_id,))
             row = cur.fetchone()
@@ -226,6 +234,11 @@ class SubmissionUpdate(BaseModel):
     bullet_point_summary: Optional[str] = None
     # Opportunity/broker request
     opportunity_notes: Optional[str] = None
+    # Insured address
+    address_street: Optional[str] = None
+    address_city: Optional[str] = None
+    address_state: Optional[str] = None
+    address_zip: Optional[str] = None
 
 
 @app.patch("/api/submissions/{submission_id}")
