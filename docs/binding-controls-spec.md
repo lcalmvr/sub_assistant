@@ -105,32 +105,33 @@ Binding a quote creates a policy commitment. This requires:
 
 ---
 
-### Phase 4: Database Protection ⬜ TODO
+### Phase 4: Database Protection ✅ COMPLETE
 
 | Task | Status | File | Notes |
 |------|--------|------|-------|
-| Create bound update trigger | ⬜ | `db_setup/` | Reject direct UPDATE |
-| Create bound delete trigger | ⬜ | `db_setup/` | Reject DELETE |
-| Add audit table | ⬜ | `db_setup/` | Log all attempts |
+| Create bound update trigger | ✅ | `db_setup/create_bound_protection_triggers.sql` | Blocks protected fields |
+| Create bound delete trigger | ✅ | `db_setup/create_bound_protection_triggers.sql` | Blocks DELETE on bound |
+| Create submission trigger | ✅ | `db_setup/create_bound_protection_triggers.sql` | Blocks rating/broker fields |
+| Add admin bypass function | ✅ | `db_setup/create_bound_protection_triggers.sql` | `admin_force_unbind()` |
 
-#### Proposed Trigger
+#### Triggers Created
 
+| Trigger Name | Table | Event | Description |
+|--------------|-------|-------|-------------|
+| `bound_quote_protection_update` | `insurance_towers` | UPDATE | Blocks protected field updates |
+| `bound_quote_protection_delete` | `insurance_towers` | DELETE | Blocks deletion of bound quotes |
+| `bound_submission_protection_update` | `submissions` | UPDATE | Blocks rating/broker/account changes |
+
+#### Error Format
+```
+ERROR: Cannot modify protected fields on bound quote. Unbind first or use endorsement workflow. Quote ID: <uuid>
+HINT: Protected fields: tower_json, coverages, sublimits, endorsements, subjectivities, retro_schedule, primary_retention, policy_form, position
+```
+
+#### Emergency Bypass (Admin Only)
 ```sql
-CREATE OR REPLACE FUNCTION prevent_bound_modification()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF OLD.is_bound = TRUE THEN
-        RAISE EXCEPTION 'Cannot modify bound quote. Use endorsement workflow.';
-    END IF;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER bound_tower_protection
-    BEFORE UPDATE OF tower_json, coverages, primary_retention, aggregate_limit
-    ON insurance_towers
-    FOR EACH ROW
-    EXECUTE FUNCTION prevent_bound_modification();
+-- Force unbind (bypasses triggers, use with caution)
+SELECT admin_force_unbind('quote-uuid-here');
 ```
 
 ---
