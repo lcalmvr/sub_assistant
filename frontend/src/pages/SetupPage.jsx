@@ -185,7 +185,7 @@ function SubmissionEditForm({ submission, onSave, onCancel }) {
  * Wrapper that shows SubmissionHeaderCard + edit modal
  * Maps raw submission data to the expected shape
  */
-function SubmissionSummaryCard({ submission, onUpdate, dense = false }) {
+function SubmissionSummaryCard({ submission, onUpdate, defaultExpanded = true }) {
   const [isEditing, setIsEditing] = useState(false);
 
   if (!submission) return null;
@@ -193,20 +193,27 @@ function SubmissionSummaryCard({ submission, onUpdate, dense = false }) {
   // Map submission data to SubmissionHeaderCard expected shape
   const headerProps = {
     insuredName: submission.applicant_name,
-    industryLabel: submission.naics_primary_title,
+    // Industry info
+    naicsPrimaryCode: submission.naics_primary_code,
+    naicsPrimaryTitle: submission.naics_primary_title,
+    naicsSecondaryCode: submission.naics_secondary_code,
+    naicsSecondaryTitle: submission.naics_secondary_title,
+    industryTags: submission.industry_tags,
     revenue: submission.annual_revenue,
+    // Address
     address1: submission.address_street,
     city: submission.address_city,
     state: submission.address_state,
     zip: submission.address_zip,
+    // Broker
     brokerName: submission.broker_name,
     brokerCompany: submission.broker_company,
     brokerEmail: submission.broker_contact_email,
     brokerPhone: submission.broker_phone,
+    // Policy
     policyStart: submission.effective_date,
     policyEnd: submission.expiration_date,
-    status: submission.submission_status,
-    updatedAt: submission.updated_at,
+    isRenewal: submission.is_renewal,
   };
 
   const handleSave = (updates) => {
@@ -219,7 +226,7 @@ function SubmissionSummaryCard({ submission, onUpdate, dense = false }) {
       <SubmissionHeaderCard
         submission={headerProps}
         onEdit={() => setIsEditing(true)}
-        dense={dense}
+        defaultExpanded={defaultExpanded}
       />
       {isEditing && (
         <SubmissionEditForm
@@ -2105,10 +2112,8 @@ export default function SetupPage() {
 
   return (
     <div className="space-y-4">
-      {/* Submission Summary - compact header card (sticky when viewing docs) */}
-      <div className="sticky top-0 z-20 bg-gray-50 -mx-4 px-4 -mt-4 pt-4 pb-2">
-        <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} dense />
-      </div>
+      {/* Submission Summary - compact header card */}
+      <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} defaultExpanded={false} />
 
       {/* Main content area */}
       <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '500px' }}>

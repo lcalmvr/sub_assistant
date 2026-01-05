@@ -973,113 +973,86 @@ function QuickMetricsRow({ submission, credibility, onUpdate }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-4 gap-4">
-        {/* Revenue Card */}
-        <div className="metric-card">
-          <div className="metric-label">Revenue</div>
-          {isEditing ? (
-            <input
-              type="text"
-              className="form-input mt-1"
-              defaultValue={submission?.annual_revenue?.toLocaleString() || ''}
-              onBlur={(e) => {
-                const val = parseInt(e.target.value.replace(/[^0-9]/g, ''), 10);
-                if (!isNaN(val) && val !== submission?.annual_revenue) {
-                  onUpdate({ annual_revenue: val });
-                }
-              }}
-              placeholder="e.g., 50000000"
-            />
-          ) : (
-            <div
-              className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
-              onClick={handleClick}
-            >
-              {formatCompact(submission?.annual_revenue)}
+      <div className="grid grid-cols-4 gap-3">
+        {/* Revenue + Policy Period Card */}
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="space-y-2">
+            <div>
+              <div className="text-xs text-gray-500 mb-0.5">Revenue</div>
+              <div
+                className="text-lg font-bold text-gray-900 cursor-pointer hover:text-purple-600 transition-colors"
+                onClick={handleClick}
+              >
+                {formatCompact(submission?.annual_revenue)}
+              </div>
             </div>
-          )}
+            <div>
+              <div className="text-xs text-gray-500 mb-0.5">Policy Period</div>
+              <div
+                className="text-sm font-semibold text-gray-900 cursor-pointer hover:text-purple-600 transition-colors"
+                onClick={handleClick}
+              >
+                {submission?.effective_date && submission?.expiration_date
+                  ? `${new Date(submission.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(submission.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}`
+                  : '—'}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Industry Card */}
-        <div className="metric-card">
-          <div className="metric-label">Industry</div>
-          {isEditing ? (
-            <div className="mt-1 space-y-1">
-              {submission?.naics_primary_code && (
-                <div className="text-sm">
-                  <span className="text-gray-500">Primary:</span>{' '}
-                  <span className="font-medium">{submission.naics_primary_code} - {submission.naics_primary_title}</span>
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="text-xs text-gray-500 mb-1">Industry</div>
+          <div className="cursor-pointer hover:text-purple-600 transition-colors" onClick={handleClick}>
+            {submission?.naics_primary_title ? (
+              <div className="space-y-1">
+                <div className="text-sm text-gray-700">
+                  {submission.naics_primary_title}
+                  {submission?.naics_primary_code && (
+                    <span className="text-gray-400 text-xs ml-1">({submission.naics_primary_code})</span>
+                  )}
                 </div>
-              )}
-              {submission?.naics_secondary_code && (
-                <div className="text-sm">
-                  <span className="text-gray-500">Secondary:</span>{' '}
-                  <span className="font-medium">{submission.naics_secondary_code} - {submission.naics_secondary_title}</span>
-                </div>
-              )}
-              {industryTags.length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {industryTags.map((tag, idx) => (
-                    <span key={idx} className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {!submission?.naics_primary_code && (
-                <p className="text-sm text-gray-500 italic">No classification</p>
-              )}
-            </div>
-          ) : (
-            <div
-              className="metric-value text-base leading-snug cursor-pointer hover:text-purple-600 transition-colors"
-              onClick={handleClick}
-            >
-              {submission?.naics_primary_title || '—'}
-            </div>
-          )}
+                {submission?.naics_secondary_title && (
+                  <div className="text-sm text-gray-500">
+                    {submission.naics_secondary_title}
+                    {submission?.naics_secondary_code && (
+                      <span className="text-gray-400 text-xs ml-1">({submission.naics_secondary_code})</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-400">—</div>
+            )}
+          </div>
         </div>
 
-        {/* Policy Period Card */}
-        <div className="metric-card">
-          <div className="metric-label">Policy Period</div>
-          {isEditing ? (
-            <div className="grid grid-cols-2 gap-2 mt-1">
-              <input
-                type="date"
-                className="form-input text-sm"
-                value={submission?.effective_date || ''}
-                onChange={(e) => onUpdate({ effective_date: e.target.value })}
-              />
-              <input
-                type="date"
-                className="form-input text-sm"
-                value={submission?.expiration_date || ''}
-                onChange={(e) => onUpdate({ expiration_date: e.target.value })}
-              />
+        {/* Industry Tags Card */}
+        <div className="bg-white rounded-lg border border-gray-200 p-3">
+          <div className="text-xs text-gray-500 mb-1">Tags</div>
+          {industryTags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {industryTags.map((tag, idx) => (
+                <span key={idx} className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] rounded">
+                  {tag}
+                </span>
+              ))}
             </div>
           ) : (
-            <div
-              className="metric-value text-base cursor-pointer hover:text-purple-600 transition-colors"
-              onClick={handleClick}
-            >
-              {submission?.effective_date && submission?.expiration_date
-                ? `${new Date(submission.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${new Date(submission.expiration_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}`
-                : '—'}
-            </div>
+            <div className="text-sm text-gray-400">—</div>
           )}
         </div>
 
         {/* Application Quality Card (click to expand) */}
         <div
-          className={`metric-card cursor-pointer transition-colors ${qualityExpanded ? 'ring-2 ring-purple-300' : 'hover:bg-gray-50'}`}
+          className={`bg-white rounded-lg border border-gray-200 p-3 cursor-pointer transition-colors ${qualityExpanded ? 'ring-2 ring-purple-300' : 'hover:bg-gray-50'}`}
           onClick={() => credibility?.has_score && setQualityExpanded(!qualityExpanded)}
         >
           <div className="flex items-center justify-between">
-            <div className="metric-label">Application Quality</div>
+            <div className="text-xs text-gray-500">App Quality</div>
             {credibility?.has_score && (
               <svg
-                className={`w-4 h-4 text-gray-400 transition-transform ${qualityExpanded ? 'rotate-180' : ''}`}
+                className={`w-3 h-3 text-gray-400 transition-transform ${qualityExpanded ? 'rotate-180' : ''}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -1090,15 +1063,15 @@ function QuickMetricsRow({ submission, credibility, onUpdate }) {
           </div>
           {credibility?.has_score ? (
             <div className="flex items-center gap-2 mt-1">
-              <span className={`text-2xl font-bold ${getScoreColor(credibility.total_score)}`}>
+              <span className={`text-lg font-bold ${getScoreColor(credibility.total_score)}`}>
                 {Math.round(credibility.total_score)}
               </span>
-              <span className={`px-2 py-0.5 text-xs font-medium rounded ${getScoreBg(credibility.total_score)}`}>
+              <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${getScoreBg(credibility.total_score)}`}>
                 {credibility.label}
               </span>
             </div>
           ) : (
-            <div className="metric-value text-base text-gray-400">Pending</div>
+            <div className="text-sm font-semibold text-gray-400">Pending</div>
           )}
         </div>
 

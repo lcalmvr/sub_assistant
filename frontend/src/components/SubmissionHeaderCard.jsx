@@ -20,6 +20,21 @@ function formatMoneyShort(value) {
 }
 
 /**
+ * Format phone number: 7388944678 -> (738) 894-4678
+ */
+function formatPhone(phone) {
+  if (!phone) return null;
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  if (digits.length === 11 && digits[0] === '1') {
+    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  }
+  return phone;
+}
+
+/**
  * Format date string (YYYY-MM-DD or Date) to "Jan 30, 2026"
  */
 function formatDate(dateVal) {
@@ -48,69 +63,45 @@ function formatDateRange(start, end) {
   return null;
 }
 
-/**
- * Copy icon (inline SVG)
- */
-function CopyIcon() {
+/** Chevron icon */
+function ChevronIcon({ expanded }) {
   return (
-    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg
+      className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
+/** Phone icon */
+function PhoneIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
     </svg>
   );
 }
 
 /**
- * Copiable text with feedback
+ * SubmissionHeaderCard - Submission summary header
  */
-function CopyableText({ text }) {
-  const [copied, setCopied] = useState(false);
+export default function SubmissionHeaderCard({ submission, onEdit, defaultExpanded = true }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
 
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-  };
-
-  return (
-    <span className="inline-flex items-center gap-1 group">
-      <span className="truncate" title={text}>{text}</span>
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-slate-600"
-        title="Copy"
-      >
-        {copied ? (
-          <span className="text-[10px] text-green-600">Copied</span>
-        ) : (
-          <CopyIcon />
-        )}
-      </button>
-    </span>
-  );
-}
-
-/**
- * SubmissionHeaderCard - Clean, minimal header
- *
- * Props:
- *   submission: { insuredName, industryLabel, revenue, address1, city, state, zip,
- *                 brokerName, brokerCompany, brokerEmail, brokerPhone,
- *                 policyStart, policyEnd, status }
- *   onEdit: () => void
- *   dense: boolean - compact mode for doc-view
- */
-export default function SubmissionHeaderCard({ submission, onEdit, dense = false }) {
   if (!submission) return null;
 
   const {
     insuredName,
-    industryLabel,
+    naicsPrimaryCode,
+    naicsPrimaryTitle,
+    naicsSecondaryCode,
+    naicsSecondaryTitle,
+    industryTags,
     revenue,
     address1,
     address2,
@@ -123,62 +114,89 @@ export default function SubmissionHeaderCard({ submission, onEdit, dense = false
     brokerPhone,
     policyStart,
     policyEnd,
-    status,
+    isRenewal,
   } = submission;
 
-  // Format address (allow 2 lines max)
+  // Format address
   const streetLine = [address1, address2].filter(Boolean).join(', ');
   const cityStateZip = [city, state].filter(Boolean).join(', ') + (zip ? ` ${zip}` : '');
   const fullAddress = [streetLine, cityStateZip].filter(Boolean).join(', ') || null;
 
   // Format broker
-  const brokerDisplay = brokerName || null;
   const brokerFull = [brokerName, brokerCompany].filter(Boolean).join(', ') || null;
 
   // Format policy period
   const policyPeriod = formatDateRange(policyStart, policyEnd);
 
-  // Status display
-  const displayStatus = status || 'Draft';
+  // Format phone
+  const formattedPhone = formatPhone(brokerPhone);
+
+  // Parse industry tags if string
+  const tags = Array.isArray(industryTags) ? industryTags : (industryTags ? JSON.parse(industryTags) : []);
 
   // Label style
-  const labelClass = "text-[11px] font-medium text-slate-500 uppercase tracking-wide";
-  const valueClass = "text-sm text-slate-800";
+  const labelClass = "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-0.5";
+  const valueClass = "text-sm text-gray-700";
 
-  // --- COMPACT MODE ---
-  if (dense) {
+  // --- COLLAPSED MODE ---
+  if (!expanded) {
     return (
-      <div className="rounded-lg border border-slate-200 bg-slate-50 shadow-sm p-4">
-        {/* Single row: Name + Status + metadata + Edit */}
+      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
         <div className="flex items-center gap-4">
-          {/* Left: Name + Status */}
-          <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
-            <h2 className="text-base font-semibold text-slate-900 truncate max-w-[240px]" title={insuredName}>
+          {/* Expand toggle */}
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="p-1 -ml-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
+            title="Expand"
+          >
+            <ChevronIcon expanded={false} />
+          </button>
+
+          {/* Name + badge */}
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="text-base font-bold text-gray-900 truncate" title={insuredName}>
               {insuredName || 'Unnamed Submission'}
             </h2>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-              {displayStatus}
-            </span>
-          </div>
-
-          {/* Center: Compact metadata (hidden on mobile) */}
-          <div className="hidden md:flex items-center gap-6 text-xs text-slate-600 flex-1 min-w-0">
-            {fullAddress && (
-              <span className="truncate max-w-[200px]" title={fullAddress}>{fullAddress}</span>
-            )}
-            {brokerDisplay && (
-              <span className="truncate max-w-[120px]" title={brokerFull}>{brokerDisplay}</span>
-            )}
-            {policyPeriod && (
-              <span className="flex-shrink-0">{policyPeriod}</span>
+            {isRenewal !== undefined && (
+              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium flex-shrink-0 ${
+                isRenewal ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
+              }`}>
+                {isRenewal ? 'Renewal' : 'New'}
+              </span>
             )}
           </div>
 
-          {/* Right: Edit */}
+          {/* Separator */}
+          <div className="hidden md:block w-px h-5 bg-gray-200" />
+
+          {/* Broker + Contact */}
+          <div className="hidden md:flex items-center gap-4 text-sm text-gray-600 flex-1 min-w-0">
+            {brokerFull && (
+              <span className="truncate" title={brokerFull}>{brokerFull}</span>
+            )}
+            {formattedPhone && (
+              <span className="flex items-center gap-1.5 flex-shrink-0 text-gray-500">
+                <PhoneIcon />
+                {formattedPhone}
+              </span>
+            )}
+            {brokerEmail && (
+              <a
+                href={`mailto:${brokerEmail}`}
+                className="text-purple-600 hover:text-purple-800 flex-shrink-0"
+                title={brokerEmail}
+              >
+                Email
+              </a>
+            )}
+          </div>
+
+          {/* Edit button */}
           <button
             type="button"
             onClick={onEdit}
-            className="ml-auto rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors flex-shrink-0"
+            className="ml-auto rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-700 transition-colors flex-shrink-0"
           >
             Edit
           </button>
@@ -187,88 +205,102 @@ export default function SubmissionHeaderCard({ submission, onEdit, dense = false
     );
   }
 
-  // --- DEFAULT (EXPANDED) MODE ---
+  // --- EXPANDED MODE ---
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 shadow-sm p-4 md:p-5">
-      {/* Title row: Name + Status (left), Edit (right) */}
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="flex items-center gap-3 min-w-0 flex-wrap">
-          <h2 className="text-xl font-semibold text-slate-900 truncate" title={insuredName}>
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      {/* Title row */}
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="p-1 -ml-1 rounded hover:bg-gray-100 text-gray-500 transition-colors"
+            title="Collapse"
+          >
+            <ChevronIcon expanded={true} />
+          </button>
+
+          <h2 className="text-lg font-bold text-gray-900 truncate" title={insuredName}>
             {insuredName || 'Unnamed Submission'}
           </h2>
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
-            {displayStatus}
-          </span>
-          {/* Industry + Revenue pills (only if present) */}
-          {industryLabel && (
-            <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-xs text-slate-600 truncate max-w-[160px]" title={industryLabel}>
-              {industryLabel}
+
+          {isRenewal !== undefined && (
+            <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              isRenewal ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
+            }`}>
+              {isRenewal ? 'Renewal' : 'New'}
             </span>
           )}
+
+          {/* Revenue pill */}
           {revenue && (
-            <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-xs text-slate-600">
-              {formatMoneyShort(revenue)}
+            <span className="rounded-full bg-white border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-700">
+              {formatMoneyShort(revenue)} rev
             </span>
           )}
         </div>
         <button
           type="button"
           onClick={onEdit}
-          className="rounded-md bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 transition-colors flex-shrink-0"
+          className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-700 transition-colors flex-shrink-0"
         >
           Edit
         </button>
       </div>
 
-      {/* Metadata grid: 2 columns on md+ */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-y-3 gap-x-10">
-        {/* Left column */}
-        <div className="space-y-3">
-          {/* Address */}
+      {/* Metadata grid - 3 columns */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-y-2 gap-x-6 pt-2 border-t border-gray-100">
+        {/* Column 1: Address + Policy Period */}
+        <div className="space-y-2">
           <div>
             <div className={labelClass}>Address</div>
             <div className={`${valueClass} truncate`} title={fullAddress || undefined}>
-              {fullAddress || <span className="text-slate-400">—</span>}
+              {fullAddress || <span className="text-gray-400">—</span>}
             </div>
           </div>
-          {/* Policy Period */}
           <div>
             <div className={labelClass}>Policy Period</div>
             <div className={valueClass}>
-              {policyPeriod || <span className="text-slate-400">—</span>}
+              {policyPeriod || <span className="text-gray-400">—</span>}
             </div>
           </div>
         </div>
 
-        {/* Right column */}
-        <div className="space-y-3">
-          {/* Broker */}
-          <div>
-            <div className={labelClass}>Broker</div>
-            <div className={`${valueClass} truncate`} title={brokerFull || undefined}>
-              {brokerFull || <span className="text-slate-400">—</span>}
-            </div>
-          </div>
-          {/* Contact */}
-          <div>
-            <div className={labelClass}>Contact</div>
-            {brokerEmail || brokerPhone ? (
-              <div className={`${valueClass} space-y-0.5`}>
-                {brokerEmail && (
-                  <div className="truncate">
-                    <CopyableText text={brokerEmail} />
-                  </div>
-                )}
-                {brokerPhone && (
-                  <div className="truncate">
-                    <CopyableText text={brokerPhone} />
-                  </div>
-                )}
+        {/* Column 2: Industry Classification */}
+        <div>
+          <div className={labelClass}>Industry</div>
+          {naicsPrimaryCode || naicsPrimaryTitle ? (
+            <div className="space-y-1">
+              <div className="text-sm text-gray-700">
+                {naicsPrimaryTitle}
+                {naicsPrimaryCode && <span className="text-gray-400 text-xs ml-1">({naicsPrimaryCode})</span>}
               </div>
-            ) : (
-              <div className={valueClass}><span className="text-slate-400">—</span></div>
-            )}
-          </div>
+              {(naicsSecondaryCode || naicsSecondaryTitle) && (
+                <div className="text-sm text-gray-500">
+                  {naicsSecondaryTitle}
+                  {naicsSecondaryCode && <span className="text-gray-400 text-xs ml-1">({naicsSecondaryCode})</span>}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className={valueClass}><span className="text-gray-400">—</span></div>
+          )}
+        </div>
+
+        {/* Column 3: Industry Tags */}
+        <div>
+          <div className={labelClass}>Tags</div>
+          {tags.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {tags.map((tag, i) => (
+                <span key={i} className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] rounded">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className={valueClass}><span className="text-gray-400">—</span></div>
+          )}
         </div>
       </div>
     </div>
