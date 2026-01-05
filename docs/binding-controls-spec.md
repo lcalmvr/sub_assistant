@@ -136,14 +136,45 @@ SELECT admin_force_unbind('quote-uuid-here');
 
 ---
 
-### Phase 5: Unbind Protection ⬜ TODO
+### Phase 5: Unbind Audit Logging ✅ COMPLETE
 
 | Task | Status | File | Notes |
 |------|--------|------|-------|
-| Add unbind reason requirement | ⬜ | `policy_panel.py` | Text field in dialog |
-| Add unbind audit logging | ⬜ | `core/bound_option.py` | Log who/when/why |
-| Add role-based permission | ⬜ | TBD | senior_uw or admin only |
-| Add confirmation warnings | ⬜ | `policy_panel.py` | List what will be lost |
+| Create audit table | ✅ | `db_setup/create_bind_audit_table.sql` | bind_audit_log table |
+| Add unbind reason requirement | ✅ | `policy_panel.py`, `QuotePage.jsx`, `PolicyPage.jsx` | Required text field in dialog |
+| Add unbind audit logging | ✅ | `api/main.py`, `core/bound_option.py` | Calls log_unbind_action() |
+| Add bind audit logging | ✅ | `api/main.py`, `core/bound_option.py` | Calls log_bind_action() |
+| Add confirmation warnings | ✅ | `policy_panel.py`, `QuotePage.jsx`, `PolicyPage.jsx` | Lists consequences |
+| Add role-based permission | ⬜ | TBD | Future: senior_uw or admin only |
+
+#### Audit Table Structure
+
+```sql
+CREATE TABLE bind_audit_log (
+    id UUID PRIMARY KEY,
+    quote_id UUID NOT NULL,
+    submission_id UUID NOT NULL,
+    quote_name VARCHAR(255),
+    applicant_name VARCHAR(500),
+    action VARCHAR(20) NOT NULL,  -- 'bind', 'unbind'
+    reason TEXT,                   -- Required for unbind
+    performed_by VARCHAR(255),
+    performed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    snapshot JSONB,               -- Captures premium, dates, etc.
+    request_source VARCHAR(50),   -- 'api', 'streamlit', 'admin_bypass'
+);
+```
+
+#### Audit Functions
+
+- `log_bind_action(quote_id, performed_by, request_source)` - Log bind events
+- `log_unbind_action(quote_id, reason, performed_by, request_source)` - Log unbind events (reason required)
+
+#### Query Audit History
+
+```sql
+SELECT * FROM bind_audit_recent;  -- View for easy querying
+```
 
 ---
 

@@ -72,6 +72,15 @@ def bind_option(tower_id: str, bound_by: str = "system", subjectivities: list[di
             "bound_by": bound_by
         })
 
+        # Log the bind action to audit table
+        conn.execute(text("""
+            SELECT log_bind_action(:quote_id, :performed_by, :request_source)
+        """), {
+            "quote_id": tower_id,
+            "performed_by": bound_by,
+            "request_source": "streamlit"
+        })
+
         conn.commit()
 
         # Migrate subjectivities from session state to database
@@ -120,17 +129,30 @@ def bind_option(tower_id: str, bound_by: str = "system", subjectivities: list[di
         return result.rowcount > 0
 
 
-def unbind_option(tower_id: str) -> bool:
+def unbind_option(tower_id: str, reason: str = None, performed_by: str = "system") -> bool:
     """
     Remove bound status from a quote option.
 
     Args:
         tower_id: UUID of the insurance_tower to unbind
+        reason: Reason for unbinding (required for audit trail)
+        performed_by: User who performed the unbind
 
     Returns:
         True if successful
     """
     with get_conn() as conn:
+        # Log to audit table BEFORE unbinding (to capture bound state in snapshot)
+        if reason:
+            conn.execute(text("""
+                SELECT log_unbind_action(:quote_id, :reason, :performed_by, :request_source)
+            """), {
+                "quote_id": tower_id,
+                "reason": reason,
+                "performed_by": performed_by,
+                "request_source": "streamlit"
+            })
+
         result = conn.execute(text("""
             UPDATE insurance_towers
             SET is_bound = FALSE, bound_at = NULL, bound_by = NULL

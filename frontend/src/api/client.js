@@ -122,7 +122,8 @@ export const applyToAllQuotes = (id, data) => api.post(`/quotes/${id}/apply-to-a
 export const getBindValidation = (id) => api.get(`/quotes/${id}/bind-validation`);
 export const getBindReadiness = (submissionId) => api.get(`/submissions/${submissionId}/bind-readiness`);
 export const bindQuoteOption = (id, force = false) => api.post(`/quotes/${id}/bind`, { force });
-export const unbindQuoteOption = (id) => api.post(`/quotes/${id}/unbind`);
+export const unbindQuoteOption = (id, reason, performedBy = 'frontend_user') =>
+  api.post(`/quotes/${id}/unbind`, { reason, performed_by: performedBy });
 
 // Documents
 export const generateQuoteDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-document`);

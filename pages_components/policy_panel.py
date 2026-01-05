@@ -176,8 +176,11 @@ def render_policy_panel(
                         from core.bound_option import unbind_option
                         tower_id = bound_option.get("id")
                         if tower_id:
-                            # TODO: Log unbind reason to audit table
-                            unbind_option(tower_id)
+                            unbind_option(
+                                tower_id,
+                                reason=unbind_reason.strip(),
+                                performed_by="streamlit_user"
+                            )
                         st.session_state["_return_to_policy_tab"] = True
                         st.rerun()
                 with c2:

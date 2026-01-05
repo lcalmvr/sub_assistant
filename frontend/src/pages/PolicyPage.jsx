@@ -1309,6 +1309,7 @@ export default function PolicyPage() {
   // Modal states
   const [showUnbindConfirm, setShowUnbindConfirm] = useState(false);
   const [showAddEndorsement, setShowAddEndorsement] = useState(false);
+  const [unbindReason, setUnbindReason] = useState('');
 
   const { data: policyData, isLoading } = useQuery({
     queryKey: ['policy', submissionId],
@@ -1317,12 +1318,13 @@ export default function PolicyPage() {
 
   // Unbind mutation
   const unbindMutation = useMutation({
-    mutationFn: (quoteId) => unbindQuoteOption(quoteId),
+    mutationFn: ({ quoteId, reason }) => unbindQuoteOption(quoteId, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['policy', submissionId] });
       queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
       queryClient.invalidateQueries({ queryKey: ['submission', submissionId] }); // Sync header pill
       setShowUnbindConfirm(false);
+      setUnbindReason('');
     },
   });
 
@@ -1451,21 +1453,37 @@ export default function PolicyPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900 mb-3">Unbind Policy?</h3>
-            <p className="text-gray-600 mb-6">
+            <p className="text-gray-600 mb-4">
               This will unbind the quote option. Any generated documents will remain but the policy will no longer be active.
             </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Reason for unbinding (required)
+              </label>
+              <textarea
+                className="w-full border border-gray-300 rounded-lg p-2 text-sm"
+                rows={3}
+                placeholder="e.g., Client requested cancellation, Quote error discovered, etc."
+                value={unbindReason}
+                onChange={(e) => setUnbindReason(e.target.value)}
+              />
+              <p className="text-xs text-gray-500 mt-1">This will be logged for audit purposes.</p>
+            </div>
             <div className="flex gap-3 justify-end">
               <button
                 className="btn bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
-                onClick={() => setShowUnbindConfirm(false)}
+                onClick={() => {
+                  setShowUnbindConfirm(false);
+                  setUnbindReason('');
+                }}
                 disabled={unbindMutation.isPending}
               >
                 Cancel
               </button>
               <button
                 className="btn bg-red-600 text-white hover:bg-red-700"
-                onClick={() => unbindMutation.mutate(boundOption.id)}
-                disabled={unbindMutation.isPending}
+                onClick={() => unbindMutation.mutate({ quoteId: boundOption.id, reason: unbindReason })}
+                disabled={unbindMutation.isPending || !unbindReason.trim()}
               >
                 {unbindMutation.isPending ? 'Unbinding...' : 'Unbind Policy'}
               </button>

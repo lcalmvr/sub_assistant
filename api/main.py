@@ -2855,6 +2855,12 @@ class BindQuoteRequest(BaseModel):
     force: bool = False  # If true, bind even with warnings
 
 
+class UnbindQuoteRequest(BaseModel):
+    """Request body for unbinding a quote."""
+    reason: str  # Required reason for audit trail
+    performed_by: str = "api_user"  # Who performed the action
+
+
 @app.post("/api/quotes/{quote_id}/bind")
 def bind_quote(quote_id: str, request: BindQuoteRequest = None):
     """
@@ -2925,6 +2931,11 @@ def bind_quote(quote_id: str, request: BindQuoteRequest = None):
                 RETURNING id
             """, (datetime.utcnow(), quote_id))
 
+            # Log the bind action to audit table
+            cur.execute("""
+                SELECT log_bind_action(%s, %s, %s)
+            """, (quote_id, "api_user", "api"))
+
             # Auto-update submission status to quoted/bound
             cur.execute("""
                 UPDATE submissions
@@ -2952,13 +2963,23 @@ def bind_quote(quote_id: str, request: BindQuoteRequest = None):
 
 
 @app.post("/api/quotes/{quote_id}/unbind")
-def unbind_quote(quote_id: str):
-    """Unbind a quote option. Subjectivity status is preserved (tracking is in submission_subjectivities)."""
+def unbind_quote(quote_id: str, request: UnbindQuoteRequest):
+    """
+    Unbind a quote option. Requires a reason for audit trail.
+    Subjectivity status is preserved (tracking is in submission_subjectivities).
+    """
     from datetime import datetime
+
+    # Validate reason is provided
+    if not request.reason or not request.reason.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Reason is required for unbinding"
+        )
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # Get submission_id
+            # Get submission_id and verify quote exists
             cur.execute("""
                 SELECT submission_id FROM insurance_towers WHERE id = %s
             """, (quote_id,))
@@ -2968,10 +2989,17 @@ def unbind_quote(quote_id: str):
 
             submission_id = row["submission_id"]
 
+            # Log the unbind action to audit table BEFORE unbinding
+            # (so we capture the bound state in the snapshot)
+            cur.execute("""
+                SELECT log_unbind_action(%s, %s, %s, %s) as audit_id
+            """, (quote_id, request.reason.strip(), request.performed_by, "api"))
+            audit_id = cur.fetchone()["audit_id"]
+
             # Unbind the quote
             cur.execute("""
                 UPDATE insurance_towers
-                SET is_bound = false, bound_at = NULL
+                SET is_bound = false, bound_at = NULL, bound_by = NULL
                 WHERE id = %s
                 RETURNING id
             """, (quote_id,))
@@ -2987,7 +3015,8 @@ def unbind_quote(quote_id: str):
             conn.commit()
             return {
                 "status": "unbound",
-                "quote_id": quote_id
+                "quote_id": quote_id,
+                "audit_id": str(audit_id),
             }
 
 

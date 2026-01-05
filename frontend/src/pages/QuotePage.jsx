@@ -765,6 +765,10 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
   const [bindValidationWarnings, setBindValidationWarnings] = useState([]);
   const [showBindConfirmation, setShowBindConfirmation] = useState(false);
 
+  // Unbind confirmation state
+  const [showUnbindConfirm, setShowUnbindConfirm] = useState(false);
+  const [unbindReason, setUnbindReason] = useState('');
+
   // Reset state when quote changes
   useEffect(() => {
     setTowerLayers(quote.tower_json || []);
@@ -931,10 +935,12 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
   // Unbind quote mutation
   const unbindMutation = useMutation({
-    mutationFn: () => unbindQuoteOption(quote.id),
+    mutationFn: (reason) => unbindQuoteOption(quote.id, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quotes', submission.id] });
       queryClient.invalidateQueries({ queryKey: ['submission', submission.id] }); // Sync header pill
+      setShowUnbindConfirm(false);
+      setUnbindReason('');
       onRefresh?.();
     },
   });
@@ -1154,7 +1160,7 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
             <>
               <span className="badge badge-bound">BOUND</span>
               <button
-                onClick={() => unbindMutation.mutate()}
+                onClick={() => setShowUnbindConfirm(true)}
                 disabled={unbindMutation.isPending}
                 className="text-sm text-gray-500 hover:text-red-600 transition-colors"
                 title="Unbind this quote option"
@@ -1243,6 +1249,50 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Unbind Confirmation Modal */}
+      {showUnbindConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">Unbind Quote?</h3>
+            <p className="text-gray-600 mb-4">
+              This will unbind the quote option. Any generated documents will remain but the policy will no longer be active.
+            </p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Reason for unbinding (required)
+              </label>
+              <textarea
+                className="w-full border border-gray-300 rounded-lg p-2 text-sm"
+                rows={3}
+                placeholder="e.g., Client requested cancellation, Quote error discovered, etc."
+                value={unbindReason}
+                onChange={(e) => setUnbindReason(e.target.value)}
+              />
+              <p className="text-xs text-gray-500 mt-1">This will be logged for audit purposes.</p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                className="px-3 py-1.5 text-sm bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                onClick={() => {
+                  setShowUnbindConfirm(false);
+                  setUnbindReason('');
+                }}
+                disabled={unbindMutation.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                onClick={() => unbindMutation.mutate(unbindReason)}
+                disabled={unbindMutation.isPending || !unbindReason.trim()}
+              >
+                {unbindMutation.isPending ? 'Unbinding...' : 'Unbind'}
+              </button>
             </div>
           </div>
         </div>
