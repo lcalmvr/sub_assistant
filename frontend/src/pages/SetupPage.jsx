@@ -33,6 +33,7 @@ const inputBase = "px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ri
  */
 function SubmissionEditForm({ submission, onSave, onCancel }) {
   const [draft, setDraft] = useState({
+    applicant_name: submission?.applicant_name || '',
     address_street: submission?.address_street || '',
     address_city: submission?.address_city || '',
     address_state: submission?.address_state || '',
@@ -46,6 +47,7 @@ function SubmissionEditForm({ submission, onSave, onCancel }) {
 
   const handleSave = () => {
     const updates = {};
+    if (draft.applicant_name !== (submission?.applicant_name || '')) updates.applicant_name = draft.applicant_name || null;
     if (draft.address_street !== (submission?.address_street || '')) updates.address_street = draft.address_street || null;
     if (draft.address_city !== (submission?.address_city || '')) updates.address_city = draft.address_city || null;
     if (draft.address_state !== (submission?.address_state || '')) updates.address_state = draft.address_state || null;
@@ -87,11 +89,18 @@ function SubmissionEditForm({ submission, onSave, onCancel }) {
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200">
           <h3 className="text-lg font-semibold text-slate-900">Edit Submission</h3>
-          <p className="text-sm text-slate-500 mt-0.5">{submission?.applicant_name || 'Unnamed Submission'}</p>
         </div>
 
         {/* Form */}
         <div className="px-6 py-5 space-y-4">
+          {/* Company Name */}
+          <div>
+            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Company Name</label>
+            <input type="text" placeholder="Insured name" value={draft.applicant_name}
+              onChange={(e) => setDraft(prev => ({ ...prev, applicant_name: e.target.value }))}
+              className={`${inputBase} w-full`} />
+          </div>
+
           {/* Address */}
           <div>
             <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Address</label>
