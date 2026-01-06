@@ -421,6 +421,15 @@ export const getSchemaRecommendations = (status = 'pending') =>
 export const actionSchemaRecommendation = (recId, action, notes = null) =>
   api.post(`/schemas/recommendations/${recId}`, { action, notes });
 
+// Field Importance Settings
+export const getActiveImportanceSettings = () => api.get('/extraction-schema/importance');
+export const getImportanceVersions = () => api.get('/extraction-schema/importance-versions');
+export const createImportanceVersion = (data) => api.post('/extraction-schema/importance-versions', data);
+export const updateFieldImportance = (versionId, fieldKey, importance, rationale = null) =>
+  api.put(`/extraction-schema/importance-versions/${versionId}/fields`, { field_key: fieldKey, importance, rationale });
+export const activateImportanceVersion = (versionId) =>
+  api.post(`/extraction-schema/importance-versions/${versionId}/activate`);
+
 // Collaborative Workflow
 export const getWorkflowStages = () => api.get('/workflow/stages');
 export const getWorkflowQueue = (userName = null) =>
@@ -464,5 +473,60 @@ export const sendDecline = (declineId, userName) =>
   api.post(`/pending-declines/${declineId}/send`, { user_name: userName });
 export const cancelPendingDecline = (declineId, userName) =>
   api.post(`/pending-declines/${declineId}/cancel`, null, { params: { user_name: userName } });
+
+// Submission Controls (security controls tracking) - LEGACY, use Extracted Values instead
+export const getSubmissionControls = (submissionId) =>
+  api.get(`/submissions/${submissionId}/controls`);
+export const getControlsNeedingInfo = (submissionId) =>
+  api.get(`/submissions/${submissionId}/controls/needing-info`);
+export const updateControl = (submissionId, controlId, data) =>
+  api.patch(`/submissions/${submissionId}/controls/${controlId}`, data);
+export const parseBrokerResponse = (submissionId, data) =>
+  api.post(`/submissions/${submissionId}/controls/parse-response`, data);
+export const applyControlUpdates = (submissionId, data) =>
+  api.post(`/submissions/${submissionId}/controls/apply-updates`, data);
+export const getControlHistory = (submissionId, controlId) =>
+  api.get(`/submissions/${submissionId}/controls/${controlId}/history`);
+
+// Extracted Values (Phase 1.9 - unified data model)
+export const getExtractedValues = (submissionId) =>
+  api.get(`/submissions/${submissionId}/extracted-values`);
+export const getExtractedValuesNeedingConfirmation = (submissionId) =>
+  api.get(`/submissions/${submissionId}/extracted-values/needing-confirmation`);
+export const updateExtractedValue = (submissionId, fieldKey, data) =>
+  api.patch(`/submissions/${submissionId}/extracted-values/${fieldKey}`, data);
+
+// AI Agent
+export const agentChat = (submissionId, message, context = {}, conversationHistory = []) =>
+  api.post(`/agent/chat`, {
+    submission_id: submissionId,
+    message,
+    context,
+    conversation_history: conversationHistory,
+  });
+
+export const agentAction = (submissionId, action, context = {}, params = {}) =>
+  api.post(`/agent/action`, {
+    submission_id: submissionId,
+    action,
+    context,
+    params,
+  });
+
+export const agentConfirm = (submissionId, actionId, confirmed = true) =>
+  api.post(`/agent/confirm`, {
+    submission_id: submissionId,
+    action_id: actionId,
+    confirmed,
+  });
+
+export const getAgentCapabilities = () => api.get('/agent/capabilities');
+
+export const submitFeatureRequest = (description, useCase = null, submissionId = null) =>
+  api.post('/agent/feature-requests', {
+    description,
+    use_case: useCase,
+    submission_id: submissionId,
+  });
 
 export default api;

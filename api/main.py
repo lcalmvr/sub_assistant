@@ -12,6 +12,7 @@ import os
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from dotenv import load_dotenv
+import openai
 
 # Load environment variables from .env file
 load_dotenv()
@@ -2865,6 +2866,132 @@ def get_submission_bind_readiness(submission_id: str):
     return get_bind_readiness(submission_id)
 
 
+# ─────────────────────────────────────────────────────────────
+# Decision Snapshots (Phase 4)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/snapshots")
+def get_submission_snapshots(submission_id: str):
+    """
+    Get all decision snapshots for a submission.
+
+    Returns snapshots from quote issued and policy bound events,
+    showing what was known at each decision point.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT
+                ds.id,
+                ds.quote_id,
+                ds.decision_type,
+                ds.decision_at,
+                ds.decision_by,
+                t.quote_name,
+                t.sold_premium,
+                jsonb_array_length(COALESCE(ds.gap_analysis->'critical_missing', '[]'::jsonb)) as critical_gaps,
+                jsonb_array_length(COALESCE(ds.gap_analysis->'important_missing', '[]'::jsonb)) as important_gaps,
+                (ds.gap_analysis->>'critical_present_count')::int as critical_present,
+                (ds.gap_analysis->>'important_present_count')::int as important_present
+            FROM decision_snapshots ds
+            LEFT JOIN insurance_towers t ON t.id = ds.quote_id
+            WHERE ds.submission_id = %s
+            ORDER BY ds.decision_at DESC
+        """, (submission_id,))
+        return {"snapshots": cur.fetchall()}
+
+
+@app.get("/api/snapshots/{snapshot_id}")
+def get_snapshot_detail(snapshot_id: str):
+    """
+    Get full detail of a decision snapshot.
+
+    Includes the frozen extracted values and gap analysis
+    as they were at the decision point.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT
+                ds.*,
+                s.applicant_name,
+                t.quote_name,
+                t.sold_premium,
+                iv.version_number as importance_version,
+                iv.name as importance_version_name
+            FROM decision_snapshots ds
+            JOIN submissions s ON s.id = ds.submission_id
+            LEFT JOIN insurance_towers t ON t.id = ds.quote_id
+            LEFT JOIN importance_versions iv ON iv.id = ds.importance_version_id
+            WHERE ds.id = %s
+        """, (snapshot_id,))
+        snapshot = cur.fetchone()
+
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="Snapshot not found")
+
+        return snapshot
+
+
+@app.get("/api/quotes/{quote_id}/snapshots")
+def get_quote_snapshots(quote_id: str):
+    """
+    Get all decision snapshots for a specific quote.
+
+    Shows the quote_issued snapshot and policy_bound snapshot (if bound).
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT
+                ds.id,
+                ds.decision_type,
+                ds.decision_at,
+                ds.decision_by,
+                ds.gap_analysis,
+                jsonb_array_length(COALESCE(ds.gap_analysis->'critical_missing', '[]'::jsonb)) as critical_gaps,
+                (ds.gap_analysis->>'critical_present_count')::int as critical_present
+            FROM decision_snapshots ds
+            WHERE ds.quote_id = %s
+            ORDER BY ds.decision_at ASC
+        """, (quote_id,))
+        return {"snapshots": cur.fetchall()}
+
+
+@app.get("/api/quotes/{quote_id}/bind-snapshot")
+def get_quote_bind_snapshot(quote_id: str):
+    """
+    Get the bind-time snapshot for a quote.
+
+    Returns the extracted values and gap analysis as they were
+    when the policy was bound. Useful for claims correlation.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT
+                ds.id,
+                ds.decision_at as bound_at,
+                ds.decision_by as bound_by,
+                ds.extracted_values,
+                ds.gap_analysis,
+                ds.nist_assessment,
+                ds.importance_version_id,
+                iv.version_number as importance_version
+            FROM decision_snapshots ds
+            LEFT JOIN importance_versions iv ON iv.id = ds.importance_version_id
+            WHERE ds.quote_id = %s AND ds.decision_type = 'policy_bound'
+            ORDER BY ds.decision_at DESC
+            LIMIT 1
+        """, (quote_id,))
+        snapshot = cur.fetchone()
+
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="No bind snapshot found for this quote")
+
+        return snapshot
+
+
 class BindQuoteRequest(BaseModel):
     """Request body for binding a quote."""
     force: bool = False  # If true, bind even with warnings
@@ -2950,6 +3077,20 @@ def bind_quote(quote_id: str, request: BindQuoteRequest = None):
             cur.execute("""
                 SELECT log_bind_action(%s, %s, %s)
             """, (quote_id, "api_user", "api"))
+
+            # Phase 4: Capture decision snapshot (what we knew when we bound)
+            try:
+                cur.execute("""
+                    SELECT capture_decision_snapshot(%s, %s, 'policy_bound', %s)
+                """, (submission_id, quote_id, "api_user"))
+                snapshot_id = cur.fetchone()[0]
+                # Link snapshot to quote
+                cur.execute("""
+                    UPDATE insurance_towers SET bind_snapshot_id = %s WHERE id = %s
+                """, (snapshot_id, quote_id))
+            except Exception as e:
+                # Don't fail the bind if snapshot capture fails
+                print(f"[bind] Warning: Failed to capture decision snapshot: {e}")
 
             # Auto-update submission status to quoted/bound
             cur.execute("""
@@ -6187,6 +6328,23 @@ def generate_quote_document(quote_id: str):
             created_by="api"
         )
 
+        # Phase 4: Capture decision snapshot (what we knew when we quoted)
+        try:
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT capture_decision_snapshot(%s, %s, 'quote_issued', %s)
+                    """, (submission_id, quote_id, "api_user"))
+                    snapshot_id = cur.fetchone()[0]
+                    # Link snapshot to quote
+                    cur.execute("""
+                        UPDATE insurance_towers SET quote_snapshot_id = %s WHERE id = %s
+                    """, (snapshot_id, quote_id))
+                    conn.commit()
+        except Exception as snapshot_err:
+            # Don't fail quote generation if snapshot capture fails
+            print(f"[quote] Warning: Failed to capture decision snapshot: {snapshot_err}")
+
         return result
 
     except Exception as e:
@@ -8619,6 +8777,2777 @@ def update_field_verification(
                 "status": verification["status"],
                 "verified_at": verification["verified_at"].isoformat() if verification["verified_at"] else None,
             }
+
+
+# ─────────────────────────────────────────────────────────────
+# Submission Controls API
+# ─────────────────────────────────────────────────────────────
+
+class ControlUpdate(BaseModel):
+    status: str  # present, not_present, not_asked, pending_confirmation
+    source_type: str  # extraction, email, synthetic, verbal
+    source_note: Optional[str] = None
+    source_text: Optional[str] = None
+    source_document_id: Optional[str] = None
+    updated_by: Optional[str] = None
+
+class BrokerResponseParse(BaseModel):
+    response_text: str
+    source_type: str = "synthetic"  # paste -> synthetic, email, verbal
+    controls_needed: List[str] = []
+    updated_by: Optional[str] = None
+
+class ControlUpdateItem(BaseModel):
+    control_name: str
+    status: str
+    source_text: Optional[str] = None
+
+class ApplyUpdatesRequest(BaseModel):
+    updates: list[ControlUpdateItem]
+    source_type: str = "synthetic"
+    updated_by: str = "unknown"
+
+@app.get("/api/submissions/{submission_id}/controls")
+def get_submission_controls(submission_id: str):
+    """Get all controls for a submission with summary stats."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get controls
+        cur.execute("""
+            SELECT
+                sc.id,
+                sc.control_name,
+                sc.control_category,
+                sc.is_mandatory,
+                sc.status,
+                sc.source_type,
+                sc.source_note,
+                sc.source_text,
+                sc.source_document_id,
+                sc.updated_at,
+                sc.updated_by
+            FROM submission_controls sc
+            WHERE sc.submission_id = %s
+            ORDER BY sc.control_category, sc.control_name
+        """, (submission_id,))
+        controls = cur.fetchall()
+
+        # Get summary
+        cur.execute("""
+            SELECT * FROM v_submission_controls_summary
+            WHERE submission_id = %s
+        """, (submission_id,))
+        summary = cur.fetchone()
+
+        # If no controls exist, initialize them
+        if not controls:
+            cur.execute("SELECT initialize_submission_controls(%s, %s)", (submission_id, "system"))
+            conn.commit()
+            # Re-fetch
+            cur.execute("""
+                SELECT
+                    sc.id,
+                    sc.control_name,
+                    sc.control_category,
+                    sc.is_mandatory,
+                    sc.status,
+                    sc.source_type,
+                    sc.source_note,
+                    sc.source_text,
+                    sc.source_document_id,
+                    sc.updated_at,
+                    sc.updated_by
+                FROM submission_controls sc
+                WHERE sc.submission_id = %s
+                ORDER BY sc.control_category, sc.control_name
+            """, (submission_id,))
+            controls = cur.fetchall()
+            cur.execute("""
+                SELECT * FROM v_submission_controls_summary
+                WHERE submission_id = %s
+            """, (submission_id,))
+            summary = cur.fetchone()
+
+        return {
+            "controls": controls,
+            "summary": summary or {
+                "mandatory_present": 0,
+                "mandatory_missing": 0,
+                "mandatory_not_asked": 0,
+                "mandatory_pending": 0,
+                "total_present": 0,
+                "total_missing": 0,
+                "total_controls": 0
+            }
+        }
+
+@app.get("/api/submissions/{submission_id}/extracted-values")
+def get_submission_extracted_values(submission_id: str):
+    """
+    Get all extracted values for a submission with importance levels.
+
+    Phase 1.9: This is the unified endpoint for extracted field values.
+    Replaces get_submission_controls for AI agent and UI consumption.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get all extracted values with schema metadata and importance
+        cur.execute("""
+            SELECT
+                sev.id,
+                sev.field_key,
+                sf.display_name as field_name,
+                sc.display_name as category_name,
+                sc.key as category_key,
+                sf.field_type,
+                sev.value,
+                sev.status,
+                sev.source_type,
+                sev.source_text,
+                sev.source_document_id,
+                sev.confidence,
+                sev.updated_at,
+                sev.updated_by,
+                COALESCE(fis.importance, 'standard') as importance,
+                fis.rationale as importance_rationale
+            FROM submission_extracted_values sev
+            JOIN schema_fields sf ON sf.key = sev.field_key
+            JOIN schema_categories sc ON sc.id = sf.category_id
+            LEFT JOIN field_importance_settings fis ON fis.field_key = sev.field_key
+            LEFT JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
+            WHERE sev.submission_id = %s
+            ORDER BY
+                CASE COALESCE(fis.importance, 'standard')
+                    WHEN 'critical' THEN 1
+                    WHEN 'important' THEN 2
+                    ELSE 3
+                END,
+                sc.display_order, sf.display_order
+        """, (submission_id,))
+        values = cur.fetchall()
+
+        # Get summary stats
+        cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE fis.importance = 'critical' AND sev.status = 'present') as critical_present,
+                COUNT(*) FILTER (WHERE fis.importance = 'critical' AND sev.status != 'present') as critical_missing,
+                COUNT(*) FILTER (WHERE fis.importance = 'important' AND sev.status = 'present') as important_present,
+                COUNT(*) FILTER (WHERE fis.importance = 'important' AND sev.status != 'present') as important_missing,
+                COUNT(*) FILTER (WHERE sev.status = 'present') as total_present,
+                COUNT(*) FILTER (WHERE sev.status = 'not_present') as total_not_present,
+                COUNT(*) FILTER (WHERE sev.status = 'not_asked') as total_not_asked,
+                COUNT(*) FILTER (WHERE sev.status = 'pending') as total_pending,
+                COUNT(*) as total_fields
+            FROM submission_extracted_values sev
+            LEFT JOIN field_importance_settings fis ON fis.field_key = sev.field_key
+            LEFT JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
+            WHERE sev.submission_id = %s
+        """, (submission_id,))
+        summary = cur.fetchone()
+
+        # Parse JSON values
+        for v in values:
+            if v['value'] is not None:
+                try:
+                    v['value'] = json.loads(v['value']) if isinstance(v['value'], str) else v['value']
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        return {
+            "values": values,
+            "summary": summary or {
+                "critical_present": 0,
+                "critical_missing": 0,
+                "important_present": 0,
+                "important_missing": 0,
+                "total_present": 0,
+                "total_not_present": 0,
+                "total_not_asked": 0,
+                "total_pending": 0,
+                "total_fields": 0
+            }
+        }
+
+
+class ExtractedValueUpdate(BaseModel):
+    """Request body for updating an extracted value."""
+    value: Any = None  # The actual value (bool, string, number, array)
+    status: str  # present, not_present, not_asked, pending
+    source_type: str = "manual"  # manual, verbal, document, broker_response
+    source_note: Optional[str] = None  # Required for verbal confirmations
+    source_text: Optional[str] = None  # Supporting text/quote
+    source_document_id: Optional[str] = None
+    updated_by: Optional[str] = None
+
+
+@app.patch("/api/submissions/{submission_id}/extracted-values/{field_key}")
+def update_extracted_value(submission_id: str, field_key: str, data: ExtractedValueUpdate):
+    """
+    Update an extracted value's status with source tracking.
+
+    Phase 1.9: Manual UW confirmations write to submission_extracted_values.
+    This replaces the old /controls/{control_id} endpoint for new data model.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Validate source_type requires note for verbal
+        if data.source_type == "verbal" and not data.source_note:
+            raise HTTPException(status_code=400, detail="source_note is required for verbal confirmations")
+
+        # Validate field_key exists in schema
+        cur.execute("""
+            SELECT sf.key, sf.display_name
+            FROM schema_fields sf
+            JOIN extraction_schemas es ON es.id = sf.schema_id AND es.is_active = true
+            WHERE sf.key = %s
+        """, (field_key,))
+        field = cur.fetchone()
+        if not field:
+            raise HTTPException(status_code=400, detail=f"Unknown field_key: {field_key}")
+
+        # Convert value to JSON
+        value_json = json.dumps(data.value) if data.value is not None else None
+
+        # Upsert the extracted value
+        cur.execute("""
+            INSERT INTO submission_extracted_values
+                (submission_id, field_key, value, status, source_type, source_text,
+                 source_document_id, updated_at, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+            ON CONFLICT (submission_id, field_key)
+            DO UPDATE SET
+                value = EXCLUDED.value,
+                status = EXCLUDED.status,
+                source_type = EXCLUDED.source_type,
+                source_text = EXCLUDED.source_text,
+                source_document_id = EXCLUDED.source_document_id,
+                updated_at = NOW(),
+                updated_by = EXCLUDED.updated_by
+            RETURNING
+                id, field_key, value, status, source_type, source_text,
+                source_document_id, updated_at, updated_by
+        """, (
+            submission_id,
+            field_key,
+            value_json,
+            data.status,
+            data.source_type,
+            data.source_text or data.source_note,  # Use note as fallback for text
+            data.source_document_id,
+            data.updated_by or "uw"
+        ))
+
+        result = cur.fetchone()
+        conn.commit()
+
+        # Parse the JSON value back for response
+        if result and result['value']:
+            try:
+                result['value'] = json.loads(result['value']) if isinstance(result['value'], str) else result['value']
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        return {
+            "success": True,
+            "field_key": field_key,
+            "field_name": field['display_name'],
+            "updated": result
+        }
+
+
+@app.get("/api/submissions/{submission_id}/extracted-values/needing-confirmation")
+def get_extracted_values_needing_confirmation(submission_id: str):
+    """
+    Get critical/important fields that need UW confirmation.
+
+    Phase 1.9: Replaces /controls/needing-info for new data model.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute("""
+            SELECT
+                sf.key as field_key,
+                sf.display_name as field_name,
+                sc.display_name as category_name,
+                fis.importance,
+                COALESCE(sev.status, 'not_asked') as status,
+                sev.value,
+                sev.source_type,
+                sev.source_text
+            FROM schema_fields sf
+            JOIN schema_categories sc ON sc.id = sf.category_id
+            JOIN extraction_schemas es ON es.id = sf.schema_id AND es.is_active = true
+            JOIN field_importance_settings fis ON fis.field_key = sf.key
+            JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
+            LEFT JOIN submission_extracted_values sev
+                ON sev.field_key = sf.key AND sev.submission_id = %s
+            WHERE fis.importance IN ('critical', 'important')
+              AND COALESCE(sev.status, 'not_asked') IN ('not_asked', 'pending')
+            ORDER BY
+                CASE fis.importance WHEN 'critical' THEN 1 ELSE 2 END,
+                sc.display_order, sf.display_order
+        """, (submission_id,))
+
+        fields = cur.fetchall()
+
+        # Parse JSON values
+        for f in fields:
+            if f['value']:
+                try:
+                    f['value'] = json.loads(f['value']) if isinstance(f['value'], str) else f['value']
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        return {
+            "fields": fields,
+            "critical_count": sum(1 for f in fields if f['importance'] == 'critical'),
+            "important_count": sum(1 for f in fields if f['importance'] == 'important')
+        }
+
+
+@app.get("/api/submissions/{submission_id}/controls/needing-info")
+def get_controls_needing_info(submission_id: str):
+    """Get mandatory controls that need broker confirmation."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Initialize if needed
+        cur.execute("""
+            SELECT COUNT(*) as cnt FROM submission_controls WHERE submission_id = %s
+        """, (submission_id,))
+        if cur.fetchone()["cnt"] == 0:
+            cur.execute("SELECT initialize_submission_controls(%s, %s)", (submission_id, "system"))
+            conn.commit()
+
+        cur.execute("""
+            SELECT
+                id,
+                control_name,
+                control_category,
+                status
+            FROM submission_controls
+            WHERE submission_id = %s
+              AND is_mandatory = true
+              AND status IN ('not_asked', 'pending_confirmation')
+            ORDER BY control_category, control_name
+        """, (submission_id,))
+
+        return {"controls": cur.fetchall()}
+
+@app.patch("/api/submissions/{submission_id}/controls/{control_id}")
+def update_control(submission_id: str, control_id: str, data: ControlUpdate):
+    """Update a control's status with source tracking."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Validate source_type requires note for verbal
+        if data.source_type == "verbal" and not data.source_note:
+            raise HTTPException(status_code=400, detail="source_note is required for verbal confirmations")
+
+        cur.execute("""
+            UPDATE submission_controls
+            SET
+                status = %s,
+                source_type = %s,
+                source_note = %s,
+                source_text = %s,
+                source_document_id = %s,
+                updated_by = %s
+            WHERE id = %s AND submission_id = %s
+            RETURNING *
+        """, (
+            data.status,
+            data.source_type,
+            data.source_note,
+            data.source_text,
+            data.source_document_id,
+            data.updated_by or "unknown",
+            control_id,
+            submission_id
+        ))
+
+        control = cur.fetchone()
+        if not control:
+            raise HTTPException(status_code=404, detail="Control not found")
+
+        conn.commit()
+        return control
+
+@app.post("/api/submissions/{submission_id}/controls/parse-response")
+def parse_broker_response(submission_id: str, data: BrokerResponseParse):
+    """Parse broker response text to identify control confirmations."""
+    import openai
+
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get controls needing info
+        cur.execute("""
+            SELECT control_name
+            FROM submission_controls
+            WHERE submission_id = %s
+              AND is_mandatory = true
+              AND status IN ('not_asked', 'pending_confirmation')
+        """, (submission_id,))
+        controls_needed = [r["control_name"] for r in cur.fetchall()]
+
+        if not controls_needed:
+            return {"message": "No controls need information", "results": []}
+
+        # Build prompt
+        prompt = f"""You are analyzing a broker's response to determine the status of specific security controls.
+
+Controls to look for (currently not confirmed):
+{chr(10).join(f"- {c}" for c in controls_needed)}
+
+For each control, determine:
+1. Is it addressed in the response?
+2. If yes, is it PRESENT (they have it) or NOT_PRESENT (they confirmed they don't have it)?
+3. Quote the relevant text that supports your determination.
+
+Return JSON only, no markdown:
+{{
+  "results": [
+    {{
+      "control_name": "Phishing Training",
+      "status": "present",
+      "confidence": "high",
+      "source_text": "the exact quote from the response"
+    }}
+  ]
+}}
+
+Valid status values: "present", "not_present", "not_addressed"
+Valid confidence values: "high", "medium", "low"
+
+Only include controls that ARE addressed. Omit controls not mentioned.
+
+Broker Response:
+{data.response_text}"""
+
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            response_format={"type": "json_object"}
+        )
+
+        import json
+        try:
+            parsed = json.loads(response.choices[0].message.content)
+            results = parsed.get("results", [])
+        except json.JSONDecodeError:
+            results = []
+
+        # Return results for UI to review before applying
+        return {
+            "controls_checked": controls_needed,
+            "results": results,
+            "source_type": data.source_type,
+            "updated_by": data.updated_by
+        }
+
+@app.post("/api/submissions/{submission_id}/controls/apply-updates")
+def apply_control_updates(submission_id: str, data: ApplyUpdatesRequest):
+    """Apply multiple control updates from parsed broker response."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        applied = []
+        for update in data.updates:
+            if update.status in ("present", "not_present"):
+                cur.execute("""
+                    UPDATE submission_controls
+                    SET
+                        status = %s,
+                        source_type = %s,
+                        source_text = %s,
+                        updated_by = %s
+                    WHERE submission_id = %s AND control_name = %s
+                    RETURNING id, control_name, status
+                """, (
+                    update.status,
+                    data.source_type,
+                    update.source_text,
+                    data.updated_by,
+                    submission_id,
+                    update.control_name
+                ))
+                result = cur.fetchone()
+                if result:
+                    applied.append(result)
+
+        conn.commit()
+        return {"applied": applied, "count": len(applied)}
+
+@app.get("/api/submissions/{submission_id}/controls/{control_id}/history")
+def get_control_history(submission_id: str, control_id: str):
+    """Get change history for a control."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute("""
+            SELECT
+                h.id,
+                h.previous_status,
+                h.new_status,
+                h.source_type,
+                h.source_note,
+                h.source_text,
+                h.changed_by,
+                h.changed_at
+            FROM submission_controls_history h
+            JOIN submission_controls sc ON sc.id = h.control_id
+            WHERE h.control_id = %s AND sc.submission_id = %s
+            ORDER BY h.changed_at DESC
+        """, (control_id, submission_id))
+
+        return {"history": cur.fetchall()}
+
+
+# ─────────────────────────────────────────────────────────────
+# Extraction Schema Importance
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/extraction-schema/importance")
+def get_active_importance_settings():
+    """Get the currently active importance settings for all fields."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get active version info
+        cur.execute("""
+            SELECT id, version_number, name, description, created_at, created_by
+            FROM importance_versions
+            WHERE is_active = true
+        """)
+        active_version = cur.fetchone()
+
+        if not active_version:
+            return {"version": None, "settings": []}
+
+        # Get all settings for active version
+        cur.execute("""
+            SELECT
+                fis.field_key,
+                fis.importance,
+                fis.rationale,
+                fis.created_at
+            FROM field_importance_settings fis
+            WHERE fis.version_id = %s
+            ORDER BY
+                CASE fis.importance
+                    WHEN 'critical' THEN 1
+                    WHEN 'important' THEN 2
+                    WHEN 'nice_to_know' THEN 3
+                    ELSE 4
+                END,
+                fis.field_key
+        """, (active_version['id'],))
+        settings = cur.fetchall()
+
+        return {
+            "version": active_version,
+            "settings": settings,
+            "counts": {
+                "critical": len([s for s in settings if s['importance'] == 'critical']),
+                "important": len([s for s in settings if s['importance'] == 'important']),
+                "nice_to_know": len([s for s in settings if s['importance'] == 'nice_to_know']),
+                "none": len([s for s in settings if s['importance'] == 'none'])
+            }
+        }
+
+
+@app.get("/api/extraction-schema/importance-versions")
+def get_importance_versions():
+    """Get all importance versions (for admin UI)."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute("""
+            SELECT
+                iv.id,
+                iv.version_number,
+                iv.name,
+                iv.description,
+                iv.is_active,
+                iv.created_at,
+                iv.created_by,
+                iv.based_on_claims_through,
+                (SELECT COUNT(*) FROM field_importance_settings WHERE version_id = iv.id) as field_count
+            FROM importance_versions iv
+            ORDER BY iv.version_number DESC
+        """)
+
+        return {"versions": cur.fetchall()}
+
+
+class CreateImportanceVersionRequest(BaseModel):
+    name: str
+    description: str = None
+    based_on_claims_through: str = None  # ISO date string
+    copy_from_version: int = None  # Version number to copy settings from
+    set_active: bool = False
+
+
+@app.post("/api/extraction-schema/importance-versions")
+def create_importance_version(req: CreateImportanceVersionRequest):
+    """Create a new importance version (optionally copying from existing)."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get next version number
+        cur.execute("SELECT COALESCE(MAX(version_number), 0) + 1 as next_ver FROM importance_versions")
+        next_ver = cur.fetchone()['next_ver']
+
+        # Create new version
+        cur.execute("""
+            INSERT INTO importance_versions (version_number, name, description, is_active, created_by, based_on_claims_through)
+            VALUES (%s, %s, %s, false, 'api', %s)
+            RETURNING id, version_number, name
+        """, (next_ver, req.name, req.description, req.based_on_claims_through))
+        new_version = cur.fetchone()
+
+        # Copy settings from existing version if requested
+        copied_count = 0
+        if req.copy_from_version:
+            cur.execute("""
+                INSERT INTO field_importance_settings (version_id, field_key, importance, rationale)
+                SELECT %s, field_key, importance, rationale
+                FROM field_importance_settings fis
+                JOIN importance_versions iv ON iv.id = fis.version_id
+                WHERE iv.version_number = %s
+            """, (new_version['id'], req.copy_from_version))
+            copied_count = cur.rowcount
+
+        # Set active if requested
+        if req.set_active:
+            cur.execute("UPDATE importance_versions SET is_active = false WHERE is_active = true")
+            cur.execute("UPDATE importance_versions SET is_active = true WHERE id = %s", (new_version['id'],))
+
+        conn.commit()
+
+        return {
+            "version": new_version,
+            "copied_settings": copied_count,
+            "is_active": req.set_active
+        }
+
+
+class UpdateFieldImportanceRequest(BaseModel):
+    field_key: str
+    importance: str  # critical, important, nice_to_know, none
+    rationale: str = None
+
+
+@app.put("/api/extraction-schema/importance-versions/{version_id}/fields")
+def update_field_importance(version_id: str, req: UpdateFieldImportanceRequest):
+    """Update or create a field importance setting for a version."""
+    if req.importance not in ('critical', 'important', 'nice_to_know', 'none'):
+        raise HTTPException(status_code=400, detail="Invalid importance level")
+
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Upsert the setting
+        cur.execute("""
+            INSERT INTO field_importance_settings (version_id, field_key, importance, rationale)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (version_id, field_key)
+            DO UPDATE SET importance = EXCLUDED.importance, rationale = EXCLUDED.rationale
+            RETURNING id, field_key, importance, rationale
+        """, (version_id, req.field_key, req.importance, req.rationale))
+
+        setting = cur.fetchone()
+        conn.commit()
+
+        return {"setting": setting}
+
+
+@app.post("/api/extraction-schema/importance-versions/{version_id}/activate")
+def activate_importance_version(version_id: str):
+    """Set a version as the active importance version."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Deactivate all, then activate the requested one
+        cur.execute("UPDATE importance_versions SET is_active = false WHERE is_active = true")
+        cur.execute("""
+            UPDATE importance_versions
+            SET is_active = true
+            WHERE id = %s
+            RETURNING id, version_number, name
+        """, (version_id,))
+
+        activated = cur.fetchone()
+        if not activated:
+            raise HTTPException(status_code=404, detail="Version not found")
+
+        conn.commit()
+
+        return {"activated": activated}
+
+
+# ─────────────────────────────────────────────────────────────
+# AI Agent
+# ─────────────────────────────────────────────────────────────
+
+# Agent capabilities catalog - structured data for help UI
+AGENT_CAPABILITIES = {
+    "categories": [
+        {
+            "name": "Policy Management",
+            "description": "Actions for bound policies",
+            "actions": [
+                {
+                    "id": "extend_policy",
+                    "name": "Extend Policy",
+                    "description": "Extend policy expiration date with pro-rata premium",
+                    "examples": ["extend 30 days", "extend policy to 3/1/26"],
+                    "requires_bound": True
+                },
+                {
+                    "id": "cancel_policy",
+                    "name": "Cancel Policy",
+                    "description": "Cancel policy with reason and return premium calculation",
+                    "examples": ["cancel insured request", "cancel non-payment effective 2/1/26"],
+                    "reason_codes": list(CANCELLATION_REASONS.values()) if 'CANCELLATION_REASONS' in dir() else [],
+                    "requires_bound": True
+                },
+                {
+                    "id": "reinstate_policy",
+                    "name": "Reinstate Policy",
+                    "description": "Reinstate a cancelled policy",
+                    "examples": ["reinstate policy", "reinstate"],
+                    "requires_bound": True
+                },
+                {
+                    "id": "change_broker",
+                    "name": "Change Broker (BOR)",
+                    "description": "Change broker of record",
+                    "examples": ["change broker to Marsh", "BOR to Acme Insurance"],
+                    "requires_bound": True
+                },
+                {
+                    "id": "issue_policy",
+                    "name": "Issue Policy / Binder",
+                    "description": "Bind quote and generate binder document",
+                    "examples": ["issue policy", "generate binder"],
+                    "requires_bound": False
+                }
+            ]
+        },
+        {
+            "name": "Submission Management",
+            "description": "Actions for submissions at any stage",
+            "actions": [
+                {
+                    "id": "decline_submission",
+                    "name": "Decline Submission",
+                    "description": "Decline with reason code",
+                    "examples": ["decline outside appetite", "decline inadequate controls"],
+                    "reason_codes": list(DECLINE_REASONS.values()) if 'DECLINE_REASONS' in dir() else [],
+                    "requires_bound": False
+                },
+                {
+                    "id": "mark_subjectivity",
+                    "name": "Mark Subjectivity Received",
+                    "description": "Mark a pending subjectivity as received",
+                    "examples": ["mark financials received", "subjectivity complete: signed app"],
+                    "requires_bound": False
+                },
+                {
+                    "id": "add_note",
+                    "name": "Add Note to File",
+                    "description": "Add timestamped note to the submission file",
+                    "examples": ["add note: Spoke with broker", "note: Follow up Friday"],
+                    "requires_bound": False
+                }
+            ]
+        },
+        {
+            "name": "Analysis",
+            "description": "AI-powered analysis and summaries",
+            "actions": [
+                {
+                    "id": "show_gaps",
+                    "name": "Show Gaps",
+                    "description": "List critical/important fields needing confirmation",
+                    "examples": ["show gaps", "what's missing", "critical gaps"],
+                    "requires_bound": False
+                },
+                {
+                    "id": "summarize",
+                    "name": "Summarize",
+                    "description": "Generate submission summary",
+                    "examples": ["summarize", "summary"],
+                    "requires_bound": False
+                },
+                {
+                    "id": "nist_assessment",
+                    "name": "NIST Assessment",
+                    "description": "Generate NIST cybersecurity framework assessment",
+                    "examples": ["nist", "nist assessment", "security assessment"],
+                    "requires_bound": False
+                },
+                {
+                    "id": "parse_broker_response",
+                    "name": "Parse Broker Response",
+                    "description": "Extract information from broker email",
+                    "examples": ["parse email", "broker response"],
+                    "requires_bound": False
+                }
+            ]
+        },
+        {
+            "name": "Quote Building",
+            "description": "AI-powered quote generation",
+            "actions": [
+                {
+                    "id": "quote_options",
+                    "name": "Generate Quote Options",
+                    "description": "Create multiple quote options at once",
+                    "examples": ["quote 1M, 2M, 3M at 50K retention", "options at 25K SIR"],
+                    "requires_bound": False
+                },
+                {
+                    "id": "build_tower",
+                    "name": "Build Tower",
+                    "description": "Create excess tower structure",
+                    "examples": ["XL primary 5M, CMAI 5M xs 5M", "build tower"],
+                    "requires_bound": False
+                }
+            ]
+        }
+    ]
+}
+
+
+@app.get("/api/agent/capabilities")
+def get_agent_capabilities():
+    """Return structured catalog of AI agent capabilities."""
+    return AGENT_CAPABILITIES
+
+
+class FeatureRequestCreate(BaseModel):
+    description: str
+    use_case: Optional[str] = None
+    submission_id: Optional[str] = None
+
+
+@app.post("/api/agent/feature-requests")
+def create_feature_request(request: FeatureRequestCreate):
+    """Submit a feature request for new AI agent capability."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            INSERT INTO agent_feature_requests (description, use_case, submission_id, submitted_by)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, created_at
+        """, (
+            request.description,
+            request.use_case,
+            request.submission_id,
+            "api_user"
+        ))
+        result = cur.fetchone()
+        conn.commit()
+
+    return {
+        "success": True,
+        "message": "Feature request submitted",
+        "request_id": str(result["id"])
+    }
+
+
+@app.get("/api/agent/feature-requests")
+def get_feature_requests():
+    """Get all feature requests (admin view)."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT id, description, use_case, status, admin_notes, created_at
+            FROM agent_feature_requests
+            ORDER BY created_at DESC
+        """)
+        requests = cur.fetchall()
+
+    return {"requests": requests}
+
+
+class AgentChatRequest(BaseModel):
+    submission_id: str
+    message: str
+    context: dict = {}
+    conversation_history: List[dict] = []
+
+class AgentActionRequest(BaseModel):
+    submission_id: str
+    action: str
+    context: dict = {}
+    params: dict = {}
+
+class AgentConfirmRequest(BaseModel):
+    submission_id: str
+    action_id: str
+    confirmed: bool = True
+
+# In-memory store for pending action previews (in production, use Redis)
+_pending_actions = {}
+
+@app.post("/api/agent/chat")
+def agent_chat(request: AgentChatRequest):
+    """Handle free-form chat with the AI agent."""
+    submission_id = request.submission_id
+    message = request.message.lower().strip()
+    page = request.context.get("page", "analyze")
+
+    # Check for command-like messages
+    command_patterns = {
+        "show gaps": "show_gaps",
+        "what's missing": "show_gaps",
+        "critical gaps": "show_gaps",
+        "summarize": "summarize",
+        "summary": "summarize",
+        "parse email": "parse_broker_response",
+        "broker response": "parse_broker_response",
+        "nist": "nist_assessment",
+        "extend": "extend_policy",
+        "change broker": "change_broker",
+        "bor": "change_broker",
+        "mark subjectivity": "mark_subjectivity",
+        "subjectivity received": "mark_subjectivity",
+        "received": "mark_subjectivity",
+        "issue policy": "issue_policy",
+        "issue binder": "issue_policy",
+        "generate binder": "issue_policy",
+        "cancel policy": "cancel_policy",
+        "cancel": "cancel_policy",
+        "reinstate": "reinstate_policy",
+        "decline": "decline_submission",
+        "pass on": "decline_submission",
+        "add note": "add_note",
+        "note:": "add_note",
+    }
+
+    matched_action = None
+    for pattern, action in command_patterns.items():
+        if pattern in message:
+            matched_action = action
+            break
+
+    if matched_action:
+        action_request = AgentActionRequest(
+            submission_id=submission_id,
+            action=matched_action,
+            context=request.context,
+            params={"message": request.message}
+        )
+        return agent_action(action_request)
+
+    # For free-form questions, use AI
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT applicant_name, submission_status, submission_outcome,
+                   annual_revenue, naics_primary_title, bullet_point_summary
+            FROM submissions WHERE id = %s
+        """, (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "content": "Submission not found"}
+
+    revenue_str = f"${sub['annual_revenue']:,}" if sub['annual_revenue'] else 'Unknown'
+    context_str = f"""
+Submission: {sub['applicant_name']}
+Status: {sub['submission_status']} / {sub['submission_outcome']}
+Industry: {sub['naics_primary_title']}
+Revenue: {revenue_str}
+Current page: {page}
+Notes: {sub['bullet_point_summary'] or 'None'}
+"""
+
+    client = openai.OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": f"""You are an AI assistant helping an underwriter review a commercial insurance submission.
+
+Context:
+{context_str}
+
+Available actions you can suggest:
+- Show Gaps: List critical fields that need confirmation
+- Summarize: Summarize the submission
+- NIST Assessment: Generate security framework evaluation
+- Parse Email: Extract info from broker response
+
+Answer questions concisely."""},
+            *[{"role": m["role"], "content": m["content"]} for m in request.conversation_history[-5:]],
+            {"role": "user", "content": request.message}
+        ],
+        temperature=0.7,
+        max_tokens=500
+    )
+
+    return {"type": "text", "content": response.choices[0].message.content}
+
+
+@app.post("/api/agent/action")
+def agent_action(request: AgentActionRequest):
+    """Execute a quick action."""
+    action = request.action
+    submission_id = request.submission_id
+    params = request.params
+
+    if action == "show_gaps":
+        return _action_show_gaps(submission_id)
+    elif action == "summarize":
+        return _action_summarize(submission_id)
+    elif action == "nist_assessment":
+        return _action_nist_assessment(submission_id)
+    elif action == "parse_broker_response":
+        return _action_parse_broker_response(submission_id, params)
+    elif action == "extend_policy":
+        return _action_extend_policy(submission_id, params)
+    elif action == "change_broker":
+        return _action_change_broker(submission_id, params)
+    elif action == "mark_subjectivity":
+        return _action_mark_subjectivity(submission_id, params)
+    elif action == "issue_policy":
+        return _action_issue_policy(submission_id, params)
+    elif action == "cancel_policy":
+        return _action_cancel_policy(submission_id, params)
+    elif action == "reinstate_policy":
+        return _action_reinstate_policy(submission_id, params)
+    elif action == "decline_submission":
+        return _action_decline_submission(submission_id, params)
+    elif action == "add_note":
+        return _action_add_note(submission_id, params)
+    elif action == "quote_command":
+        return _action_quote_command(submission_id, params)
+    else:
+        return {"type": "error", "message": f"Unknown action: {action}"}
+
+
+@app.post("/api/agent/confirm")
+def agent_confirm(request: AgentConfirmRequest):
+    """Confirm and execute a previewed action."""
+    action_id = request.action_id
+
+    if action_id not in _pending_actions:
+        return {"type": "error", "success": False, "message": "Action preview expired or not found"}
+
+    if not request.confirmed:
+        del _pending_actions[action_id]
+        return {"type": "action_result", "success": True, "message": "Action cancelled"}
+
+    preview = _pending_actions.pop(action_id)
+    action_type = preview.get("action_type")
+
+    if action_type == "apply_broker_response":
+        return _execute_apply_broker_response(preview)
+    elif action_type == "extend_policy":
+        return _execute_extend_policy(preview)
+    elif action_type == "change_broker":
+        return _execute_change_broker(preview)
+    elif action_type == "mark_subjectivity":
+        return _execute_mark_subjectivity(preview)
+    elif action_type == "issue_policy":
+        return _execute_issue_policy(preview)
+    elif action_type == "cancel_policy":
+        return _execute_cancel_policy(preview)
+    elif action_type == "reinstate_policy":
+        return _execute_reinstate_policy(preview)
+    elif action_type == "decline_submission":
+        return _execute_decline_submission(preview)
+    elif action_type == "add_note":
+        return _execute_add_note(preview)
+    else:
+        return {"type": "error", "success": False, "message": f"Cannot execute: {action_type}"}
+
+
+def _action_show_gaps(submission_id: str):
+    """Show critical/important fields that need confirmation.
+
+    Queries the extraction schema importance settings and checks
+    submission_extracted_values to find gaps.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get critical/important fields from importance settings
+        # joined with submission values (if any) to find gaps
+        cur.execute("""
+            SELECT
+                fis.field_key,
+                fis.importance,
+                fis.rationale,
+                COALESCE(sev.status, 'not_asked') as status,
+                sev.value,
+                sev.source_type
+            FROM field_importance_settings fis
+            JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
+            LEFT JOIN submission_extracted_values sev
+                ON sev.field_key = fis.field_key
+                AND sev.submission_id = %s
+            WHERE fis.importance IN ('critical', 'important')
+              AND COALESCE(sev.status, 'not_asked') IN ('not_asked', 'pending', 'not_present')
+            ORDER BY
+                CASE fis.importance WHEN 'critical' THEN 1 ELSE 2 END,
+                fis.field_key
+        """, (submission_id,))
+        gaps = cur.fetchall()
+
+        # Format field keys to display names (camelCase to Title Case)
+        def to_display_name(key):
+            import re
+            # Split on camelCase
+            words = re.sub('([A-Z])', r' \1', key).split()
+            return ' '.join(w.capitalize() for w in words)
+
+        formatted_gaps = [{
+            "field_key": g["field_key"],
+            "field_name": to_display_name(g["field_key"]),
+            "importance": g["importance"],
+            "status": g["status"],
+            "rationale": g["rationale"]
+        } for g in gaps]
+
+        critical_count = len([g for g in formatted_gaps if g["importance"] == "critical"])
+        important_count = len([g for g in formatted_gaps if g["importance"] == "important"])
+
+        return {
+            "type": "structured",
+            "message": f"Found {critical_count} critical and {important_count} important gaps.",
+            "data": {
+                "gaps": formatted_gaps,
+                "critical_count": critical_count,
+                "important_count": important_count,
+                "summary": f"{critical_count} critical, {important_count} important fields need confirmation"
+            }
+        }
+
+
+def _action_summarize(submission_id: str):
+    """Generate a summary of the submission using current extracted values."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT applicant_name, submission_status, submission_outcome,
+                   annual_revenue, naics_primary_title, bullet_point_summary
+            FROM submissions WHERE id = %s
+        """, (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+
+    revenue_str = f"${sub['annual_revenue']:,}" if sub['annual_revenue'] else 'Unknown'
+
+    # Phase 1.9: Use current extracted values (not stale Day 1 summary)
+    extracted = _get_extracted_values(submission_id)
+
+    # Format extracted values by category for summarization
+    if extracted:
+        by_category = {}
+        for ev in extracted:
+            cat = ev['category_name']
+            if cat not in by_category:
+                by_category[cat] = []
+            # Format value for display
+            val = ev['value']
+            if isinstance(val, bool):
+                val_str = "Yes" if val else "No"
+            elif val is None:
+                val_str = f"({ev['status']})"
+            else:
+                val_str = str(val)
+            by_category[cat].append(f"  - {ev['display_name']}: {val_str}")
+
+        controls_text = "\n".join([
+            f"{cat}:\n" + "\n".join(items)
+            for cat, items in by_category.items()
+        ])
+    else:
+        # Fallback to legacy bullet_point_summary if no extracted values
+        controls_text = sub['bullet_point_summary'] or "(No security controls data available)"
+
+    client = openai.OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": """Summarize this cyber insurance submission in 3-4 bullet points.
+Focus on:
+1. Key risk factors based on industry and security controls
+2. Notable strengths (controls that are present)
+3. Gaps or concerns (critical controls that are missing)
+4. Overall risk posture"""},
+            {"role": "user", "content": f"""
+Company: {sub['applicant_name']}
+Industry: {sub['naics_primary_title']}
+Revenue: {revenue_str}
+Status: {sub['submission_status']}
+
+Security Controls:
+{controls_text}"""}
+        ],
+        temperature=0.5,
+        max_tokens=400
+    )
+
+    return {"type": "text", "content": response.choices[0].message.content}
+
+
+# ─────────────────────────────────────────────────────────────
+# Unified Data Helpers (submission_extracted_values)
+# ─────────────────────────────────────────────────────────────
+
+def _get_extracted_values(submission_id: str) -> list:
+    """Get all extracted values for a submission from submission_extracted_values."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT
+                sev.field_key,
+                sev.value,
+                sev.status,
+                sev.source_type,
+                sev.source_text,
+                sf.display_name,
+                sc.display_name as category_name
+            FROM submission_extracted_values sev
+            JOIN schema_fields sf ON sf.key = sev.field_key
+            JOIN schema_categories sc ON sc.id = sf.category_id
+            WHERE sev.submission_id = %s
+            ORDER BY sc.display_order, sf.display_order
+        """, (submission_id,))
+        return cur.fetchall()
+
+
+def _get_critical_fields() -> list:
+    """Get critical/important fields from the active importance version."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT
+                sf.key as field_key,
+                sf.display_name,
+                sc.display_name as category_name,
+                fis.importance,
+                fis.rationale
+            FROM field_importance_settings fis
+            JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
+            JOIN schema_fields sf ON sf.key = fis.field_key
+            JOIN schema_categories sc ON sc.id = sf.category_id
+            WHERE fis.importance IN ('critical', 'important')
+            ORDER BY
+                CASE fis.importance WHEN 'critical' THEN 1 ELSE 2 END,
+                sc.display_order, sf.display_order
+        """)
+        return cur.fetchall()
+
+
+def _upsert_extracted_value(
+    submission_id: str,
+    field_key: str,
+    value,
+    status: str,
+    source_type: str = 'broker_response',
+    source_text: str = None,
+    updated_by: str = 'ai_agent'
+):
+    """Insert or update an extracted value."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            INSERT INTO submission_extracted_values
+                (submission_id, field_key, value, status, source_type, source_text, updated_at, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
+            ON CONFLICT (submission_id, field_key)
+            DO UPDATE SET
+                value = EXCLUDED.value,
+                status = EXCLUDED.status,
+                source_type = EXCLUDED.source_type,
+                source_text = EXCLUDED.source_text,
+                updated_at = NOW(),
+                updated_by = EXCLUDED.updated_by
+            RETURNING field_key
+        """, (
+            submission_id,
+            field_key,
+            json.dumps(value) if value is not None else None,
+            status,
+            source_type,
+            source_text,
+            updated_by
+        ))
+        conn.commit()
+        return cur.fetchone()
+
+
+def _action_nist_assessment(submission_id: str):
+    """Generate NIST framework assessment from current extracted values."""
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT applicant_name, bullet_point_summary FROM submissions WHERE id = %s", (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+
+    # Get current extracted values (not stale Day 1 data)
+    extracted = _get_extracted_values(submission_id)
+
+    # Format for NIST analysis - group by category
+    by_category = {}
+    for ev in extracted:
+        cat = ev['category_name']
+        if cat not in by_category:
+            by_category[cat] = []
+        # Format value for display
+        val = ev['value']
+        if isinstance(val, bool):
+            val_str = "Yes" if val else "No"
+        elif val is None:
+            val_str = f"({ev['status']})"
+        else:
+            val_str = str(val)
+        by_category[cat].append(f"  - {ev['display_name']}: {val_str}")
+
+    controls_text = "\n".join([
+        f"{cat}:\n" + "\n".join(items)
+        for cat, items in by_category.items()
+    ])
+
+    # If no extracted values, note that
+    if not extracted:
+        controls_text = "(No security controls data available yet)"
+
+    client = openai.OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": """Evaluate security posture using NIST CSF based on the extracted security controls.
+Return JSON with scores 1-5 for each function:
+{"identify": {"score": 1-5, "notes": "brief assessment"}, "protect": {"score": 1-5, "notes": "..."}, "detect": {"score": 1-5, "notes": "..."}, "respond": {"score": 1-5, "notes": "..."}, "recover": {"score": 1-5, "notes": "..."}, "overall_score": 1-5, "key_strengths": ["..."], "key_gaps": ["..."]}
+
+If data is limited, note that in your assessment and provide conservative scores."""},
+            {"role": "user", "content": f"Company: {sub['applicant_name']}\n\nExtracted Security Controls:\n{controls_text}"}
+        ],
+        temperature=0.3,
+        max_tokens=600,
+        response_format={"type": "json_object"}
+    )
+
+    try:
+        assessment = json.loads(response.choices[0].message.content)
+    except:
+        assessment = {"error": "Failed to parse"}
+
+    return {
+        "type": "structured",
+        "message": f"NIST Assessment: Overall {assessment.get('overall_score', 'N/A')}/5",
+        "data": {
+            "assessment": assessment,
+            "extracted_count": len(extracted),
+            "note": "Computed from current extracted values"
+        }
+    }
+
+
+def _action_parse_broker_response(submission_id: str, params: dict):
+    """Parse broker email to extract field value confirmations."""
+    import uuid
+
+    text = params.get("text") or params.get("message", "")
+
+    if not text or len(text) < 50:
+        return {"type": "text", "content": "Please paste the broker's email response. I'll extract security control confirmations."}
+
+    # Get critical/important fields that need confirmation
+    critical_fields = _get_critical_fields()
+
+    # Get current values to see what's already confirmed
+    current_values = _get_extracted_values(submission_id)
+    current_by_key = {v['field_key']: v for v in current_values}
+
+    # Find fields that need confirmation (not yet present)
+    needs_confirmation = []
+    for field in critical_fields:
+        current = current_by_key.get(field['field_key'])
+        if not current or current['status'] in ('not_asked', 'pending'):
+            needs_confirmation.append({
+                "field_key": field['field_key'],
+                "display_name": field['display_name'],
+                "category": field['category_name']
+            })
+
+    if not needs_confirmation:
+        return {"type": "text", "content": "All critical fields are already confirmed. No updates needed."}
+
+    # Build prompt with field names for AI to look for
+    field_list = json.dumps([f['display_name'] for f in needs_confirmation])
+
+    client = openai.OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": f"""Extract security control confirmations from the broker's email response.
+
+Look for confirmations of these fields: {field_list}
+
+For each field mentioned, determine if the broker is confirming it's present/enabled or not present/disabled.
+
+Return JSON: {{"updates": [{{"field_name": "exact field name from list", "confirmed": true/false, "source_text": "quote from email"}}]}}
+
+Only include fields that are clearly mentioned in the email."""},
+            {"role": "user", "content": text}
+        ],
+        temperature=0.1,
+        response_format={"type": "json_object"}
+    )
+
+    try:
+        parsed = json.loads(response.choices[0].message.content)
+        raw_updates = parsed.get("updates", [])
+    except:
+        raw_updates = []
+
+    # Map display names back to field keys
+    display_to_key = {f['display_name']: f['field_key'] for f in needs_confirmation}
+    updates = []
+    for u in raw_updates:
+        field_name = u.get("field_name", "")
+        if field_name in display_to_key:
+            updates.append({
+                "field_key": display_to_key[field_name],
+                "field_name": field_name,
+                "status": "present" if u.get("confirmed") else "not_present",
+                "value": u.get("confirmed", False),
+                "source_text": u.get("source_text", "")
+            })
+
+    if not updates:
+        return {"type": "text", "content": "No clear control confirmations found. Try pasting the full broker response."}
+
+    action_id = f"parse_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "apply_broker_response",
+        "submission_id": submission_id,
+        "updates": updates
+    }
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": f"Apply {len(updates)} field updates",
+        "changes": [{"field": u["field_name"], "from": "not confirmed", "to": u["status"]} for u in updates]
+    }
+
+
+def _action_extend_policy(submission_id: str, params: dict):
+    """Preview policy extension."""
+    import uuid
+    import re
+
+    message = params.get("message", "")
+    days_match = re.search(r'(\d+)\s*day', message.lower())
+    days = int(days_match.group(1)) if days_match else 30
+
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT applicant_name, expiration_date,
+                   EXISTS(SELECT 1 FROM insurance_towers t WHERE t.submission_id = s.id AND t.is_bound) as is_bound
+            FROM submissions s WHERE s.id = %s
+        """, (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+    if not sub["is_bound"]:
+        return {"type": "text", "content": "Cannot extend - policy is not bound yet."}
+
+    current_exp = sub["expiration_date"]
+    new_exp = current_exp + timedelta(days=days) if current_exp else None
+
+    action_id = f"extend_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "extend_policy",
+        "submission_id": submission_id,
+        "days": days,
+        "new_expiration_date": new_exp.isoformat() if new_exp else None
+    }
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": f"Extend policy by {days} days",
+        "changes": [{"field": "Expiration", "from": str(current_exp), "to": str(new_exp)}],
+        "warnings": [] if days <= 90 else ["Extension exceeds 90 days"]
+    }
+
+
+def _execute_apply_broker_response(preview: dict):
+    """Apply broker response updates to submission_extracted_values."""
+    submission_id = preview["submission_id"]
+    updates = preview["updates"]
+
+    applied = []
+    for update in updates:
+        result = _upsert_extracted_value(
+            submission_id=submission_id,
+            field_key=update["field_key"],
+            value=update.get("value", True),
+            status=update["status"],
+            source_type="broker_response",
+            source_text=update.get("source_text", ""),
+            updated_by="ai_agent"
+        )
+        if result:
+            applied.append(update["field_name"])
+
+    return {"type": "action_result", "success": True, "message": f"Updated {len(applied)} fields"}
+
+
+def _execute_extend_policy(preview: dict):
+    """Execute policy extension."""
+    from core import endorsement_management as endorsements
+
+    submission_id = preview["submission_id"]
+    days = preview.get("days", 30)
+    new_exp = preview.get("new_expiration_date")
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            # Get bound tower
+            cur.execute("""
+                SELECT id, sold_premium FROM insurance_towers
+                WHERE submission_id = %s AND is_bound = true LIMIT 1
+            """, (submission_id,))
+            tower = cur.fetchone()
+
+            if not tower:
+                return {"type": "action_result", "success": False, "message": "No bound policy found"}
+
+            base_premium = float(tower["sold_premium"] or 0)
+            premium_change = (base_premium / 365) * days if base_premium > 0 else 0
+
+            # Create extension endorsement
+            endo_id = endorsements.create_endorsement(
+                submission_id=submission_id,
+                tower_id=tower["id"],
+                endorsement_type="extension",
+                effective_date=date.today(),
+                description=f"Policy extended to {new_exp}",
+                change_details={"new_expiration_date": new_exp},
+                premium_method="pro_rata",
+                premium_change=premium_change,
+                original_annual_premium=base_premium,
+                days_remaining=days,
+                created_by="ai_agent"
+            )
+
+            # Auto-issue
+            endorsements.issue_endorsement(endo_id, issued_by="ai_agent")
+
+            premium_msg = f" (+${premium_change:,.0f})" if premium_change > 0 else ""
+            return {"type": "action_result", "success": True, "message": f"Policy extended to {new_exp}{premium_msg}"}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"Extension failed: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin Actions: Change Broker (BOR)
+# ─────────────────────────────────────────────────────────────
+
+def _action_change_broker(submission_id: str, params: dict):
+    """Preview broker of record change."""
+    import uuid
+    from core import bor_management as bor
+
+    message = params.get("message", "")
+
+    # Parse broker name from message (AI could help here, but simple extraction for now)
+    # Examples: "change broker to Marsh", "BOR to Acme Insurance"
+    broker_patterns = [
+        r'(?:change\s+)?broker\s+(?:to\s+)?(.+?)(?:\s+effective|\s*$)',
+        r'bor\s+(?:to\s+)?(.+?)(?:\s+effective|\s*$)',
+    ]
+
+    new_broker_name = None
+    for pattern in broker_patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            new_broker_name = match.group(1).strip()
+            break
+
+    if not new_broker_name:
+        return {"type": "text", "content": "Please specify the new broker name. Example: 'change broker to Marsh Insurance'"}
+
+    # Check if policy is bound
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT applicant_name,
+                   EXISTS(SELECT 1 FROM insurance_towers t WHERE t.submission_id = s.id AND t.is_bound) as is_bound
+            FROM submissions s WHERE s.id = %s
+        """, (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+    if not sub["is_bound"]:
+        return {"type": "text", "content": "Cannot change broker - policy is not bound yet."}
+
+    # Find matching broker
+    try:
+        all_employments = bor.get_all_broker_employments()
+        matching_emp = None
+        search_lower = new_broker_name.lower()
+        for emp in all_employments:
+            if (search_lower in emp["person_name"].lower() or
+                search_lower in emp["org_name"].lower()):
+                matching_emp = emp
+                break
+
+        current_broker = bor.get_current_broker(submission_id)
+        current_name = "None"
+        if current_broker:
+            current_name = current_broker.get("broker_name") or "None"
+            if current_broker.get("contact_name"):
+                current_name = f"{current_name} ({current_broker['contact_name']})"
+    except Exception as e:
+        return {"type": "error", "message": f"Error looking up brokers: {str(e)}"}
+
+    warnings = []
+    if not matching_emp:
+        warnings.append(f"Broker '{new_broker_name}' not found in system - please verify")
+
+    new_display = f"{matching_emp['org_name']} ({matching_emp['person_name']})" if matching_emp else new_broker_name
+
+    action_id = f"bor_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "change_broker",
+        "submission_id": submission_id,
+        "new_broker_id": matching_emp["org_id"] if matching_emp else None,
+        "new_broker_name": matching_emp["org_name"] if matching_emp else new_broker_name,
+        "new_contact_id": matching_emp["id"] if matching_emp else None,
+        "current_broker": current_broker
+    }
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": f"Change broker of record",
+        "changes": [{"field": "Broker", "from": current_name, "to": new_display}],
+        "warnings": warnings
+    }
+
+
+def _execute_change_broker(preview: dict):
+    """Execute broker of record change."""
+    from core import endorsement_management as endorsements
+    from core import bor_management as bor
+
+    submission_id = preview["submission_id"]
+
+    if not preview.get("new_broker_id"):
+        return {"type": "action_result", "success": False, "message": "Broker not found in system"}
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT id FROM insurance_towers
+                WHERE submission_id = %s AND is_bound = true LIMIT 1
+            """, (submission_id,))
+            tower = cur.fetchone()
+
+            if not tower:
+                return {"type": "action_result", "success": False, "message": "No bound policy found"}
+
+        current = preview.get("current_broker") or {}
+
+        change_details = bor.build_bor_change_details(
+            previous_broker_id=current.get("broker_id"),
+            previous_broker_name=current.get("broker_name", "None"),
+            new_broker_id=preview["new_broker_id"],
+            new_broker_name=preview["new_broker_name"],
+            previous_contact_id=current.get("broker_contact_id"),
+            previous_contact_name=current.get("contact_name"),
+            new_contact_id=preview.get("new_contact_id"),
+            change_reason="BOR change via AI agent"
+        )
+
+        endo_id = endorsements.create_endorsement(
+            submission_id=submission_id,
+            tower_id=tower["id"],
+            endorsement_type="bor_change",
+            effective_date=date.today(),
+            description=f"Broker of Record change to {preview['new_broker_name']}",
+            change_details=change_details,
+            created_by="ai_agent"
+        )
+
+        endorsements.issue_endorsement(endo_id, issued_by="ai_agent")
+
+        return {"type": "action_result", "success": True, "message": f"Broker changed to {preview['new_broker_name']}"}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"BOR change failed: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin Actions: Mark Subjectivity Received
+# ─────────────────────────────────────────────────────────────
+
+def _action_mark_subjectivity(submission_id: str, params: dict):
+    """Preview marking a subjectivity as received."""
+    import uuid
+    from core import subjectivity_management as subj_mgmt
+
+    message = params.get("message", "")
+
+    # Extract subjectivity description from message
+    # Examples: "mark financials received", "subjectivity complete: signed app"
+    subj_patterns = [
+        r'mark\s+(.+?)\s+(?:as\s+)?received',
+        r'subjectivity\s+(?:complete|received|done):\s*(.+)',
+        r'received\s+(.+)',
+    ]
+
+    subj_desc = None
+    for pattern in subj_patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            subj_desc = match.group(1).strip()
+            break
+
+    if not subj_desc:
+        # Show list of pending subjectivities
+        try:
+            pending = subj_mgmt.get_pending_subjectivities(submission_id)
+            if pending:
+                pending_list = "\n".join([f"• {s['text'][:60]}..." if len(s['text']) > 60 else f"• {s['text']}" for s in pending[:5]])
+                return {"type": "text", "content": f"Which subjectivity was received?\n\n{pending_list}\n\nSay 'mark [description] received'"}
+            else:
+                return {"type": "text", "content": "No pending subjectivities found for this submission."}
+        except Exception as e:
+            return {"type": "text", "content": "Please specify which subjectivity. Example: 'mark financials received'"}
+
+    # Find matching subjectivity
+    try:
+        matching = subj_mgmt.find_matching_subjectivity(submission_id, subj_desc, status="pending")
+    except Exception as e:
+        return {"type": "error", "message": f"Error searching subjectivities: {str(e)}"}
+
+    if not matching:
+        return {"type": "text", "content": f"No pending subjectivity matching '{subj_desc}' found."}
+
+    action_id = f"subj_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "mark_subjectivity",
+        "submission_id": submission_id,
+        "subjectivity_id": matching["id"],
+        "subjectivity_text": matching["text"]
+    }
+
+    display_text = matching["text"][:50] + "..." if len(matching["text"]) > 50 else matching["text"]
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": "Mark subjectivity as received",
+        "changes": [{"field": "Subjectivity", "from": display_text, "to": "Received"}],
+        "warnings": []
+    }
+
+
+def _execute_mark_subjectivity(preview: dict):
+    """Execute marking subjectivity as received."""
+    from core import subjectivity_management as subj_mgmt
+
+    subj_id = preview.get("subjectivity_id")
+
+    if not subj_id:
+        return {"type": "action_result", "success": False, "message": "Subjectivity not found"}
+
+    try:
+        success = subj_mgmt.mark_received(
+            subjectivity_id=subj_id,
+            received_by="ai_agent",
+            notes="Marked via AI agent"
+        )
+
+        if success:
+            return {"type": "action_result", "success": True, "message": "Subjectivity marked as received"}
+        else:
+            return {"type": "action_result", "success": False, "message": "Failed to update subjectivity"}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"Error: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin Actions: Issue Policy (Generate Binder)
+# ─────────────────────────────────────────────────────────────
+
+def _action_issue_policy(submission_id: str, params: dict):
+    """Preview issuing/binding a policy."""
+    import uuid
+    from core import subjectivity_management as subj_mgmt
+
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT s.applicant_name,
+                   t.id as tower_id, t.quote_name, t.is_bound, t.sold_premium
+            FROM submissions s
+            LEFT JOIN insurance_towers t ON t.submission_id = s.id
+            WHERE s.id = %s
+            ORDER BY t.is_bound DESC, t.sold_premium DESC NULLS LAST
+        """, (submission_id,))
+        rows = cur.fetchall()
+
+    if not rows:
+        return {"type": "error", "message": "Submission not found"}
+
+    applicant_name = rows[0]["applicant_name"]
+    bound_tower = next((r for r in rows if r["is_bound"]), None)
+
+    warnings = []
+
+    # Check pending subjectivities
+    try:
+        pending_count = subj_mgmt.get_pending_count(submission_id)
+        if pending_count > 0:
+            warnings.append(f"{pending_count} subjectivities still pending")
+    except:
+        pass
+
+    if bound_tower:
+        # Already bound - offer to regenerate binder
+        action_id = f"issue_{uuid.uuid4().hex[:8]}"
+        _pending_actions[action_id] = {
+            "action_type": "issue_policy",
+            "submission_id": submission_id,
+            "tower_id": bound_tower["tower_id"],
+            "regenerate": True
+        }
+
+        return {
+            "type": "action_preview",
+            "action_id": action_id,
+            "description": f"Regenerate binder for {applicant_name}",
+            "changes": [{"field": "Action", "from": "Bound", "to": "Regenerate Binder"}],
+            "warnings": warnings
+        }
+    else:
+        # Not bound - need to select a quote to bind
+        quotes = [r for r in rows if r["tower_id"]]
+        if not quotes:
+            return {"type": "text", "content": "No quote options found. Create a quote first."}
+
+        if len(quotes) == 1:
+            # Single quote - can proceed
+            quote = quotes[0]
+            action_id = f"issue_{uuid.uuid4().hex[:8]}"
+            _pending_actions[action_id] = {
+                "action_type": "issue_policy",
+                "submission_id": submission_id,
+                "tower_id": quote["tower_id"],
+                "regenerate": False
+            }
+
+            premium_str = f"${quote['sold_premium']:,.0f}" if quote['sold_premium'] else "TBD"
+            return {
+                "type": "action_preview",
+                "action_id": action_id,
+                "description": f"Bind and issue policy for {applicant_name}",
+                "changes": [
+                    {"field": "Status", "from": "Quoted", "to": "Bound"},
+                    {"field": "Premium", "from": "-", "to": premium_str}
+                ],
+                "warnings": warnings
+            }
+        else:
+            # Multiple quotes - ask which one
+            quote_list = "\n".join([f"• {q['quote_name'] or 'Option'}: ${q['sold_premium']:,.0f}" if q['sold_premium'] else f"• {q['quote_name'] or 'Option'}" for q in quotes[:5]])
+            return {"type": "text", "content": f"Multiple quote options found. Please bind a specific option first:\n\n{quote_list}"}
+
+
+def _execute_issue_policy(preview: dict):
+    """Execute policy issuance."""
+    from core import document_generator
+
+    submission_id = preview["submission_id"]
+    tower_id = preview["tower_id"]
+    regenerate = preview.get("regenerate", False)
+
+    try:
+        if not regenerate:
+            # Bind the quote first
+            with get_conn() as conn:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+                cur.execute("""
+                    UPDATE insurance_towers
+                    SET is_bound = true, bound_at = %s
+                    WHERE id = %s
+                    RETURNING id
+                """, (datetime.utcnow(), tower_id))
+                conn.commit()
+
+        # Generate binder document
+        doc = document_generator.generate_document(
+            submission_id=submission_id,
+            quote_option_id=tower_id,
+            doc_type="binder",
+            created_by="ai_agent"
+        )
+
+        action = "Binder regenerated" if regenerate else "Policy bound and binder issued"
+        return {"type": "action_result", "success": True, "message": action}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"Failed to issue policy: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin Actions: Cancel Policy
+# ─────────────────────────────────────────────────────────────
+
+# Cancellation reason codes
+CANCELLATION_REASONS = {
+    "insured_request": "Insured Request",
+    "non_payment": "Non-Payment of Premium",
+    "material_change": "Material Change in Risk",
+    "misrepresentation": "Misrepresentation",
+    "underwriting": "Underwriting Reasons",
+    "other": "Other"
+}
+
+def _action_cancel_policy(submission_id: str, params: dict):
+    """Preview policy cancellation."""
+    import uuid
+
+    message = params.get("message", "")
+
+    # Check if policy is bound
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT s.applicant_name, s.expiration_date,
+                   t.id as tower_id, t.sold_premium,
+                   EXISTS(SELECT 1 FROM insurance_towers t2 WHERE t2.submission_id = s.id AND t2.is_bound) as is_bound
+            FROM submissions s
+            LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = true
+            WHERE s.id = %s
+        """, (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+    if not sub["is_bound"]:
+        return {"type": "text", "content": "Cannot cancel - policy is not bound."}
+
+    # Try to extract reason from message
+    reason_code = None
+    for code, label in CANCELLATION_REASONS.items():
+        if code.replace("_", " ") in message.lower() or label.lower() in message.lower():
+            reason_code = code
+            break
+
+    # Try to extract effective date
+    cancel_date = date.today()
+    date_match = re.search(r'effective\s+(\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})', message, re.IGNORECASE)
+    if date_match:
+        try:
+            date_str = date_match.group(1)
+            if '/' in date_str:
+                parts = date_str.split('/')
+                if len(parts[2]) == 2:
+                    parts[2] = '20' + parts[2]
+                cancel_date = date(int(parts[2]), int(parts[0]), int(parts[1]))
+            else:
+                cancel_date = date.fromisoformat(date_str)
+        except:
+            pass
+
+    # Calculate return premium (pro-rata)
+    return_premium = 0
+    if sub["sold_premium"] and sub["expiration_date"]:
+        days_remaining = (sub["expiration_date"] - cancel_date).days
+        if days_remaining > 0:
+            return_premium = (float(sub["sold_premium"]) / 365) * days_remaining
+
+    warnings = []
+    if not reason_code:
+        reason_list = "\n".join([f"• {label}" for label in CANCELLATION_REASONS.values()])
+        return {"type": "text", "content": f"Please specify cancellation reason:\n\n{reason_list}\n\nExample: 'cancel policy insured request effective 1/15/26'"}
+
+    action_id = f"cancel_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "cancel_policy",
+        "submission_id": submission_id,
+        "tower_id": sub["tower_id"],
+        "reason_code": reason_code,
+        "cancel_date": cancel_date.isoformat(),
+        "return_premium": return_premium
+    }
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": f"Cancel policy for {sub['applicant_name']}",
+        "changes": [
+            {"field": "Status", "from": "Bound", "to": "Cancelled"},
+            {"field": "Reason", "from": "-", "to": CANCELLATION_REASONS[reason_code]},
+            {"field": "Effective", "from": "-", "to": str(cancel_date)},
+            {"field": "Return Premium", "from": "-", "to": f"${return_premium:,.0f}"}
+        ],
+        "warnings": warnings
+    }
+
+
+def _execute_cancel_policy(preview: dict):
+    """Execute policy cancellation."""
+    from core import endorsement_management as endorsements
+
+    submission_id = preview["submission_id"]
+    tower_id = preview["tower_id"]
+    reason_code = preview["reason_code"]
+    cancel_date = date.fromisoformat(preview["cancel_date"])
+    return_premium = preview.get("return_premium", 0)
+
+    try:
+        endo_id = endorsements.create_endorsement(
+            submission_id=submission_id,
+            tower_id=tower_id,
+            endorsement_type="cancellation",
+            effective_date=cancel_date,
+            description=f"Policy cancelled: {CANCELLATION_REASONS.get(reason_code, reason_code)}",
+            change_details={
+                "reason_code": reason_code,
+                "reason_label": CANCELLATION_REASONS.get(reason_code, reason_code)
+            },
+            premium_method="pro_rata",
+            premium_change=-return_premium,
+            created_by="ai_agent"
+        )
+
+        endorsements.issue_endorsement(endo_id, issued_by="ai_agent")
+
+        return_msg = f" (return premium: ${return_premium:,.0f})" if return_premium > 0 else ""
+        return {"type": "action_result", "success": True, "message": f"Policy cancelled effective {cancel_date}{return_msg}"}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"Cancellation failed: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin Actions: Reinstate Policy
+# ─────────────────────────────────────────────────────────────
+
+def _action_reinstate_policy(submission_id: str, params: dict):
+    """Preview policy reinstatement."""
+    import uuid
+
+    # Check if policy is cancelled
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT s.applicant_name, s.data_sources,
+                   t.id as tower_id, t.sold_premium
+            FROM submissions s
+            LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = true
+            WHERE s.id = %s
+        """, (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+
+    is_cancelled = sub.get("data_sources", {}).get("cancelled", False) if sub.get("data_sources") else False
+    if not is_cancelled:
+        return {"type": "text", "content": "Policy is not cancelled - nothing to reinstate."}
+
+    action_id = f"reinstate_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "reinstate_policy",
+        "submission_id": submission_id,
+        "tower_id": sub["tower_id"]
+    }
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": f"Reinstate policy for {sub['applicant_name']}",
+        "changes": [
+            {"field": "Status", "from": "Cancelled", "to": "Active"}
+        ],
+        "warnings": ["Reinstatement may require additional premium or underwriting review"]
+    }
+
+
+def _execute_reinstate_policy(preview: dict):
+    """Execute policy reinstatement."""
+    from core import endorsement_management as endorsements
+
+    submission_id = preview["submission_id"]
+    tower_id = preview["tower_id"]
+
+    try:
+        endo_id = endorsements.create_endorsement(
+            submission_id=submission_id,
+            tower_id=tower_id,
+            endorsement_type="reinstatement",
+            effective_date=date.today(),
+            description="Policy reinstated",
+            change_details={},
+            created_by="ai_agent"
+        )
+
+        endorsements.issue_endorsement(endo_id, issued_by="ai_agent")
+
+        return {"type": "action_result", "success": True, "message": "Policy reinstated"}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"Reinstatement failed: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin Actions: Decline Submission
+# ─────────────────────────────────────────────────────────────
+
+# Decline reason codes
+DECLINE_REASONS = {
+    "appetite": "Outside Appetite",
+    "controls": "Inadequate Controls",
+    "claims": "Adverse Claims History",
+    "financials": "Financial Concerns",
+    "industry": "Prohibited Industry",
+    "capacity": "Capacity Constraints",
+    "pricing": "Unable to Meet Pricing",
+    "information": "Insufficient Information",
+    "other": "Other"
+}
+
+def _action_decline_submission(submission_id: str, params: dict):
+    """Preview declining a submission."""
+    import uuid
+
+    message = params.get("message", "")
+
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT applicant_name, submission_status, submission_outcome
+            FROM submissions WHERE id = %s
+        """, (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+
+    if sub["submission_outcome"] == "bound":
+        return {"type": "text", "content": "Cannot decline - policy is already bound. Use cancel instead."}
+    if sub["submission_outcome"] == "declined":
+        return {"type": "text", "content": "Submission is already declined."}
+
+    # Try to extract reason from message
+    reason_code = None
+    for code, label in DECLINE_REASONS.items():
+        if code in message.lower() or label.lower() in message.lower():
+            reason_code = code
+            break
+
+    if not reason_code:
+        reason_list = "\n".join([f"• {label}" for label in DECLINE_REASONS.values()])
+        return {"type": "text", "content": f"Please specify decline reason:\n\n{reason_list}\n\nExample: 'decline outside appetite'"}
+
+    action_id = f"decline_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "decline_submission",
+        "submission_id": submission_id,
+        "reason_code": reason_code,
+        "reason_label": DECLINE_REASONS[reason_code]
+    }
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": f"Decline submission for {sub['applicant_name']}",
+        "changes": [
+            {"field": "Status", "from": sub["submission_status"] or "pending", "to": "Declined"},
+            {"field": "Reason", "from": "-", "to": DECLINE_REASONS[reason_code]}
+        ],
+        "warnings": []
+    }
+
+
+def _execute_decline_submission(preview: dict):
+    """Execute submission decline."""
+    submission_id = preview["submission_id"]
+    reason_code = preview["reason_code"]
+    reason_label = preview["reason_label"]
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                UPDATE submissions
+                SET submission_status = 'declined',
+                    submission_outcome = 'declined',
+                    outcome_reason = %s,
+                    status_updated_at = %s
+                WHERE id = %s
+            """, (reason_label, datetime.utcnow(), submission_id))
+            conn.commit()
+
+        return {"type": "action_result", "success": True, "message": f"Submission declined: {reason_label}"}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"Decline failed: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin Actions: Add Note
+# ─────────────────────────────────────────────────────────────
+
+def _action_add_note(submission_id: str, params: dict):
+    """Add a note to the submission."""
+    import uuid
+
+    message = params.get("message", "")
+
+    # Extract note content - everything after "add note" or "note:"
+    note_patterns = [
+        r'add\s+note[:\s]+(.+)',
+        r'note[:\s]+(.+)',
+        r'add\s+(.+)',
+    ]
+
+    note_text = None
+    for pattern in note_patterns:
+        match = re.search(pattern, message, re.IGNORECASE | re.DOTALL)
+        if match:
+            note_text = match.group(1).strip()
+            break
+
+    if not note_text:
+        return {"type": "text", "content": "Please specify the note content. Example: 'add note: Spoke with broker, they will send updated app by Friday'"}
+
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT applicant_name FROM submissions WHERE id = %s", (submission_id,))
+        sub = cur.fetchone()
+
+    if not sub:
+        return {"type": "error", "message": "Submission not found"}
+
+    action_id = f"note_{uuid.uuid4().hex[:8]}"
+    _pending_actions[action_id] = {
+        "action_type": "add_note",
+        "submission_id": submission_id,
+        "note_text": note_text
+    }
+
+    # Truncate for preview
+    preview_text = note_text[:100] + "..." if len(note_text) > 100 else note_text
+
+    return {
+        "type": "action_preview",
+        "action_id": action_id,
+        "description": f"Add note to {sub['applicant_name']}",
+        "changes": [
+            {"field": "Note", "from": "-", "to": preview_text}
+        ],
+        "warnings": []
+    }
+
+
+def _execute_add_note(preview: dict):
+    """Execute adding a note."""
+    submission_id = preview["submission_id"]
+    note_text = preview["note_text"]
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            # Append to existing uw_notes or create new
+            cur.execute("""
+                UPDATE submissions
+                SET uw_notes = CASE
+                    WHEN uw_notes IS NULL OR uw_notes = '' THEN %s
+                    ELSE uw_notes || E'\n\n---\n' || %s
+                END,
+                note_updated_at = %s,
+                note_updated_by = 'ai_agent'
+                WHERE id = %s
+            """, (
+                f"[{datetime.utcnow().strftime('%Y-%m-%d %H:%M')}] {note_text}",
+                f"[{datetime.utcnow().strftime('%Y-%m-%d %H:%M')}] {note_text}",
+                datetime.utcnow(),
+                submission_id
+            ))
+            conn.commit()
+
+        return {"type": "action_result", "success": True, "message": "Note added"}
+    except Exception as e:
+        return {"type": "action_result", "success": False, "message": f"Failed to add note: {str(e)}"}
+
+
+# ─────────────────────────────────────────────────────────────
+# Quote Command Handler (AI-powered quote generation)
+# ─────────────────────────────────────────────────────────────
+
+import re as _quote_re  # Import for quote command regex patterns
+
+
+def _action_quote_command(submission_id: str, params: dict):
+    """
+    Handle natural language quote commands:
+    - Options: "1M, 3M, 5M at 50K retention" → creates multiple primary quote options
+    - Tower: "XL primary $5M, CMAI $5M xs $5M" → creates excess quote with tower
+    - Coverage: "set SE to 250K" → modifies coverage sublimits
+    """
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    command = params.get("command", "")
+    if not command:
+        return {"type": "error", "message": "No command provided"}
+
+    cmd_lower = command.lower().strip()
+
+    # Determine command type
+    if _is_options_command(cmd_lower):
+        return _handle_options_command(submission_id, command)
+    elif _is_tower_command(cmd_lower):
+        return _handle_tower_command(submission_id, command)
+    elif _is_coverage_command(cmd_lower):
+        return _handle_coverage_command(submission_id, command)
+    else:
+        # Try AI routing to determine intent
+        return _ai_route_quote_command(submission_id, command)
+
+
+def _is_options_command(cmd: str) -> bool:
+    """Check if command is requesting multiple quote options."""
+    patterns = [
+        r'\boptions?\b',
+        r'\bquote\s+\d+[mk]?\s*(,|and)',
+        r'\d+[mk]?\s*,\s*\d+[mk]?\s*(,|and)?\s*\d*[mk]?\s*(option|at|with|retention)',
+        r'(give|create|generate|make)\s+(me\s+)?\d+[mk]',
+    ]
+    return any(_quote_re.search(p, cmd) for p in patterns)
+
+
+def _is_tower_command(cmd: str) -> bool:
+    """Check if command is tower-related."""
+    tower_keywords = [
+        r'\bxs\b',
+        r'\bexcess\s+(of|option|quote)',
+        r'\bprimary\b.*\bfor\b',
+        r'\b(xl|berkley|beazley|axa|chubb|zurich|liberty|hartford|travelers)\b.*\d+[mk]',
+        r'\btower\b',
+        r'\bsir\b',
+        r'\b\d+[mk]\s*x\s*\d+[mk]',
+    ]
+    return any(_quote_re.search(kw, cmd) for kw in tower_keywords)
+
+
+def _is_coverage_command(cmd: str) -> bool:
+    """Check if command is coverage-related."""
+    coverage_keywords = [
+        r'\bset\s+.+\s+to\s+\d+',
+        r'\bchange\s+.+\s+to\s+\d+',
+        r'\bsublimit',
+        r'\bsocial\s+engineering',
+        r'\bftf\b',
+        r'\bransomware',
+    ]
+    return any(_quote_re.search(kw, cmd) for kw in coverage_keywords)
+
+
+def _handle_options_command(submission_id: str, command: str):
+    """
+    Handle multiple quote options generation.
+    E.g., "1M, 3M, 5M options at 50K retention"
+    """
+    # Use AI to parse the command
+    parsed = _ai_parse_options_command(command)
+    if not parsed or not parsed.get("limits"):
+        # Fallback to regex parsing
+        parsed = _regex_parse_options(command)
+
+    if not parsed or not parsed.get("limits"):
+        return {"type": "error", "message": "Could not parse options. Try: '1M, 3M, 5M at 50K retention'"}
+
+    limits = parsed.get("limits", [])
+    retention = parsed.get("retention", 25000)
+
+    # Import premium calculator
+    from rating_engine.premium_calculator import calculate_premium_for_submission
+
+    created_quotes = []
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for limit in limits:
+                # Calculate premium for this limit
+                result = calculate_premium_for_submission(submission_id, limit, retention)
+                premium = None
+                technical_premium = None
+                if result and "error" not in result:
+                    premium = result.get("risk_adjusted_premium")
+                    technical_premium = result.get("technical_premium")
+
+                # Build tower JSON
+                tower_json = [{
+                    "carrier": "CMAI",
+                    "limit": limit,
+                    "attachment": 0,
+                    "premium": premium,
+                    "retention": retention,
+                }]
+
+                # Generate quote name
+                quote_name = _format_limit_short(limit)
+                if retention:
+                    quote_name += f" x {_format_limit_short(retention)}"
+
+                # Insert quote
+                cur.execute("""
+                    INSERT INTO insurance_towers (
+                        submission_id, quote_name, primary_retention,
+                        tower_json, position, technical_premium,
+                        risk_adjusted_premium, sold_premium
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id, quote_name
+                """, (
+                    submission_id,
+                    quote_name,
+                    retention,
+                    json.dumps(tower_json),
+                    'primary',
+                    technical_premium,
+                    premium,
+                    premium,
+                ))
+                row = cur.fetchone()
+                created_quotes.append({
+                    "id": str(row["id"]),
+                    "name": row["quote_name"],
+                    "limit": limit,
+                    "retention": retention,
+                    "premium": premium,
+                })
+            conn.commit()
+
+    limit_strs = [_format_limit_short(l) for l in limits]
+    return {
+        "type": "structured",
+        "message": f"Created {len(created_quotes)} quote options: {', '.join(limit_strs)} at {_format_limit_short(retention)} retention",
+        "data": {
+            "quotes": created_quotes,
+            "action": "quotes_created"
+        }
+    }
+
+
+def _handle_tower_command(submission_id: str, command: str):
+    """
+    Handle tower/excess quote commands.
+    E.g., "XL primary $5M x $50K SIR, CMAI $5M xs $5M for $45K"
+    """
+    parsed = _ai_parse_tower_command(command)
+    if not parsed:
+        return {"type": "error", "message": "Could not parse tower command. Try: 'XL primary $5M, CMAI $5M xs $5M'"}
+
+    layers = parsed.get("layers", [])
+    retention = parsed.get("retention", 25000)
+
+    if not layers:
+        return {"type": "error", "message": "No layers found in command"}
+
+    # Import premium calculator
+    from rating_engine.premium_calculator import calculate_premium_for_submission
+
+    # Find CMAI layer and calculate premium using ILF
+    cmai_layer = next((l for l in layers if l.get("carrier", "").upper() == "CMAI"), None)
+    premium = None
+    technical_premium = None
+
+    if cmai_layer:
+        our_limit = cmai_layer.get("limit", 1000000)
+        our_attachment = cmai_layer.get("attachment", 0)
+
+        if our_attachment > 0:
+            # Excess: ILF approach
+            total_limit = our_attachment + our_limit
+            total_result = calculate_premium_for_submission(submission_id, total_limit, retention)
+            underlying_result = calculate_premium_for_submission(submission_id, our_attachment, retention)
+
+            if total_result and underlying_result and "error" not in total_result and "error" not in underlying_result:
+                premium = max(0, (total_result.get("risk_adjusted_premium") or 0) - (underlying_result.get("risk_adjusted_premium") or 0))
+                technical_premium = max(0, (total_result.get("technical_premium") or 0) - (underlying_result.get("technical_premium") or 0))
+                cmai_layer["premium"] = premium
+        else:
+            # Primary
+            result = calculate_premium_for_submission(submission_id, our_limit, retention)
+            if result and "error" not in result:
+                premium = result.get("risk_adjusted_premium")
+                technical_premium = result.get("technical_premium")
+                cmai_layer["premium"] = premium
+
+    # Generate quote name from tower structure
+    quote_name = _generate_tower_quote_name(layers, retention)
+    position = "excess" if cmai_layer and cmai_layer.get("attachment", 0) > 0 else "primary"
+
+    # Insert quote
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO insurance_towers (
+                    submission_id, quote_name, primary_retention,
+                    tower_json, position, technical_premium,
+                    risk_adjusted_premium, sold_premium
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, quote_name
+            """, (
+                submission_id,
+                quote_name,
+                retention,
+                json.dumps(layers),
+                position,
+                technical_premium,
+                premium,
+                premium,
+            ))
+            row = cur.fetchone()
+            conn.commit()
+
+    return {
+        "type": "structured",
+        "message": f"Created {position} quote: {quote_name}",
+        "data": {
+            "quote": {
+                "id": str(row["id"]),
+                "name": row["quote_name"],
+                "position": position,
+                "layers": layers,
+                "retention": retention,
+                "premium": premium,
+            },
+            "action": "quote_created"
+        }
+    }
+
+
+def _handle_coverage_command(submission_id: str, command: str):
+    """
+    Handle coverage/sublimit modification commands.
+    E.g., "set SE to 250K" or "change ransomware sublimit to 500K"
+    """
+    parsed = _ai_parse_coverage_command(command)
+    if not parsed:
+        return {"type": "error", "message": "Could not parse coverage command. Try: 'set social engineering to 250K'"}
+
+    return {
+        "type": "structured",
+        "message": f"Parsed coverage change: {parsed.get('coverage')} → {_format_limit_short(parsed.get('value', 0))}",
+        "data": {
+            "coverage": parsed.get("coverage"),
+            "value": parsed.get("value"),
+            "action": "coverage_change",
+            "note": "Apply this change to a specific quote option"
+        }
+    }
+
+
+def _ai_route_quote_command(submission_id: str, command: str):
+    """Use AI to determine intent when patterns don't match."""
+    client = openai.OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": """Classify this quote command:
+- "options": Multiple quote options at different limits (e.g., "1M, 3M, 5M at 50K")
+- "tower": Excess/tower structure with carriers (e.g., "XL primary, CMAI excess")
+- "coverage": Sublimit/coverage changes (e.g., "set SE to 250K")
+- "unknown": Cannot classify
+
+Return JSON: {"type": "options|tower|coverage|unknown"}"""},
+            {"role": "user", "content": command}
+        ],
+        temperature=0,
+        max_tokens=50,
+        response_format={"type": "json_object"}
+    )
+
+    try:
+        result = json.loads(response.choices[0].message.content)
+        cmd_type = result.get("type", "unknown")
+
+        if cmd_type == "options":
+            return _handle_options_command(submission_id, command)
+        elif cmd_type == "tower":
+            return _handle_tower_command(submission_id, command)
+        elif cmd_type == "coverage":
+            return _handle_coverage_command(submission_id, command)
+        else:
+            return {"type": "text", "content": "I couldn't understand that command. Try:\n• '1M, 3M, 5M at 50K retention' for options\n• 'XL primary $5M, CMAI $5M xs $5M' for tower\n• 'set SE to 250K' for coverage"}
+    except:
+        return {"type": "error", "message": "Failed to parse command"}
+
+
+def _ai_parse_options_command(command: str) -> dict:
+    """Use AI to parse options command."""
+    try:
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": f"""Parse this insurance quote options request.
+
+Command: "{command}"
+
+Extract:
+- "limits": array of limit amounts in dollars (e.g., [1000000, 3000000, 5000000])
+- "retention": retention/deductible amount in dollars (e.g., 50000)
+
+Convert: K = thousands (50K = 50000), M = millions (5M = 5000000).
+Return ONLY valid JSON."""}],
+            temperature=0,
+            max_tokens=200,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except:
+        return None
+
+
+def _ai_parse_tower_command(command: str) -> dict:
+    """Use AI to parse tower command."""
+    try:
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": f"""Parse this insurance tower request.
+
+Request: "{command}"
+
+Return JSON with:
+- "layers": array of layers, each with carrier, limit, attachment, premium (null if not specified)
+- "retention": SIR/retention amount in dollars
+
+Rules:
+- Primary layer (first carrier) has attachment=0
+- Each excess layer's attachment = sum of limits below it
+- Convert K=thousands, M=millions
+- "xs" means "excess of" (indicates attachment point)
+- "x" between numbers usually means limit x retention (e.g., "5M x 50K" = limit 5M, retention 50K)
+
+Example: "XL primary 5M x 50K SIR, CMAI 5M xs 5M for 45K"
+Returns: {{"layers": [{{"carrier": "XL", "limit": 5000000, "attachment": 0, "premium": null}}, {{"carrier": "CMAI", "limit": 5000000, "attachment": 5000000, "premium": 45000}}], "retention": 50000}}
+
+Return ONLY valid JSON."""}],
+            temperature=0,
+            max_tokens=400,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except:
+        return None
+
+
+def _ai_parse_coverage_command(command: str) -> dict:
+    """Use AI to parse coverage command."""
+    try:
+        client = openai.OpenAI()
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": f"""Parse this coverage/sublimit command.
+
+Command: "{command}"
+
+Common coverages and abbreviations:
+- SE = Social Engineering
+- FTF = Funds Transfer Fraud
+- BEC = Business Email Compromise
+- Ransomware
+- Cryptojacking
+- BI = Business Interruption
+- PCI = PCI-DSS fines
+
+Return JSON: {{"coverage": "full coverage name", "value": amount_in_dollars}}
+Convert K=thousands, M=millions.
+
+Example: "set SE to 250K" -> {{"coverage": "Social Engineering", "value": 250000}}"""
+            }],
+            temperature=0,
+            max_tokens=100,
+            response_format={"type": "json_object"}
+        )
+        return json.loads(response.choices[0].message.content)
+    except:
+        return None
+
+
+def _regex_parse_options(command: str) -> dict:
+    """Fallback regex parsing for options."""
+    cmd_lower = command.lower()
+    amounts = _quote_re.findall(r'(\d+(?:\.\d+)?)\s*([mk])?', cmd_lower)
+
+    limits = []
+    retention = None
+
+    for amt_str, suffix in amounts:
+        amount = float(amt_str)
+        if suffix == 'm':
+            amount *= 1_000_000
+        elif suffix == 'k':
+            amount *= 1_000
+        amount = int(amount)
+
+        if amount >= 500_000:
+            limits.append(amount)
+        else:
+            retention = amount
+
+    if limits:
+        return {"limits": limits, "retention": retention or 25000}
+    return None
+
+
+def _format_limit_short(amount: int) -> str:
+    """Format limit as short string (e.g., 1000000 -> $1M)."""
+    if amount >= 1_000_000:
+        if amount % 1_000_000 == 0:
+            return f"${amount // 1_000_000}M"
+        return f"${amount / 1_000_000:.1f}M"
+    elif amount >= 1_000:
+        if amount % 1_000 == 0:
+            return f"${amount // 1_000}K"
+        return f"${amount / 1_000:.1f}K"
+    return f"${amount:,}"
+
+
+def _generate_tower_quote_name(layers: list, retention: int) -> str:
+    """Generate quote name from tower structure."""
+    cmai_layer = next((l for l in layers if l.get("carrier", "").upper() == "CMAI"), None)
+    if not cmai_layer:
+        return "Quote"
+
+    limit = cmai_layer.get("limit", 0)
+    attachment = cmai_layer.get("attachment", 0)
+
+    if attachment > 0:
+        return f"{_format_limit_short(limit)} xs {_format_limit_short(attachment)} x {_format_limit_short(retention)}"
+    else:
+        return f"{_format_limit_short(limit)} x {_format_limit_short(retention)}"
 
 
 # ─────────────────────────────────────────────────────────────
