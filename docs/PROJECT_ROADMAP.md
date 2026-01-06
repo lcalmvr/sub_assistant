@@ -579,20 +579,28 @@ When a policy approaches expiration:
   - Contextual badge: `frontend/src/components/RenewalContextBadge.jsx`
   - Shows in UnifiedHeader with key change metrics
 
-- [ ] **8.3** Renewal pricing
+- [x] **8.3** Renewal pricing
   - Prior year loss ratio calculation
   - Rate change recommendation based on experience
   - Apply renewal credits/debits
+  - Module: `core/renewal_pricing.py`
+  - API: `GET /api/submissions/{id}/renewal-pricing`
+  - UI: Pricing recommendation card in RenewalPage
 
-- [ ] **8.4** Decision snapshot for renewals
-  - Capture `renewal_offered` snapshot type
-  - Compare bind-time controls vs renewal-time controls
-  - Track control improvements/degradations
+- [x] **8.4** Decision snapshot for renewals
+  - Capture renewal context at bind (prior link, loss ratio, rate change)
+  - `capture_renewal_decision_snapshot()` function
+  - `v_renewal_decision_history` view for chain tracking
+  - API: `GET /api/submissions/{id}/decision-history`
+  - Migration: `db_setup/decision_snapshots_renewal.sql`
 
-- [ ] **8.5** Renewal automation
-  - Auto-generate renewal quote for clean accounts
-  - Broker notification workflow
-  - Expiration warning notifications (ties to Phase 6)
+- [x] **8.5** Renewal automation
+  - Auto-create expectations for expiring policies (90 days)
+  - Auto-mark overdue expectations as not received (30 days grace)
+  - Match incoming submissions to pending expectations
+  - Module: `ingestion/renewal_automation.py`
+  - APIs: `/api/admin/renewal-automation/*`
+  - Pipeline integration for auto-linking
 
 ---
 
@@ -608,7 +616,14 @@ When a policy approaches expiration:
 | Phase 5: Claims Feedback | Not Started | - | - |
 | Phase 6: Proactive Notifications | Not Started | - | - |
 | Phase 7: Remarket Detection | Complete | 2026-01-06 | 2026-01-06 |
-| Phase 8: Policy Renewal | In Progress | 2026-01-06 | - |
+| Phase 8: Policy Renewal | Complete | 2026-01-06 | 2026-01-06 |
+| Phase 9: Underwriter Assignment | Not Started | - | - |
+| Phase 10: Policy Issuance Workflow | Not Started | - | - |
+| Phase 11: Email Vote Queue | Not Started | - | - |
+| Phase 12: Incumbent/Expiring Tower | Not Started | - | - |
+| Phase 13: UW Knowledge Base | Not Started | - | - |
+| Phase 14: Endorsement Management | Not Started | - | - |
+| Phase 15: UI Enhancements | Not Started | - | - |
 
 ### Summary: Done vs Open
 
@@ -633,11 +648,257 @@ When a policy approaches expiration:
   - ✅ 4 API endpoints for snapshot retrieval
   - ✅ Views ready for Phase 5 claims correlation
 
+- ✅ Phase 7: Remarket Detection
+  - ✅ Prior submission detection (FEIN, domain, fuzzy name)
+  - ✅ Remarket linking UI with import capability
+  - ✅ Remarket analytics dashboard
+- ✅ Phase 8: Policy Renewal Workflow
+  - ✅ Renewal queue UI in AdminPage
+  - ✅ Renewal comparison view (dedicated tab + header badges)
+  - ✅ Renewal pricing with loss ratio and experience factors
+  - ✅ Decision snapshots for renewals
+  - ✅ Renewal automation (expectations, matching, overdue handling)
+
 **FUTURE:**
 - Phase 5: Claims feedback loop
 - Phase 6: Proactive agent notifications
-- Phase 7: Remarket detection (prior submission linking)
-- Phase 8: Policy renewal workflow
+- Phase 9-15: See detailed sections below
+
+---
+
+## Phase 9: Underwriter Assignment
+
+Track who is working on each submission/account.
+
+### Concept
+
+Every submission should have an assigned underwriter. This enables:
+- Workload distribution visibility
+- Accountability tracking
+- Filtering "my accounts" vs "all accounts"
+- Audit trail of who made decisions
+
+### Tasks
+
+- [ ] **9.1** Add underwriter fields to submissions
+  - `assigned_underwriter_id` - FK to users table
+  - `assigned_at` - when assigned
+  - `assigned_by` - who assigned (can be auto or manual)
+
+- [ ] **9.2** Auto-assignment logic
+  - Round-robin by capacity
+  - Broker relationship (same UW for same broker)
+  - Industry specialization
+
+- [ ] **9.3** Assignment UI
+  - Dropdown in header to assign/reassign
+  - "My Queue" filter on submissions list
+  - Workload dashboard showing distribution
+
+- [ ] **9.4** Decision attribution
+  - Track who quoted, who bound
+  - Show in decision snapshots
+  - Audit trail for compliance
+
+---
+
+## Phase 10: Policy Issuance Workflow
+
+Complete the bind → issue workflow with subjectivity tracking.
+
+### Current State
+
+- Bind flow exists (`bind_quote()`)
+- Subjectivity tracking exists (junction table)
+- Binder generation exists (`generate_binder_document()`)
+- Mark subjectivity received exists
+
+### Tasks
+
+- [ ] **10.1** Subjectivity deadline tracking
+  - Due dates on subjectivities (default: effective date)
+  - Warning when approaching deadline
+  - Block issuance if critical subjectivities pending
+
+- [ ] **10.2** Policy issuance checklist
+  - All critical subjectivities received
+  - Premium payment confirmed (optional)
+  - Policy documents generated
+
+- [ ] **10.3** Issuance workflow UI
+  - "Ready to Issue" indicator
+  - One-click issue when checklist complete
+  - Issue confirmation with policy number
+
+- [ ] **10.4** Post-issuance document generation
+  - Policy declarations page
+  - Full policy jacket
+  - Certificate of insurance template
+
+---
+
+## Phase 11: Email Vote Queue
+
+Allow voting on prescreen submissions via email link.
+
+### Concept
+
+Underwriters receive daily email with prescreen submissions. Each card has voting buttons that work directly from the email (no login required for simple votes).
+
+### Tasks
+
+- [ ] **11.1** Email template design
+  - Summary cards for each pending submission
+  - Quick vote buttons (Pursue / Pass / Need Info)
+  - Links to full submission if more detail needed
+
+- [ ] **11.2** Tokenized vote links
+  - Secure tokens that encode: submission_id, voter_id, vote_type
+  - Expiration (e.g., 24 hours)
+  - One-click voting without login
+
+- [ ] **11.3** Vote aggregation
+  - Same logic as web voting
+  - Email notification when consensus reached
+  - Digest of voting activity
+
+- [ ] **11.4** Scheduled email dispatch
+  - Daily digest of pending votes
+  - Configurable time (e.g., 7am local)
+  - Skip if no pending items
+
+---
+
+## Phase 12: Incumbent/Expiring Tower
+
+Capture and display incumbent carrier information for competitive analysis.
+
+### Current State
+
+- `incumbent_carrier`, `expiring_premium`, `years_with_carrier` fields exist
+- Basic display in AnalyzePage
+- No structured tower capture
+
+### Tasks
+
+- [ ] **12.1** Expiring tower data model
+  - `expiring_towers` table (carrier, limit, attachment, premium, retention)
+  - Link to submission
+  - Support multi-layer incumbent programs
+
+- [ ] **12.2** Extraction from documents
+  - Parse incumbent tower from applications
+  - Extract from loss run cover pages
+  - Extract from expiring dec pages
+
+- [ ] **12.3** Competitive analysis UI
+  - Side-by-side: Expiring vs Proposed
+  - Premium comparison (rate per million)
+  - Coverage comparison matrix
+
+- [ ] **12.4** Win/loss tracking by incumbent
+  - Which carriers we compete against
+  - Win rate by incumbent carrier
+  - Premium differential when we win vs lose
+
+---
+
+## Phase 13: UW Knowledge Base
+
+Living underwriting guide accessible to AI agents.
+
+### Concept
+
+A structured knowledge base that:
+- Documents underwriting appetite and guidelines
+- Provides context to AI agents for better recommendations
+- Can be updated as guidelines evolve
+- Versioned for audit trail
+
+### Tasks
+
+- [ ] **13.1** Knowledge base data model
+  - Categories: appetite, pricing, coverage, claims
+  - Versioned entries with effective dates
+  - Tags for AI retrieval
+
+- [ ] **13.2** Admin UI for knowledge management
+  - CRUD for knowledge entries
+  - Rich text editing
+  - Version history
+
+- [ ] **13.3** AI agent integration
+  - RAG retrieval for relevant knowledge
+  - Include in agent system prompts
+  - Citation of sources in responses
+
+- [ ] **13.4** Seed initial content
+  - Import existing guidelines
+  - Document tribal knowledge
+  - Claims learnings
+
+---
+
+## Phase 14: Endorsement Management
+
+UI for managing endorsements with fill-in fields.
+
+### Current State
+
+- Endorsement catalog exists (`endorsement_catalog`)
+- Component templates exist (`endorsement_component_templates`)
+- Policy endorsements table exists
+- Add/remove endorsements works
+
+### Tasks
+
+- [ ] **14.1** Additional insured endorsements
+  - Structured AI fill-in capture (name, address, relationship)
+  - Multiple AIs per endorsement
+  - Schedule of AIs document generation
+
+- [ ] **14.2** Endorsement fill-in UI
+  - Dynamic form based on endorsement template
+  - Field validation
+  - Preview before adding
+
+- [ ] **14.3** Mid-term endorsements
+  - Add endorsement to bound policy
+  - Premium adjustment calculation
+  - Endorsement document generation
+
+- [ ] **14.4** Endorsement library management
+  - Admin UI to manage templates
+  - Fill-in field definitions
+  - Premium rules per endorsement
+
+---
+
+## Phase 15: UI Enhancements
+
+Various UI improvements for usability.
+
+### Tasks
+
+- [ ] **15.1** Header editing
+  - Edit revenue directly in header
+  - Edit industry/NAICS in header
+  - Inline editing pattern
+
+- [ ] **15.2** Setup page full screen
+  - Remove sidebar on setup
+  - Full-width document viewer
+  - Better use of screen real estate
+
+- [ ] **15.3** Responsive improvements
+  - Mobile-friendly submission list
+  - Tablet layout for underwriting
+  - Keyboard navigation
+
+- [ ] **15.4** Dark mode
+  - Theme toggle in settings
+  - Persist preference
+  - System preference detection
 
 ---
 
