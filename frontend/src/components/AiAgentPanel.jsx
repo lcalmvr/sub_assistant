@@ -194,35 +194,8 @@ function HelpSection({ submissionId, onActionClick }) {
 
       {isOpen && (
         <div className="px-4 pb-4 max-h-[400px] overflow-y-auto">
-          {capabilities?.categories?.map((category, i) => (
-            <div key={i} className="mb-5 last:mb-2">
-              {/* Category header */}
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  {categoryIcons[category.name] || categoryIcons['Analysis']}
-                </svg>
-                {category.name}
-              </div>
-
-              {/* Action pills in a grid */}
-              <div className="flex flex-wrap gap-1.5">
-                {category.actions.map((action, j) => (
-                  <button
-                    key={j}
-                    title={getTooltip(action)}
-                    onClick={() => onActionClick?.(action.examples?.[0] || action.name)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full hover:bg-purple-100 hover:text-purple-700 cursor-pointer transition-colors"
-                  >
-                    <ActionIconSmall actionName={action.name} />
-                    {action.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-
-          {/* Feature Request */}
-          <div className="mt-4 pt-3 border-t border-gray-200">
+          {/* Feature Request - at top */}
+          <div className="mb-5 pb-4 border-b border-gray-200">
             {!showRequestForm ? (
               <button
                 onClick={() => setShowRequestForm(true)}
@@ -268,6 +241,34 @@ function HelpSection({ submissionId, onActionClick }) {
               </form>
             )}
           </div>
+
+          {/* Categories */}
+          {capabilities?.categories?.map((category, i) => (
+            <div key={i} className="mb-6 last:mb-0">
+              {/* Category header */}
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {categoryIcons[category.name] || categoryIcons['Analysis']}
+                </svg>
+                {category.name}
+              </div>
+
+              {/* Action pills in a grid */}
+              <div className="flex flex-wrap gap-1.5">
+                {category.actions.map((action, j) => (
+                  <button
+                    key={j}
+                    title={getTooltip(action)}
+                    onClick={() => onActionClick?.(action.examples?.[0] || action.name)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full hover:bg-purple-100 hover:text-purple-700 cursor-pointer transition-colors"
+                  >
+                    <ActionIconSmall actionName={action.name} />
+                    {action.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

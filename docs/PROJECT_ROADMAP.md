@@ -558,10 +558,16 @@ When a policy approaches expiration:
 
 ### Tasks
 
-- [ ] **8.1** Renewal detection and queue
+- [x] **8.1** Renewal detection and queue
   - Identify policies expiring in 60/90 days
   - Auto-create renewal submission linked to expiring policy
   - Pre-populate with bind-time data
+  - API: `GET /api/renewals/queue` (comprehensive queue)
+  - API: `POST /api/renewals/{id}/create-expectation`
+  - API: `POST /api/renewals/{id}/mark-received`
+  - API: `POST /api/renewals/{id}/mark-not-received`
+  - Component: `frontend/src/components/RenewalQueueCard.jsx`
+  - AdminPage "Renewals" tab (first tab)
 
 - [x] **8.2** Renewal comparison view
   - Side-by-side: expiring vs renewal terms
