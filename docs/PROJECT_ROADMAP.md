@@ -563,10 +563,15 @@ When a policy approaches expiration:
   - Auto-create renewal submission linked to expiring policy
   - Pre-populate with bind-time data
 
-- [ ] **8.2** Renewal comparison view
+- [x] **8.2** Renewal comparison view
   - Side-by-side: expiring vs renewal terms
   - Highlight changes (coverage, limits, premium)
   - Flag new claims since inception
+  - API: `GET /api/submissions/{id}/renewal-comparison`
+  - Component: `frontend/src/pages/RenewalPage.jsx`
+  - Conditional "Renewal" tab shown for renewal submissions
+  - Contextual badge: `frontend/src/components/RenewalContextBadge.jsx`
+  - Shows in UnifiedHeader with key change metrics
 
 - [ ] **8.3** Renewal pricing
   - Prior year loss ratio calculation
@@ -597,7 +602,7 @@ When a policy approaches expiration:
 | Phase 5: Claims Feedback | Not Started | - | - |
 | Phase 6: Proactive Notifications | Not Started | - | - |
 | Phase 7: Remarket Detection | Complete | 2026-01-06 | 2026-01-06 |
-| Phase 8: Policy Renewal | Not Started | - | - |
+| Phase 8: Policy Renewal | In Progress | 2026-01-06 | - |
 
 ### Summary: Done vs Open
 

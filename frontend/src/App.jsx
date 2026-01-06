@@ -68,6 +68,7 @@ import CompsPage from './pages/CompsPage';
 import RatingPage from './pages/RatingPage';
 import QuotePage from './pages/QuotePage';
 import PolicyPage from './pages/PolicyPage';
+import RenewalPage from './pages/RenewalPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -117,6 +118,8 @@ function App() {
           {/* Individual Submission with Tabs */}
           <Route path="/submissions/:submissionId" element={<SubmissionLayout />}>
             <Route index element={<Navigate to="setup" replace />} />
+            {/* Renewal summary page (conditional, only for renewals) */}
+            <Route path="renewal" element={<RenewalPage />} />
             {/* Phase 1: Setup page (Account + Review merged) */}
             <Route path="setup" element={<SetupPage />} />
             {/* Phase 2: Analyze page (UW + Rating + Comps merged) */}

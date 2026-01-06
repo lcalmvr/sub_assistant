@@ -8,13 +8,23 @@ import AiAgentPanel from '../components/AiAgentPanel';
 import UnifiedHeader from '../components/UnifiedHeader';
 import RemarketBanner from '../components/RemarketBanner';
 
-const tabs = [
+// Base tabs - always shown
+const baseTabs = [
   { name: 'Setup', path: 'setup' },
   { name: 'Analyze', path: 'analyze' },
   { name: 'Analyze V2', path: 'analyze-v2' },
   { name: 'Quote', path: 'quote' },
   { name: 'Policy', path: 'policy' },
 ];
+
+// Get tabs based on submission type
+function getTabs(submission) {
+  if (submission?.prior_submission_id) {
+    // For renewals, add Renewal tab at the beginning
+    return [{ name: 'Renewal', path: 'renewal' }, ...baseTabs];
+  }
+  return baseTabs;
+}
 
 // Status configuration
 const STATUSES = {
@@ -573,6 +583,9 @@ export default function SubmissionLayout() {
     queryKey: ['submission', submissionId],
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
+
+  // Get tabs based on submission type (renewals get extra tab)
+  const tabs = getTabs(submission);
 
   // Determine active tab from current path
   const activeTab = tabs.find(tab => location.pathname.includes(tab.path))?.path || 'setup';

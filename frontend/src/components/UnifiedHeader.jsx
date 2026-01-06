@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import RenewalContextBadge from './RenewalContextBadge';
 
 /**
  * UnifiedHeader - Combined dark nav bar with submission context
@@ -154,10 +155,27 @@ function DocsButton({ onClick }) {
   );
 }
 
+// AI Agent Button Component
+function AiAgentButton({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-2 py-1 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-md transition-colors"
+      title="AI Assistant (Cmd+K)"
+    >
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+      </svg>
+      <span>AI</span>
+    </button>
+  );
+}
+
 // Main UnifiedHeader Component
 export default function UnifiedHeader({
   submission,
   onDocsClick,
+  onAiClick,
   workflowBadge,
   correctionsBadge,
   tabs,
@@ -227,12 +245,19 @@ export default function UnifiedHeader({
           )}
         </div>
 
+        {/* Renewal badge (if applicable) */}
+        {submission?.prior_submission_id && (
+          <RenewalContextBadge submissionId={submission?.id} mode="compact" />
+        )}
+
         {/* Spacer */}
         <div className="flex-1" />
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
           <DocsButton onClick={onDocsClick} />
+
+          <AiAgentButton onClick={onAiClick} />
 
           {correctionsBadge}
 

@@ -172,6 +172,7 @@ export const getStatsSummary = () => api.get('/stats/summary');
 export const getUpcomingRenewals = (days = 90) => api.get(`/stats/upcoming-renewals?days=${days}`);
 export const getRenewalsNotReceived = () => api.get('/stats/renewals-not-received');
 export const getRetentionMetrics = () => api.get('/stats/retention-metrics');
+export const getRenewalComparison = (submissionId) => api.get(`/submissions/${submissionId}/renewal-comparison`);
 
 // Admin
 export const getBoundPolicies = (search = '') => {

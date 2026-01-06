@@ -4286,6 +4286,264 @@ def get_retention_metrics():
             }
 
 
+@app.get("/api/submissions/{submission_id}/renewal-comparison")
+def get_renewal_comparison(submission_id: str):
+    """
+    Get comprehensive renewal comparison data.
+
+    Returns prior year policy details, current submission details,
+    computed changes, loss history during term, and renewal chain.
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get current submission with prior link
+            cur.execute("""
+                SELECT
+                    s.id, s.applicant_name, s.prior_submission_id, s.renewal_type,
+                    s.effective_date, s.expiration_date,
+                    s.annual_revenue, s.employee_count, s.website,
+                    s.submission_status, s.submission_outcome,
+                    s.opportunity_notes, s.date_received
+                FROM submissions s
+                WHERE s.id = %s
+            """, (submission_id,))
+            current = cur.fetchone()
+
+            if not current:
+                raise HTTPException(status_code=404, detail="Submission not found")
+
+            if not current["prior_submission_id"]:
+                return {
+                    "is_renewal": False,
+                    "message": "This is not a renewal submission"
+                }
+
+            prior_id = str(current["prior_submission_id"])
+
+            # Get prior submission details
+            cur.execute("""
+                SELECT
+                    s.id, s.applicant_name, s.effective_date, s.expiration_date,
+                    s.annual_revenue, s.employee_count, s.website,
+                    s.submission_status, s.submission_outcome, s.outcome_reason,
+                    s.opportunity_notes, s.date_received
+                FROM submissions s
+                WHERE s.id = %s
+            """, (prior_id,))
+            prior = cur.fetchone()
+
+            # Get prior bound tower
+            cur.execute("""
+                SELECT
+                    t.id, t.quote_name, t.sold_premium, t.quoted_premium,
+                    t.policy_form, t.position,
+                    t.tower_json, t.coverages, t.endorsements,
+                    t.bound_at, t.bound_by
+                FROM insurance_towers t
+                WHERE t.submission_id = %s AND t.is_bound = TRUE
+            """, (prior_id,))
+            prior_tower = cur.fetchone()
+
+            # Get current tower (may be proposed, not bound yet)
+            cur.execute("""
+                SELECT
+                    t.id, t.quote_name, t.sold_premium, t.quoted_premium,
+                    t.policy_form, t.position,
+                    t.tower_json, t.coverages, t.endorsements,
+                    t.is_bound, t.bound_at
+                FROM insurance_towers t
+                WHERE t.submission_id = %s
+                ORDER BY t.is_bound DESC, t.created_at DESC
+                LIMIT 1
+            """, (submission_id,))
+            current_tower = cur.fetchone()
+
+            # Get loss history during prior policy period
+            loss_summary = {"count": 0, "total_paid": 0, "total_incurred": 0, "claims": []}
+            if prior and prior["effective_date"] and prior["expiration_date"]:
+                cur.execute("""
+                    SELECT
+                        id, loss_date, loss_type, loss_description,
+                        loss_amount, paid_amount, reserve_amount,
+                        claim_status, claim_number
+                    FROM loss_history
+                    WHERE submission_id = %s
+                    OR (submission_id = %s AND loss_date BETWEEN %s AND %s)
+                    ORDER BY loss_date DESC
+                """, (prior_id, submission_id, prior["effective_date"], prior["expiration_date"]))
+                claims = cur.fetchall()
+
+                loss_summary = {
+                    "count": len(claims),
+                    "total_paid": sum(float(c["paid_amount"] or 0) for c in claims),
+                    "total_incurred": sum(float(c["loss_amount"] or 0) for c in claims),
+                    "claims": [
+                        {
+                            "id": c["id"],
+                            "loss_date": c["loss_date"].isoformat() if c["loss_date"] else None,
+                            "loss_type": c["loss_type"],
+                            "description": c["loss_description"],
+                            "loss_amount": float(c["loss_amount"]) if c["loss_amount"] else None,
+                            "paid_amount": float(c["paid_amount"]) if c["paid_amount"] else None,
+                            "status": c["claim_status"],
+                        }
+                        for c in claims
+                    ]
+                }
+
+            # Get renewal chain (walk back through prior_submission_id)
+            chain = []
+            chain_id = submission_id
+            while chain_id:
+                cur.execute("""
+                    SELECT
+                        s.id, s.applicant_name, s.effective_date, s.expiration_date,
+                        s.submission_outcome, s.prior_submission_id,
+                        t.sold_premium, t.quoted_premium
+                    FROM submissions s
+                    LEFT JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = TRUE
+                    WHERE s.id = %s
+                """, (chain_id,))
+                chain_row = cur.fetchone()
+                if not chain_row:
+                    break
+                chain.append({
+                    "id": str(chain_row["id"]),
+                    "effective_date": chain_row["effective_date"].isoformat() if chain_row["effective_date"] else None,
+                    "expiration_date": chain_row["expiration_date"].isoformat() if chain_row["expiration_date"] else None,
+                    "outcome": chain_row["submission_outcome"],
+                    "premium": float(chain_row["sold_premium"] or chain_row["quoted_premium"] or 0),
+                })
+                chain_id = str(chain_row["prior_submission_id"]) if chain_row["prior_submission_id"] else None
+            chain.reverse()  # Oldest first
+
+            # Compute changes
+            changes = {}
+
+            # Revenue change
+            if current["annual_revenue"] and prior and prior["annual_revenue"]:
+                old_rev = float(prior["annual_revenue"])
+                new_rev = float(current["annual_revenue"])
+                if old_rev > 0:
+                    changes["revenue"] = {
+                        "old": old_rev,
+                        "new": new_rev,
+                        "change": new_rev - old_rev,
+                        "pct_change": round(100 * (new_rev - old_rev) / old_rev, 1)
+                    }
+
+            # Employee change
+            if current["employee_count"] and prior and prior["employee_count"]:
+                old_emp = prior["employee_count"]
+                new_emp = current["employee_count"]
+                if old_emp > 0:
+                    changes["employees"] = {
+                        "old": old_emp,
+                        "new": new_emp,
+                        "change": new_emp - old_emp,
+                        "pct_change": round(100 * (new_emp - old_emp) / old_emp, 1)
+                    }
+
+            # Premium change (if both have towers)
+            if prior_tower and current_tower:
+                old_prem = float(prior_tower["sold_premium"] or prior_tower["quoted_premium"] or 0)
+                new_prem = float(current_tower["sold_premium"] or current_tower["quoted_premium"] or 0)
+                if old_prem > 0 and new_prem > 0:
+                    changes["premium"] = {
+                        "old": old_prem,
+                        "new": new_prem,
+                        "change": new_prem - old_prem,
+                        "pct_change": round(100 * (new_prem - old_prem) / old_prem, 1)
+                    }
+
+            # Extract limit/retention from tower_json
+            def get_tower_structure(tower):
+                if not tower or not tower.get("tower_json"):
+                    return None
+                layers = tower["tower_json"]
+                if not layers:
+                    return None
+                # Sum limits, get primary retention
+                total_limit = sum(float(l.get("limit") or 0) for l in layers)
+                primary_retention = layers[0].get("retention") if layers else None
+                return {
+                    "total_limit": total_limit,
+                    "retention": float(primary_retention) if primary_retention else None,
+                    "layer_count": len(layers)
+                }
+
+            prior_structure = get_tower_structure(prior_tower)
+            current_structure = get_tower_structure(current_tower)
+
+            if prior_structure and current_structure:
+                if prior_structure["total_limit"] and current_structure["total_limit"]:
+                    changes["limit"] = {
+                        "old": prior_structure["total_limit"],
+                        "new": current_structure["total_limit"],
+                        "change": current_structure["total_limit"] - prior_structure["total_limit"],
+                    }
+                if prior_structure["retention"] and current_structure["retention"]:
+                    changes["retention"] = {
+                        "old": prior_structure["retention"],
+                        "new": current_structure["retention"],
+                        "change": current_structure["retention"] - prior_structure["retention"],
+                    }
+
+            # Calculate loss ratio if we have premium and losses
+            loss_ratio = None
+            if prior_tower and loss_summary["total_incurred"] > 0:
+                earned_premium = float(prior_tower["sold_premium"] or 0)
+                if earned_premium > 0:
+                    loss_ratio = round(loss_summary["total_incurred"] / earned_premium, 3)
+
+            return {
+                "is_renewal": True,
+                "current": {
+                    "id": str(current["id"]),
+                    "applicant_name": current["applicant_name"],
+                    "effective_date": current["effective_date"].isoformat() if current["effective_date"] else None,
+                    "expiration_date": current["expiration_date"].isoformat() if current["expiration_date"] else None,
+                    "annual_revenue": float(current["annual_revenue"]) if current["annual_revenue"] else None,
+                    "employee_count": current["employee_count"],
+                    "status": current["submission_status"],
+                    "outcome": current["submission_outcome"],
+                    "tower": {
+                        "id": str(current_tower["id"]) if current_tower else None,
+                        "quote_name": current_tower["quote_name"] if current_tower else None,
+                        "premium": float(current_tower["sold_premium"] or current_tower["quoted_premium"] or 0) if current_tower else None,
+                        "policy_form": current_tower["policy_form"] if current_tower else None,
+                        "is_bound": current_tower["is_bound"] if current_tower else False,
+                        "structure": current_structure,
+                    } if current_tower else None,
+                },
+                "prior": {
+                    "id": str(prior["id"]) if prior else None,
+                    "applicant_name": prior["applicant_name"] if prior else None,
+                    "effective_date": prior["effective_date"].isoformat() if prior and prior["effective_date"] else None,
+                    "expiration_date": prior["expiration_date"].isoformat() if prior and prior["expiration_date"] else None,
+                    "annual_revenue": float(prior["annual_revenue"]) if prior and prior["annual_revenue"] else None,
+                    "employee_count": prior["employee_count"] if prior else None,
+                    "outcome": prior["submission_outcome"] if prior else None,
+                    "outcome_reason": prior["outcome_reason"] if prior else None,
+                    "uw_notes": prior["opportunity_notes"] if prior else None,
+                    "tower": {
+                        "id": str(prior_tower["id"]) if prior_tower else None,
+                        "quote_name": prior_tower["quote_name"] if prior_tower else None,
+                        "premium": float(prior_tower["sold_premium"] or 0) if prior_tower else None,
+                        "policy_form": prior_tower["policy_form"] if prior_tower else None,
+                        "bound_at": prior_tower["bound_at"].isoformat() if prior_tower and prior_tower["bound_at"] else None,
+                        "structure": prior_structure,
+                    } if prior_tower else None,
+                },
+                "changes": changes,
+                "loss_history": {
+                    **loss_summary,
+                    "loss_ratio": loss_ratio,
+                },
+                "renewal_chain": chain,
+            }
+
+
 # ─────────────────────────────────────────────────────────────
 # Admin Endpoints
 # ─────────────────────────────────────────────────────────────
