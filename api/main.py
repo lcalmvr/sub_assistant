@@ -3269,9 +3269,10 @@ def bind_quote(quote_id: str, request: BindQuoteRequest = None):
             """, (quote_id, "api_user", "api"))
 
             # Phase 4: Capture decision snapshot (what we knew when we bound)
+            # Use renewal-aware function which captures prior link, loss ratio, rate change
             try:
                 cur.execute("""
-                    SELECT capture_decision_snapshot(%s, %s, 'policy_bound', %s)
+                    SELECT capture_renewal_decision_snapshot(%s, %s, 'policy_bound', %s)
                 """, (submission_id, quote_id, "api_user"))
                 snapshot_id = cur.fetchone()[0]
                 # Link snapshot to quote
@@ -4218,6 +4219,192 @@ def get_upcoming_renewals(days: int = 90):
             return cur.fetchall()
 
 
+@app.get("/api/renewals/queue")
+def get_renewal_queue():
+    """
+    Get comprehensive renewal queue showing:
+    - Expiring policies (bound, approaching expiration)
+    - Renewal expectations (created, waiting for broker)
+    - Received renewals (in progress)
+    - Summary metrics
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # 1. Expiring policies (bound policies expiring in next 90 days)
+            #    Check if renewal expectation already exists
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.effective_date,
+                    s.expiration_date,
+                    (s.expiration_date - CURRENT_DATE) as days_until_expiry,
+                    t.sold_premium,
+                    t.policy_form,
+                    s.broker_email,
+                    -- Check if renewal expectation exists
+                    renewal.id as renewal_id,
+                    renewal.submission_status as renewal_status
+                FROM submissions s
+                JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = true
+                LEFT JOIN submissions renewal ON renewal.prior_submission_id = s.id
+                WHERE s.submission_outcome = 'bound'
+                AND s.expiration_date IS NOT NULL
+                AND s.expiration_date >= CURRENT_DATE
+                AND s.expiration_date <= CURRENT_DATE + 90
+                ORDER BY s.expiration_date ASC
+            """)
+            expiring = []
+            for row in cur.fetchall():
+                expiring.append({
+                    "id": str(row["id"]),
+                    "applicant_name": row["applicant_name"],
+                    "effective_date": row["effective_date"].isoformat() if row["effective_date"] else None,
+                    "expiration_date": row["expiration_date"].isoformat() if row["expiration_date"] else None,
+                    "days_until_expiry": row["days_until_expiry"],
+                    "sold_premium": float(row["sold_premium"]) if row["sold_premium"] else None,
+                    "policy_form": row["policy_form"],
+                    "broker_email": row["broker_email"],
+                    "renewal_id": str(row["renewal_id"]) if row["renewal_id"] else None,
+                    "renewal_status": row["renewal_status"],
+                    "status": "has_renewal" if row["renewal_id"] else "needs_renewal",
+                })
+
+            # 2. Pending renewal expectations (waiting for broker)
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.effective_date,
+                    s.expiration_date,
+                    s.date_received,
+                    s.broker_email,
+                    prior.id as prior_id,
+                    prior.expiration_date as prior_expiration,
+                    prior_t.sold_premium as prior_premium
+                FROM submissions s
+                JOIN submissions prior ON prior.id = s.prior_submission_id
+                LEFT JOIN insurance_towers prior_t ON prior_t.submission_id = prior.id AND prior_t.is_bound = true
+                WHERE s.submission_status = 'renewal_expected'
+                ORDER BY s.effective_date ASC
+            """)
+            pending = []
+            for row in cur.fetchall():
+                pending.append({
+                    "id": str(row["id"]),
+                    "applicant_name": row["applicant_name"],
+                    "effective_date": row["effective_date"].isoformat() if row["effective_date"] else None,
+                    "expiration_date": row["expiration_date"].isoformat() if row["expiration_date"] else None,
+                    "broker_email": row["broker_email"],
+                    "prior_id": str(row["prior_id"]) if row["prior_id"] else None,
+                    "prior_expiration": row["prior_expiration"].isoformat() if row["prior_expiration"] else None,
+                    "prior_premium": float(row["prior_premium"]) if row["prior_premium"] else None,
+                    "status": "pending",
+                })
+
+            # 3. Received renewals (in progress)
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.effective_date,
+                    s.expiration_date,
+                    s.submission_status,
+                    s.submission_outcome,
+                    s.date_received,
+                    prior.id as prior_id,
+                    prior_t.sold_premium as prior_premium,
+                    t.quoted_premium as current_premium
+                FROM submissions s
+                JOIN submissions prior ON prior.id = s.prior_submission_id
+                LEFT JOIN insurance_towers prior_t ON prior_t.submission_id = prior.id AND prior_t.is_bound = true
+                LEFT JOIN insurance_towers t ON t.submission_id = s.id
+                WHERE s.renewal_type = 'renewal'
+                AND s.submission_status NOT IN ('renewal_expected', 'renewal_not_received')
+                AND s.submission_outcome = 'pending'
+                ORDER BY s.date_received DESC
+                LIMIT 20
+            """)
+            in_progress = []
+            for row in cur.fetchall():
+                in_progress.append({
+                    "id": str(row["id"]),
+                    "applicant_name": row["applicant_name"],
+                    "effective_date": row["effective_date"].isoformat() if row["effective_date"] else None,
+                    "expiration_date": row["expiration_date"].isoformat() if row["expiration_date"] else None,
+                    "submission_status": row["submission_status"],
+                    "date_received": row["date_received"].isoformat() if row["date_received"] else None,
+                    "prior_id": str(row["prior_id"]) if row["prior_id"] else None,
+                    "prior_premium": float(row["prior_premium"]) if row["prior_premium"] else None,
+                    "current_premium": float(row["current_premium"]) if row["current_premium"] else None,
+                    "status": "in_progress",
+                })
+
+            # 4. Summary metrics
+            cur.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE s.submission_outcome = 'bound'
+                        AND s.expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30) as expiring_30,
+                    COUNT(*) FILTER (WHERE s.submission_outcome = 'bound'
+                        AND s.expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 60) as expiring_60,
+                    COUNT(*) FILTER (WHERE s.submission_outcome = 'bound'
+                        AND s.expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 90) as expiring_90,
+                    COUNT(*) FILTER (WHERE s.submission_status = 'renewal_expected') as pending_expectations,
+                    COUNT(*) FILTER (WHERE s.renewal_type = 'renewal'
+                        AND s.submission_status NOT IN ('renewal_expected', 'renewal_not_received')
+                        AND s.submission_outcome = 'pending') as renewals_in_progress,
+                    COUNT(*) FILTER (WHERE s.submission_status = 'renewal_not_received') as not_received
+                FROM submissions s
+            """)
+            metrics_row = cur.fetchone()
+            metrics = {
+                "expiring_30": metrics_row["expiring_30"] or 0,
+                "expiring_60": metrics_row["expiring_60"] or 0,
+                "expiring_90": metrics_row["expiring_90"] or 0,
+                "pending_expectations": metrics_row["pending_expectations"] or 0,
+                "renewals_in_progress": metrics_row["renewals_in_progress"] or 0,
+                "not_received": metrics_row["not_received"] or 0,
+            }
+
+            return {
+                "expiring": expiring,
+                "pending": pending,
+                "in_progress": in_progress,
+                "metrics": metrics,
+            }
+
+
+@app.post("/api/renewals/{submission_id}/create-expectation")
+def create_renewal_expectation_endpoint(submission_id: str):
+    """Create a renewal expectation for an expiring policy."""
+    from core.renewal_management import create_renewal_expectation
+    try:
+        new_id = create_renewal_expectation(submission_id)
+        return {"success": True, "renewal_id": new_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/renewals/{submission_id}/mark-received")
+def mark_renewal_received(submission_id: str):
+    """Convert a renewal expectation to received status."""
+    from core.renewal_management import convert_to_received
+    success = convert_to_received(submission_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to mark as received")
+    return {"success": True}
+
+
+@app.post("/api/renewals/{submission_id}/mark-not-received")
+def mark_renewal_not_received_endpoint(submission_id: str, reason: str = ""):
+    """Mark a renewal expectation as not received."""
+    from core.renewal_management import mark_renewal_not_received
+    success = mark_renewal_not_received(submission_id, reason=reason)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to mark as not received")
+    return {"success": True}
+
+
 @app.get("/api/stats/renewals-not-received")
 def get_renewals_not_received():
     """Get renewals that were expected but not received."""
@@ -4542,6 +4729,212 @@ def get_renewal_comparison(submission_id: str):
                 },
                 "renewal_chain": chain,
             }
+
+
+@app.get("/api/submissions/{submission_id}/renewal-pricing")
+def get_renewal_pricing(submission_id: str):
+    """
+    Get renewal pricing recommendation based on loss experience.
+
+    Returns loss ratio calculation, experience factor, and rate recommendation.
+    """
+    from core.renewal_pricing import get_renewal_pricing_summary
+    return get_renewal_pricing_summary(submission_id)
+
+
+@app.get("/api/submissions/{submission_id}/decision-history")
+def get_decision_history(submission_id: str):
+    """
+    Get decision snapshots for a submission and its renewal chain.
+
+    Returns snapshots at key decision points (quote, bind) with renewal context
+    (loss ratio at decision, rate changes, prior snapshots).
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all snapshots for this submission
+            cur.execute("""
+                SELECT
+                    ds.id,
+                    ds.submission_id,
+                    ds.quote_id,
+                    ds.decision_type,
+                    ds.decision_at,
+                    ds.decision_by,
+                    ds.prior_submission_id,
+                    ds.prior_snapshot_id,
+                    ds.loss_ratio_at_decision,
+                    ds.renewal_rate_change_pct,
+                    ds.renewal_data,
+                    ds.gap_analysis,
+                    t.quote_name,
+                    t.sold_premium,
+                    t.quoted_premium,
+                    s.applicant_name,
+                    s.effective_date,
+                    s.expiration_date
+                FROM decision_snapshots ds
+                JOIN submissions s ON s.id = ds.submission_id
+                LEFT JOIN insurance_towers t ON t.id = ds.quote_id
+                WHERE ds.submission_id = %s
+                ORDER BY ds.decision_at DESC
+            """, (submission_id,))
+            snapshots = cur.fetchall()
+
+            # Get the renewal chain context
+            cur.execute("""
+                WITH RECURSIVE chain AS (
+                    SELECT id, applicant_name, prior_submission_id, 1 as position
+                    FROM submissions WHERE id = %s
+                    UNION ALL
+                    SELECT s.id, s.applicant_name, s.prior_submission_id, c.position + 1
+                    FROM submissions s
+                    JOIN chain c ON s.id = c.prior_submission_id
+                )
+                SELECT
+                    c.id,
+                    c.applicant_name,
+                    c.position,
+                    ds.decision_type,
+                    ds.decision_at,
+                    ds.loss_ratio_at_decision,
+                    ds.renewal_rate_change_pct,
+                    t.sold_premium
+                FROM chain c
+                LEFT JOIN decision_snapshots ds ON ds.submission_id = c.id
+                    AND ds.decision_type = 'policy_bound'
+                LEFT JOIN insurance_towers t ON t.submission_id = c.id AND t.is_bound = TRUE
+                ORDER BY c.position
+            """, (submission_id,))
+            chain = cur.fetchall()
+
+            return {
+                "submission_id": submission_id,
+                "snapshots": [
+                    {
+                        "id": str(s["id"]),
+                        "submission_id": str(s["submission_id"]),
+                        "quote_id": str(s["quote_id"]) if s["quote_id"] else None,
+                        "decision_type": s["decision_type"],
+                        "decision_at": s["decision_at"].isoformat() if s["decision_at"] else None,
+                        "decision_by": s["decision_by"],
+                        "quote_name": s["quote_name"],
+                        "premium": float(s["sold_premium"] or s["quoted_premium"] or 0),
+                        # Renewal context
+                        "prior_submission_id": str(s["prior_submission_id"]) if s["prior_submission_id"] else None,
+                        "prior_snapshot_id": str(s["prior_snapshot_id"]) if s["prior_snapshot_id"] else None,
+                        "loss_ratio_at_decision": float(s["loss_ratio_at_decision"]) if s["loss_ratio_at_decision"] else None,
+                        "renewal_rate_change_pct": float(s["renewal_rate_change_pct"]) if s["renewal_rate_change_pct"] else None,
+                        "renewal_data": s["renewal_data"],
+                        # Gap summary
+                        "critical_missing": len(s["gap_analysis"].get("critical_missing") or []) if s["gap_analysis"] else 0,
+                        "important_missing": len(s["gap_analysis"].get("important_missing") or []) if s["gap_analysis"] else 0,
+                    }
+                    for s in snapshots
+                ],
+                "renewal_chain": [
+                    {
+                        "id": str(c["id"]),
+                        "applicant_name": c["applicant_name"],
+                        "position": c["position"],
+                        "decision_type": c["decision_type"],
+                        "decision_at": c["decision_at"].isoformat() if c["decision_at"] else None,
+                        "loss_ratio": float(c["loss_ratio_at_decision"]) if c["loss_ratio_at_decision"] else None,
+                        "rate_change_pct": float(c["renewal_rate_change_pct"]) if c["renewal_rate_change_pct"] else None,
+                        "premium": float(c["sold_premium"]) if c["sold_premium"] else None,
+                    }
+                    for c in chain
+                ],
+            }
+
+
+# ─────────────────────────────────────────────────────────────
+# Renewal Automation Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.post("/api/admin/renewal-automation/run")
+def run_renewal_automation(dry_run: bool = True):
+    """
+    Run all daily renewal automation tasks.
+
+    Tasks:
+    1. Create renewal expectations for policies expiring in 90 days
+    2. Mark overdue expectations (30+ days past effective) as not received
+
+    Args:
+        dry_run: If True (default), report what would happen without making changes
+    """
+    from ingestion.renewal_automation import run_daily_automation
+    return run_daily_automation(dry_run=dry_run)
+
+
+@app.post("/api/admin/renewal-automation/create-expectations")
+def run_create_expectations(days_ahead: int = 90, dry_run: bool = True):
+    """
+    Create renewal expectations for policies expiring soon.
+
+    Args:
+        days_ahead: Create expectations for policies expiring within this many days
+        dry_run: If True, report without making changes
+    """
+    from ingestion.renewal_automation import check_and_create_renewal_expectations
+    return check_and_create_renewal_expectations(days_ahead=days_ahead, dry_run=dry_run)
+
+
+@app.post("/api/admin/renewal-automation/mark-overdue")
+def run_mark_overdue(grace_days: int = 30, dry_run: bool = True):
+    """
+    Mark overdue renewal expectations as not received.
+
+    Args:
+        grace_days: Days past effective date before marking as not received
+        dry_run: If True, report without making changes
+    """
+    from ingestion.renewal_automation import check_overdue_renewals
+    return check_overdue_renewals(grace_days=grace_days, dry_run=dry_run)
+
+
+@app.get("/api/admin/renewal-automation/match")
+def find_renewal_match(applicant_name: str, broker_email: str = None, website: str = None):
+    """
+    Find a matching renewal expectation for an incoming submission.
+
+    Used during ingestion to auto-link renewals to their prior policies.
+
+    Args:
+        applicant_name: Name to match against
+        broker_email: Optional broker email for higher confidence match
+        website: Optional website for fallback matching
+    """
+    from ingestion.renewal_automation import match_incoming_to_expected
+    match = match_incoming_to_expected(
+        applicant_name=applicant_name,
+        broker_email=broker_email,
+        website=website
+    )
+    return {"match": match}
+
+
+@app.post("/api/admin/renewal-automation/link")
+def link_to_expectation(submission_id: str, expectation_id: str, carry_over: bool = True):
+    """
+    Link an incoming submission to a pending renewal expectation.
+
+    This merges the expectation into the submission, linking it to the prior
+    policy and optionally carrying over the bound option.
+
+    Args:
+        submission_id: The incoming submission
+        expectation_id: The renewal expectation to merge
+        carry_over: If True, copy prior year's tower as starting point
+    """
+    from ingestion.renewal_automation import link_submission_to_expectation
+    success = link_submission_to_expectation(
+        submission_id=submission_id,
+        expectation_id=expectation_id,
+        carry_over_bound_option=carry_over
+    )
+    return {"success": success, "linked": success}
 
 
 # ─────────────────────────────────────────────────────────────

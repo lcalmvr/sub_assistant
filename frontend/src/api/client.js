@@ -173,6 +173,13 @@ export const getUpcomingRenewals = (days = 90) => api.get(`/stats/upcoming-renew
 export const getRenewalsNotReceived = () => api.get('/stats/renewals-not-received');
 export const getRetentionMetrics = () => api.get('/stats/retention-metrics');
 export const getRenewalComparison = (submissionId) => api.get(`/submissions/${submissionId}/renewal-comparison`);
+export const getRenewalPricing = (submissionId) => api.get(`/submissions/${submissionId}/renewal-pricing`);
+export const getDecisionHistory = (submissionId) => api.get(`/submissions/${submissionId}/decision-history`);
+export const getRenewalQueue = () => api.get('/renewals/queue');
+export const createRenewalExpectation = (submissionId) => api.post(`/renewals/${submissionId}/create-expectation`);
+export const markRenewalReceived = (submissionId) => api.post(`/renewals/${submissionId}/mark-received`);
+export const markRenewalNotReceived = (submissionId, reason = '') =>
+  api.post(`/renewals/${submissionId}/mark-not-received?reason=${encodeURIComponent(reason)}`);
 
 // Admin
 export const getBoundPolicies = (search = '') => {

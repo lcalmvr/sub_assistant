@@ -847,6 +847,66 @@ def _detect_remarket(submission_id: str) -> dict | None:
     return None
 
 
+# ───────────── Renewal Matching (Phase 8) ─────────────
+
+def _match_renewal_expectation(
+    submission_id: str,
+    applicant_name: str | None,
+    broker_email: str | None,
+    website: str | None
+) -> dict | None:
+    """
+    Check if this submission matches a pending renewal expectation.
+
+    If a match is found, links the submission to the expectation's prior policy
+    and deletes the expectation (merging them).
+
+    Returns match info if found, None otherwise.
+    """
+    if not applicant_name:
+        return None
+
+    try:
+        from ingestion.renewal_automation import match_incoming_to_expected, link_submission_to_expectation
+
+        # Try to find a matching expectation
+        match = match_incoming_to_expected(
+            applicant_name=applicant_name,
+            broker_email=broker_email,
+            website=website
+        )
+
+        if match and match.get("confidence") == "high":
+            # Auto-link for high confidence matches
+            expectation_id = match["expectation_id"]
+            success = link_submission_to_expectation(
+                submission_id=submission_id,
+                expectation_id=expectation_id,
+                carry_over_bound_option=True
+            )
+            if success:
+                print(f"[pipeline] Renewal matched: auto-linked to expectation {expectation_id} "
+                      f"({match['match_type']} match for {match['applicant_name']})")
+                return match
+            else:
+                print(f"[pipeline] Renewal match found but link failed for {expectation_id}")
+        elif match:
+            # Medium confidence - log but don't auto-link
+            print(f"[pipeline] Possible renewal match (medium confidence): "
+                  f"{match['match_type']} for {match['applicant_name']} - "
+                  f"expectation_id={match['expectation_id']}")
+            # Could store this for manual review
+            return match
+
+    except ImportError:
+        # renewal_automation not available
+        pass
+    except Exception as e:
+        print(f"[pipeline] Renewal matching error: {e}")
+
+    return None
+
+
 # ───────────── Broker email matching ─────────────
 _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 _FORWARDED_FROM_RE = re.compile(r"^>?\s*From:\s*([^\n<]+?)\s*<([^>]+)>", re.I | re.M)
@@ -2144,6 +2204,13 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
         _detect_remarket(sid_str)
     except Exception as e:
         print(f"[pipeline] Remarket detection failed: {e}")
+
+    # ───────────── Renewal Matching (Phase 8) ─────────────
+    # Check if this submission matches a pending renewal expectation
+    try:
+        _match_renewal_expectation(sid_str, name, broker_email, website)
+    except Exception as e:
+        print(f"[pipeline] Renewal matching failed: {e}")
 
     return sid
 

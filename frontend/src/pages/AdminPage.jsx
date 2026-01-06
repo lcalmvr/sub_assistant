@@ -27,6 +27,7 @@ import {
   updateFieldImportance,
 } from '../api/client';
 import RemarketAnalyticsCard from '../components/RemarketAnalyticsCard';
+import RenewalQueueCard from '../components/RenewalQueueCard';
 
 // Format currency
 function formatCurrency(value) {
@@ -2315,6 +2316,7 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
   const tabs = [
+    { id: 'renewals', label: 'Renewals' },
     { id: 'search', label: 'Policy Search' },
     { id: 'subjectivities', label: 'Pending Subjectivities' },
     { id: 'bound', label: 'Bound Policies' },
@@ -2370,6 +2372,7 @@ export default function AdminPage() {
           </div>
 
           {/* Tab content */}
+          {activeTab === 'renewals' && <RenewalQueueCard />}
           {activeTab === 'search' && <PolicySearchTab />}
           {activeTab === 'subjectivities' && <PendingSubjectivitiesTab />}
           {activeTab === 'bound' && <BoundPoliciesTab />}

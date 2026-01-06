@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getRenewalComparison } from '../api/client';
+import { getRenewalComparison, getRenewalPricing } from '../api/client';
 
 // Format currency
 function formatCurrency(value) {
@@ -67,6 +67,12 @@ export default function RenewalPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['renewal-comparison', submissionId],
     queryFn: () => getRenewalComparison(submissionId).then(res => res.data),
+  });
+
+  const { data: pricingData } = useQuery({
+    queryKey: ['renewal-pricing', submissionId],
+    queryFn: () => getRenewalPricing(submissionId).then(res => res.data),
+    enabled: data?.is_renewal, // Only fetch if this is a renewal
   });
 
   if (isLoading) {
@@ -150,6 +156,112 @@ export default function RenewalPage() {
                 <span className="text-xs font-medium text-gray-700">
                   {formatCompact(changes.limit.old)} → {formatCompact(changes.limit.new)}
                 </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Pricing Recommendation */}
+      {pricingData?.has_data && (
+        <div className="bg-white rounded-lg border">
+          <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between">
+            <h3 className="font-semibold text-gray-900">Renewal Pricing Recommendation</h3>
+            <span className={`px-2 py-0.5 text-xs font-medium rounded ${
+              pricingData.experience_credit < 0 ? 'bg-green-100 text-green-700' :
+              pricingData.experience_credit > 0 ? 'bg-red-100 text-red-700' :
+              'bg-gray-100 text-gray-600'
+            }`}>
+              {pricingData.experience_credit > 0 ? '+' : ''}{pricingData.experience_credit}% Experience
+            </span>
+          </div>
+          <div className="p-4">
+            <div className="grid grid-cols-4 gap-4 mb-4">
+              {/* Expiring Premium */}
+              <div className="text-center p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">Expiring</div>
+                <div className="text-lg font-bold text-gray-900">{formatCurrency(pricingData.expiring_premium)}</div>
+              </div>
+              {/* Recommended Premium */}
+              <div className="text-center p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="text-xs text-blue-600 mb-1">Recommended</div>
+                <div className="text-lg font-bold text-blue-700">{formatCurrency(pricingData.recommended_premium)}</div>
+              </div>
+              {/* Rate Change */}
+              <div className="text-center p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">Rate Change</div>
+                <div className={`text-lg font-bold ${
+                  pricingData.rate_change_pct > 0 ? 'text-red-600' :
+                  pricingData.rate_change_pct < 0 ? 'text-green-600' :
+                  'text-gray-700'
+                }`}>
+                  {pricingData.rate_change_pct > 0 ? '+' : ''}{pricingData.rate_change_pct}%
+                </div>
+              </div>
+              {/* Loss Ratio */}
+              <div className="text-center p-3 bg-gray-50 rounded-lg">
+                <div className="text-xs text-gray-500 mb-1">Loss Ratio</div>
+                <div className={`text-lg font-bold ${
+                  pricingData.loss_ratio_pct > 60 ? 'text-red-600' :
+                  pricingData.loss_ratio_pct > 30 ? 'text-amber-600' :
+                  'text-green-600'
+                }`}>
+                  {pricingData.loss_ratio_pct}%
+                </div>
+                <div className="text-[10px] text-gray-400">{pricingData.claim_count} claim{pricingData.claim_count !== 1 ? 's' : ''}</div>
+              </div>
+            </div>
+
+            {/* Factors Breakdown */}
+            {pricingData.factors?.length > 0 && (
+              <div className="border-t pt-3">
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Rate Factors</div>
+                <div className="space-y-1.5">
+                  {pricingData.factors.map((factor, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-700">{factor.name}</span>
+                        <span className="text-xs text-gray-400">{factor.description}</span>
+                      </div>
+                      <span className={`font-medium ${
+                        factor.factor > 0 ? 'text-red-600' :
+                        factor.factor < 0 ? 'text-green-600' :
+                        'text-gray-600'
+                      }`}>
+                        {factor.factor > 0 ? '+' : ''}{(factor.factor * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Justification */}
+            {pricingData.justification?.length > 0 && (
+              <div className="border-t pt-3 mt-3">
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Justification</div>
+                <ul className="text-sm text-gray-600 space-y-1">
+                  {pricingData.justification.map((item, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="text-gray-400">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Multi-year indicator */}
+            {pricingData.multi_year && (
+              <div className="border-t pt-3 mt-3">
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-medium rounded">
+                    {pricingData.multi_year.years}-Year Analysis
+                  </span>
+                  <span>
+                    {(pricingData.multi_year.loss_ratio_incurred * 100).toFixed(0)}% combined loss ratio
+                  </span>
+                </div>
               </div>
             )}
           </div>
