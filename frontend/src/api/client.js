@@ -529,4 +529,24 @@ export const submitFeatureRequest = (description, useCase = null, submissionId =
     submission_id: submissionId,
   });
 
+// Remarket Detection (Prior Submission Linking)
+export const findPriorSubmissions = (submissionId) =>
+  api.get(`/submissions/${submissionId}/prior-submissions`);
+
+export const linkPriorSubmission = (submissionId, priorSubmissionId, options = {}) =>
+  api.post(`/submissions/${submissionId}/link-prior`, {
+    prior_submission_id: priorSubmissionId,
+    import_extracted_values: options.importExtractedValues ?? true,
+    import_uw_notes: options.importUwNotes ?? true,
+  });
+
+export const unlinkPriorSubmission = (submissionId) =>
+  api.delete(`/submissions/${submissionId}/prior-link`);
+
+export const getRemarketStatus = (submissionId) =>
+  api.get(`/submissions/${submissionId}/remarket-status`);
+
+// Remarket Analytics
+export const getRemarketAnalytics = () => api.get('/analytics/remarket');
+
 export default api;

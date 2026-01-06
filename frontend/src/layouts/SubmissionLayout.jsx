@@ -4,7 +4,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getSubmission, updateSubmission, getSubmissionWorkflow, recordVote, claimSubmission, startPrescreen, submitForReview, getUwRecommendation } from '../api/client';
 import DocsPanel from '../components/DocsPanel';
 import AiCorrectionsPanel, { AiCorrectionsBadge } from '../components/AiCorrectionsPanel';
+import AiAgentPanel from '../components/AiAgentPanel';
 import UnifiedHeader from '../components/UnifiedHeader';
+import RemarketBanner from '../components/RemarketBanner';
 
 const tabs = [
   { name: 'Setup', path: 'setup' },
@@ -552,7 +554,20 @@ export default function SubmissionLayout() {
   const location = useLocation();
   const [isDocsPanelOpen, setIsDocsPanelOpen] = useState(false);
   const [isCorrectionsPanelOpen, setIsCorrectionsPanelOpen] = useState(false);
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(getInitialUser);
+
+  // Keyboard shortcut for AI panel (Cmd+K)
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsAiPanelOpen(prev => !prev);
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const { data: submission } = useQuery({
     queryKey: ['submission', submissionId],
@@ -568,6 +583,7 @@ export default function SubmissionLayout() {
       <UnifiedHeader
         submission={submission}
         onDocsClick={() => setIsDocsPanelOpen(true)}
+        onAiClick={() => setIsAiPanelOpen(true)}
         tabs={tabs}
         activeTab={activeTab}
         workflowBadge={
@@ -587,6 +603,9 @@ export default function SubmissionLayout() {
 
       {/* Tab Content */}
       <main className="flex-1 max-w-7xl mx-auto px-6 py-6 w-full">
+        {/* Remarket Banner - shows when prior submission detected */}
+        <RemarketBanner submissionId={submissionId} />
+
         <Outlet />
       </main>
 
@@ -629,6 +648,15 @@ export default function SubmissionLayout() {
           </div>
         </>
       )}
+
+      {/* AI Agent Panel */}
+      <AiAgentPanel
+        submissionId={submissionId}
+        submission={submission}
+        currentPage={activeTab}
+        isOpen={isAiPanelOpen}
+        onClose={() => setIsAiPanelOpen(false)}
+      />
     </div>
   );
 }

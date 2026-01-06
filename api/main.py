@@ -2992,6 +2992,196 @@ def get_quote_bind_snapshot(quote_id: str):
         return snapshot
 
 
+# ─────────────────────────────────────────────────────────────
+# Remarket Detection (Phase 7)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/prior-submissions")
+def find_prior_submissions(submission_id: str):
+    """
+    Find potential prior submissions for the same account.
+
+    Searches for matches by FEIN (100% confidence), domain (80%),
+    exact name (70%), and fuzzy name (50-69%). Excludes bound policies
+    (those would be renewals, not remarkets).
+
+    Returns empty list if no matches found.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Check if submission exists
+        cur.execute("SELECT id FROM submissions WHERE id = %s", (submission_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        # Call the database function
+        cur.execute("""
+            SELECT * FROM find_prior_submissions(%s)
+            ORDER BY match_confidence DESC, submission_date DESC
+        """, (submission_id,))
+
+        matches = cur.fetchall()
+
+        # Format for frontend
+        for match in matches:
+            if match.get('quoted_premium'):
+                match['quoted_premium'] = float(match['quoted_premium'])
+            if match.get('submission_date'):
+                match['submission_date'] = match['submission_date'].isoformat()
+
+        return {
+            "submission_id": submission_id,
+            "prior_submissions": matches,
+            "has_matches": len(matches) > 0
+        }
+
+
+class LinkPriorSubmissionRequest(BaseModel):
+    """Request body for linking a prior submission."""
+    prior_submission_id: str
+    import_extracted_values: bool = True
+    import_uw_notes: bool = True
+
+
+@app.post("/api/submissions/{submission_id}/link-prior")
+def link_prior_submission(submission_id: str, request: LinkPriorSubmissionRequest):
+    """
+    Link a prior submission and optionally import its data.
+
+    Imports extracted values (marked as needing confirmation) and
+    UW notes from the prior submission. Creates a link between
+    the submissions for tracking remarket history.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Verify both submissions exist
+        cur.execute("SELECT id, insured_name FROM submissions WHERE id = %s", (submission_id,))
+        target = cur.fetchone()
+        if not target:
+            raise HTTPException(status_code=404, detail="Target submission not found")
+
+        cur.execute("SELECT id, insured_name, submission_date, submission_outcome FROM submissions WHERE id = %s",
+                   (request.prior_submission_id,))
+        source = cur.fetchone()
+        if not source:
+            raise HTTPException(status_code=404, detail="Prior submission not found")
+
+        # Don't allow linking to a bound policy (that's renewal, not remarket)
+        if source['submission_outcome'] == 'bound':
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot link to a bound policy. Use renewal workflow instead."
+            )
+
+        # Import data using the database function
+        cur.execute("""
+            SELECT import_prior_submission_data(%s, %s, %s, %s) as result
+        """, (submission_id, request.prior_submission_id,
+              request.import_extracted_values, request.import_uw_notes))
+
+        result = cur.fetchone()['result']
+        conn.commit()
+
+        return {
+            "success": True,
+            "message": f"Linked to prior submission for {source['insured_name']}",
+            "values_imported": result.get('values_imported', 0),
+            "notes_imported": result.get('notes_imported', False),
+            "prior_submission": {
+                "id": source['id'],
+                "insured_name": source['insured_name'],
+                "submission_date": source['submission_date'].isoformat() if source.get('submission_date') else None,
+                "outcome": source['submission_outcome']
+            }
+        }
+
+
+@app.delete("/api/submissions/{submission_id}/prior-link")
+def unlink_prior_submission(submission_id: str):
+    """
+    Remove the link to a prior submission.
+
+    Does not delete imported data - just removes the link.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            UPDATE submissions
+            SET prior_submission_id = NULL,
+                remarket_detected_at = NULL,
+                remarket_match_type = NULL,
+                remarket_match_confidence = NULL
+            WHERE id = %s
+            RETURNING id
+        """, (submission_id,))
+
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        conn.commit()
+        return {"success": True, "message": "Prior submission link removed"}
+
+
+@app.get("/api/submissions/{submission_id}/remarket-status")
+def get_remarket_status(submission_id: str):
+    """
+    Get the remarket detection status for a submission.
+
+    Shows whether a prior submission was detected, linked, and
+    if data was imported.
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute("""
+            SELECT
+                s.id,
+                s.prior_submission_id,
+                s.remarket_detected_at,
+                s.remarket_match_type,
+                s.remarket_match_confidence,
+                s.remarket_imported_at,
+                ps.applicant_name as prior_insured_name,
+                ps.date_received as prior_submission_date,
+                ps.submission_outcome as prior_outcome,
+                (SELECT SUM(it.quoted_premium) FROM insurance_towers it WHERE it.submission_id = ps.id) as prior_quoted_premium
+            FROM submissions s
+            LEFT JOIN submissions ps ON ps.id = s.prior_submission_id
+            WHERE s.id = %s
+        """, (submission_id,))
+
+        result = cur.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
+        status = "none"
+        if result['remarket_imported_at']:
+            status = "imported"
+        elif result['prior_submission_id']:
+            status = "linked"
+        elif result['remarket_detected_at']:
+            status = "detected"
+
+        return {
+            "submission_id": submission_id,
+            "status": status,
+            "prior_submission_id": result['prior_submission_id'],
+            "match_type": result['remarket_match_type'],
+            "match_confidence": result['remarket_match_confidence'],
+            "detected_at": result['remarket_detected_at'].isoformat() if result.get('remarket_detected_at') else None,
+            "imported_at": result['remarket_imported_at'].isoformat() if result.get('remarket_imported_at') else None,
+            "prior_submission": {
+                "insured_name": result['prior_insured_name'],
+                "submission_date": result['prior_submission_date'].isoformat() if result.get('prior_submission_date') else None,
+                "outcome": result['prior_outcome'],
+                "quoted_premium": float(result['prior_quoted_premium']) if result.get('prior_quoted_premium') else None
+            } if result['prior_submission_id'] else None
+        }
+
+
 class BindQuoteRequest(BaseModel):
     """Request body for binding a quote."""
     force: bool = False  # If true, bind even with warnings
@@ -4793,6 +4983,48 @@ def search_policies(q: str):
                 LIMIT 20
             """, (f"%{q}%",))
             return cur.fetchall()
+
+
+# ─────────────────────────────────────────────────────────────
+# Remarket Analytics (Phase 7.6)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/analytics/remarket")
+def get_remarket_analytics():
+    """
+    Get comprehensive remarket analytics.
+
+    Returns:
+    - summary: Overall stats (total remarkets, percentages)
+    - performance: Win rate comparison (remarket vs new business)
+    - time_stats: Average time between submissions
+    - return_reasons: Why accounts come back
+    - recent_remarkets: Last 10 remarket submissions
+    """
+    with get_conn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Use the database function for comprehensive analytics
+        cur.execute("SELECT get_remarket_analytics() as analytics")
+        result = cur.fetchone()
+
+        if result and result.get('analytics'):
+            return result['analytics']
+
+        # Fallback if function doesn't exist or returns null
+        return {
+            "summary": {
+                "total_submissions": 0,
+                "total_remarkets": 0,
+                "remarket_pct": 0,
+                "remarkets_bound": 0,
+                "new_business_bound": 0
+            },
+            "performance": [],
+            "time_stats": {},
+            "return_reasons": [],
+            "recent_remarkets": []
+        }
 
 
 # ─────────────────────────────────────────────────────────────
@@ -9754,16 +9986,56 @@ def agent_chat(request: AgentChatRequest):
     with get_conn() as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
-            SELECT applicant_name, submission_status, submission_outcome,
-                   annual_revenue, naics_primary_title, bullet_point_summary
-            FROM submissions WHERE id = %s
+            SELECT s.applicant_name, s.submission_status, s.submission_outcome,
+                   s.annual_revenue, s.naics_primary_title, s.bullet_point_summary,
+                   s.prior_submission_id, s.remarket_detected_at, s.remarket_match_type,
+                   ps.applicant_name as prior_name,
+                   ps.date_received as prior_date,
+                   ps.submission_outcome as prior_outcome,
+                   ps.outcome_reason as prior_outcome_reason,
+                   ps.opportunity_notes as prior_notes,
+                   (SELECT SUM(it.quoted_premium) FROM insurance_towers it WHERE it.submission_id = ps.id) as prior_quoted_premium
+            FROM submissions s
+            LEFT JOIN submissions ps ON ps.id = s.prior_submission_id
+            WHERE s.id = %s
         """, (submission_id,))
         sub = cur.fetchone()
 
-    if not sub:
-        return {"type": "error", "content": "Submission not found"}
+        if not sub:
+            return {"type": "error", "content": "Submission not found"}
 
-    revenue_str = f"${sub['annual_revenue']:,}" if sub['annual_revenue'] else 'Unknown'
+        revenue_str = f"${sub['annual_revenue']:,}" if sub['annual_revenue'] else 'Unknown'
+
+        # Build prior submission context if available
+        prior_context = ""
+        if sub.get('prior_submission_id'):
+            prior_date = sub['prior_date'].strftime('%b %Y') if sub.get('prior_date') else 'unknown date'
+            prior_premium = f"${sub['prior_quoted_premium']:,.0f}" if sub.get('prior_quoted_premium') else 'not quoted'
+            prior_context = f"""
+PRIOR SUBMISSION HISTORY:
+This account was previously submitted in {prior_date}.
+Prior outcome: {sub['prior_outcome'] or 'pending'}
+Prior quoted premium: {prior_premium}"""
+            if sub.get('prior_outcome_reason'):
+                prior_context += f"\nReason: {sub['prior_outcome_reason']}"
+            if sub.get('prior_notes'):
+                # Include first 200 chars of prior notes
+                notes_preview = sub['prior_notes'][:200] + '...' if len(sub['prior_notes'] or '') > 200 else sub['prior_notes']
+                prior_context += f"\nPrior notes: {notes_preview}"
+        elif sub.get('remarket_detected_at'):
+            # Detected but not yet linked - fetch best match
+            cur.execute("SELECT * FROM find_prior_submissions(%s) ORDER BY match_confidence DESC LIMIT 1", (submission_id,))
+            best_match = cur.fetchone()
+            if best_match:
+                match_date = best_match['submission_date'].strftime('%b %Y') if best_match.get('submission_date') else 'unknown date'
+                match_premium = f"${best_match['quoted_premium']:,.0f}" if best_match.get('quoted_premium') else 'not quoted'
+                prior_context = f"""
+PRIOR SUBMISSION DETECTED (not yet linked):
+Possible match: {best_match['insured_name']} submitted in {match_date}
+Match type: {best_match['match_type']} ({best_match['match_confidence']}% confidence)
+Prior outcome: {best_match['submission_outcome']}
+Prior quoted premium: {match_premium}"""
+
     context_str = f"""
 Submission: {sub['applicant_name']}
 Status: {sub['submission_status']} / {sub['submission_outcome']}
@@ -9771,7 +10043,7 @@ Industry: {sub['naics_primary_title']}
 Revenue: {revenue_str}
 Current page: {page}
 Notes: {sub['bullet_point_summary'] or 'None'}
-"""
+{prior_context}"""
 
     client = openai.OpenAI()
     response = client.chat.completions.create(

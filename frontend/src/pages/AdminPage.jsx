@@ -23,7 +23,10 @@ import {
   updateSchema,
   getSchemaRecommendations,
   actionSchemaRecommendation,
+  getActiveImportanceSettings,
+  updateFieldImportance,
 } from '../api/client';
+import RemarketAnalyticsCard from '../components/RemarketAnalyticsCard';
 
 // Format currency
 function formatCurrency(value) {
@@ -1783,6 +1786,7 @@ function ExtractionSchemaTab() {
   const [newField, setNewField] = useState({ key: '', displayName: '', type: 'string', description: '', enumValues: '' });
   const [editingField, setEditingField] = useState(null);
   const [showHelp, setShowHelp] = useState(false);
+  const [importanceFilter, setImportanceFilter] = useState('all'); // all, critical, important, none
 
   const { data: schema, isLoading } = useQuery({
     queryKey: ['active-schema'],
@@ -1794,10 +1798,23 @@ function ExtractionSchemaTab() {
     queryFn: () => getSchemaRecommendations().then(res => res.data),
   });
 
+  const { data: importanceData } = useQuery({
+    queryKey: ['importance-settings'],
+    queryFn: () => getActiveImportanceSettings().then(res => res.data),
+  });
+
   const updateSchemaMutation = useMutation({
     mutationFn: ({ schemaId, data }) => updateSchema(schemaId, data),
     onSuccess: () => {
       queryClient.invalidateQueries(['active-schema']);
+    },
+  });
+
+  const updateImportanceMutation = useMutation({
+    mutationFn: ({ versionId, fieldKey, importance, rationale }) =>
+      updateFieldImportance(versionId, fieldKey, importance, rationale),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['importance-settings']);
     },
   });
 
@@ -1808,6 +1825,24 @@ function ExtractionSchemaTab() {
       queryClient.invalidateQueries(['active-schema']);
     },
   });
+
+  // Build a map of field_key -> importance for quick lookup
+  const importanceMap = {};
+  if (importanceData?.settings) {
+    importanceData.settings.forEach(s => {
+      importanceMap[s.field_key] = { importance: s.importance, rationale: s.rationale };
+    });
+  }
+
+  const handleImportanceChange = (fieldKey, newImportance) => {
+    if (!importanceData?.version?.id) return;
+    updateImportanceMutation.mutate({
+      versionId: importanceData.version.id,
+      fieldKey,
+      importance: newImportance,
+      rationale: null,
+    });
+  };
 
   if (isLoading) {
     return <div className="text-center py-8 text-gray-500">Loading schema...</div>;
@@ -1825,8 +1860,22 @@ function ExtractionSchemaTab() {
     ? schema.schema_definition[selectedCategory]
     : null;
 
-  const fields = selectedCategoryData?.fields
+  // Get all fields for selected category, then filter by importance if filter is active
+  const allFields = selectedCategoryData?.fields
     ? Object.entries(selectedCategoryData.fields).map(([key, value]) => ({ key, ...value }))
+    : [];
+
+  const fields = importanceFilter === 'all'
+    ? allFields
+    : allFields.filter(f => importanceMap[f.key]?.importance === importanceFilter);
+
+  // When filter is active and no category selected, show all matching fields across categories
+  const filteredFieldsAcrossCategories = importanceFilter !== 'all' && !selectedCategory
+    ? categories.flatMap(cat =>
+        Object.entries(cat.fields || {})
+          .filter(([key]) => importanceMap[key]?.importance === importanceFilter)
+          .map(([key, value]) => ({ key, ...value, categoryKey: cat.key, categoryName: cat.displayName || cat.key }))
+      )
     : [];
 
   const handleAddField = () => {
@@ -1903,6 +1952,46 @@ function ExtractionSchemaTab() {
             <div className="text-sm text-purple-600">
               {categories.length} categories, {categories.reduce((sum, cat) => sum + Object.keys(cat.fields || {}).length, 0)} fields
             </div>
+            {importanceData?.counts && (
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  onClick={() => {
+                    const newFilter = importanceFilter === 'critical' ? 'all' : 'critical';
+                    setImportanceFilter(newFilter);
+                    if (newFilter !== 'all') setSelectedCategory(null);
+                  }}
+                  className={`px-2 py-0.5 rounded cursor-pointer transition-all ${
+                    importanceFilter === 'critical'
+                      ? 'bg-red-600 text-white ring-2 ring-red-300'
+                      : 'bg-red-100 text-red-700 hover:bg-red-200'
+                  }`}
+                >
+                  {importanceData.counts.critical} critical
+                </button>
+                <button
+                  onClick={() => {
+                    const newFilter = importanceFilter === 'important' ? 'all' : 'important';
+                    setImportanceFilter(newFilter);
+                    if (newFilter !== 'all') setSelectedCategory(null);
+                  }}
+                  className={`px-2 py-0.5 rounded cursor-pointer transition-all ${
+                    importanceFilter === 'important'
+                      ? 'bg-orange-600 text-white ring-2 ring-orange-300'
+                      : 'bg-orange-100 text-orange-700 hover:bg-orange-200'
+                  }`}
+                >
+                  {importanceData.counts.important} important
+                </button>
+                {importanceFilter !== 'all' && (
+                  <button
+                    onClick={() => setImportanceFilter('all')}
+                    className="text-gray-500 hover:text-gray-700 text-xs"
+                  >
+                    Clear filter
+                  </button>
+                )}
+              </div>
+            )}
             <button
               onClick={() => setShowHelp(true)}
               className="px-3 py-1.5 text-sm bg-purple-600 text-white rounded hover:bg-purple-700 flex items-center gap-1.5"
@@ -2068,6 +2157,7 @@ function ExtractionSchemaTab() {
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Field</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Importance</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
                       <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                     </tr>
@@ -2108,6 +2198,22 @@ function ExtractionSchemaTab() {
                               </div>
                             )}
                           </td>
+                          <td className="px-4 py-3">
+                            <select
+                              value={importanceMap[field.key]?.importance || 'none'}
+                              onChange={(e) => handleImportanceChange(field.key, e.target.value)}
+                              className={`text-xs px-2 py-1 rounded border-0 cursor-pointer ${
+                                importanceMap[field.key]?.importance === 'critical' ? 'bg-red-100 text-red-700' :
+                                importanceMap[field.key]?.importance === 'important' ? 'bg-orange-100 text-orange-700' :
+                                'bg-gray-100 text-gray-500'
+                              }`}
+                            >
+                              <option value="none">—</option>
+                              <option value="critical">Critical</option>
+                              <option value="important">Important</option>
+                              <option value="nice_to_know">Nice to Know</option>
+                            </select>
+                          </td>
                           <td className="px-4 py-3 text-sm text-gray-500 max-w-xs">
                             {field.description || '—'}
                           </td>
@@ -2130,11 +2236,65 @@ function ExtractionSchemaTab() {
                     ))}
                     {fields.length === 0 && (
                       <tr>
-                        <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
+                        <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
                           No fields in this category yet.
                         </td>
                       </tr>
                     )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : importanceFilter !== 'all' && filteredFieldsAcrossCategories.length > 0 ? (
+            /* Show filtered fields across all categories */
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-medium text-gray-900">
+                  All {importanceFilter} fields
+                  <span className="ml-2 text-sm text-gray-500">({filteredFieldsAcrossCategories.length} fields)</span>
+                </h4>
+              </div>
+              <div className="border rounded-lg overflow-hidden">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Field</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {filteredFieldsAcrossCategories.map((field) => (
+                      <tr key={`${field.categoryKey}-${field.key}`}>
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900 text-sm">{field.displayName}</div>
+                          <div className="text-xs text-gray-400">{field.key}</div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => { setSelectedCategory(field.categoryKey); setImportanceFilter('all'); }}
+                            className="text-sm text-purple-600 hover:text-purple-800"
+                          >
+                            {field.categoryName}
+                          </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex px-2 py-0.5 text-xs rounded ${
+                            field.type === 'boolean' ? 'bg-blue-100 text-blue-700' :
+                            field.type === 'enum' ? 'bg-green-100 text-green-700' :
+                            field.type === 'array' ? 'bg-purple-100 text-purple-700' :
+                            field.type === 'number' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-gray-100 text-gray-700'
+                          }`}>
+                            {field.type}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-500 max-w-xs">
+                          {field.description || '—'}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -2164,6 +2324,7 @@ export default function AdminPage() {
     { id: 'schemas', label: 'Extraction Schema' },
     { id: 'extraction', label: 'Extraction Stats' },
     { id: 'feedback', label: 'AI Feedback' },
+    { id: 'remarket', label: 'Remarket Analytics' },
   ];
 
   return (
@@ -2218,6 +2379,7 @@ export default function AdminPage() {
           {activeTab === 'schemas' && <ExtractionSchemaTab />}
           {activeTab === 'extraction' && <ExtractionStatsTab />}
           {activeTab === 'feedback' && <FeedbackAnalyticsTab />}
+          {activeTab === 'remarket' && <RemarketAnalyticsCard />}
         </div>
       </main>
     </div>

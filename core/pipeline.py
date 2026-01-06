@@ -788,6 +788,65 @@ def _update_submission_by_id(sid: Any, rec: dict[str, Any]) -> None:
         conn.execute(sql, params)
 
 
+# ───────────── Remarket Detection (Phase 7) ─────────────
+
+def _detect_remarket(submission_id: str) -> dict | None:
+    """
+    Check if this submission matches a prior submission for the same account.
+
+    Uses the find_prior_submissions database function to check FEIN, domain,
+    and fuzzy name matches. If a match is found with confidence >= 70%,
+    updates the submission with the detection info.
+
+    Returns the best match info if found, None otherwise.
+    """
+    if not engine:
+        return None
+
+    with engine.begin() as conn:
+        # Call the database function to find matches
+        result = conn.execute(
+            text("SELECT * FROM find_prior_submissions(:sid) ORDER BY match_confidence DESC LIMIT 1"),
+            {"sid": submission_id}
+        )
+        match = result.fetchone()
+
+        if match:
+            # Only auto-flag if confidence is high enough
+            # (FEIN=100, domain=80, name_exact=70 are all good)
+            if match.match_confidence >= 70:
+                conn.execute(
+                    text("""
+                        UPDATE submissions
+                        SET remarket_detected_at = NOW(),
+                            remarket_match_type = :match_type,
+                            remarket_match_confidence = :confidence
+                        WHERE id = :sid
+                    """),
+                    {
+                        "sid": submission_id,
+                        "match_type": match.match_type,
+                        "confidence": match.match_confidence,
+                    }
+                )
+                print(f"[pipeline] Remarket detected: {match.match_type} match ({match.match_confidence}%) "
+                      f"with prior submission {match.submission_id} ({match.insured_name})")
+                return {
+                    "prior_submission_id": str(match.submission_id),
+                    "insured_name": match.insured_name,
+                    "match_type": match.match_type,
+                    "match_confidence": match.match_confidence,
+                    "submission_date": str(match.submission_date) if match.submission_date else None,
+                    "outcome": match.submission_outcome,
+                }
+            else:
+                # Lower confidence - log but don't auto-flag
+                print(f"[pipeline] Possible remarket (low confidence): {match.match_type} "
+                      f"({match.match_confidence}%) with {match.insured_name}")
+
+    return None
+
+
 # ───────────── Broker email matching ─────────────
 _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 _FORWARDED_FROM_RE = re.compile(r"^>?\s*From:\s*([^\n<]+?)\s*<([^>]+)>", re.I | re.M)
@@ -1222,6 +1281,115 @@ def _save_extraction_run(
                 "low": low_conf,
             },
         )
+
+
+# ───────────── Save Extracted Values (Phase 1.9) ─────────────
+
+def _save_extracted_values(
+    submission_id: str,
+    extraction: ApplicationExtraction,
+    source_type: str = "extraction",
+    document_id: str | None = None,
+) -> int:
+    """
+    Save extraction results to submission_extracted_values table.
+
+    This is the unified data store for all extracted field values.
+    AI functions (NIST assessment, show gaps, etc.) read from this table.
+
+    Args:
+        submission_id: The submission UUID
+        extraction: ApplicationExtraction result from extract_from_pdf()
+        source_type: 'extraction' for initial, 'supplemental' for supplemental apps
+        document_id: Optional source document UUID
+
+    Returns:
+        Number of values saved
+    """
+    if not engine:
+        return 0
+
+    tables = _existing_tables()
+    if "submission_extracted_values" not in tables:
+        print("[pipeline] submission_extracted_values table not found, skipping")
+        return 0
+
+    saved_count = 0
+    with engine.begin() as conn:
+        for section_name, fields in extraction.data.items():
+            for field_name, result in fields.items():
+                # Determine status based on extraction result
+                if not result.is_present:
+                    status = "not_asked"
+                elif result.value is None:
+                    status = "pending"  # Question asked but no answer
+                elif result.value is True or (result.value and result.value not in [False, [], ""]):
+                    status = "present"
+                else:
+                    status = "not_present"
+
+                # Convert value to JSON-compatible format
+                import json
+                value_json = json.dumps(result.value) if result.value is not None else None
+
+                try:
+                    conn.execute(
+                        text("""
+                            INSERT INTO submission_extracted_values
+                                (submission_id, field_key, value, status, source_type,
+                                 source_document_id, source_text, confidence, updated_at, updated_by)
+                            VALUES
+                                (:submission_id, :field_key, :value, :status, :source_type,
+                                 :source_document_id, :source_text, :confidence, NOW(), :updated_by)
+                            ON CONFLICT (submission_id, field_key)
+                            DO UPDATE SET
+                                value = CASE
+                                    -- Only update if new value is more definitive
+                                    WHEN EXCLUDED.status = 'present' THEN EXCLUDED.value
+                                    WHEN submission_extracted_values.status = 'present' THEN submission_extracted_values.value
+                                    ELSE COALESCE(EXCLUDED.value, submission_extracted_values.value)
+                                END,
+                                status = CASE
+                                    -- Present > pending > not_asked > not_present (priority order)
+                                    WHEN EXCLUDED.status = 'present' THEN 'present'
+                                    WHEN submission_extracted_values.status = 'present' THEN 'present'
+                                    WHEN EXCLUDED.status = 'pending' THEN 'pending'
+                                    WHEN submission_extracted_values.status = 'pending' THEN 'pending'
+                                    ELSE EXCLUDED.status
+                                END,
+                                source_type = CASE
+                                    WHEN EXCLUDED.status = 'present' THEN EXCLUDED.source_type
+                                    ELSE submission_extracted_values.source_type
+                                END,
+                                source_text = CASE
+                                    WHEN EXCLUDED.status = 'present' THEN EXCLUDED.source_text
+                                    ELSE submission_extracted_values.source_text
+                                END,
+                                confidence = CASE
+                                    WHEN EXCLUDED.confidence > submission_extracted_values.confidence
+                                    THEN EXCLUDED.confidence
+                                    ELSE submission_extracted_values.confidence
+                                END,
+                                updated_at = NOW()
+                        """),
+                        {
+                            "submission_id": submission_id,
+                            "field_key": field_name,  # Just the field name, not section.field
+                            "value": value_json,
+                            "status": status,
+                            "source_type": source_type,
+                            "source_document_id": document_id,
+                            "source_text": result.source_text[:500] if result.source_text else None,
+                            "confidence": result.confidence,
+                            "updated_by": "pipeline",
+                        },
+                    )
+                    saved_count += 1
+                except Exception as e:
+                    print(f"[pipeline] Failed to save {field_name}: {e}")
+
+    print(f"[pipeline] Saved {saved_count} extracted values to submission_extracted_values")
+    return saved_count
 
 
 # ───────────── Document Record Saving ─────────────
@@ -1748,6 +1916,7 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
                 document_classifications = {}
 
         # Extract from application documents (ACORD first, then supplementals)
+        supplemental_extractions = []  # Phase 1.9: collect for unified data flow
         application_docs = get_applications(document_classifications)
         if application_docs:
             # Extract from the primary application (usually ACORD)
@@ -1766,6 +1935,7 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
                             supp_data = supp_result.to_docupipe_format()
                             # Merge: supplemental data fills in gaps but doesn't override
                             app_data = _merge_application_data(app_data, supp_data)
+                            supplemental_extractions.append(supp_result)  # Store for later
                             print(f"[pipeline] Merged supplemental: {Path(supp_path).name}")
                         except Exception as e:
                             print(f"[pipeline] Supplemental extraction failed for {supp_path}: {e}")
@@ -1909,8 +2079,17 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
         try:
             _save_extraction_provenance(sid_str, extraction_result)
             _save_extraction_run(sid_str, extraction_result)
+            # Phase 1.9: Also save to unified submission_extracted_values table
+            _save_extracted_values(sid_str, extraction_result, source_type="extraction")
         except Exception as e:
             print(f"[pipeline] Failed to save extraction provenance: {e}")
+
+    # Phase 1.9: Save supplemental extraction results to unified table
+    for supp_extraction in supplemental_extractions:
+        try:
+            _save_extracted_values(sid_str, supp_extraction, source_type="supplemental")
+        except Exception as e:
+            print(f"[pipeline] Failed to save supplemental extraction: {e}")
 
     # ───────────── Save document records for UI display ─────────────
     if document_classifications:
@@ -1958,6 +2137,13 @@ def process_submission(subject: str, email_body: str, sender_email: str, attachm
             print(f"[pipeline] Extraction orchestrator not available: {e}")
         except Exception as e:
             print(f"[pipeline] Extraction orchestrator failed: {e}")
+
+    # ───────────── Remarket Detection (Phase 7) ─────────────
+    # Check if this is a resubmission of an account we've seen before
+    try:
+        _detect_remarket(sid_str)
+    except Exception as e:
+        print(f"[pipeline] Remarket detection failed: {e}")
 
     return sid
 
