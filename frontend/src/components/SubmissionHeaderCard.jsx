@@ -1,5 +1,8 @@
 import { useState } from 'react';
 
+// Team users for assignment dropdown
+const TEAM_USERS = ['Sarah', 'Mike', 'Tom'];
+
 /**
  * Format revenue as abbreviated string ($12.0M, $1.2B, etc.)
  */
@@ -87,10 +90,26 @@ function PhoneIcon() {
   );
 }
 
+/** User icon */
+function UserIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+    </svg>
+  );
+}
+
 /**
  * SubmissionHeaderCard - Submission summary header
  */
-export default function SubmissionHeaderCard({ submission, onEdit, defaultExpanded = true }) {
+export default function SubmissionHeaderCard({
+  submission,
+  onEdit,
+  onAssign,
+  defaultExpanded = true,
+  currentUser = 'Sarah'
+}) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (!submission) return null;
@@ -115,7 +134,16 @@ export default function SubmissionHeaderCard({ submission, onEdit, defaultExpand
     policyStart,
     policyEnd,
     isRenewal,
+    assignedTo,
   } = submission;
+
+  // Handle assignment change
+  const handleAssignChange = (e) => {
+    const newAssignee = e.target.value || null;
+    if (onAssign) {
+      onAssign(newAssignee);
+    }
+  };
 
   // Format address
   const streetLine = [address1, address2].filter(Boolean).join(', ');
@@ -239,13 +267,40 @@ export default function SubmissionHeaderCard({ submission, onEdit, defaultExpand
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onEdit}
-          className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-700 transition-colors flex-shrink-0"
-        >
-          Edit
-        </button>
+
+        {/* Assignment + Edit buttons */}
+        <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Assignment dropdown */}
+          <div className="flex items-center gap-2">
+            <UserIcon />
+            <select
+              value={assignedTo || ''}
+              onChange={handleAssignChange}
+              className={`text-sm border rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                assignedTo
+                  ? assignedTo === currentUser
+                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                    : 'border-gray-200 bg-white text-gray-700'
+                  : 'border-orange-300 bg-orange-50 text-orange-600'
+              }`}
+            >
+              <option value="">Unassigned</option>
+              {TEAM_USERS.map(user => (
+                <option key={user} value={user}>
+                  {user === currentUser ? `${user} (Me)` : user}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={onEdit}
+            className="rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-700 transition-colors"
+          >
+            Edit
+          </button>
+        </div>
       </div>
 
       {/* Metadata grid - 3 columns */}

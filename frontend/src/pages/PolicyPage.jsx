@@ -12,6 +12,8 @@ import {
   reinstateEndorsement,
   deleteEndorsement,
   calculatePremium,
+  getIssuanceStatus,
+  issuePolicy,
 } from '../api/client';
 import CoverageEditor, { AGGREGATE_COVERAGES, SUBLIMIT_COVERAGES, AGGREGATE_LIMIT_OPTIONS } from '../components/CoverageEditor';
 
@@ -111,6 +113,102 @@ function SubjectivityBadge({ status }) {
   };
   const { label, class: badgeClass } = config[status] || config.pending;
   return <span className={`badge ${badgeClass} text-xs`}>{label}</span>;
+}
+
+// Checklist status icon
+function ChecklistIcon({ status }) {
+  if (status === 'complete') {
+    return (
+      <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    );
+  }
+  if (status === 'incomplete') {
+    return (
+      <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    );
+  }
+  // pending
+  return (
+    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+// Issuance checklist component
+function IssuanceChecklist({ checklist, warnings, blockingItems }) {
+  return (
+    <div className="space-y-4">
+      {/* Checklist items */}
+      <div className="space-y-2">
+        {checklist.map((item, idx) => (
+          <div
+            key={idx}
+            className={`flex items-center justify-between p-3 rounded-lg ${
+              item.status === 'complete' ? 'bg-green-50' :
+              item.status === 'incomplete' ? 'bg-red-50' : 'bg-gray-50'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <ChecklistIcon status={item.status} />
+              <div>
+                <span className={`font-medium ${
+                  item.status === 'complete' ? 'text-green-800' :
+                  item.status === 'incomplete' ? 'text-red-800' : 'text-gray-700'
+                }`}>
+                  {item.item}
+                </span>
+                {item.required && (
+                  <span className="ml-2 text-xs text-gray-500">(required)</span>
+                )}
+              </div>
+            </div>
+            {item.details && (
+              <span className="text-sm text-gray-500">{item.details}</span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Warnings */}
+      {warnings && warnings.length > 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <p className="font-medium text-yellow-800 mb-2">Warnings</p>
+          <ul className="space-y-1">
+            {warnings.map((warning, idx) => (
+              <li key={idx} className="text-sm text-yellow-700 flex items-center gap-2">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                {warning}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Blocking items */}
+      {blockingItems && blockingItems.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <p className="font-medium text-red-800 mb-2">Blocking Issuance</p>
+          <ul className="space-y-1">
+            {blockingItems.map((item, idx) => (
+              <li key={idx} className="text-sm text-red-700 flex items-center gap-2">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Endorsement status dropdown - clickable badge with status options
@@ -1316,6 +1414,12 @@ export default function PolicyPage() {
     queryFn: () => getPolicyData(submissionId).then(res => res.data),
   });
 
+  // Issuance status query
+  const { data: issuanceStatus, isLoading: issuanceLoading } = useQuery({
+    queryKey: ['issuance-status', submissionId],
+    queryFn: () => getIssuanceStatus(submissionId).then(res => res.data),
+  });
+
   // Unbind mutation
   const unbindMutation = useMutation({
     mutationFn: ({ quoteId, reason }) => unbindQuoteOption(quoteId, reason),
@@ -1340,11 +1444,12 @@ export default function PolicyPage() {
     },
   });
 
-  // Generate policy mutation
+  // Issue policy mutation (uses new issuance workflow)
   const policyMutation = useMutation({
-    mutationFn: (quoteId) => generatePolicyDocument(quoteId),
+    mutationFn: () => issuePolicy(submissionId),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['policy', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['issuance-status', submissionId] });
       // Open the PDF in a new tab
       if (data.data?.pdf_url) {
         window.open(data.data.pdf_url, '_blank');
@@ -1669,60 +1774,78 @@ export default function PolicyPage() {
       {/* Policy Issuance */}
       <div className="card">
         <h3 className="form-section-title">Policy Issuance</h3>
-        {isIssued ? (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <span className="text-green-600 text-xl">✓</span>
-              <div>
-                <p className="font-semibold text-green-800">Policy Issued</p>
-                <p className="text-green-700 text-sm">
-                  Policy document has been generated and is available above
-                </p>
-              </div>
-            </div>
-          </div>
-        ) : pendingSubjectivities.length > 0 ? (
-          <div className="space-y-4">
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-              <p className="text-yellow-800">
-                <span className="font-semibold">Cannot issue policy:</span>{' '}
-                {pendingSubjectivities.length} subjectivit{pendingSubjectivities.length === 1 ? 'y' : 'ies'} pending
-              </p>
-            </div>
 
-            {/* Pending subjectivities list */}
-            <div className="space-y-2">
-              {pendingSubjectivities.map((subj) => (
-                <div key={subj.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <span className="text-gray-700">{subj.text}</span>
-                  <div className="flex gap-2">
-                    <button className="btn btn-outline text-sm py-1">Received</button>
-                    <button className="btn btn-outline text-sm py-1">Waive</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
+        {/* Loading state */}
+        {issuanceLoading ? (
+          <div className="text-gray-500">Loading issuance status...</div>
+        ) : issuanceStatus?.is_issued ? (
+          /* Already issued */
           <div className="space-y-4">
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <p className="text-green-800">
-                {hasBinder ? 'Binder generated. ' : ''}Ready to issue policy.
-              </p>
+              <div className="flex items-center gap-3">
+                <svg className="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="font-semibold text-green-800">Policy Issued</p>
+                  {issuanceStatus.policy_info && (
+                    <p className="text-green-700 text-sm">
+                      {issuanceStatus.policy_info.policy_number}
+                      {issuanceStatus.policy_info.pdf_url && (
+                        <a
+                          href={issuanceStatus.policy_info.pdf_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-3 text-green-600 underline"
+                        >
+                          View Policy PDF
+                        </a>
+                      )}
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="flex gap-3">
+
+            {/* Still show checklist for reference */}
+            {issuanceStatus.checklist && (
+              <IssuanceChecklist
+                checklist={issuanceStatus.checklist}
+                warnings={[]}
+                blockingItems={[]}
+              />
+            )}
+          </div>
+        ) : issuanceStatus ? (
+          /* Not yet issued - show checklist and button */
+          <div className="space-y-4">
+            {/* Issuance checklist */}
+            <IssuanceChecklist
+              checklist={issuanceStatus.checklist || []}
+              warnings={issuanceStatus.warnings || []}
+              blockingItems={issuanceStatus.blocking_items || []}
+            />
+
+            {/* Issue button */}
+            <div className="flex gap-3 pt-2">
               <button
                 className="btn btn-primary"
-                onClick={() => policyMutation.mutate(boundOption.id)}
-                disabled={policyMutation.isPending}
+                onClick={() => policyMutation.mutate()}
+                disabled={!issuanceStatus.can_issue || policyMutation.isPending}
+                title={!issuanceStatus.can_issue ? 'Resolve blocking items first' : ''}
               >
                 {policyMutation.isPending ? 'Issuing...' : 'Issue Policy'}
               </button>
               <span className="text-sm text-gray-500 self-center">
-                Generates Dec Page + Policy Form + Endorsements
+                {issuanceStatus.can_issue
+                  ? 'Ready to issue - Generates Dec Page + Policy Form + Endorsements'
+                  : 'Resolve blocking items to enable issuance'}
               </span>
             </div>
           </div>
+        ) : (
+          /* Fallback if no issuance status */
+          <div className="text-gray-500">Unable to load issuance status</div>
         )}
       </div>
 

@@ -59,17 +59,30 @@ function WorkflowStageBadge({ stage, assignedTo }) {
   const config = stageConfig[stage] || { label: stage, color: 'bg-gray-100 text-gray-600', icon: '○' };
 
   return (
-    <div className="flex flex-col">
-      <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded ${config.color}`}>
-        <span>{config.icon}</span>
-        <span>{config.label}</span>
-      </span>
-      {assignedTo && stage === 'uw_work' && (
-        <span className="text-[10px] text-gray-500 mt-0.5">{assignedTo}</span>
-      )}
-    </div>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded ${config.color}`}>
+      <span>{config.icon}</span>
+      <span>{config.label}</span>
+    </span>
   );
 }
+
+// Assignment badge component
+function AssignmentBadge({ assignedTo, currentUser }) {
+  if (!assignedTo) {
+    return <span className="text-xs text-gray-400">Unassigned</span>;
+  }
+
+  const isMe = assignedTo === currentUser;
+
+  return (
+    <span className={`text-xs ${isMe ? 'text-blue-600 font-medium' : 'text-gray-600'}`}>
+      {isMe ? 'Me' : assignedTo}
+    </span>
+  );
+}
+
+// Team users (same as in SubmissionLayout)
+const TEAM_USERS = ['Sarah', 'Mike', 'Tom'];
 
 // Format currency
 function formatCurrency(value) {
@@ -97,6 +110,16 @@ export default function SubmissionsListPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [boundFilter, setBoundFilter] = useState('');
   const [workflowFilter, setWorkflowFilter] = useState('');
+  const [assignmentFilter, setAssignmentFilter] = useState(''); // '', 'mine', 'unassigned', or UW name
+  const [currentUser, setCurrentUser] = useState(() =>
+    localStorage.getItem('currentUser') || 'Sarah'
+  );
+
+  // Persist current user to localStorage
+  const handleUserChange = (user) => {
+    setCurrentUser(user);
+    localStorage.setItem('currentUser', user);
+  };
 
   const { data: submissions, isLoading, error } = useQuery({
     queryKey: ['submissions'],
@@ -116,8 +139,16 @@ export default function SubmissionsListPage() {
     if (boundFilter === 'bound' && !sub.has_bound_quote) return false;
     if (boundFilter === 'unbound' && sub.has_bound_quote) return false;
     if (workflowFilter && sub.workflow_stage !== workflowFilter) return false;
+    // Assignment filter
+    if (assignmentFilter === 'mine' && sub.assigned_to_name !== currentUser) return false;
+    if (assignmentFilter === 'unassigned' && sub.assigned_to_name) return false;
+    if (assignmentFilter && assignmentFilter !== 'mine' && assignmentFilter !== 'unassigned' && sub.assigned_to_name !== assignmentFilter) return false;
     return true;
   });
+
+  // Count my assigned submissions
+  const myCount = submissions?.filter(s => s.assigned_to_name === currentUser).length || 0;
+  const unassignedCount = submissions?.filter(s => !s.assigned_to_name).length || 0;
 
   // Get unique statuses for filter dropdown
   const statuses = [...new Set(submissions?.map(s => s.status).filter(Boolean) || [])];
@@ -176,6 +207,49 @@ export default function SubmissionsListPage() {
           </div>
         </div>
 
+        {/* Quick Filters - My Queue */}
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+            <span>Viewing as:</span>
+            <select
+              className="form-select py-1 px-2 text-sm"
+              value={currentUser}
+              onChange={(e) => handleUserChange(e.target.value)}
+            >
+              {TEAM_USERS.map(user => (
+                <option key={user} value={user}>{user}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1" />
+          <div className="flex gap-2">
+            <button
+              className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+                assignmentFilter === '' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+              onClick={() => setAssignmentFilter('')}
+            >
+              All ({submissions?.length || 0})
+            </button>
+            <button
+              className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+                assignmentFilter === 'mine' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+              }`}
+              onClick={() => setAssignmentFilter('mine')}
+            >
+              My Queue ({myCount})
+            </button>
+            <button
+              className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+                assignmentFilter === 'unassigned' ? 'bg-orange-600 text-white' : 'bg-orange-50 text-orange-600 hover:bg-orange-100'
+              }`}
+              onClick={() => setAssignmentFilter('unassigned')}
+            >
+              Unassigned ({unassignedCount})
+            </button>
+          </div>
+        </div>
+
         {/* Search and Filters */}
         <div className="card mb-6">
           <div className="mb-4">
@@ -187,7 +261,7 @@ export default function SubmissionsListPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             <div>
               <label className="form-label">Status</label>
               <select
@@ -229,6 +303,21 @@ export default function SubmissionsListPage() {
                 <option value="complete">Complete</option>
               </select>
             </div>
+            <div>
+              <label className="form-label">Assigned To</label>
+              <select
+                className="form-select"
+                value={assignmentFilter}
+                onChange={(e) => setAssignmentFilter(e.target.value)}
+              >
+                <option value="">All</option>
+                <option value="mine">My Queue</option>
+                <option value="unassigned">Unassigned</option>
+                {TEAM_USERS.filter(u => u !== currentUser).map(user => (
+                  <option key={user} value={user}>{user}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -238,6 +327,7 @@ export default function SubmissionsListPage() {
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="table-header">Account</th>
+                <th className="table-header">Assigned</th>
                 <th className="table-header">Workflow</th>
                 <th className="table-header">Status</th>
                 <th className="table-header">Decision</th>
@@ -263,7 +353,10 @@ export default function SubmissionsListPage() {
                     )}
                   </td>
                   <td className="table-cell">
-                    <WorkflowStageBadge stage={sub.workflow_stage} assignedTo={sub.assigned_to_name} />
+                    <AssignmentBadge assignedTo={sub.assigned_to_name} currentUser={currentUser} />
+                  </td>
+                  <td className="table-cell">
+                    <WorkflowStageBadge stage={sub.workflow_stage} />
                   </td>
                   <td className="table-cell">
                     <StatusBadge status={sub.status} isBound={sub.has_bound_quote} />

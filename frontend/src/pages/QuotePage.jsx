@@ -37,6 +37,7 @@ import {
 import CoverageEditor from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
 import RetroScheduleEditor from '../components/RetroScheduleEditor';
+import TowerComparison from '../components/TowerComparison';
 
 // Format currency
 function formatCurrency(value) {
@@ -2466,6 +2467,9 @@ export default function QuotePage() {
 
   return (
     <div className="space-y-6">
+      {/* Expiring vs Proposed Comparison (for renewals) */}
+      <TowerComparison submissionId={submissionId} />
+
       {/* Header Row with Actions */}
       <div className="flex items-center justify-between">
         <div>

@@ -617,12 +617,12 @@ When a policy approaches expiration:
 | Phase 6: Proactive Notifications | Not Started | - | - |
 | Phase 7: Remarket Detection | Complete | 2026-01-06 | 2026-01-06 |
 | Phase 8: Policy Renewal | Complete | 2026-01-06 | 2026-01-06 |
-| Phase 9: Underwriter Assignment | Not Started | - | - |
-| Phase 10: Policy Issuance Workflow | Not Started | - | - |
+| Phase 9: Underwriter Assignment | Complete | 2026-01-06 | 2026-01-06 |
+| Phase 10: Policy Issuance Workflow | Complete | 2026-01-06 | 2026-01-06 |
 | Phase 11: Email Vote Queue | Not Started | - | - |
-| Phase 12: Incumbent/Expiring Tower | Not Started | - | - |
-| Phase 13: UW Knowledge Base | Not Started | - | - |
-| Phase 14: Endorsement Management | Not Started | - | - |
+| Phase 12: Incumbent/Expiring Tower | Complete | 2026-01-06 | 2026-01-06 |
+| Phase 13: UW Knowledge Base | Partial | 2025-12 | - |
+| Phase 14: Endorsement Management | Partial | 2025-11 | - |
 | Phase 15: UI Enhancements | Not Started | - | - |
 
 ### Summary: Done vs Open
@@ -658,82 +658,109 @@ When a policy approaches expiration:
   - ✅ Renewal pricing with loss ratio and experience factors
   - ✅ Decision snapshots for renewals
   - ✅ Renewal automation (expectations, matching, overdue handling)
+- ✅ Phase 10: Policy Issuance Workflow
+  - ✅ `is_critical` flag for subjectivities (blocking vs warning-only)
+  - ✅ Deadline enforcement with overdue/due-soon tracking
+  - ✅ `get_issuance_status()` with full checklist
+  - ✅ PolicyPage issuance checklist UI
+  - ✅ Admin dashboard for pending subjectivities (filter by deadline status)
+- ✅ Phase 9: Underwriter Assignment
+  - ✅ Submission-level assignment fields (`assigned_uw_name`, `assigned_at`, `assigned_by`)
+  - ✅ Assignment history tracking table with audit trail
+  - ✅ API endpoints: POST /assign, POST /unassign, GET /assignment-history
+  - ✅ SubmissionsListPage: "My Queue" filter with quick toggle buttons
+  - ✅ SubmissionHeaderCard: Assignment dropdown for reassignment
+- ✅ Phase 12: Incumbent/Expiring Tower
+  - ✅ `expiring_towers` table for capturing incumbent coverage snapshots
+  - ✅ DB functions: `capture_expiring_tower_from_prior()`, `get_tower_comparison()`
+  - ✅ `v_incumbent_analytics` view for win/loss tracking by carrier
+  - ✅ Core module `core/expiring_tower.py` with CRUD and comparison functions
+  - ✅ API endpoints: GET/POST/PATCH/DELETE expiring-tower, tower-comparison
+  - ✅ `TowerComparison` component in QuotePage for side-by-side comparison
+  - ✅ Comparison shows: limit, retention, premium, RPM with change indicators
+
+**PARTIAL:**
+- ⚠️ Phase 13: UW Knowledge Base
+  - ✅ UW Guide frontend with 5 tabs (Conflicts, Market News, Field Definitions, Guidelines, Supplemental Questions)
+  - ✅ Conflict rules system with AI discovery
+  - ✅ Market news with AI tagging/summarization
+  - ⏳ Remaining: Organization/docs, move questions to DB, API layer, credibility score UI
+- ⚠️ Phase 14: Endorsement Management
+  - ✅ Full endorsement schema (document_library, quote_endorsements, policy_endorsements)
+  - ✅ Quote-level endorsements with auto-attach rules
+  - ✅ Mid-term endorsement lifecycle (draft → issued → void)
+  - ✅ Fill-in variables system
+  - ⏳ Remaining: Fill-in UI decision, more endorsement types, coverage editor integration
 
 **FUTURE:**
 - Phase 5: Claims feedback loop
 - Phase 6: Proactive agent notifications
-- Phase 9-15: See detailed sections below
+- Phase 11, 15: See detailed sections below
 
 ---
 
-## Phase 9: Underwriter Assignment
+## Phase 9: Underwriter Assignment ✅
 
 Track who is working on each submission/account.
 
-### Concept
+### Completed
 
-Every submission should have an assigned underwriter. This enables:
-- Workload distribution visibility
-- Accountability tracking
-- Filtering "my accounts" vs "all accounts"
-- Audit trail of who made decisions
-
-### Tasks
-
-- [ ] **9.1** Add underwriter fields to submissions
-  - `assigned_underwriter_id` - FK to users table
+- [x] **9.1** Submission-level assignment fields
+  - `assigned_uw_name` - current assignee (string-based, no users table needed yet)
   - `assigned_at` - when assigned
   - `assigned_by` - who assigned (can be auto or manual)
+  - Migration: `db_setup/underwriter_assignment.sql`
 
-- [ ] **9.2** Auto-assignment logic
-  - Round-robin by capacity
-  - Broker relationship (same UW for same broker)
-  - Industry specialization
+- [x] **9.2** Assignment history tracking
+  - `submission_assignment_history` table with audit trail
+  - `assign_submission()` and `unassign_submission()` DB functions
+  - Views: `v_my_submissions`, `v_unassigned_submissions`, `v_assignment_workload`
+  - API: `POST /api/submissions/{id}/assign`
+  - API: `POST /api/submissions/{id}/unassign`
+  - API: `GET /api/submissions/{id}/assignment-history`
+  - API: `GET /api/assignment-workload`
 
-- [ ] **9.3** Assignment UI
-  - Dropdown in header to assign/reassign
-  - "My Queue" filter on submissions list
-  - Workload dashboard showing distribution
+- [x] **9.3** Assignment UI
+  - SubmissionsListPage: "My Queue" toggle with quick filter buttons
+  - SubmissionsListPage: "Viewing as" user selector (persisted to localStorage)
+  - SubmissionsListPage: Assigned column showing assignee
+  - SubmissionHeaderCard: Assignment dropdown for reassignment
+  - Color-coded badges (blue = me, orange = unassigned)
 
-- [ ] **9.4** Decision attribution
-  - Track who quoted, who bound
-  - Show in decision snapshots
-  - Audit trail for compliance
+### Future Enhancement
+- Auto-assignment logic (round-robin, broker relationship, specialization)
 
 ---
 
-## Phase 10: Policy Issuance Workflow
+## Phase 10: Policy Issuance Workflow ✅
 
 Complete the bind → issue workflow with subjectivity tracking.
 
-### Current State
+### Completed
 
-- Bind flow exists (`bind_quote()`)
-- Subjectivity tracking exists (junction table)
-- Binder generation exists (`generate_binder_document()`)
-- Mark subjectivity received exists
+- [x] **10.1** Subjectivity deadline tracking
+  - `is_critical` flag to distinguish blocking vs warning-only
+  - `due_date` field with deadline status calculation
+  - `get_overdue_subjectivities()`, `check_deadline_warnings()`
+  - Migration: `db_setup/subjectivities_deadline.sql`
 
-### Tasks
+- [x] **10.2** Policy issuance checklist
+  - `get_issuance_status()` returns full checklist with warnings
+  - Checklist items: bound, binder generated, subjectivities received, policy issued
+  - Blocking items list for what prevents issuance
 
-- [ ] **10.1** Subjectivity deadline tracking
-  - Due dates on subjectivities (default: effective date)
-  - Warning when approaching deadline
-  - Block issuance if critical subjectivities pending
+- [x] **10.3** Issuance workflow UI
+  - `IssuanceChecklist` component with color-coded status
+  - PolicyPage shows checklist with warnings and blocking items
+  - Issue button disabled until requirements met
+  - API: `GET /api/submissions/{id}/issuance-status`
+  - API: `POST /api/submissions/{id}/issue-policy`
 
-- [ ] **10.2** Policy issuance checklist
-  - All critical subjectivities received
-  - Premium payment confirmed (optional)
-  - Policy documents generated
-
-- [ ] **10.3** Issuance workflow UI
-  - "Ready to Issue" indicator
-  - One-click issue when checklist complete
-  - Issue confirmation with policy number
-
-- [ ] **10.4** Post-issuance document generation
-  - Policy declarations page
-  - Full policy jacket
-  - Certificate of insurance template
+- [x] **10.4** Admin pending subjectivities dashboard
+  - Cross-account view of all pending subjectivities
+  - Filter by: All / Overdue / Due Soon
+  - Quick actions: Mark received, Waive
+  - API: `GET /api/admin/pending-subjectivities?filter=`
 
 ---
 
@@ -769,108 +796,154 @@ Underwriters receive daily email with prescreen submissions. Each card has votin
 
 ---
 
-## Phase 12: Incumbent/Expiring Tower
+## Phase 12: Incumbent/Expiring Tower ✅
 
 Capture and display incumbent carrier information for competitive analysis.
 
-### Current State
+### Completed
 
-- `incumbent_carrier`, `expiring_premium`, `years_with_carrier` fields exist
-- Basic display in AnalyzePage
-- No structured tower capture
+- [x] **12.1** Expiring tower data model
+  - `expiring_towers` table with carrier, limit, retention, premium, tower_json
+  - Links to submission and prior_submission
+  - `capture_expiring_tower_from_prior()` DB function
+  - `get_tower_comparison()` DB function for comparison data
+  - Migration: `db_setup/expiring_towers.sql`
 
-### Tasks
+- [x] **12.2** Core module and API
+  - `core/expiring_tower.py` with CRUD and comparison functions
+  - API: `GET/POST/PATCH/DELETE /api/submissions/{id}/expiring-tower`
+  - API: `GET /api/submissions/{id}/tower-comparison`
+  - API: `POST /api/submissions/{id}/capture-expiring-tower`
+  - API: `GET /api/admin/incumbent-analytics`
 
-- [ ] **12.1** Expiring tower data model
-  - `expiring_towers` table (carrier, limit, attachment, premium, retention)
-  - Link to submission
-  - Support multi-layer incumbent programs
-
-- [ ] **12.2** Extraction from documents
-  - Parse incumbent tower from applications
-  - Extract from loss run cover pages
-  - Extract from expiring dec pages
-
-- [ ] **12.3** Competitive analysis UI
+- [x] **12.3** Competitive analysis UI
+  - `TowerComparison` component in QuotePage
   - Side-by-side: Expiring vs Proposed
-  - Premium comparison (rate per million)
-  - Coverage comparison matrix
+  - Shows limit, retention, premium with change indicators
+  - Rate per million (RPM) comparison
+  - Only displays for renewals with expiring tower data
 
-- [ ] **12.4** Win/loss tracking by incumbent
-  - Which carriers we compete against
-  - Win rate by incumbent carrier
-  - Premium differential when we win vs lose
+- [x] **12.4** Win/loss tracking by incumbent
+  - `v_incumbent_analytics` view
+  - Tracks submission count, won/lost, win rate by carrier
+  - Average premium when won
+
+### Future Enhancement
+- Extract expiring tower from documents (dec pages, applications)
+- Manual entry UI for expiring coverage
 
 ---
 
-## Phase 13: UW Knowledge Base
+## Phase 13: UW Knowledge Base (Partially Complete)
 
 Living underwriting guide accessible to AI agents.
 
-### Concept
+### Already Built
 
-A structured knowledge base that:
-- Documents underwriting appetite and guidelines
-- Provides context to AI agents for better recommendations
-- Can be updated as guidelines evolve
-- Versioned for audit trail
+- [x] **UW Guide Frontend** (`/uw-guide` route, `pages_workflows/uw_guide.py`)
+  - 5-tab Streamlit dashboard: Conflicts, Market News, Field Definitions, Guidelines, Supplemental Questions
+  - Full-featured UI with filters, dialogs, CRUD operations
 
-### Tasks
+- [x] **Conflict Rules System**
+  - `conflict_rules` table with 12 seeded rules (EDR, MFA, Backup, Business Model, Scale)
+  - `detected_conflicts` table for instance tracking
+  - Detection patterns (field comparison + context-based)
+  - AI discovery of new rules (`ai/conflict_analyzer.py`)
 
-- [ ] **13.1** Knowledge base data model
-  - Categories: appetite, pricing, coverage, claims
-  - Versioned entries with effective dates
-  - Tags for AI retrieval
+- [x] **Market News**
+  - `market_news` table with title, URL, source, tags, summary
+  - AI-powered tagging and summarization (`ai/market_news_intel.py`)
+  - CRUD UI with auto-generate button
 
-- [ ] **13.2** Admin UI for knowledge management
-  - CRUD for knowledge entries
-  - Rich text editing
-  - Version history
+- [x] **Field Definitions & Guidelines**
+  - Static markdown reference for application fields
+  - Credibility score interpretation guide
 
-- [ ] **13.3** AI agent integration
-  - RAG retrieval for relevant knowledge
-  - Include in agent system prompts
-  - Citation of sources in responses
+- [x] **Supplemental Questions**
+  - 9 risk area categories with extensive Q&A content
+  - Biometric Data, OT/ICS, Healthcare/PHI, Crypto, AI/ML, etc.
 
-- [ ] **13.4** Seed initial content
-  - Import existing guidelines
-  - Document tribal knowledge
-  - Claims learnings
+### Remaining Work
+
+- [ ] **13.1** Organization & Documentation
+  - Document rule naming conventions and lifecycle
+  - Define approval workflow for new rules
+  - Add version tracking to conflict rules
+
+- [ ] **13.2** Move Supplemental Questions to Database
+  - Create `supplemental_questions` and `risk_categories` tables
+  - Store `submission_supplemental_answers` for tracking
+  - Dynamic form generation based on submission profile
+
+- [ ] **13.3** API Layer for External Access
+  - `GET /api/uw-guide/conflicts` - List rules with filters
+  - `GET /api/uw-guide/market-news` - Searchable articles
+  - Enable broker portal integration
+
+- [ ] **13.4** Credibility Score UI
+  - Display score breakdown in Guidelines tab
+  - Link to specific contradiction examples
+  - Actionable recommendations ("Request clarification on these points")
 
 ---
 
-## Phase 14: Endorsement Management
+## Phase 14: Endorsement Management (Mostly Complete)
 
 UI for managing endorsements with fill-in fields.
 
-### Current State
+### Already Built
 
-- Endorsement catalog exists (`endorsement_catalog`)
-- Component templates exist (`endorsement_component_templates`)
-- Policy endorsements table exists
-- Add/remove endorsements works
+- [x] **Database Schema**
+  - `document_library` - Endorsement templates with fill_in_mappings, auto_attach_rules
+  - `quote_endorsements` - Junction table with field_values JSONB
+  - `policy_endorsements` - Mid-term transactions with status lifecycle
+  - `endorsement_component_templates` - Reusable sections (header, lead-in, closing)
 
-### Tasks
+- [x] **Quote-Level Endorsements**
+  - Three-section selector: Required (locked), Auto-Added (rules), Manual Selection
+  - Auto-attach rule evaluation based on quote data
+  - `fill_in_mappings` system for placeholder variables
+  - `field_values` storage per quote (e.g., additional insured names)
 
-- [ ] **14.1** Additional insured endorsements
-  - Structured AI fill-in capture (name, address, relationship)
-  - Multiple AIs per endorsement
-  - Schedule of AIs document generation
+- [x] **Mid-Term Endorsements**
+  - Full lifecycle tracking: draft → issued → void
+  - Endorsement types: coverage_change, cancellation, extension, name_change, address_change, erp, bor_change, reinstatement
+  - Premium calculation (pro-rata, flat methods)
+  - Document generation with PDF storage
+  - `carries_to_renewal` flag
 
-- [ ] **14.2** Endorsement fill-in UI
-  - Dynamic form based on endorsement template
-  - Field validation
-  - Preview before adding
+- [x] **Document Library Admin**
+  - CRUD for endorsement templates
+  - Auto-attach rule editor
+  - Fill-in mapping configuration
+  - Component templates management
 
-- [ ] **14.3** Mid-term endorsements
-  - Add endorsement to bound policy
-  - Premium adjustment calculation
-  - Endorsement document generation
+- [x] **Fill-In Variables System**
+  - Policy data: `{{insured_name}}`, `{{effective_date}}`, `{{aggregate_limit}}`, etc.
+  - Mid-term data: `{{endorsement_effective_date}}`, `{{previous_broker}}`, `{{new_broker}}`
 
-- [ ] **14.4** Endorsement library management
-  - Admin UI to manage templates
-  - Fill-in field definitions
-  - Premium rules per endorsement
+### Remaining Work
+
+- [ ] **14.1** Fill-In UI Decision
+  - **Option A**: Embedded in endorsement selection flow
+  - **Option B**: Separate "Additional Information" screen
+  - Need to decide where fill-in values are entered and reviewed
+
+- [ ] **14.2** Additional Endorsement Types
+  - Additional Insured endorsements with schedule generation
+  - Waiver of Subrogation
+  - Notice of Cancellation
+  - Other carrier-specific forms
+
+- [ ] **14.3** Coverage Change Editor Integration
+  - Full CoverageEditor integration for `coverage_change` endorsements
+  - Visual diff of before/after coverage
+  - See `PLAN_midterm_endorsement_redesign.md`
+
+- [ ] **14.4** Document Generation Polish
+  - Placeholder substitution in generated PDFs
+  - Preview before finalizing
+  - Batch endorsement generation
 
 ---
 

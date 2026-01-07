@@ -14,6 +14,8 @@ import {
   createAiResearchTask,
   getAiResearchTasks,
   reviewAiResearchTask,
+  assignSubmission,
+  unassignSubmission,
 } from '../api/client';
 import PdfHighlighter from '../components/review/PdfHighlighter';
 import BrokerSelector from '../components/BrokerSelector';
@@ -187,6 +189,23 @@ function SubmissionEditForm({ submission, onSave, onCancel }) {
  */
 function SubmissionSummaryCard({ submission, onUpdate, defaultExpanded = true }) {
   const [isEditing, setIsEditing] = useState(false);
+  const queryClient = useQueryClient();
+  const currentUser = localStorage.getItem('currentUser') || 'Sarah';
+
+  // Assignment mutation
+  const assignMutation = useMutation({
+    mutationFn: async ({ submissionId, assignedTo }) => {
+      if (assignedTo) {
+        return assignSubmission(submissionId, assignedTo, currentUser, 'assigned');
+      } else {
+        return unassignSubmission(submissionId, currentUser, 'released');
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['submission', submission.id]);
+      queryClient.invalidateQueries(['submissions']);
+    },
+  });
 
   if (!submission) return null;
 
@@ -214,6 +233,8 @@ function SubmissionSummaryCard({ submission, onUpdate, defaultExpanded = true })
     policyStart: submission.effective_date,
     policyEnd: submission.expiration_date,
     isRenewal: submission.is_renewal,
+    // Assignment
+    assignedTo: submission.assigned_uw_name,
   };
 
   const handleSave = (updates) => {
@@ -221,12 +242,18 @@ function SubmissionSummaryCard({ submission, onUpdate, defaultExpanded = true })
     setIsEditing(false);
   };
 
+  const handleAssign = (assignedTo) => {
+    assignMutation.mutate({ submissionId: submission.id, assignedTo });
+  };
+
   return (
     <>
       <SubmissionHeaderCard
         submission={headerProps}
         onEdit={() => setIsEditing(true)}
+        onAssign={handleAssign}
         defaultExpanded={defaultExpanded}
+        currentUser={currentUser}
       />
       {isEditing && (
         <SubmissionEditForm

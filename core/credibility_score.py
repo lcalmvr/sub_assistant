@@ -724,3 +724,159 @@ def calculate_credibility_score(
         app_complexity=complexity,
         all_issues=all_issues,
     )
+
+
+# =============================================================================
+# API HELPER: GET SCORE BREAKDOWN FOR SUBMISSION
+# =============================================================================
+
+def get_score_breakdown(submission_id: str) -> dict:
+    """
+    Get a detailed credibility score breakdown for a submission.
+
+    Fetches the application data from the database and calculates
+    the credibility score with full issue details.
+
+    Args:
+        submission_id: UUID of the submission
+
+    Returns:
+        Dictionary with score, dimensions, and issues suitable for API response
+    """
+    from sqlalchemy import text
+    from core.db import get_conn
+
+    # Fetch submission data
+    with get_conn() as conn:
+        # Get submission metadata
+        result = conn.execute(
+            text("""
+                SELECT
+                    s.id,
+                    s.applicant_name,
+                    s.annual_revenue,
+                    s.naics_primary_code,
+                    s.naics_primary_title,
+                    s.business_summary
+                FROM submissions s
+                WHERE s.id = :submission_id
+            """),
+            {"submission_id": submission_id}
+        )
+        sub_row = result.fetchone()
+
+        if not sub_row:
+            return {
+                "score": 0,
+                "label": "unknown",
+                "description": "Submission not found",
+                "dimensions": {},
+                "issues": [],
+            }
+
+        # Get extracted values as application data
+        result = conn.execute(
+            text("""
+                SELECT field_key, field_value
+                FROM extraction_values
+                WHERE submission_id = :submission_id
+            """),
+            {"submission_id": submission_id}
+        )
+        value_rows = result.fetchall()
+
+    # Build app_data from extracted values
+    app_data = {}
+    for row in value_rows:
+        if row.field_value is not None:
+            app_data[row.field_key] = row.field_value
+
+    # Build submission metadata
+    submission_data = {
+        "naics_primary_code": sub_row.naics_primary_code,
+        "naics_primary_title": sub_row.naics_primary_title,
+        "annual_revenue": sub_row.annual_revenue,
+        "business_summary": sub_row.business_summary,
+    }
+
+    # Calculate score
+    score = calculate_credibility_score(
+        app_data=app_data,
+        submission_data=submission_data,
+    )
+
+    # Format dimensions for API response
+    dimensions = {
+        "consistency": {
+            "score": round(score.consistency.score, 1),
+            "max": 100,
+            "weight": score.consistency.weight,
+            "weighted_score": round(score.consistency.weighted_score, 1),
+            "weighted_max": round(100 * score.consistency.weight, 1),
+            "issue_count": len(score.consistency.issues),
+            "details": score.consistency.details,
+            "issues": [
+                {
+                    "rule": i.rule_name,
+                    "severity": i.severity,
+                    "message": i.message,
+                    "field": i.field_name,
+                    "value": str(i.field_value) if i.field_value is not None else None,
+                }
+                for i in score.consistency.issues
+            ],
+        },
+        "plausibility": {
+            "score": round(score.plausibility.score, 1),
+            "max": 100,
+            "weight": score.plausibility.weight,
+            "weighted_score": round(score.plausibility.weighted_score, 1),
+            "weighted_max": round(100 * score.plausibility.weight, 1),
+            "issue_count": len(score.plausibility.issues),
+            "details": score.plausibility.details,
+            "issues": [
+                {
+                    "rule": i.rule_name,
+                    "severity": i.severity,
+                    "message": i.message,
+                    "field": i.field_name,
+                    "value": str(i.field_value) if i.field_value is not None else None,
+                }
+                for i in score.plausibility.issues
+            ],
+        },
+        "completeness": {
+            "score": round(score.completeness.score, 1),
+            "max": 100,
+            "weight": score.completeness.weight,
+            "weighted_score": round(score.completeness.weighted_score, 1),
+            "weighted_max": round(100 * score.completeness.weight, 1),
+            "issue_count": len(score.completeness.issues),
+            "details": score.completeness.details,
+            "issues": [
+                {
+                    "rule": i.rule_name,
+                    "severity": i.severity,
+                    "message": i.message,
+                    "field": i.field_name,
+                    "value": str(i.field_value) if i.field_value is not None else None,
+                }
+                for i in score.completeness.issues
+            ],
+        },
+    }
+
+    return {
+        "score": round(score.total_score, 1),
+        "label": score.label,
+        "description": score.description,
+        "app_complexity": score.app_complexity,
+        "dimensions": dimensions,
+        "total_issues": len(score.all_issues),
+        "issues_by_severity": {
+            "critical": len([i for i in score.all_issues if i.severity == "critical"]),
+            "high": len([i for i in score.all_issues if i.severity == "high"]),
+            "medium": len([i for i in score.all_issues if i.severity == "medium"]),
+            "low": len([i for i in score.all_issues if i.severity == "low"]),
+        },
+    }

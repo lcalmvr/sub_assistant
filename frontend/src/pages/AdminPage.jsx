@@ -25,6 +25,12 @@ import {
   actionSchemaRecommendation,
   getActiveImportanceSettings,
   updateFieldImportance,
+  getAdminPendingSubjectivities,
+  setSubjectivityCritical,
+  getDriftReviewQueue,
+  getRuleAmendments,
+  createRuleAmendment,
+  reviewRuleAmendment,
 } from '../api/client';
 import RemarketAnalyticsCard from '../components/RemarketAnalyticsCard';
 import RenewalQueueCard from '../components/RenewalQueueCard';
@@ -146,99 +152,158 @@ function PolicySearchTab() {
   );
 }
 
-// Pending Subjectivities Tab
+// Deadline status badge
+function DeadlineStatusBadge({ status, daysUntilDue }) {
+  if (status === 'overdue') {
+    const daysOverdue = Math.abs(daysUntilDue);
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+        {daysOverdue}d overdue
+      </span>
+    );
+  }
+  if (status === 'due_soon') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+        Due in {daysUntilDue}d
+      </span>
+    );
+  }
+  if (status === 'on_track') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+        Due in {daysUntilDue}d
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+      No deadline
+    </span>
+  );
+}
+
+// Pending Subjectivities Tab - Enhanced with deadline filtering
 function PendingSubjectivitiesTab() {
   const queryClient = useQueryClient();
-  const [expandedPolicies, setExpandedPolicies] = useState({});
+  const [filter, setFilter] = useState('all');
 
-  const { data: policies, isLoading } = useQuery({
-    queryKey: ['pending-subjectivities'],
-    queryFn: () => getPendingSubjectivities().then(res => res.data),
+  // Use new admin API with filter
+  const { data: subjectivities, isLoading } = useQuery({
+    queryKey: ['admin-pending-subjectivities', filter],
+    queryFn: () => getAdminPendingSubjectivities(filter, 100).then(res => res.data),
   });
 
   const receivedMutation = useMutation({
     mutationFn: (id) => markSubjectivityReceived(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-subjectivities'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-pending-subjectivities'] });
     },
   });
 
   const waiveMutation = useMutation({
     mutationFn: (id) => waiveSubjectivity(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-subjectivities'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-pending-subjectivities'] });
     },
   });
 
-  const toggleExpanded = (id) => {
-    setExpandedPolicies(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
-  };
+  // Count by deadline status
+  const overdueCount = (subjectivities || []).filter(s => s.deadline_status === 'overdue').length;
+  const dueSoonCount = (subjectivities || []).filter(s => s.deadline_status === 'due_soon').length;
 
   if (isLoading) {
     return <div className="text-gray-500">Loading...</div>;
   }
 
-  if (!policies || policies.length === 0) {
-    return (
-      <div className="bg-gray-50 rounded-lg p-6 text-center text-gray-500">
-        No policies have pending subjectivities
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-3">
-      <div className="text-sm text-gray-500 mb-4">
-        {policies.length} {policies.length === 1 ? 'policy' : 'policies'} with pending subjectivities
+    <div className="space-y-4">
+      {/* Filter buttons */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-gray-500">Filter:</span>
+        <button
+          onClick={() => setFilter('all')}
+          className={`px-3 py-1 text-sm rounded-full ${
+            filter === 'all'
+              ? 'bg-purple-100 text-purple-700'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          All ({subjectivities?.length || 0})
+        </button>
+        <button
+          onClick={() => setFilter('overdue')}
+          className={`px-3 py-1 text-sm rounded-full ${
+            filter === 'overdue'
+              ? 'bg-red-100 text-red-700'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          Overdue ({overdueCount})
+        </button>
+        <button
+          onClick={() => setFilter('due_soon')}
+          className={`px-3 py-1 text-sm rounded-full ${
+            filter === 'due_soon'
+              ? 'bg-yellow-100 text-yellow-700'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          Due Soon ({dueSoonCount})
+        </button>
       </div>
 
-      {policies.map((policy) => {
-        const isExpanded = expandedPolicies[policy.submission_id];
-        const count = policy.subjectivities.length;
-
-        return (
-          <div
-            key={policy.submission_id}
-            className="border border-gray-200 rounded-lg overflow-hidden"
-          >
-            {/* Header */}
-            <button
-              onClick={() => toggleExpanded(policy.submission_id)}
-              className="w-full flex items-center justify-between p-4 bg-white hover:bg-gray-50 text-left"
-            >
-              <div className="flex items-center gap-3">
-                <span className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                  ▶
-                </span>
-                <span className="font-medium text-gray-900">{policy.applicant_name}</span>
-                <span className="text-sm text-gray-500">
-                  {count} pending
-                </span>
-              </div>
-              <Link
-                to={`/submissions/${policy.submission_id}/policy`}
-                className="text-purple-600 hover:text-purple-800 text-sm"
-                onClick={(e) => e.stopPropagation()}
-              >
-                View Policy →
-              </Link>
-            </button>
-
-            {/* Expanded content */}
-            {isExpanded && (
-              <div className="border-t border-gray-200 bg-gray-50 p-4 space-y-2">
-                {policy.subjectivities.map((subj) => (
-                  <div
-                    key={subj.id}
-                    className="flex items-start justify-between p-3 bg-white rounded-lg border border-gray-200"
-                  >
-                    <div className="flex-1 pr-4">
-                      <p className="text-sm text-gray-700">{subj.text}</p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
+      {/* Results */}
+      {!subjectivities || subjectivities.length === 0 ? (
+        <div className="bg-gray-50 rounded-lg p-6 text-center text-gray-500">
+          {filter === 'all'
+            ? 'No pending subjectivities across bound policies'
+            : filter === 'overdue'
+            ? 'No overdue subjectivities'
+            : 'No subjectivities due soon'}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-gray-200">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="table-header text-left">Account</th>
+                <th className="table-header text-left">Subjectivity</th>
+                <th className="table-header text-center">Deadline</th>
+                <th className="table-header text-center">Critical</th>
+                <th className="table-header text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {subjectivities.map((subj) => (
+                <tr key={subj.id} className="hover:bg-gray-50">
+                  <td className="table-cell">
+                    <Link
+                      to={`/submissions/${subj.submission_id}/policy`}
+                      className="text-purple-600 hover:text-purple-800 font-medium"
+                    >
+                      {subj.company_name || subj.insured_name || 'Unknown'}
+                    </Link>
+                    {subj.bound_option_name && (
+                      <div className="text-xs text-gray-500">{subj.bound_option_name}</div>
+                    )}
+                  </td>
+                  <td className="table-cell">
+                    <span className="text-gray-700 text-sm">{subj.text}</span>
+                  </td>
+                  <td className="table-cell text-center">
+                    <DeadlineStatusBadge
+                      status={subj.deadline_status}
+                      daysUntilDue={subj.days_until_due}
+                    />
+                  </td>
+                  <td className="table-cell text-center">
+                    <span className={`inline-block w-2 h-2 rounded-full ${
+                      subj.is_critical ? 'bg-red-500' : 'bg-gray-300'
+                    }`} title={subj.is_critical ? 'Blocks issuance' : 'Warning only'} />
+                  </td>
+                  <td className="table-cell text-right">
+                    <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => receivedMutation.mutate(subj.id)}
                         disabled={receivedMutation.isPending}
@@ -254,13 +319,13 @@ function PendingSubjectivitiesTab() {
                         Waive
                       </button>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -2312,6 +2377,349 @@ function ExtractionSchemaTab() {
   );
 }
 
+// Drift Review Tab - AI Knowledge Governance
+function DriftReviewTab() {
+  const queryClient = useQueryClient();
+  const [selectedRule, setSelectedRule] = useState(null);
+  const [amendmentReason, setAmendmentReason] = useState('');
+  const [viewMode, setViewMode] = useState('queue'); // 'queue' or 'amendments'
+
+  // Fetch drift review queue
+  const { data: driftQueue, isLoading: queueLoading } = useQuery({
+    queryKey: ['drift-review-queue'],
+    queryFn: () => getDriftReviewQueue().then(res => res.data),
+  });
+
+  // Fetch pending amendments
+  const { data: amendments, isLoading: amendmentsLoading } = useQuery({
+    queryKey: ['rule-amendments', 'pending'],
+    queryFn: () => getRuleAmendments('pending').then(res => res.data),
+  });
+
+  // Create amendment mutation
+  const createAmendmentMutation = useMutation({
+    mutationFn: (data) => createRuleAmendment(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rule-amendments'] });
+      queryClient.invalidateQueries({ queryKey: ['drift-review-queue'] });
+      setSelectedRule(null);
+      setAmendmentReason('');
+    },
+  });
+
+  // Review amendment mutation
+  const reviewMutation = useMutation({
+    mutationFn: ({ amendmentId, action, approvedBy }) =>
+      reviewRuleAmendment(amendmentId, { action, approved_by: approvedBy }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rule-amendments'] });
+      queryClient.invalidateQueries({ queryKey: ['drift-review-queue'] });
+    },
+  });
+
+  const handleCreateAmendment = (rule, type) => {
+    createAmendmentMutation.mutate({
+      rule_type: rule.rule_type,
+      rule_id: rule.rule_id,
+      amendment_type: type === 'accept' ? 'enforcement_change' : 'training_flag',
+      reason: amendmentReason,
+      supporting_data: {
+        override_rate: rule.override_rate_pct,
+        times_applied: rule.times_applied,
+        times_overridden: rule.times_overridden,
+        common_reasons: rule.common_override_reasons,
+      },
+      requested_by: 'Admin User',
+    });
+  };
+
+  const getEnforcementBadge = (level) => {
+    const styles = {
+      hard: 'bg-red-100 text-red-800',
+      advisory: 'bg-yellow-100 text-yellow-800',
+      flexible: 'bg-green-100 text-green-800',
+    };
+    return (
+      <span className={`px-2 py-0.5 rounded text-xs font-medium ${styles[level] || 'bg-gray-100 text-gray-800'}`}>
+        {level}
+      </span>
+    );
+  };
+
+  const getRuleTypeBadge = (type) => {
+    const styles = {
+      declination: 'bg-red-50 text-red-700 border-red-200',
+      control: 'bg-blue-50 text-blue-700 border-blue-200',
+      referral: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+      appetite: 'bg-purple-50 text-purple-700 border-purple-200',
+    };
+    return (
+      <span className={`px-2 py-0.5 rounded text-xs border ${styles[type] || 'bg-gray-50 text-gray-700 border-gray-200'}`}>
+        {type}
+      </span>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header with view toggle */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900">AI Knowledge Governance</h3>
+          <p className="text-sm text-gray-500">Review rules where UW behavior diverges from guidelines</p>
+        </div>
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+          <button
+            onClick={() => setViewMode('queue')}
+            className={`px-4 py-2 text-sm font-medium ${
+              viewMode === 'queue'
+                ? 'bg-purple-600 text-white'
+                : 'bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Drift Queue
+            {driftQueue?.length > 0 && (
+              <span className="ml-2 bg-white/20 px-1.5 py-0.5 rounded text-xs">
+                {driftQueue.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setViewMode('amendments')}
+            className={`px-4 py-2 text-sm font-medium ${
+              viewMode === 'amendments'
+                ? 'bg-purple-600 text-white'
+                : 'bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Pending Amendments
+            {amendments?.length > 0 && (
+              <span className="ml-2 bg-white/20 px-1.5 py-0.5 rounded text-xs">
+                {amendments.length}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Drift Review Queue */}
+      {viewMode === 'queue' && (
+        <div className="space-y-4">
+          {queueLoading ? (
+            <div className="text-center py-8 text-gray-500">Loading drift patterns...</div>
+          ) : !driftQueue?.length ? (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
+              <div className="text-green-800 font-medium">No drift patterns detected</div>
+              <div className="text-green-600 text-sm mt-1">
+                UW decisions are aligned with formal guidelines
+              </div>
+            </div>
+          ) : (
+            driftQueue.map((rule) => (
+              <div
+                key={`${rule.rule_type}-${rule.rule_id}`}
+                className={`border rounded-lg p-4 ${
+                  rule.under_review ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200 bg-white'
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      {getRuleTypeBadge(rule.rule_type)}
+                      {getEnforcementBadge(rule.enforcement_level)}
+                      {rule.under_review && (
+                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+                          Under Review
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="font-medium text-gray-900">{rule.rule_name}</h4>
+                    <div className="mt-2 flex items-center gap-4 text-sm text-gray-600">
+                      <span>Applied {rule.times_applied}x</span>
+                      <span>Overridden {rule.times_overridden}x</span>
+                      <span className={`font-medium ${
+                        rule.override_rate_pct >= 50 ? 'text-red-600' :
+                        rule.override_rate_pct >= 30 ? 'text-orange-600' : 'text-yellow-600'
+                      }`}>
+                        {rule.override_rate_pct}% override rate
+                      </span>
+                    </div>
+
+                    {/* Common override reasons */}
+                    {rule.common_override_reasons?.length > 0 && (
+                      <div className="mt-3">
+                        <div className="text-xs text-gray-500 mb-1">Common override reasons:</div>
+                        <div className="flex flex-wrap gap-2">
+                          {rule.common_override_reasons.map((r, i) => (
+                            <span
+                              key={i}
+                              className="px-2 py-1 bg-gray-100 rounded text-xs text-gray-700"
+                            >
+                              {r.reason} ({r.count}x)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  {!rule.under_review && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSelectedRule(selectedRule?.rule_id === rule.rule_id ? null : rule)}
+                        className="px-3 py-1.5 text-sm font-medium text-purple-600 hover:bg-purple-50 rounded"
+                      >
+                        Review
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Expanded review panel */}
+                {selectedRule?.rule_id === rule.rule_id && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="space-y-3">
+                      <textarea
+                        value={amendmentReason}
+                        onChange={(e) => setAmendmentReason(e.target.value)}
+                        placeholder="Enter reason for your decision..."
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        rows={3}
+                      />
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => handleCreateAmendment(rule, 'accept')}
+                          disabled={!amendmentReason || createAmendmentMutation.isPending}
+                          className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50"
+                        >
+                          Accept & Propose Amendment
+                        </button>
+                        <button
+                          onClick={() => handleCreateAmendment(rule, 'reject')}
+                          disabled={!amendmentReason || createAmendmentMutation.isPending}
+                          className="px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 disabled:opacity-50"
+                        >
+                          Flag for Training
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedRule(null);
+                            setAmendmentReason('');
+                          }}
+                          className="px-4 py-2 text-gray-600 text-sm font-medium hover:bg-gray-100 rounded-lg"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Pending Amendments */}
+      {viewMode === 'amendments' && (
+        <div className="space-y-4">
+          {amendmentsLoading ? (
+            <div className="text-center py-8 text-gray-500">Loading amendments...</div>
+          ) : !amendments?.length ? (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+              <div className="text-gray-600">No pending amendments</div>
+            </div>
+          ) : (
+            amendments.map((amendment) => (
+              <div
+                key={amendment.id}
+                className="border border-gray-200 rounded-lg p-4 bg-white"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      {getRuleTypeBadge(amendment.rule_type)}
+                      <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                        {amendment.amendment_type.replace('_', ' ')}
+                      </span>
+                    </div>
+                    <h4 className="font-medium text-gray-900">
+                      Rule: {amendment.rule_id?.slice(0, 8)}...
+                    </h4>
+                    <p className="mt-1 text-sm text-gray-600">{amendment.reason}</p>
+                    <div className="mt-2 text-xs text-gray-500">
+                      Requested by {amendment.requested_by} on{' '}
+                      {new Date(amendment.created_at).toLocaleDateString()}
+                    </div>
+
+                    {/* Supporting data */}
+                    {amendment.supporting_data && (
+                      <div className="mt-3 p-2 bg-gray-50 rounded text-xs text-gray-600">
+                        <div>Override rate: {amendment.supporting_data.override_rate}%</div>
+                        <div>
+                          Applied {amendment.supporting_data.times_applied}x,
+                          Overridden {amendment.supporting_data.times_overridden}x
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Approval actions */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => reviewMutation.mutate({
+                        amendmentId: amendment.id,
+                        action: 'approve',
+                        approvedBy: 'Admin User',
+                      })}
+                      disabled={reviewMutation.isPending}
+                      className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 disabled:opacity-50"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => reviewMutation.mutate({
+                        amendmentId: amendment.id,
+                        action: 'reject',
+                        approvedBy: 'Admin User',
+                      })}
+                      disabled={reviewMutation.isPending}
+                      className="px-3 py-1.5 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 disabled:opacity-50"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Info box */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 className="font-medium text-blue-900 mb-2">About Drift Detection</h4>
+        <div className="text-sm text-blue-800 space-y-1">
+          <p>
+            <strong>Drift</strong> occurs when underwriter decisions consistently diverge from formal guidelines.
+            Rules with 20%+ override rate are surfaced for review.
+          </p>
+          <p>
+            <strong>Accept & Amend</strong>: Creates an amendment proposal to update the rule based on observed practice.
+          </p>
+          <p>
+            <strong>Flag for Training</strong>: Keeps the rule unchanged but notes the pattern for UW training.
+          </p>
+          <p>
+            <strong>Enforcement Levels</strong>: Hard (must follow), Advisory (strong guidance), Flexible (UW judgment).
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
@@ -2327,6 +2735,7 @@ export default function AdminPage() {
     { id: 'extraction', label: 'Extraction Stats' },
     { id: 'feedback', label: 'AI Feedback' },
     { id: 'remarket', label: 'Remarket Analytics' },
+    { id: 'drift-review', label: 'Drift Review' },
   ];
 
   return (
@@ -2383,6 +2792,7 @@ export default function AdminPage() {
           {activeTab === 'extraction' && <ExtractionStatsTab />}
           {activeTab === 'feedback' && <FeedbackAnalyticsTab />}
           {activeTab === 'remarket' && <RemarketAnalyticsCard />}
+          {activeTab === 'drift-review' && <DriftReviewTab />}
         </div>
       </main>
     </div>

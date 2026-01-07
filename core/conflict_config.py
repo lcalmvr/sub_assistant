@@ -4,7 +4,17 @@ Conflict Detection Configuration
 Central configuration for the conflict detection and review system.
 Supports switching between eager, lazy, and hybrid detection strategies.
 
-See docs/conflict_review_implementation_plan.md for full documentation.
+Key components:
+- DetectionStrategy: EAGER, LAZY, or HYBRID mode selection
+- TRACKED_FIELDS: Fields stored in field_values table
+- EAGER_FIELDS: Critical fields for HYBRID mode
+- APPLICATION_CONTRADICTION_RULES: Detects contradictory application answers
+- CORE_SIGN_OFF_ITEMS: Mandatory verification checkpoints
+
+Rule sources: system (hardcoded), llm_discovered, uw_added
+Severity levels: critical (3.0), high (2.0), medium (1.0), low (0.5)
+
+See docs/uw-knowledge-base.md for full documentation.
 """
 
 from __future__ import annotations

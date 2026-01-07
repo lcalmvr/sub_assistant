@@ -4,7 +4,14 @@ Application Credibility Score Configuration
 Defines rules and weights for calculating the credibility score of application responses.
 The score measures consistency, plausibility, and completeness of answers.
 
-See docs/conflicts_guide.md for full documentation.
+Three dimensions (weighted):
+- Consistency (40%): Internal answer coherence via CONSISTENCY_RULES
+- Plausibility (35%): Business context fit via PLAUSIBILITY_RULES
+- Completeness (25%): Answer quality via COMPLETENESS_POINTS
+
+Score labels: excellent (90-100), good (80-89), fair (70-79), poor (60-69), very_poor (0-59)
+
+See docs/uw-knowledge-base.md for full documentation.
 """
 
 from __future__ import annotations

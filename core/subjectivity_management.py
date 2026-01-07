@@ -499,3 +499,273 @@ def add_stock_subjectivities(
         if result:
             count += 1
     return count
+
+
+# =============================================================================
+# DEADLINE ENFORCEMENT FUNCTIONS
+# =============================================================================
+
+def get_overdue_subjectivities(submission_id: str) -> list[dict]:
+    """
+    Get all subjectivities that are past their due date.
+
+    Args:
+        submission_id: UUID of the submission
+
+    Returns:
+        List of overdue subjectivity dicts with days_overdue
+    """
+    try:
+        with get_conn() as conn:
+            result = conn.execute(text("""
+                SELECT id, text, category, status, due_date, is_critical,
+                       CURRENT_DATE - due_date AS days_overdue
+                FROM policy_subjectivities
+                WHERE submission_id = :submission_id
+                  AND status = 'pending'
+                  AND due_date IS NOT NULL
+                  AND due_date < CURRENT_DATE
+                ORDER BY due_date
+            """), {"submission_id": submission_id})
+
+            return [
+                {
+                    "id": str(row[0]),
+                    "text": row[1],
+                    "category": row[2],
+                    "status": row[3],
+                    "due_date": row[4],
+                    "is_critical": row[5] if row[5] is not None else True,
+                    "days_overdue": row[6]
+                }
+                for row in result.fetchall()
+            ]
+    except Exception as e:
+        print(f"Error getting overdue subjectivities: {e}")
+        return []
+
+
+def get_due_soon_subjectivities(submission_id: str, days: int = 7) -> list[dict]:
+    """
+    Get subjectivities due within the specified number of days.
+
+    Args:
+        submission_id: UUID of the submission
+        days: Number of days to look ahead (default 7)
+
+    Returns:
+        List of subjectivity dicts due soon with days_until_due
+    """
+    try:
+        with get_conn() as conn:
+            result = conn.execute(text("""
+                SELECT id, text, category, status, due_date, is_critical,
+                       due_date - CURRENT_DATE AS days_until_due
+                FROM policy_subjectivities
+                WHERE submission_id = :submission_id
+                  AND status = 'pending'
+                  AND due_date IS NOT NULL
+                  AND due_date >= CURRENT_DATE
+                  AND due_date <= CURRENT_DATE + :days * INTERVAL '1 day'
+                ORDER BY due_date
+            """), {"submission_id": submission_id, "days": days})
+
+            return [
+                {
+                    "id": str(row[0]),
+                    "text": row[1],
+                    "category": row[2],
+                    "status": row[3],
+                    "due_date": row[4],
+                    "is_critical": row[5] if row[5] is not None else True,
+                    "days_until_due": row[6]
+                }
+                for row in result.fetchall()
+            ]
+    except Exception as e:
+        print(f"Error getting due soon subjectivities: {e}")
+        return []
+
+
+def check_deadline_warnings(submission_id: str) -> dict:
+    """
+    Check for deadline warnings and blocking issues.
+
+    Returns:
+        Dict with:
+        - overdue: list of overdue subjectivities
+        - due_soon: list due within 7 days
+        - blocking_count: count of critical pending subjectivities
+        - warnings: list of warning messages
+        - blocking_items: list of items blocking issuance
+    """
+    overdue = get_overdue_subjectivities(submission_id)
+    due_soon = get_due_soon_subjectivities(submission_id)
+
+    # Count critical pending
+    blocking_count = get_critical_pending_count(submission_id)
+
+    # Build warning messages
+    warnings = []
+    blocking_items = []
+
+    for subj in overdue:
+        msg = f"'{subj['text'][:50]}...' - {subj['days_overdue']} days overdue"
+        if subj.get("is_critical", True):
+            blocking_items.append(msg)
+        else:
+            warnings.append(msg)
+
+    for subj in due_soon:
+        days = subj.get("days_until_due", 0)
+        msg = f"'{subj['text'][:50]}...' - due in {days} day{'s' if days != 1 else ''}"
+        warnings.append(msg)
+
+    return {
+        "overdue": overdue,
+        "due_soon": due_soon,
+        "blocking_count": blocking_count,
+        "warnings": warnings,
+        "blocking_items": blocking_items
+    }
+
+
+def get_critical_pending_count(submission_id: str) -> int:
+    """
+    Get count of critical pending subjectivities (those that block issuance).
+
+    Args:
+        submission_id: UUID of the submission
+
+    Returns:
+        Count of critical pending subjectivities
+    """
+    try:
+        with get_conn() as conn:
+            result = conn.execute(text("""
+                SELECT COUNT(*) FROM policy_subjectivities
+                WHERE submission_id = :submission_id
+                  AND status = 'pending'
+                  AND (is_critical = true OR is_critical IS NULL)
+            """), {"submission_id": submission_id})
+            row = result.fetchone()
+            return row[0] if row else 0
+    except Exception as e:
+        print(f"Error getting critical pending count: {e}")
+        return 0
+
+
+def set_subjectivity_critical(
+    subjectivity_id: str,
+    is_critical: bool,
+    updated_by: str = "system"
+) -> bool:
+    """
+    Set whether a subjectivity is critical (blocks issuance).
+
+    Args:
+        subjectivity_id: UUID of the subjectivity
+        is_critical: True = blocks issuance, False = warning only
+        updated_by: User making the change
+
+    Returns:
+        True if updated successfully
+    """
+    try:
+        with get_conn() as conn:
+            result = conn.execute(text("""
+                UPDATE policy_subjectivities
+                SET is_critical = :is_critical,
+                    updated_by = :updated_by,
+                    updated_at = NOW()
+                WHERE id = :subjectivity_id
+            """), {
+                "subjectivity_id": subjectivity_id,
+                "is_critical": is_critical,
+                "updated_by": updated_by
+            })
+            return result.rowcount > 0
+    except Exception as e:
+        print(f"Error setting subjectivity critical: {e}")
+        return False
+
+
+def get_all_pending_subjectivities_admin(
+    filter_type: str = "all",
+    limit: int = 100
+) -> list[dict]:
+    """
+    Get all pending subjectivities across all bound accounts (admin view).
+
+    Args:
+        filter_type: "all", "overdue", or "due_soon"
+        limit: Maximum number of results
+
+    Returns:
+        List of pending subjectivities with account info
+    """
+    try:
+        with get_conn() as conn:
+            base_query = """
+                SELECT
+                    ps.id,
+                    ps.submission_id,
+                    ps.text,
+                    ps.category,
+                    ps.due_date,
+                    ps.is_critical,
+                    ps.created_at,
+                    s.applicant_name,
+                    t.quote_name AS bound_option_name,
+                    CASE
+                        WHEN ps.due_date IS NULL THEN 'no_deadline'
+                        WHEN ps.due_date < CURRENT_DATE THEN 'overdue'
+                        WHEN ps.due_date <= CURRENT_DATE + INTERVAL '7 days' THEN 'due_soon'
+                        ELSE 'on_track'
+                    END AS deadline_status,
+                    ps.due_date - CURRENT_DATE AS days_until_due
+                FROM policy_subjectivities ps
+                JOIN submissions s ON s.id = ps.submission_id
+                JOIN insurance_towers t ON t.submission_id = s.id AND t.is_bound = true
+                WHERE ps.status = 'pending'
+            """
+
+            if filter_type == "overdue":
+                base_query += " AND ps.due_date < CURRENT_DATE"
+            elif filter_type == "due_soon":
+                base_query += " AND ps.due_date >= CURRENT_DATE AND ps.due_date <= CURRENT_DATE + INTERVAL '7 days'"
+
+            base_query += """
+                ORDER BY
+                    CASE
+                        WHEN ps.due_date IS NULL THEN 3
+                        WHEN ps.due_date < CURRENT_DATE THEN 1
+                        WHEN ps.due_date <= CURRENT_DATE + INTERVAL '7 days' THEN 2
+                        ELSE 4
+                    END,
+                    ps.due_date NULLS LAST
+                LIMIT :limit
+            """
+
+            result = conn.execute(text(base_query), {"limit": limit})
+
+            return [
+                {
+                    "id": str(row[0]),
+                    "submission_id": str(row[1]),
+                    "text": row[2],
+                    "category": row[3],
+                    "due_date": row[4].isoformat() if row[4] else None,
+                    "is_critical": row[5] if row[5] is not None else True,
+                    "created_at": row[6].isoformat() if row[6] else None,
+                    "company_name": row[7],  # actually applicant_name from DB
+                    "insured_name": row[7],  # same as company_name for compatibility
+                    "bound_option_name": row[8],
+                    "deadline_status": row[9],
+                    "days_until_due": row[10]
+                }
+                for row in result.fetchall()
+            ]
+    except Exception as e:
+        print(f"Error getting admin pending subjectivities: {e}")
+        return []

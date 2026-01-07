@@ -359,3 +359,145 @@ def get_policy_issuance_status(submission_id: str) -> dict:
         "policy_number": policy_number,
         "pdf_url": pdf_url,
     }
+
+
+def get_issuance_status(submission_id: str) -> dict:
+    """
+    Get full issuance readiness with checklist format.
+
+    Returns:
+        dict with:
+        - can_issue: bool
+        - checklist: list of {item, status, required, details}
+        - warnings: list of warning strings
+        - blocking_items: list of items blocking issuance
+        - policy_info: dict with policy_number, pdf_url, issued_at (if issued)
+    """
+    from core.subjectivity_management import (
+        check_deadline_warnings,
+        get_critical_pending_count,
+        get_subjectivities_summary,
+    )
+
+    bound_option = get_bound_option(submission_id)
+    is_bound = bound_option is not None
+    is_issued = is_policy_issued(submission_id)
+
+    # Get subjectivity counts
+    summary = get_subjectivities_summary(submission_id)
+    critical_pending = get_critical_pending_count(submission_id)
+    deadline_info = check_deadline_warnings(submission_id)
+
+    # Build checklist
+    checklist = []
+
+    # 1. Bound option check
+    checklist.append({
+        "item": "Policy bound",
+        "status": "complete" if is_bound else "incomplete",
+        "required": True,
+        "details": bound_option.get("quote_name") if is_bound else "Bind a quote option first",
+    })
+
+    # 2. Binder generated check
+    binder_url = None
+    if is_bound:
+        with get_conn() as conn:
+            result = conn.execute(
+                text("""
+                    SELECT pdf_url FROM policy_documents
+                    WHERE submission_id = :submission_id
+                    AND document_type = 'binder'
+                    AND status != 'void'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"submission_id": submission_id},
+            )
+            row = result.fetchone()
+            if row:
+                binder_url = row[0]
+
+    checklist.append({
+        "item": "Binder generated",
+        "status": "complete" if binder_url else ("incomplete" if is_bound else "pending"),
+        "required": False,
+        "details": None,
+    })
+
+    # 3. Subjectivities check
+    if summary["total"] == 0:
+        subj_status = "complete"
+        subj_details = "No subjectivities required"
+    elif critical_pending == 0:
+        subj_status = "complete"
+        subj_details = f"{summary['received']} received, {summary['waived']} waived"
+    else:
+        subj_status = "incomplete"
+        subj_details = f"{critical_pending} critical pending"
+
+    checklist.append({
+        "item": "All critical subjectivities received",
+        "status": subj_status,
+        "required": True,
+        "details": subj_details,
+    })
+
+    # 4. Policy issued check
+    policy_info = None
+    if is_issued:
+        policy_number = get_policy_number(submission_id)
+        with get_conn() as conn:
+            result = conn.execute(
+                text("""
+                    SELECT pdf_url, created_at FROM policy_documents
+                    WHERE submission_id = :submission_id
+                    AND document_type = 'policy'
+                    AND status != 'void'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"submission_id": submission_id},
+            )
+            row = result.fetchone()
+            if row:
+                policy_info = {
+                    "policy_number": policy_number,
+                    "pdf_url": row[0],
+                    "issued_at": row[1].isoformat() if row[1] else None,
+                }
+
+    checklist.append({
+        "item": "Policy issued",
+        "status": "complete" if is_issued else "pending",
+        "required": False,
+        "details": policy_info.get("policy_number") if policy_info else None,
+    })
+
+    # Determine can_issue
+    can_issue = is_bound and critical_pending == 0 and not is_issued
+
+    # Build blocking items from checklist
+    blocking_items = []
+    if not is_bound:
+        blocking_items.append("No bound option")
+    if critical_pending > 0:
+        blocking_items.extend(deadline_info.get("blocking_items", []))
+        if not deadline_info.get("blocking_items"):
+            blocking_items.append(f"{critical_pending} critical subjectivit{'y' if critical_pending == 1 else 'ies'} pending")
+
+    return {
+        "can_issue": can_issue,
+        "is_issued": is_issued,
+        "checklist": checklist,
+        "warnings": deadline_info.get("warnings", []),
+        "blocking_items": blocking_items,
+        "policy_info": policy_info,
+        "summary": {
+            "total_subjectivities": summary["total"],
+            "pending": summary["pending"],
+            "received": summary["received"],
+            "waived": summary["waived"],
+            "critical_pending": critical_pending,
+        },
+    }
