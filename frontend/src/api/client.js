@@ -181,6 +181,22 @@ export const markRenewalReceived = (submissionId) => api.post(`/renewals/${submi
 export const markRenewalNotReceived = (submissionId, reason = '') =>
   api.post(`/renewals/${submissionId}/mark-not-received?reason=${encodeURIComponent(reason)}`);
 
+// Expiring Tower (Incumbent Coverage)
+export const getExpiringTower = (submissionId) =>
+  api.get(`/submissions/${submissionId}/expiring-tower`);
+export const saveExpiringTower = (submissionId, data) =>
+  api.post(`/submissions/${submissionId}/expiring-tower`, data);
+export const updateExpiringTower = (submissionId, data) =>
+  api.patch(`/submissions/${submissionId}/expiring-tower`, data);
+export const deleteExpiringTower = (submissionId) =>
+  api.delete(`/submissions/${submissionId}/expiring-tower`);
+export const getTowerComparison = (submissionId) =>
+  api.get(`/submissions/${submissionId}/tower-comparison`);
+export const captureExpiringTower = (submissionId, priorSubmissionId) =>
+  api.post(`/submissions/${submissionId}/capture-expiring-tower?prior_submission_id=${priorSubmissionId}`);
+export const getIncumbentAnalytics = () =>
+  api.get('/admin/incumbent-analytics');
+
 // Admin
 export const getBoundPolicies = (search = '') => {
   const params = search ? `?search=${encodeURIComponent(search)}` : '';
@@ -259,6 +275,130 @@ export const getMarketNews = (params = {}) => {
 };
 export const createMarketNews = (data) => api.post('/uw-guide/market-news', data);
 export const deleteMarketNews = (id) => api.delete(`/uw-guide/market-news/${id}`);
+
+// Conflict Rules CRUD
+export const getConflictRule = (ruleId) => api.get(`/conflict-rules/${ruleId}`);
+export const createConflictRule = (data) => api.post('/conflict-rules', data);
+export const updateConflictRule = (ruleId, data) => api.patch(`/conflict-rules/${ruleId}`, data);
+export const deleteConflictRule = (ruleId) => api.delete(`/conflict-rules/${ruleId}`);
+
+// Supplemental Questions
+export const getSupplementalQuestions = (category = null) => {
+  const params = category ? `?category=${encodeURIComponent(category)}` : '';
+  return api.get(`/supplemental-questions${params}`);
+};
+export const getQuestionCategories = () => api.get('/supplemental-questions/categories');
+export const getSubmissionAnswers = (submissionId) =>
+  api.get(`/submissions/${submissionId}/answers`);
+export const saveSubmissionAnswers = (submissionId, answers, answeredBy = 'frontend') =>
+  api.post(`/submissions/${submissionId}/answers`, { answers, answered_by: answeredBy });
+export const saveSubmissionAnswer = (submissionId, questionId, answerValue, answeredBy = 'frontend') =>
+  api.post(`/submissions/${submissionId}/answers`, {
+    question_id: questionId,
+    answer_value: answerValue,
+    answered_by: answeredBy,
+  });
+export const getAnswerProgress = (submissionId) =>
+  api.get(`/submissions/${submissionId}/answers/progress`);
+export const getUnansweredQuestions = (submissionId, category = null) => {
+  const params = category ? `?category=${encodeURIComponent(category)}` : '';
+  return api.get(`/submissions/${submissionId}/answers/unanswered${params}`);
+};
+export const deleteSubmissionAnswer = (submissionId, questionId) =>
+  api.delete(`/submissions/${submissionId}/answers/${questionId}`);
+
+// Credibility Score Breakdown
+export const getCredibilityBreakdown = (submissionId) =>
+  api.get(`/submissions/${submissionId}/credibility-breakdown`);
+
+// UW Guide - Comprehensive Reference Data
+export const getUWAppetite = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.status) query.append('status', params.status);
+  if (params.hazard_class) query.append('hazard_class', params.hazard_class);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/appetite${queryStr ? `?${queryStr}` : ''}`);
+};
+
+export const getUWMandatoryControls = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.category) query.append('category', params.category);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/mandatory-controls${queryStr ? `?${queryStr}` : ''}`);
+};
+
+export const getUWDeclinationRules = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.category) query.append('category', params.category);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/declination-rules${queryStr ? `?${queryStr}` : ''}`);
+};
+
+export const getUWReferralTriggers = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.category) query.append('category', params.category);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/referral-triggers${queryStr ? `?${queryStr}` : ''}`);
+};
+
+export const getUWPricingGuidelines = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.hazard_class) query.append('hazard_class', params.hazard_class);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/pricing-guidelines${queryStr ? `?${queryStr}` : ''}`);
+};
+
+export const getUWGeographicRestrictions = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.restriction_type) query.append('restriction_type', params.restriction_type);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/geographic-restrictions${queryStr ? `?${queryStr}` : ''}`);
+};
+
+// UW Guide CRUD Operations
+export const createUWAppetite = (data) => api.post('/uw-guide/appetite', data);
+export const updateUWAppetite = (id, data) => api.patch(`/uw-guide/appetite/${id}`, data);
+export const deleteUWAppetite = (id) => api.delete(`/uw-guide/appetite/${id}`);
+
+export const createUWControl = (data) => api.post('/uw-guide/mandatory-controls', data);
+export const updateUWControl = (id, data) => api.patch(`/uw-guide/mandatory-controls/${id}`, data);
+export const deleteUWControl = (id) => api.delete(`/uw-guide/mandatory-controls/${id}`);
+
+export const createUWDeclinationRule = (data) => api.post('/uw-guide/declination-rules', data);
+export const updateUWDeclinationRule = (id, data) => api.patch(`/uw-guide/declination-rules/${id}`, data);
+export const deleteUWDeclinationRule = (id) => api.delete(`/uw-guide/declination-rules/${id}`);
+
+export const createUWReferralTrigger = (data) => api.post('/uw-guide/referral-triggers', data);
+export const updateUWReferralTrigger = (id, data) => api.patch(`/uw-guide/referral-triggers/${id}`, data);
+export const deleteUWReferralTrigger = (id) => api.delete(`/uw-guide/referral-triggers/${id}`);
+
+export const createUWPricingGuideline = (data) => api.post('/uw-guide/pricing-guidelines', data);
+export const updateUWPricingGuideline = (id, data) => api.patch(`/uw-guide/pricing-guidelines/${id}`, data);
+export const deleteUWPricingGuideline = (id) => api.delete(`/uw-guide/pricing-guidelines/${id}`);
+
+export const createUWGeoRestriction = (data) => api.post('/uw-guide/geographic-restrictions', data);
+export const updateUWGeoRestriction = (id, data) => api.patch(`/uw-guide/geographic-restrictions/${id}`, data);
+export const deleteUWGeoRestriction = (id) => api.delete(`/uw-guide/geographic-restrictions/${id}`);
+
+// UW Drift Review & Decision Logging
+export const getDriftReviewQueue = () => api.get('/uw-guide/drift-review');
+export const getDriftPatterns = () => api.get('/uw-guide/drift-patterns');
+export const getSimilarPatterns = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.industry) query.append('industry', params.industry);
+  if (params.hazard_class) query.append('hazard_class', params.hazard_class);
+  if (params.revenue_band) query.append('revenue_band', params.revenue_band);
+  const queryStr = query.toString();
+  return api.get(`/uw-guide/similar-patterns${queryStr ? `?${queryStr}` : ''}`);
+};
+export const getDecisionLog = (submissionId) => api.get(`/decision-log/${submissionId}`);
+export const recordUWDecision = (logId, data) => api.post(`/decision-log/${logId}/record`, data);
+export const getRuleAmendments = (status = null) => {
+  const params = status ? `?status=${status}` : '';
+  return api.get(`/rule-amendments${params}`);
+};
+export const createRuleAmendment = (data) => api.post('/rule-amendments', data);
+export const reviewRuleAmendment = (amendmentId, data) => api.post(`/rule-amendments/${amendmentId}/review`, data);
 
 // Brokers (brkr_* schema)
 // Organizations
@@ -470,6 +610,16 @@ export const markNotificationRead = (notificationId) =>
 export const markAllNotificationsRead = (userName) =>
   api.post('/workflow/notifications/read-all', null, { params: { user_name: userName } });
 
+// Underwriter Assignment (submission-level)
+export const assignSubmission = (submissionId, assignedTo, assignedBy, reason = 'assigned') =>
+  api.post(`/submissions/${submissionId}/assign`, { assigned_to: assignedTo, assigned_by: assignedBy, reason });
+export const unassignSubmission = (submissionId, unassignedBy, reason = 'released') =>
+  api.post(`/submissions/${submissionId}/unassign`, { unassigned_by: unassignedBy, reason });
+export const getAssignmentHistory = (submissionId) =>
+  api.get(`/submissions/${submissionId}/assignment-history`);
+export const getAssignmentWorkload = () =>
+  api.get('/assignment-workload');
+
 // Pending Declines
 export const getPendingDeclines = () =>
   api.get('/pending-declines');
@@ -556,5 +706,21 @@ export const getRemarketStatus = (submissionId) =>
 
 // Remarket Analytics
 export const getRemarketAnalytics = () => api.get('/analytics/remarket');
+
+// Policy Issuance
+export const getIssuanceStatus = (submissionId) =>
+  api.get(`/submissions/${submissionId}/issuance-status`);
+
+export const issuePolicy = (submissionId) =>
+  api.post(`/submissions/${submissionId}/issue-policy`);
+
+// Admin: Pending Subjectivities
+export const getAdminPendingSubjectivities = (filter = 'all', limit = 100) =>
+  api.get(`/admin/pending-subjectivities?filter=${filter}&limit=${limit}`);
+
+export const setSubjectivityCritical = (subjectivityId, isCritical) =>
+  api.patch(`/subjectivities/${subjectivityId}/critical`, null, {
+    params: { is_critical: isCritical },
+  });
 
 export default api;

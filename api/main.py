@@ -146,7 +146,9 @@ def list_submissions():
                     COALESCE(bound.is_bound, false) as has_bound_quote,
                     bound.quote_name as bound_quote_name,
                     sw.current_stage as workflow_stage,
-                    sw.assigned_uw_name as assigned_to_name
+                    s.assigned_uw_name as assigned_to_name,
+                    s.assigned_at,
+                    s.assigned_by
                 FROM submissions s
                 LEFT JOIN (
                     SELECT DISTINCT ON (submission_id)
@@ -183,6 +185,7 @@ def get_submission(submission_id: str):
                        s.opportunity_notes,
                        s.created_at,
                        s.account_id,
+                       s.assigned_uw_name, s.assigned_at, s.assigned_by,
                        e.org_id as broker_org_id,
                        o.name as broker_company,
                        CONCAT(p.first_name, ' ', p.last_name) as broker_name,
@@ -4742,6 +4745,144 @@ def get_renewal_pricing(submission_id: str):
     return get_renewal_pricing_summary(submission_id)
 
 
+# ─────────────────────────────────────────────────────────────
+# EXPIRING TOWER (Incumbent Coverage Tracking)
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/expiring-tower")
+def get_expiring_tower_endpoint(submission_id: str):
+    """
+    Get expiring/incumbent tower for a submission.
+
+    Returns the captured expiring coverage snapshot or null if none exists.
+    """
+    from core.expiring_tower import get_expiring_tower
+    tower = get_expiring_tower(submission_id)
+    if not tower:
+        return None
+    return tower
+
+
+class ExpiringTowerData(BaseModel):
+    incumbent_carrier: Optional[str] = None
+    policy_number: Optional[str] = None
+    expiration_date: Optional[str] = None  # ISO date
+    tower_json: Optional[list] = None
+    total_limit: Optional[float] = None
+    primary_retention: Optional[float] = None
+    premium: Optional[float] = None
+    policy_form: Optional[str] = None
+    sublimits: Optional[dict] = None
+    source: Optional[str] = "manual"
+
+
+@app.post("/api/submissions/{submission_id}/expiring-tower")
+def save_expiring_tower_endpoint(submission_id: str, data: ExpiringTowerData):
+    """
+    Save or update expiring tower data (manual entry or document extract).
+    """
+    from core.expiring_tower import save_expiring_tower
+    from psycopg2.extras import Json
+
+    tower_data = {
+        "incumbent_carrier": data.incumbent_carrier,
+        "policy_number": data.policy_number,
+        "expiration_date": data.expiration_date,
+        "tower_json": Json(data.tower_json) if data.tower_json else None,
+        "total_limit": data.total_limit,
+        "primary_retention": data.primary_retention,
+        "premium": data.premium,
+        "policy_form": data.policy_form,
+        "sublimits": Json(data.sublimits) if data.sublimits else None,
+        "source": data.source or "manual"
+    }
+
+    result = save_expiring_tower(submission_id, tower_data)
+    return result
+
+
+@app.patch("/api/submissions/{submission_id}/expiring-tower")
+def update_expiring_tower_endpoint(submission_id: str, data: ExpiringTowerData):
+    """
+    Partially update expiring tower data.
+    """
+    from core.expiring_tower import update_expiring_tower
+    from psycopg2.extras import Json
+
+    updates = {}
+    if data.incumbent_carrier is not None:
+        updates["incumbent_carrier"] = data.incumbent_carrier
+    if data.policy_number is not None:
+        updates["policy_number"] = data.policy_number
+    if data.expiration_date is not None:
+        updates["expiration_date"] = data.expiration_date
+    if data.tower_json is not None:
+        updates["tower_json"] = Json(data.tower_json)
+    if data.total_limit is not None:
+        updates["total_limit"] = data.total_limit
+    if data.primary_retention is not None:
+        updates["primary_retention"] = data.primary_retention
+    if data.premium is not None:
+        updates["premium"] = data.premium
+    if data.policy_form is not None:
+        updates["policy_form"] = data.policy_form
+    if data.sublimits is not None:
+        updates["sublimits"] = Json(data.sublimits)
+    if data.source is not None:
+        updates["source"] = data.source
+
+    result = update_expiring_tower(submission_id, updates)
+    if not result:
+        raise HTTPException(status_code=404, detail="Expiring tower not found")
+    return result
+
+
+@app.delete("/api/submissions/{submission_id}/expiring-tower")
+def delete_expiring_tower_endpoint(submission_id: str):
+    """
+    Delete expiring tower record.
+    """
+    from core.expiring_tower import delete_expiring_tower
+    deleted = delete_expiring_tower(submission_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Expiring tower not found")
+    return {"success": True}
+
+
+@app.get("/api/submissions/{submission_id}/tower-comparison")
+def get_tower_comparison_endpoint(submission_id: str):
+    """
+    Get side-by-side comparison of expiring vs proposed coverage.
+
+    Returns expiring and proposed tower details with calculated changes.
+    """
+    from core.expiring_tower import get_tower_comparison
+    return get_tower_comparison(submission_id)
+
+
+@app.post("/api/submissions/{submission_id}/capture-expiring-tower")
+def capture_expiring_tower_endpoint(submission_id: str, prior_submission_id: str):
+    """
+    Capture expiring tower from a prior submission's bound tower.
+
+    Called when linking a submission to a prior submission.
+    """
+    from core.expiring_tower import capture_expiring_tower
+    result = capture_expiring_tower(submission_id, prior_submission_id)
+    if not result:
+        return {"success": False, "message": "Prior submission has no bound tower"}
+    return {"success": True, "expiring_tower": result}
+
+
+@app.get("/api/admin/incumbent-analytics")
+def get_incumbent_analytics_endpoint():
+    """
+    Get win/loss analytics by incumbent carrier.
+    """
+    from core.expiring_tower import get_incumbent_analytics
+    return get_incumbent_analytics()
+
+
 @app.get("/api/submissions/{submission_id}/decision-history")
 def get_decision_history(submission_id: str):
     """
@@ -9055,6 +9196,95 @@ def unclaim_submission(submission_id: str, claim: ClaimRequest):
                 raise HTTPException(status_code=400, detail=str(e))
 
 
+# ─────────────────────────────────────────────────────────────
+# UNDERWRITER ASSIGNMENT (Submission-level)
+# ─────────────────────────────────────────────────────────────
+
+class AssignmentRequest(BaseModel):
+    assigned_to: str  # UW name
+    assigned_by: str  # Who is making the assignment
+    reason: Optional[str] = "assigned"  # 'assigned', 'reassigned', 'claimed'
+
+
+@app.post("/api/submissions/{submission_id}/assign")
+def assign_submission(submission_id: str, data: AssignmentRequest):
+    """Assign or reassign an underwriter to a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                # Use the database function which handles history tracking
+                cur.execute("""
+                    SELECT assign_submission(%s, %s, %s, %s)
+                """, (submission_id, data.assigned_to, data.assigned_by, data.reason))
+                result = cur.fetchone()
+                conn.commit()
+
+                return {
+                    "success": True,
+                    "submission_id": submission_id,
+                    "assigned_to": data.assigned_to,
+                    "assigned_by": data.assigned_by
+                }
+            except Exception as e:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/submissions/{submission_id}/unassign")
+def unassign_submission_uw(submission_id: str, data: dict):
+    """Remove underwriter assignment from a submission."""
+    unassigned_by = data.get("unassigned_by", "system")
+    reason = data.get("reason", "released")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            try:
+                cur.execute("""
+                    SELECT unassign_submission(%s, %s, %s)
+                """, (submission_id, unassigned_by, reason))
+                result = cur.fetchone()
+                conn.commit()
+
+                return {
+                    "success": True,
+                    "submission_id": submission_id,
+                    "unassigned_by": unassigned_by
+                }
+            except Exception as e:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/submissions/{submission_id}/assignment-history")
+def get_assignment_history(submission_id: str):
+    """Get the assignment history for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id,
+                    assigned_uw_name,
+                    assigned_at,
+                    assigned_by,
+                    reason,
+                    notes,
+                    created_at
+                FROM submission_assignment_history
+                WHERE submission_id = %s
+                ORDER BY created_at DESC
+            """, (submission_id,))
+            return cur.fetchall()
+
+
+@app.get("/api/assignment-workload")
+def get_assignment_workload():
+    """Get workload summary by underwriter."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM v_assignment_workload")
+            return cur.fetchall()
+
+
 @app.post("/api/workflow/{submission_id}/start-prescreen")
 def start_prescreen(submission_id: str):
     """Move a submission from intake to pre-screen (called after AI extraction)."""
@@ -12471,6 +12701,1141 @@ def _generate_tower_quote_name(layers: list, retention: int) -> str:
         return f"{_format_limit_short(limit)} xs {_format_limit_short(attachment)} x {_format_limit_short(retention)}"
     else:
         return f"{_format_limit_short(limit)} x {_format_limit_short(retention)}"
+
+
+# ─────────────────────────────────────────────────────────────
+# Policy Issuance Status
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/issuance-status")
+def get_issuance_status_endpoint(submission_id: str):
+    """
+    Get full issuance readiness with checklist format.
+
+    Returns:
+        - can_issue: bool
+        - checklist: list of {item, status, required, details}
+        - warnings: list of warning strings
+        - blocking_items: list of items blocking issuance
+        - policy_info: dict with policy_number, pdf_url, issued_at (if issued)
+    """
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.policy_issuance import get_issuance_status
+
+        return get_issuance_status(submission_id)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/submissions/{submission_id}/issue-policy")
+def issue_policy_endpoint(submission_id: str):
+    """
+    Issue policy for a submission.
+
+    Requires:
+    - Bound option exists
+    - All critical subjectivities received/waived
+    - Policy not already issued
+    """
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.policy_issuance import issue_policy
+
+        result = issue_policy(submission_id, issued_by="api")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# Admin: Pending Subjectivities
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/admin/pending-subjectivities")
+def get_admin_pending_subjectivities(filter: str = "all", limit: int = 100):
+    """
+    Get all pending subjectivities across bound accounts (admin view).
+
+    Query params:
+        filter: "all", "overdue", or "due_soon"
+        limit: Maximum number of results (default 100)
+
+    Returns list of pending subjectivities with account info.
+    """
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.subjectivity_management import get_all_pending_subjectivities_admin
+
+        return get_all_pending_subjectivities_admin(filter_type=filter, limit=limit)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/subjectivities/{subjectivity_id}/critical")
+def set_subjectivity_critical_endpoint(subjectivity_id: str, is_critical: bool):
+    """
+    Set whether a subjectivity is critical (blocks policy issuance).
+
+    Body:
+        is_critical: True = blocks issuance, False = warning only
+    """
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.subjectivity_management import set_subjectivity_critical
+
+        success = set_subjectivity_critical(subjectivity_id, is_critical, updated_by="api")
+        if not success:
+            raise HTTPException(status_code=404, detail="Subjectivity not found")
+        return {"success": True, "is_critical": is_critical}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# Supplemental Questions
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/supplemental-questions")
+def get_supplemental_questions(category: str = None):
+    """Get all active supplemental questions."""
+    from core.supplemental_questions import get_active_questions
+    return get_active_questions(category)
+
+
+@app.get("/api/supplemental-questions/categories")
+def get_question_categories():
+    """Get question categories with counts."""
+    from core.supplemental_questions import get_categories
+    return get_categories()
+
+
+@app.get("/api/submissions/{submission_id}/answers")
+def get_submission_answers(submission_id: str):
+    """Get answers for a submission."""
+    from core.supplemental_questions import get_submission_answers
+    return get_submission_answers(submission_id)
+
+
+@app.post("/api/submissions/{submission_id}/answers")
+def save_submission_answers(submission_id: str, data: dict):
+    """Save answers for a submission."""
+    from core.supplemental_questions import save_answer, save_answers_bulk
+
+    answers = data.get("answers", [])
+    answered_by = data.get("answered_by", "api")
+
+    if isinstance(answers, list) and len(answers) > 0:
+        count = save_answers_bulk(submission_id, answers, answered_by)
+        return {"saved": count}
+    elif "question_id" in data and "answer_value" in data:
+        result = save_answer(
+            submission_id,
+            data["question_id"],
+            data["answer_value"],
+            answered_by,
+            data.get("source", "manual"),
+            data.get("confidence"),
+        )
+        return result
+    else:
+        raise HTTPException(status_code=400, detail="Missing answers or question_id/answer_value")
+
+
+@app.get("/api/submissions/{submission_id}/answers/progress")
+def get_answer_progress(submission_id: str):
+    """Get answer completion progress for a submission."""
+    from core.supplemental_questions import get_answer_progress
+    return get_answer_progress(submission_id)
+
+
+@app.get("/api/submissions/{submission_id}/answers/unanswered")
+def get_unanswered_questions_endpoint(submission_id: str, category: str = None):
+    """Get unanswered questions for a submission."""
+    from core.supplemental_questions import get_unanswered_questions
+    return get_unanswered_questions(submission_id, category)
+
+
+@app.delete("/api/submissions/{submission_id}/answers/{question_id}")
+def delete_submission_answer(submission_id: str, question_id: str):
+    """Delete an answer for a submission."""
+    from core.supplemental_questions import delete_answer
+    success = delete_answer(submission_id, question_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Answer not found")
+    return {"deleted": True}
+
+
+# ─────────────────────────────────────────────────────────────
+# Conflict Rules CRUD
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/conflict-rules/{rule_id}")
+def get_conflict_rule(rule_id: str):
+    """Get a single conflict rule by ID."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id, rule_name, category, severity, title, description,
+                    detection_pattern, example_bad, example_explanation,
+                    times_detected, times_confirmed, times_dismissed,
+                    source, is_active, requires_review,
+                    created_at, updated_at, last_detected_at
+                FROM conflict_rules
+                WHERE id = %s
+            """, (rule_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Rule not found")
+            return row
+
+
+@app.post("/api/conflict-rules")
+def create_conflict_rule(data: dict):
+    """Create a new conflict rule."""
+    rule_name = data.get("rule_name", "").strip()
+    if not rule_name:
+        raise HTTPException(status_code=400, detail="rule_name is required")
+
+    title = data.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO conflict_rules (
+                    rule_name, category, severity, title, description,
+                    detection_pattern, example_bad, example_explanation,
+                    source, requires_review
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, created_at
+            """, (
+                rule_name,
+                data.get("category", "other"),
+                data.get("severity", "medium"),
+                title,
+                data.get("description"),
+                json.dumps(data.get("detection_pattern")) if data.get("detection_pattern") else None,
+                data.get("example_bad"),
+                data.get("example_explanation"),
+                data.get("source", "uw_added"),
+                data.get("requires_review", False),
+            ))
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": str(row["id"]), "created_at": row["created_at"].isoformat()}
+
+
+@app.patch("/api/conflict-rules/{rule_id}")
+def update_conflict_rule(rule_id: str, data: dict):
+    """Update a conflict rule."""
+    allowed_fields = {
+        "rule_name", "category", "severity", "title", "description",
+        "detection_pattern", "example_bad", "example_explanation",
+        "is_active", "requires_review"
+    }
+
+    updates = {k: v for k, v in data.items() if k in allowed_fields}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+
+    # Handle JSON fields
+    if "detection_pattern" in updates:
+        updates["detection_pattern"] = json.dumps(updates["detection_pattern"])
+
+    set_clauses = [f"{k} = %s" for k in updates]
+    set_clauses.append("updated_at = now()")
+    values = list(updates.values())
+    values.append(rule_id)
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE conflict_rules
+                SET {', '.join(set_clauses)}
+                WHERE id = %s
+                RETURNING id, updated_at
+            """, values)
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Rule not found")
+            conn.commit()
+            return {"id": str(row["id"]), "updated_at": row["updated_at"].isoformat()}
+
+
+@app.delete("/api/conflict-rules/{rule_id}")
+def delete_conflict_rule(rule_id: str):
+    """Soft-delete a conflict rule (set is_active=false)."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE conflict_rules
+                SET is_active = false, updated_at = now()
+                WHERE id = %s
+                RETURNING id
+            """, (rule_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Rule not found")
+            conn.commit()
+            return {"deleted": True}
+
+
+# ─────────────────────────────────────────────────────────────
+# Credibility Score Breakdown
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/credibility-breakdown")
+def get_credibility_breakdown(submission_id: str):
+    """Get detailed credibility score breakdown for a submission."""
+    from core.credibility_score import get_score_breakdown
+    try:
+        breakdown = get_score_breakdown(submission_id)
+        return breakdown
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────────────────────
+# UW Guide - Comprehensive Underwriting Reference
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/uw-guide/appetite")
+def get_uw_appetite(status: Optional[str] = None, hazard_class: Optional[int] = None):
+    """Get industry appetite matrix."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, industry_name, industry_code, sic_codes, naics_codes,
+                       hazard_class, appetite_status, max_limit_millions, min_retention,
+                       max_revenue_millions, special_requirements, declination_reason,
+                       notes, display_order
+                FROM uw_appetite
+                WHERE is_active = true
+            """
+            params = []
+            if status:
+                sql += " AND appetite_status = %s"
+                params.append(status)
+            if hazard_class:
+                sql += " AND hazard_class = %s"
+                params.append(hazard_class)
+            sql += " ORDER BY display_order, industry_name"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/mandatory-controls")
+def get_uw_mandatory_controls(category: Optional[str] = None):
+    """Get mandatory controls by tier."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, control_name, control_key, control_category, description,
+                       mandatory_above_hazard, mandatory_above_revenue_millions,
+                       mandatory_above_limit_millions, is_declination_trigger,
+                       is_referral_trigger, credit_if_present, debit_if_missing,
+                       display_order
+                FROM uw_mandatory_controls
+                WHERE is_active = true
+            """
+            params = []
+            if category:
+                sql += " AND control_category = %s"
+                params.append(category)
+            sql += " ORDER BY display_order, control_name"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/declination-rules")
+def get_uw_declination_rules(category: Optional[str] = None):
+    """Get declination criteria."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, rule_name, rule_key, description, category,
+                       condition_type, condition_field, condition_operator,
+                       condition_value, severity, override_allowed, override_requires,
+                       decline_message, display_order
+                FROM uw_declination_rules
+                WHERE is_active = true
+            """
+            params = []
+            if category:
+                sql += " AND category = %s"
+                params.append(category)
+            sql += " ORDER BY display_order, rule_name"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/referral-triggers")
+def get_uw_referral_triggers(category: Optional[str] = None):
+    """Get referral trigger rules."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, trigger_name, trigger_key, description, category,
+                       condition_type, condition_field, condition_operator,
+                       condition_value, referral_level, referral_reason,
+                       display_order
+                FROM uw_referral_triggers
+                WHERE is_active = true
+            """
+            params = []
+            if category:
+                sql += " AND category = %s"
+                params.append(category)
+            sql += " ORDER BY display_order, trigger_name"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/pricing-guidelines")
+def get_uw_pricing_guidelines(hazard_class: Optional[int] = None):
+    """Get pricing guidelines by hazard class."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, hazard_class, revenue_band, min_rate_per_million,
+                       target_rate_per_million, max_rate_per_million, min_premium,
+                       max_limit_millions, standard_retention, notes
+                FROM uw_pricing_guidelines
+                WHERE is_active = true
+            """
+            params = []
+            if hazard_class:
+                sql += " AND hazard_class = %s"
+                params.append(hazard_class)
+            sql += " ORDER BY hazard_class, revenue_band"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/geographic-restrictions")
+def get_uw_geographic_restrictions(restriction_type: Optional[str] = None):
+    """Get geographic restrictions."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT id, territory_type, territory_code, territory_name,
+                       restriction_type, max_limit_millions, special_requirements,
+                       restriction_reason
+                FROM uw_geographic_restrictions
+                WHERE is_active = true
+            """
+            params = []
+            if restriction_type:
+                sql += " AND restriction_type = %s"
+                params.append(restriction_type)
+            sql += " ORDER BY restriction_type, territory_name"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+# ─────────────────────────────────────────────────────────────
+# UW Guide CRUD Operations
+# ─────────────────────────────────────────────────────────────
+
+# --- Appetite CRUD ---
+class AppetiteCreate(BaseModel):
+    industry_name: str
+    industry_code: Optional[str] = None
+    sic_codes: Optional[List[str]] = None
+    naics_codes: Optional[List[str]] = None
+    hazard_class: int
+    appetite_status: str  # 'preferred', 'standard', 'restricted', 'excluded'
+    max_limit_millions: Optional[float] = None
+    min_retention: Optional[int] = None
+    max_revenue_millions: Optional[float] = None
+    special_requirements: Optional[List[str]] = None
+    declination_reason: Optional[str] = None
+    notes: Optional[str] = None
+    enforcement_level: Optional[str] = 'advisory'
+
+class AppetiteUpdate(BaseModel):
+    industry_name: Optional[str] = None
+    industry_code: Optional[str] = None
+    sic_codes: Optional[List[str]] = None
+    naics_codes: Optional[List[str]] = None
+    hazard_class: Optional[int] = None
+    appetite_status: Optional[str] = None
+    max_limit_millions: Optional[float] = None
+    min_retention: Optional[int] = None
+    max_revenue_millions: Optional[float] = None
+    special_requirements: Optional[List[str]] = None
+    declination_reason: Optional[str] = None
+    notes: Optional[str] = None
+    enforcement_level: Optional[str] = None
+
+@app.post("/api/uw-guide/appetite")
+def create_appetite(data: AppetiteCreate):
+    """Create a new industry appetite entry."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uw_appetite (
+                    industry_name, industry_code, sic_codes, naics_codes,
+                    hazard_class, appetite_status, max_limit_millions, min_retention,
+                    max_revenue_millions, special_requirements, declination_reason,
+                    notes, enforcement_level
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                data.industry_name, data.industry_code, data.sic_codes, data.naics_codes,
+                data.hazard_class, data.appetite_status, data.max_limit_millions,
+                data.min_retention, data.max_revenue_millions, data.special_requirements,
+                data.declination_reason, data.notes, data.enforcement_level
+            ))
+            result = cur.fetchone()
+            conn.commit()
+            return {"id": result["id"], "message": "Appetite entry created"}
+
+@app.patch("/api/uw-guide/appetite/{appetite_id}")
+def update_appetite(appetite_id: str, data: AppetiteUpdate):
+    """Update an industry appetite entry."""
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+    values = list(updates.values()) + [appetite_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE uw_appetite SET {set_clause}, updated_at = now()
+                WHERE id = %s
+            """, values)
+            conn.commit()
+            return {"message": "Appetite entry updated"}
+
+@app.delete("/api/uw-guide/appetite/{appetite_id}")
+def delete_appetite(appetite_id: str):
+    """Soft delete an industry appetite entry."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uw_appetite SET is_active = false, updated_at = now()
+                WHERE id = %s
+            """, (appetite_id,))
+            conn.commit()
+            return {"message": "Appetite entry deleted"}
+
+# --- Mandatory Controls CRUD ---
+class ControlCreate(BaseModel):
+    control_name: str
+    control_key: str
+    control_category: Optional[str] = None
+    description: Optional[str] = None
+    mandatory_above_hazard: Optional[int] = None
+    mandatory_above_revenue_millions: Optional[float] = None
+    mandatory_above_limit_millions: Optional[float] = None
+    is_declination_trigger: bool = False
+    is_referral_trigger: bool = False
+    credit_if_present: Optional[float] = None
+    debit_if_missing: Optional[float] = None
+    enforcement_level: Optional[str] = 'advisory'
+
+class ControlUpdate(BaseModel):
+    control_name: Optional[str] = None
+    control_key: Optional[str] = None
+    control_category: Optional[str] = None
+    description: Optional[str] = None
+    mandatory_above_hazard: Optional[int] = None
+    mandatory_above_revenue_millions: Optional[float] = None
+    mandatory_above_limit_millions: Optional[float] = None
+    is_declination_trigger: Optional[bool] = None
+    is_referral_trigger: Optional[bool] = None
+    credit_if_present: Optional[float] = None
+    debit_if_missing: Optional[float] = None
+    enforcement_level: Optional[str] = None
+
+@app.post("/api/uw-guide/mandatory-controls")
+def create_control(data: ControlCreate):
+    """Create a new mandatory control."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uw_mandatory_controls (
+                    control_name, control_key, control_category, description,
+                    mandatory_above_hazard, mandatory_above_revenue_millions,
+                    mandatory_above_limit_millions, is_declination_trigger,
+                    is_referral_trigger, credit_if_present, debit_if_missing,
+                    enforcement_level
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                data.control_name, data.control_key, data.control_category,
+                data.description, data.mandatory_above_hazard,
+                data.mandatory_above_revenue_millions, data.mandatory_above_limit_millions,
+                data.is_declination_trigger, data.is_referral_trigger,
+                data.credit_if_present, data.debit_if_missing, data.enforcement_level
+            ))
+            result = cur.fetchone()
+            conn.commit()
+            return {"id": result["id"], "message": "Control created"}
+
+@app.patch("/api/uw-guide/mandatory-controls/{control_id}")
+def update_control(control_id: str, data: ControlUpdate):
+    """Update a mandatory control."""
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+    values = list(updates.values()) + [control_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE uw_mandatory_controls SET {set_clause}, updated_at = now()
+                WHERE id = %s
+            """, values)
+            conn.commit()
+            return {"message": "Control updated"}
+
+@app.delete("/api/uw-guide/mandatory-controls/{control_id}")
+def delete_control(control_id: str):
+    """Soft delete a mandatory control."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uw_mandatory_controls SET is_active = false, updated_at = now()
+                WHERE id = %s
+            """, (control_id,))
+            conn.commit()
+            return {"message": "Control deleted"}
+
+# --- Declination Rules CRUD ---
+class DeclinationRuleCreate(BaseModel):
+    rule_name: str
+    rule_key: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    condition_type: Optional[str] = None
+    condition_field: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
+    severity: str = 'soft'  # 'hard' or 'soft'
+    override_allowed: bool = True
+    override_requires: Optional[str] = None
+    decline_message: Optional[str] = None
+    enforcement_level: Optional[str] = 'advisory'
+
+class DeclinationRuleUpdate(BaseModel):
+    rule_name: Optional[str] = None
+    rule_key: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    condition_type: Optional[str] = None
+    condition_field: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
+    severity: Optional[str] = None
+    override_allowed: Optional[bool] = None
+    override_requires: Optional[str] = None
+    decline_message: Optional[str] = None
+    enforcement_level: Optional[str] = None
+
+@app.post("/api/uw-guide/declination-rules")
+def create_declination_rule(data: DeclinationRuleCreate):
+    """Create a new declination rule."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uw_declination_rules (
+                    rule_name, rule_key, description, category,
+                    condition_type, condition_field, condition_operator,
+                    condition_value, severity, override_allowed,
+                    override_requires, decline_message, enforcement_level
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                data.rule_name, data.rule_key, data.description, data.category,
+                data.condition_type, data.condition_field, data.condition_operator,
+                data.condition_value, data.severity, data.override_allowed,
+                data.override_requires, data.decline_message, data.enforcement_level
+            ))
+            result = cur.fetchone()
+            conn.commit()
+            return {"id": result["id"], "message": "Declination rule created"}
+
+@app.patch("/api/uw-guide/declination-rules/{rule_id}")
+def update_declination_rule(rule_id: str, data: DeclinationRuleUpdate):
+    """Update a declination rule."""
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+    values = list(updates.values()) + [rule_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE uw_declination_rules SET {set_clause}, updated_at = now()
+                WHERE id = %s
+            """, values)
+            conn.commit()
+            return {"message": "Declination rule updated"}
+
+@app.delete("/api/uw-guide/declination-rules/{rule_id}")
+def delete_declination_rule(rule_id: str):
+    """Soft delete a declination rule."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uw_declination_rules SET is_active = false, updated_at = now()
+                WHERE id = %s
+            """, (rule_id,))
+            conn.commit()
+            return {"message": "Declination rule deleted"}
+
+# --- Referral Triggers CRUD ---
+class ReferralTriggerCreate(BaseModel):
+    trigger_name: str
+    trigger_key: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    condition_type: Optional[str] = None
+    condition_field: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
+    referral_level: Optional[str] = None
+    referral_reason: Optional[str] = None
+    enforcement_level: Optional[str] = 'advisory'
+
+class ReferralTriggerUpdate(BaseModel):
+    trigger_name: Optional[str] = None
+    trigger_key: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    condition_type: Optional[str] = None
+    condition_field: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
+    referral_level: Optional[str] = None
+    referral_reason: Optional[str] = None
+    enforcement_level: Optional[str] = None
+
+@app.post("/api/uw-guide/referral-triggers")
+def create_referral_trigger(data: ReferralTriggerCreate):
+    """Create a new referral trigger."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uw_referral_triggers (
+                    trigger_name, trigger_key, description, category,
+                    condition_type, condition_field, condition_operator,
+                    condition_value, referral_level, referral_reason,
+                    enforcement_level
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                data.trigger_name, data.trigger_key, data.description, data.category,
+                data.condition_type, data.condition_field, data.condition_operator,
+                data.condition_value, data.referral_level, data.referral_reason,
+                data.enforcement_level
+            ))
+            result = cur.fetchone()
+            conn.commit()
+            return {"id": result["id"], "message": "Referral trigger created"}
+
+@app.patch("/api/uw-guide/referral-triggers/{trigger_id}")
+def update_referral_trigger(trigger_id: str, data: ReferralTriggerUpdate):
+    """Update a referral trigger."""
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+    values = list(updates.values()) + [trigger_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE uw_referral_triggers SET {set_clause}, updated_at = now()
+                WHERE id = %s
+            """, values)
+            conn.commit()
+            return {"message": "Referral trigger updated"}
+
+@app.delete("/api/uw-guide/referral-triggers/{trigger_id}")
+def delete_referral_trigger(trigger_id: str):
+    """Soft delete a referral trigger."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uw_referral_triggers SET is_active = false, updated_at = now()
+                WHERE id = %s
+            """, (trigger_id,))
+            conn.commit()
+            return {"message": "Referral trigger deleted"}
+
+# --- Pricing Guidelines CRUD ---
+class PricingGuidelineCreate(BaseModel):
+    hazard_class: int
+    revenue_band: str
+    min_rate_per_million: Optional[float] = None
+    target_rate_per_million: Optional[float] = None
+    max_rate_per_million: Optional[float] = None
+    min_premium: Optional[int] = None
+    max_limit_millions: Optional[float] = None
+    standard_retention: Optional[int] = None
+    notes: Optional[str] = None
+
+class PricingGuidelineUpdate(BaseModel):
+    hazard_class: Optional[int] = None
+    revenue_band: Optional[str] = None
+    min_rate_per_million: Optional[float] = None
+    target_rate_per_million: Optional[float] = None
+    max_rate_per_million: Optional[float] = None
+    min_premium: Optional[int] = None
+    max_limit_millions: Optional[float] = None
+    standard_retention: Optional[int] = None
+    notes: Optional[str] = None
+
+@app.post("/api/uw-guide/pricing-guidelines")
+def create_pricing_guideline(data: PricingGuidelineCreate):
+    """Create a new pricing guideline."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uw_pricing_guidelines (
+                    hazard_class, revenue_band, min_rate_per_million,
+                    target_rate_per_million, max_rate_per_million,
+                    min_premium, max_limit_millions, standard_retention, notes
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                data.hazard_class, data.revenue_band, data.min_rate_per_million,
+                data.target_rate_per_million, data.max_rate_per_million,
+                data.min_premium, data.max_limit_millions,
+                data.standard_retention, data.notes
+            ))
+            result = cur.fetchone()
+            conn.commit()
+            return {"id": result["id"], "message": "Pricing guideline created"}
+
+@app.patch("/api/uw-guide/pricing-guidelines/{guideline_id}")
+def update_pricing_guideline(guideline_id: str, data: PricingGuidelineUpdate):
+    """Update a pricing guideline."""
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+    values = list(updates.values()) + [guideline_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE uw_pricing_guidelines SET {set_clause}, updated_at = now()
+                WHERE id = %s
+            """, values)
+            conn.commit()
+            return {"message": "Pricing guideline updated"}
+
+@app.delete("/api/uw-guide/pricing-guidelines/{guideline_id}")
+def delete_pricing_guideline(guideline_id: str):
+    """Soft delete a pricing guideline."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uw_pricing_guidelines SET is_active = false, updated_at = now()
+                WHERE id = %s
+            """, (guideline_id,))
+            conn.commit()
+            return {"message": "Pricing guideline deleted"}
+
+# --- Geographic Restrictions CRUD ---
+class GeoRestrictionCreate(BaseModel):
+    territory_type: str  # 'state', 'country', 'region'
+    territory_code: str
+    territory_name: str
+    restriction_type: str  # 'excluded', 'restricted', 'preferred'
+    max_limit_millions: Optional[float] = None
+    special_requirements: Optional[List[str]] = None
+    restriction_reason: Optional[str] = None
+    enforcement_level: Optional[str] = 'advisory'
+
+class GeoRestrictionUpdate(BaseModel):
+    territory_type: Optional[str] = None
+    territory_code: Optional[str] = None
+    territory_name: Optional[str] = None
+    restriction_type: Optional[str] = None
+    max_limit_millions: Optional[float] = None
+    special_requirements: Optional[List[str]] = None
+    restriction_reason: Optional[str] = None
+    enforcement_level: Optional[str] = None
+
+@app.post("/api/uw-guide/geographic-restrictions")
+def create_geo_restriction(data: GeoRestrictionCreate):
+    """Create a new geographic restriction."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uw_geographic_restrictions (
+                    territory_type, territory_code, territory_name,
+                    restriction_type, max_limit_millions, special_requirements,
+                    restriction_reason, enforcement_level
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                data.territory_type, data.territory_code, data.territory_name,
+                data.restriction_type, data.max_limit_millions,
+                data.special_requirements, data.restriction_reason,
+                data.enforcement_level
+            ))
+            result = cur.fetchone()
+            conn.commit()
+            return {"id": result["id"], "message": "Geographic restriction created"}
+
+@app.patch("/api/uw-guide/geographic-restrictions/{restriction_id}")
+def update_geo_restriction(restriction_id: str, data: GeoRestrictionUpdate):
+    """Update a geographic restriction."""
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join([f"{k} = %s" for k in updates.keys()])
+    values = list(updates.values()) + [restriction_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE uw_geographic_restrictions SET {set_clause}, updated_at = now()
+                WHERE id = %s
+            """, values)
+            conn.commit()
+            return {"message": "Geographic restriction updated"}
+
+@app.delete("/api/uw-guide/geographic-restrictions/{restriction_id}")
+def delete_geo_restriction(restriction_id: str):
+    """Soft delete a geographic restriction."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE uw_geographic_restrictions SET is_active = false, updated_at = now()
+                WHERE id = %s
+            """, (restriction_id,))
+            conn.commit()
+            return {"message": "Geographic restriction deleted"}
+
+
+# ─────────────────────────────────────────────────────────────
+# AI Decision & Drift Review
+# ─────────────────────────────────────────────────────────────
+
+class RecordDecisionRequest(BaseModel):
+    uw_decision: str  # 'quote', 'refer', 'decline'
+    override_reason: Optional[str] = None
+    override_category: Optional[str] = None
+    decided_by: Optional[str] = None
+
+
+@app.get("/api/uw-guide/drift-review")
+def get_drift_review_queue():
+    """Get rules that may need amendment review based on override patterns."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT *
+                FROM uw_drift_review_queue
+                ORDER BY override_rate_pct DESC
+                LIMIT 20
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/drift-patterns")
+def get_drift_patterns():
+    """Get all drift patterns with override statistics."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT *
+                FROM uw_drift_patterns
+                ORDER BY times_applied DESC
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/uw-guide/similar-patterns")
+def get_similar_case_patterns(
+    industry: Optional[str] = None,
+    hazard_class: Optional[int] = None,
+    revenue_band: Optional[str] = None,
+):
+    """Get similar case decision patterns."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = "SELECT * FROM uw_similar_case_patterns WHERE 1=1"
+            params = []
+            if industry:
+                sql += " AND LOWER(industry) = LOWER(%s)"
+                params.append(industry)
+            if hazard_class:
+                sql += " AND hazard_class = %s"
+                params.append(hazard_class)
+            if revenue_band:
+                sql += " AND revenue_band = %s"
+                params.append(revenue_band)
+            sql += " ORDER BY total_cases DESC LIMIT 20"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+@app.get("/api/decision-log/{submission_id}")
+def get_decision_log(submission_id: str):
+    """Get AI decision log for a submission."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT *
+                FROM uw_decision_log
+                WHERE submission_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (submission_id,))
+            return cur.fetchone()
+
+
+@app.post("/api/decision-log/{log_id}/record")
+def record_uw_decision_endpoint(log_id: str, req: RecordDecisionRequest):
+    """Record the final UW decision for a logged AI recommendation."""
+    from ai.ai_decision import record_uw_decision
+    success = record_uw_decision(
+        decision_log_id=log_id,
+        uw_decision=req.uw_decision,
+        override_reason=req.override_reason,
+        override_category=req.override_category,
+        decided_by=req.decided_by,
+    )
+    if success:
+        return {"status": "recorded"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to record decision")
+
+
+@app.get("/api/rule-amendments")
+def get_rule_amendments(status: Optional[str] = None):
+    """Get rule amendment history."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            sql = "SELECT * FROM uw_rule_amendments WHERE 1=1"
+            params = []
+            if status:
+                sql += " AND status = %s"
+                params.append(status)
+            sql += " ORDER BY created_at DESC LIMIT 50"
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+class RuleAmendmentRequest(BaseModel):
+    rule_type: str
+    rule_id: str
+    amendment_type: str
+    previous_state: Optional[dict] = None
+    new_state: Optional[dict] = None
+    reason: str
+    requested_by: Optional[str] = None
+
+
+@app.post("/api/rule-amendments")
+def create_rule_amendment(req: RuleAmendmentRequest):
+    """Create a rule amendment request."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO uw_rule_amendments (
+                    rule_type, rule_id, amendment_type,
+                    previous_state, new_state, reason,
+                    requested_by, status
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+                RETURNING id
+            """, (
+                req.rule_type,
+                req.rule_id,
+                req.amendment_type,
+                Json(req.previous_state) if req.previous_state else None,
+                Json(req.new_state) if req.new_state else None,
+                req.reason,
+                req.requested_by,
+            ))
+            conn.commit()
+            row = cur.fetchone()
+            return {"id": str(row["id"]), "status": "pending"}
+
+
+class AmendmentApprovalRequest(BaseModel):
+    approved_by: str
+    approve: bool  # True to approve, False to reject
+
+
+@app.post("/api/rule-amendments/{amendment_id}/review")
+def review_rule_amendment(amendment_id: str, req: AmendmentApprovalRequest):
+    """Approve or reject a rule amendment."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            new_status = "approved" if req.approve else "rejected"
+            cur.execute("""
+                UPDATE uw_rule_amendments
+                SET status = %s, approved_by = %s, approved_at = now()
+                WHERE id = %s
+                RETURNING id, rule_type, rule_id, new_state
+            """, (new_status, req.approved_by, amendment_id))
+            row = cur.fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="Amendment not found")
+
+            # If approved, apply the change
+            if req.approve and row["new_state"]:
+                new_state = row["new_state"]
+                rule_type = row["rule_type"]
+                rule_id = row["rule_id"]
+
+                # Apply enforcement_level change if present
+                if "enforcement_level" in new_state:
+                    table_map = {
+                        "declination": "uw_declination_rules",
+                        "control": "uw_mandatory_controls",
+                        "referral": "uw_referral_triggers",
+                        "appetite": "uw_appetite",
+                    }
+                    table = table_map.get(rule_type)
+                    if table:
+                        cur.execute(f"""
+                            UPDATE {table}
+                            SET enforcement_level = %s, updated_at = now()
+                            WHERE id = %s
+                        """, (new_state["enforcement_level"], rule_id))
+
+            conn.commit()
+            return {"status": new_status, "amendment_id": amendment_id}
 
 
 # ─────────────────────────────────────────────────────────────
