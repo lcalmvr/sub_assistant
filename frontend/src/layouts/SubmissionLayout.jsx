@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
-import { NavLink, Outlet, useParams, Link, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getSubmission, updateSubmission, getSubmissionWorkflow, recordVote, claimSubmission, startPrescreen, submitForReview, getUwRecommendation } from '../api/client';
+import { getSubmission, updateSubmission, getSubmissionWorkflow, recordVote, claimSubmission, startPrescreen, submitForReview, getUwRecommendation, getAgentNotifications } from '../api/client';
 import DocsPanel from '../components/DocsPanel';
 import AiCorrectionsPanel, { AiCorrectionsBadge } from '../components/AiCorrectionsPanel';
 import AiAgentPanel from '../components/AiAgentPanel';
 import UnifiedHeader from '../components/UnifiedHeader';
+import { isBadgeEnabled, setBadgeEnabled } from '../components/HeadsUpSection';
 import RemarketBanner from '../components/RemarketBanner';
 
 // Base tabs - always shown
@@ -562,10 +563,18 @@ function WorkflowStatusBadge({ submissionId, currentUser, onUserChange }) {
 export default function SubmissionLayout() {
   const { submissionId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const [isDocsPanelOpen, setIsDocsPanelOpen] = useState(false);
   const [isCorrectionsPanelOpen, setIsCorrectionsPanelOpen] = useState(false);
   const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(getInitialUser);
+  const [badgeEnabled, setBadgeEnabledState] = useState(isBadgeEnabled);
+
+  // Handle badge toggle
+  const handleBadgeToggle = (enabled) => {
+    setBadgeEnabled(enabled);
+    setBadgeEnabledState(enabled);
+  };
 
   // Keyboard shortcut for AI panel (Cmd+K)
   useEffect(() => {
@@ -584,11 +593,27 @@ export default function SubmissionLayout() {
     queryFn: () => getSubmission(submissionId).then(res => res.data),
   });
 
+  // Agent notifications for proactive alerts
+  const { data: notificationsData } = useQuery({
+    queryKey: ['agent-notifications', submissionId],
+    queryFn: () => getAgentNotifications(submissionId).then(res => res.data),
+    refetchInterval: 60000, // Refresh every 60 seconds
+    staleTime: 30000, // Consider stale after 30 seconds
+  });
+
+  const notifications = notificationsData?.notifications || [];
+  const notificationSummary = notificationsData?.summary || {};
+
   // Get tabs based on submission type (renewals get extra tab)
   const tabs = getTabs(submission);
 
   // Determine active tab from current path
   const activeTab = tabs.find(tab => location.pathname.includes(tab.path))?.path || 'setup';
+
+  // Handle navigation from AI panel notifications
+  const handleNavigateToTab = (tabPath) => {
+    navigate(`/submissions/${submissionId}/${tabPath}`);
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
@@ -599,6 +624,8 @@ export default function SubmissionLayout() {
         onAiClick={() => setIsAiPanelOpen(true)}
         tabs={tabs}
         activeTab={activeTab}
+        notificationCount={badgeEnabled ? (notificationSummary.total || 0) : 0}
+        hasCriticalNotification={badgeEnabled && (notificationSummary.has_critical || false)}
         workflowBadge={
           <WorkflowStatusBadge
             submissionId={submissionId}
@@ -669,6 +696,10 @@ export default function SubmissionLayout() {
         currentPage={activeTab}
         isOpen={isAiPanelOpen}
         onClose={() => setIsAiPanelOpen(false)}
+        notifications={notifications}
+        onNavigate={handleNavigateToTab}
+        badgeEnabled={badgeEnabled}
+        onBadgeToggle={handleBadgeToggle}
       />
     </div>
   );

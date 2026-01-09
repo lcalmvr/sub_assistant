@@ -747,4 +747,13 @@ export const applyClaimsRecommendations = (data) =>
 export const refreshClaimsAnalytics = () =>
   api.post('/claims-analytics/refresh');
 
+// Agent Notifications (Phase 6)
+export const getAgentNotifications = (submissionId) =>
+  api.get(`/submissions/${submissionId}/agent-notifications`);
+
+export const dismissAgentNotification = (submissionId, key, snoozeHours = null) =>
+  api.post(`/submissions/${submissionId}/agent-notifications/${key}/dismiss`, {
+    snooze_hours: snoozeHours,
+  });
+
 export default api;

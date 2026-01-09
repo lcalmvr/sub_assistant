@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { agentChat, agentAction, agentConfirm, getAgentCapabilities, submitFeatureRequest } from '../api/client';
+import HeadsUpSection from './HeadsUpSection';
 
 /**
  * AiAgentPanel - Slide-out AI assistant panel
@@ -137,7 +138,7 @@ function ActionIconSmall({ actionName }) {
 }
 
 // Collapsible Help Section
-function HelpSection({ submissionId, onActionClick }) {
+function HelpSection({ submissionId, onActionClick, onAiQuestion }) {
   const [isOpen, setIsOpen] = useState(false);
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [requestText, setRequestText] = useState('');
@@ -167,6 +168,18 @@ function HelpSection({ submissionId, onActionClick }) {
     if (requestText.trim()) {
       requestMutation.mutate(requestText.trim());
     }
+  };
+
+  // Handle action click - either ask question or run immediately
+  const handleActionClick = (action) => {
+    if (action.question) {
+      // Has a question - show AI asking it
+      onAiQuestion?.(action.question);
+    } else {
+      // No question - run the action immediately
+      onActionClick?.(action.examples?.[0] || action.name);
+    }
+    setIsOpen(false);
   };
 
   // Use native title for hover - simpler and always works
@@ -259,7 +272,7 @@ function HelpSection({ submissionId, onActionClick }) {
                   <button
                     key={j}
                     title={getTooltip(action)}
-                    onClick={() => onActionClick?.(action.examples?.[0] || action.name)}
+                    onClick={() => handleActionClick(action)}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded-full hover:bg-purple-100 hover:text-purple-700 cursor-pointer transition-colors"
                   >
                     <ActionIconSmall actionName={action.name} />
@@ -439,6 +452,10 @@ export default function AiAgentPanel({
   currentPage,
   isOpen,
   onClose,
+  notifications = [],
+  onNavigate,
+  badgeEnabled = true,
+  onBadgeToggle,
 }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -657,11 +674,29 @@ export default function AiAgentPanel({
           </div>
         </div>
 
+        {/* Heads Up Section - Proactive Notifications */}
+        <HeadsUpSection
+          submissionId={submissionId}
+          notifications={notifications}
+          onNavigate={(tab) => {
+            onNavigate?.(tab);
+            onClose();
+          }}
+          badgeEnabled={badgeEnabled}
+          onBadgeToggle={onBadgeToggle}
+        />
+
         {/* Help Section */}
         <HelpSection
           submissionId={submissionId}
           onActionClick={(example) => {
             setInput(example);
+            inputRef.current?.focus();
+          }}
+          onAiQuestion={(question) => {
+            // Replace messages with just this question (clear any pending questions)
+            setMessages([{ role: 'assistant', content: question }]);
+            // Focus input for user's response
             inputRef.current?.focus();
           }}
         />

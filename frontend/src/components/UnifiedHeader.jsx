@@ -155,18 +155,27 @@ function DocsButton({ onClick }) {
   );
 }
 
-// AI Agent Button Component
-function AiAgentButton({ onClick }) {
+// AI Agent Button Component with notification badge
+function AiAgentButton({ onClick, notificationCount = 0, hasCritical = false }) {
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1.5 px-2 py-1 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-md transition-colors"
+      className="relative flex items-center gap-1.5 px-2 py-1 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-md transition-colors"
       title="AI Assistant (Cmd+K)"
     >
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
       </svg>
       <span>AI</span>
+      {notificationCount > 0 && (
+        <span
+          className={`absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center text-[10px] font-bold text-white rounded-full px-1 ${
+            hasCritical ? 'bg-red-500 animate-pulse' : 'bg-amber-500'
+          }`}
+        >
+          {notificationCount > 9 ? '9+' : notificationCount}
+        </span>
+      )}
     </button>
   );
 }
@@ -180,6 +189,8 @@ export default function UnifiedHeader({
   correctionsBadge,
   tabs,
   activeTab,
+  notificationCount = 0,
+  hasCriticalNotification = false,
 }) {
   const status = submission?.submission_status || 'received';
   const outcome = submission?.submission_outcome || 'pending';
@@ -257,7 +268,11 @@ export default function UnifiedHeader({
         <div className="flex items-center gap-2">
           <DocsButton onClick={onDocsClick} />
 
-          <AiAgentButton onClick={onAiClick} />
+          <AiAgentButton
+            onClick={onAiClick}
+            notificationCount={notificationCount}
+            hasCritical={hasCriticalNotification}
+          />
 
           {correctionsBadge}
 

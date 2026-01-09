@@ -10622,6 +10622,7 @@ AGENT_CAPABILITIES = {
                     "name": "Extend Policy",
                     "description": "Extend policy expiration date with pro-rata premium",
                     "examples": ["extend 30 days", "extend policy to 3/1/26"],
+                    "question": "How many days would you like to extend the policy, or what date should it extend to?",
                     "requires_bound": True
                 },
                 {
@@ -10629,6 +10630,7 @@ AGENT_CAPABILITIES = {
                     "name": "Cancel Policy",
                     "description": "Cancel policy with reason and return premium calculation",
                     "examples": ["cancel insured request", "cancel non-payment effective 2/1/26"],
+                    "question": "What is the reason for cancellation and what effective date? (e.g., 'insured request effective 2/1/26')",
                     "reason_codes": list(CANCELLATION_REASONS.values()) if 'CANCELLATION_REASONS' in dir() else [],
                     "requires_bound": True
                 },
@@ -10637,6 +10639,7 @@ AGENT_CAPABILITIES = {
                     "name": "Reinstate Policy",
                     "description": "Reinstate a cancelled policy",
                     "examples": ["reinstate policy", "reinstate"],
+                    "question": "I'll reinstate this policy. Would you like to proceed, or do you need to specify any conditions?",
                     "requires_bound": True
                 },
                 {
@@ -10644,6 +10647,7 @@ AGENT_CAPABILITIES = {
                     "name": "Change Broker (BOR)",
                     "description": "Change broker of record",
                     "examples": ["change broker to Marsh", "BOR to Acme Insurance"],
+                    "question": "What is the name of the new broker of record?",
                     "requires_bound": True
                 },
                 {
@@ -10651,6 +10655,7 @@ AGENT_CAPABILITIES = {
                     "name": "Issue Policy / Binder",
                     "description": "Bind quote and generate binder document",
                     "examples": ["issue policy", "generate binder"],
+                    "question": "Which quote option would you like to bind? I can generate the binder once you confirm.",
                     "requires_bound": False
                 }
             ]
@@ -10664,6 +10669,7 @@ AGENT_CAPABILITIES = {
                     "name": "Decline Submission",
                     "description": "Decline with reason code",
                     "examples": ["decline outside appetite", "decline inadequate controls"],
+                    "question": "What is the reason for declining this submission? (e.g., outside appetite, inadequate controls, claims history)",
                     "reason_codes": list(DECLINE_REASONS.values()) if 'DECLINE_REASONS' in dir() else [],
                     "requires_bound": False
                 },
@@ -10672,6 +10678,7 @@ AGENT_CAPABILITIES = {
                     "name": "Mark Subjectivity Received",
                     "description": "Mark a pending subjectivity as received",
                     "examples": ["mark financials received", "subjectivity complete: signed app"],
+                    "question": "Which subjectivity has been received? (e.g., 'financials', 'signed application')",
                     "requires_bound": False
                 },
                 {
@@ -10679,6 +10686,7 @@ AGENT_CAPABILITIES = {
                     "name": "Add Note to File",
                     "description": "Add timestamped note to the submission file",
                     "examples": ["add note: Spoke with broker", "note: Follow up Friday"],
+                    "question": "What note would you like to add to the file?",
                     "requires_bound": False
                 }
             ]
@@ -10692,6 +10700,7 @@ AGENT_CAPABILITIES = {
                     "name": "Show Gaps",
                     "description": "List critical/important fields needing confirmation",
                     "examples": ["show gaps", "what's missing", "critical gaps"],
+                    "question": None,  # No question needed - runs immediately
                     "requires_bound": False
                 },
                 {
@@ -10699,6 +10708,7 @@ AGENT_CAPABILITIES = {
                     "name": "Summarize",
                     "description": "Generate submission summary",
                     "examples": ["summarize", "summary"],
+                    "question": None,  # No question needed - runs immediately
                     "requires_bound": False
                 },
                 {
@@ -10706,6 +10716,7 @@ AGENT_CAPABILITIES = {
                     "name": "NIST Assessment",
                     "description": "Generate NIST cybersecurity framework assessment",
                     "examples": ["nist", "nist assessment", "security assessment"],
+                    "question": None,  # No question needed - runs immediately
                     "requires_bound": False
                 },
                 {
@@ -10713,6 +10724,7 @@ AGENT_CAPABILITIES = {
                     "name": "Parse Broker Response",
                     "description": "Extract information from broker email",
                     "examples": ["parse email", "broker response"],
+                    "question": "Please paste the broker's email response and I'll extract any security control confirmations.",
                     "requires_bound": False
                 }
             ]
@@ -10726,6 +10738,7 @@ AGENT_CAPABILITIES = {
                     "name": "Generate Quote Options",
                     "description": "Create multiple quote options at once",
                     "examples": ["quote 1M, 2M, 3M at 50K retention", "options at 25K SIR"],
+                    "question": "What limit options and retention would you like to quote? (e.g., '1M, 2M, 3M at 50K retention')",
                     "requires_bound": False
                 },
                 {
@@ -10733,6 +10746,7 @@ AGENT_CAPABILITIES = {
                     "name": "Build Tower",
                     "description": "Create excess tower structure",
                     "examples": ["XL primary 5M, CMAI 5M xs 5M", "build tower"],
+                    "question": "Describe the tower structure you'd like to build (e.g., 'primary 5M, excess 5M xs 5M').",
                     "requires_bound": False
                 }
             ]
@@ -13924,6 +13938,44 @@ def claims_apply_recommendations(req: ApplyRecommendationsRequest):
 def claims_refresh_analytics():
     """Refresh the claims correlation materialized view."""
     return refresh_materialized_view()
+
+
+# ─────────────────────────────────────────────────────────────
+# Agent Notifications (Phase 6)
+# ─────────────────────────────────────────────────────────────
+
+from core.agent_notifications import (
+    get_notifications_with_dismissal,
+    get_notification_summary,
+    dismiss_notification,
+)
+
+
+@app.get("/api/submissions/{submission_id}/agent-notifications")
+def get_agent_notifications(submission_id: str):
+    """Get computed notifications for the AI agent panel."""
+    return {
+        "notifications": get_notifications_with_dismissal(submission_id),
+        "summary": get_notification_summary(submission_id),
+    }
+
+
+class DismissNotificationRequest(BaseModel):
+    snooze_hours: Optional[int] = None
+
+
+@app.post("/api/submissions/{submission_id}/agent-notifications/{key}/dismiss")
+def dismiss_agent_notification(
+    submission_id: str,
+    key: str,
+    req: DismissNotificationRequest = DismissNotificationRequest()
+):
+    """Dismiss or snooze a notification."""
+    return dismiss_notification(
+        submission_id=submission_id,
+        notification_key=key,
+        snooze_hours=req.snooze_hours,
+    )
 
 
 # ─────────────────────────────────────────────────────────────
