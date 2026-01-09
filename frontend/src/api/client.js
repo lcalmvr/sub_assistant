@@ -723,4 +723,28 @@ export const setSubjectivityCritical = (subjectivityId, isCritical) =>
     params: { is_critical: isCritical },
   });
 
+// Claims Analytics (Phase 5)
+export const getClaimsAnalyticsSummary = () =>
+  api.get('/claims-analytics/summary');
+
+export const getControlImpact = (params = {}) =>
+  api.get('/claims-analytics/control-impact', { params });
+
+export const getLossRatioByVersion = () =>
+  api.get('/claims-analytics/by-version');
+
+export const generateClaimsRecommendations = (data = {}) =>
+  api.post('/claims-analytics/generate-recommendations', data);
+
+export const getClaimsRecommendations = (status = null, limit = 50) =>
+  api.get('/claims-analytics/recommendations', {
+    params: { status, limit },
+  });
+
+export const applyClaimsRecommendations = (data) =>
+  api.post('/claims-analytics/apply-recommendations', data);
+
+export const refreshClaimsAnalytics = () =>
+  api.post('/claims-analytics/refresh');
+
 export default api;

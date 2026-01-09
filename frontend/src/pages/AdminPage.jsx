@@ -31,6 +31,13 @@ import {
   getRuleAmendments,
   createRuleAmendment,
   reviewRuleAmendment,
+  getClaimsAnalyticsSummary,
+  getControlImpact,
+  getLossRatioByVersion,
+  generateClaimsRecommendations,
+  getClaimsRecommendations,
+  applyClaimsRecommendations,
+  refreshClaimsAnalytics,
 } from '../api/client';
 import RemarketAnalyticsCard from '../components/RemarketAnalyticsCard';
 import RenewalQueueCard from '../components/RenewalQueueCard';
@@ -2720,6 +2727,509 @@ function DriftReviewTab() {
   );
 }
 
+// Claims Analytics Tab - Phase 5 Claims Feedback Loop
+function ClaimsAnalyticsTab() {
+  const queryClient = useQueryClient();
+  const [subView, setSubView] = useState('control-impact');
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  const [selectedRecommendation, setSelectedRecommendation] = useState(null);
+  const [versionName, setVersionName] = useState('');
+  const [versionDescription, setVersionDescription] = useState('');
+
+  // Fetch summary
+  const { data: summary, isLoading: summaryLoading } = useQuery({
+    queryKey: ['claims-analytics-summary'],
+    queryFn: () => getClaimsAnalyticsSummary().then(res => res.data),
+  });
+
+  // Fetch control impact
+  const { data: controlImpact, isLoading: impactLoading } = useQuery({
+    queryKey: ['claims-control-impact'],
+    queryFn: () => getControlImpact().then(res => res.data),
+  });
+
+  // Fetch loss ratio by version
+  const { data: versionData, isLoading: versionLoading } = useQuery({
+    queryKey: ['claims-by-version'],
+    queryFn: () => getLossRatioByVersion().then(res => res.data),
+  });
+
+  // Fetch recommendations
+  const { data: recommendations, isLoading: recsLoading } = useQuery({
+    queryKey: ['claims-recommendations'],
+    queryFn: () => getClaimsRecommendations().then(res => res.data),
+  });
+
+  // Generate recommendations mutation
+  const generateMutation = useMutation({
+    mutationFn: () => generateClaimsRecommendations({ created_by: 'admin' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['claims-recommendations'] });
+    },
+  });
+
+  // Apply recommendations mutation
+  const applyMutation = useMutation({
+    mutationFn: (data) => applyClaimsRecommendations(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['claims-recommendations'] });
+      queryClient.invalidateQueries({ queryKey: ['claims-by-version'] });
+      setShowApplyModal(false);
+      setSelectedRecommendation(null);
+      setVersionName('');
+      setVersionDescription('');
+    },
+  });
+
+  // Refresh mutation
+  const refreshMutation = useMutation({
+    mutationFn: () => refreshClaimsAnalytics(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['claims-analytics-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['claims-control-impact'] });
+      queryClient.invalidateQueries({ queryKey: ['claims-by-version'] });
+    },
+  });
+
+  const confidenceBadge = (conf) => {
+    const colors = {
+      high: 'bg-green-100 text-green-800',
+      medium: 'bg-yellow-100 text-yellow-800',
+      low: 'bg-gray-100 text-gray-500',
+    };
+    return (
+      <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[conf] || colors.low}`}>
+        {conf}
+      </span>
+    );
+  };
+
+  const importanceBadge = (imp) => {
+    const colors = {
+      critical: 'bg-red-100 text-red-800',
+      important: 'bg-orange-100 text-orange-800',
+      nice_to_know: 'bg-blue-100 text-blue-800',
+      none: 'bg-gray-100 text-gray-500',
+    };
+    return (
+      <span className={`px-2 py-0.5 rounded text-xs font-medium ${colors[imp] || colors.none}`}>
+        {imp?.replace('_', ' ') || 'none'}
+      </span>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Summary Cards */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-900">Claims Analytics</h3>
+        <button
+          onClick={() => refreshMutation.mutate()}
+          disabled={refreshMutation.isPending}
+          className="text-sm text-purple-600 hover:text-purple-800 disabled:opacity-50"
+        >
+          {refreshMutation.isPending ? 'Refreshing...' : 'Refresh Data'}
+        </button>
+      </div>
+
+      {summaryLoading ? (
+        <div className="text-center py-4 text-gray-500">Loading summary...</div>
+      ) : (
+        <div className="grid grid-cols-4 gap-4">
+          <div className="bg-purple-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-purple-700">
+              {summary?.total_bound_policies || 0}
+            </div>
+            <div className="text-sm text-purple-600">Bound Policies</div>
+          </div>
+          <div className="bg-green-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-green-700">
+              {formatCurrency(summary?.total_earned_premium)}
+            </div>
+            <div className="text-sm text-green-600">Earned Premium</div>
+          </div>
+          <div className="bg-blue-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-blue-700">
+              {summary?.avg_loss_ratio != null
+                ? `${(summary.avg_loss_ratio * 100).toFixed(1)}%`
+                : '—'}
+            </div>
+            <div className="text-sm text-blue-600">Avg Loss Ratio</div>
+          </div>
+          <div className="bg-orange-50 rounded-lg p-4">
+            <div className="text-2xl font-bold text-orange-700">
+              {summary?.claim_frequency_pct != null
+                ? `${summary.claim_frequency_pct.toFixed(1)}%`
+                : '—'}
+            </div>
+            <div className="text-sm text-orange-600">Claim Frequency</div>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-navigation */}
+      <div className="flex gap-2 border-b border-gray-200 pb-2">
+        {[
+          { id: 'control-impact', label: 'Control Impact' },
+          { id: 'by-version', label: 'Version Comparison' },
+          { id: 'recommendations', label: 'Recommendations' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setSubView(tab.id)}
+            className={`px-3 py-1.5 text-sm font-medium rounded ${
+              subView === tab.id
+                ? 'bg-purple-100 text-purple-700'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Control Impact View */}
+      {subView === 'control-impact' && (
+        <div>
+          <p className="text-sm text-gray-600 mb-4">
+            Loss ratio comparison for policies with vs without each control.
+            Positive lift means the control reduces losses.
+          </p>
+          {impactLoading ? (
+            <div className="text-center py-8 text-gray-500">Loading control impact...</div>
+          ) : !controlImpact?.length ? (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+              <div className="text-gray-600">No control impact data available</div>
+              <div className="text-sm text-gray-500 mt-1">
+                Run claims correlation after binding policies with decision snapshots
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-hidden border rounded-lg">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Control</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Current</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">With</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Without</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">LR With</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">LR Without</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Lift</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Conf</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Recommend</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {controlImpact.map((row) => (
+                    <tr key={row.field_key} className={row.change_recommended ? 'bg-yellow-50' : ''}>
+                      <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                        {row.field_name}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {importanceBadge(row.current_importance)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {row.with_count}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {row.without_count}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {row.loss_ratio_with != null ? `${(row.loss_ratio_with * 100).toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {row.loss_ratio_without != null ? `${(row.loss_ratio_without * 100).toFixed(1)}%` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-medium">
+                        {row.lift_pct != null ? (
+                          <span className={row.lift_pct > 0 ? 'text-green-600' : 'text-red-600'}>
+                            {row.lift_pct > 0 ? '+' : ''}{row.lift_pct.toFixed(1)}%
+                          </span>
+                        ) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {confidenceBadge(row.confidence)}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {row.change_recommended ? (
+                          <span className="flex items-center justify-center gap-1">
+                            {importanceBadge(row.recommended_importance)}
+                            <span className="text-yellow-600">⬆</span>
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-sm">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Version Comparison View */}
+      {subView === 'by-version' && (
+        <div>
+          <p className="text-sm text-gray-600 mb-4">
+            Compare portfolio loss ratios across different importance version configurations.
+          </p>
+          {versionLoading ? (
+            <div className="text-center py-8 text-gray-500">Loading version data...</div>
+          ) : !versionData?.length ? (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+              <div className="text-gray-600">No version comparison data available</div>
+            </div>
+          ) : (
+            <div className="overflow-hidden border rounded-lg">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Version</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Policies</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Premium</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Claims</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Incurred</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Loss Ratio</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {versionData.map((row) => (
+                    <tr key={row.version_id} className={row.is_active ? 'bg-green-50' : ''}>
+                      <td className="px-4 py-3">
+                        <div className="text-sm font-medium text-gray-900">
+                          v{row.version_number}: {row.version_name}
+                        </div>
+                        {row.based_on_claims_through && (
+                          <div className="text-xs text-gray-500">
+                            Claims through {row.based_on_claims_through}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {row.is_active ? (
+                          <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                            Active
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">Inactive</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {row.policy_count}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {formatCurrency(row.total_premium)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {row.total_claims}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-gray-600">
+                        {formatCurrency(row.total_incurred)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right font-medium">
+                        {row.aggregate_loss_ratio != null
+                          ? `${(row.aggregate_loss_ratio * 100).toFixed(1)}%`
+                          : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Recommendations View */}
+      {subView === 'recommendations' && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-sm text-gray-600">
+              Generate and apply importance recommendations based on claims correlation.
+            </p>
+            <button
+              onClick={() => generateMutation.mutate()}
+              disabled={generateMutation.isPending}
+              className="px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 disabled:opacity-50"
+            >
+              {generateMutation.isPending ? 'Generating...' : 'Generate Recommendations'}
+            </button>
+          </div>
+
+          {recsLoading ? (
+            <div className="text-center py-8 text-gray-500">Loading recommendations...</div>
+          ) : !recommendations?.length ? (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+              <div className="text-gray-600">No recommendations generated yet</div>
+              <div className="text-sm text-gray-500 mt-1">
+                Click "Generate Recommendations" to analyze claims data
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {recommendations.map((rec) => (
+                <div
+                  key={rec.id}
+                  className="border border-gray-200 rounded-lg p-4 bg-white"
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          rec.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          rec.status === 'applied' ? 'bg-green-100 text-green-800' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>
+                          {rec.status}
+                        </span>
+                        <span className="text-sm text-gray-500">
+                          Analyzed {formatDate(rec.analyzed_at)} by {rec.analyzed_by}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">
+                        {rec.fields_with_changes} of {rec.total_fields_analyzed} fields recommend changes
+                      </div>
+                    </div>
+                    {rec.status === 'pending' && (
+                      <button
+                        onClick={() => {
+                          setSelectedRecommendation(rec);
+                          setShowApplyModal(true);
+                        }}
+                        className="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700"
+                      >
+                        Apply
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Recommendation details */}
+                  {rec.recommendations?.length > 0 && (
+                    <div className="overflow-hidden border rounded-lg mt-3">
+                      <table className="min-w-full divide-y divide-gray-200 text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Field</th>
+                            <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Current</th>
+                            <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">→</th>
+                            <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Recommended</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Lift</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Rationale</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {rec.recommendations.map((item, idx) => (
+                            <tr key={idx}>
+                              <td className="px-3 py-2 font-medium text-gray-900">{item.field_name}</td>
+                              <td className="px-3 py-2 text-center">{importanceBadge(item.current_importance)}</td>
+                              <td className="px-3 py-2 text-center text-gray-400">→</td>
+                              <td className="px-3 py-2 text-center">{importanceBadge(item.recommended_importance)}</td>
+                              <td className="px-3 py-2 text-right text-green-600 font-medium">
+                                +{item.lift_pct?.toFixed(1)}%
+                              </td>
+                              <td className="px-3 py-2 text-gray-600 text-xs">{item.rationale}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Apply Modal */}
+      {showApplyModal && selectedRecommendation && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Apply Recommendations</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              This will create a new importance version with the recommended changes.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Version Name
+                </label>
+                <input
+                  type="text"
+                  value={versionName}
+                  onChange={(e) => setVersionName(e.target.value)}
+                  className="form-input w-full"
+                  placeholder="e.g., Claims-based v2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Description
+                </label>
+                <textarea
+                  value={versionDescription}
+                  onChange={(e) => setVersionDescription(e.target.value)}
+                  className="form-input w-full"
+                  rows={3}
+                  placeholder="Describe the changes being applied..."
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowApplyModal(false);
+                  setSelectedRecommendation(null);
+                }}
+                className="px-4 py-2 text-gray-700 text-sm font-medium hover:bg-gray-100 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  applyMutation.mutate({
+                    recommendation_id: selectedRecommendation.id,
+                    version_name: versionName,
+                    version_description: versionDescription,
+                    applied_by: 'admin',
+                  });
+                }}
+                disabled={!versionName || applyMutation.isPending}
+                className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded hover:bg-green-700 disabled:opacity-50"
+              >
+                {applyMutation.isPending ? 'Applying...' : 'Create Version'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Info box */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 className="font-medium text-blue-900 mb-2">About Claims Analytics</h4>
+        <div className="text-sm text-blue-800 space-y-1">
+          <p>
+            <strong>Lift</strong> measures how much a control reduces loss ratio.
+            +25% lift means policies with the control have 25% lower losses.
+          </p>
+          <p>
+            <strong>Confidence</strong> is based on sample size.
+            High = 10+ policies in each group, Medium = 5+, Low = fewer.
+          </p>
+          <p>
+            <strong>Recommendations</strong> suggest importance changes:
+            25%+ lift → Critical, 10-25% → Important, &lt;10% → Nice to Know.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
@@ -2735,6 +3245,7 @@ export default function AdminPage() {
     { id: 'extraction', label: 'Extraction Stats' },
     { id: 'feedback', label: 'AI Feedback' },
     { id: 'remarket', label: 'Remarket Analytics' },
+    { id: 'claims-analytics', label: 'Claims Analytics' },
     { id: 'drift-review', label: 'Drift Review' },
   ];
 
@@ -2792,6 +3303,7 @@ export default function AdminPage() {
           {activeTab === 'extraction' && <ExtractionStatsTab />}
           {activeTab === 'feedback' && <FeedbackAnalyticsTab />}
           {activeTab === 'remarket' && <RemarketAnalyticsCard />}
+          {activeTab === 'claims-analytics' && <ClaimsAnalyticsTab />}
           {activeTab === 'drift-review' && <DriftReviewTab />}
         </div>
       </main>

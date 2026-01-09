@@ -13839,6 +13839,94 @@ def review_rule_amendment(amendment_id: str, req: AmendmentApprovalRequest):
 
 
 # ─────────────────────────────────────────────────────────────
+# Claims Analytics (Phase 5)
+# ─────────────────────────────────────────────────────────────
+
+from core.claims_correlation import (
+    get_claims_analytics_summary,
+    get_control_impact_analysis,
+    get_loss_ratio_by_version,
+    generate_importance_recommendations,
+    get_recommendations,
+    apply_recommendations,
+    refresh_materialized_view,
+)
+
+
+@app.get("/api/claims-analytics/summary")
+def claims_analytics_summary():
+    """Get overall claims analytics summary."""
+    return get_claims_analytics_summary()
+
+
+@app.get("/api/claims-analytics/control-impact")
+def claims_control_impact(
+    min_sample_size: int = 10,
+    min_exposure_months: int = 12,
+):
+    """Get loss ratio impact analysis for each control field."""
+    return get_control_impact_analysis(
+        min_sample_size=min_sample_size,
+        min_exposure_months=min_exposure_months,
+    )
+
+
+@app.get("/api/claims-analytics/by-version")
+def claims_by_version():
+    """Get loss ratio breakdown by importance version."""
+    return get_loss_ratio_by_version()
+
+
+class GenerateRecommendationsRequest(BaseModel):
+    min_sample_size: int = 10
+    min_exposure_months: int = 12
+    created_by: str = "admin"
+
+
+@app.post("/api/claims-analytics/generate-recommendations")
+def claims_generate_recommendations(req: GenerateRecommendationsRequest):
+    """Generate importance recommendations based on claims correlation."""
+    return generate_importance_recommendations(
+        min_sample_size=req.min_sample_size,
+        min_exposure_months=req.min_exposure_months,
+        created_by=req.created_by,
+    )
+
+
+@app.get("/api/claims-analytics/recommendations")
+def claims_get_recommendations(status: Optional[str] = None, limit: int = 50):
+    """Get stored claims correlation recommendations."""
+    return get_recommendations(status=status, limit=limit)
+
+
+class ApplyRecommendationsRequest(BaseModel):
+    recommendation_id: str
+    version_name: str
+    version_description: str
+    applied_by: str = "admin"
+
+
+@app.post("/api/claims-analytics/apply-recommendations")
+def claims_apply_recommendations(req: ApplyRecommendationsRequest):
+    """Apply recommendations by creating a new importance version."""
+    try:
+        return apply_recommendations(
+            recommendation_id=req.recommendation_id,
+            version_name=req.version_name,
+            version_description=req.version_description,
+            applied_by=req.applied_by,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/claims-analytics/refresh")
+def claims_refresh_analytics():
+    """Refresh the claims correlation materialized view."""
+    return refresh_materialized_view()
+
+
+# ─────────────────────────────────────────────────────────────
 # Health Check
 # ─────────────────────────────────────────────────────────────
 
