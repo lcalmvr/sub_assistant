@@ -290,7 +290,7 @@ Add importance weighting to extraction schema fields so UW can see "what needs c
 
 ## Phase 2: AI Agents - Architecture Design
 
-Design the agent interaction model for the React frontend.
+Design the agent interaction model. The main implementation is in Streamlit (`pages_components/admin_agent_sidebar.py`, `pages_components/ai_command_box.py`), with API endpoints that can also serve a React frontend if needed.
 
 ### Tasks
 
@@ -326,7 +326,7 @@ Design the agent interaction model for the React frontend.
 
 ## Phase 3: AI Agent Implementation
 
-Build the agents for React frontend.
+Build the agents. Main implementation is in Streamlit, with API endpoints that can serve both Streamlit and React frontends.
 
 ### Tasks
 
@@ -336,11 +336,12 @@ Build the agents for React frontend.
   - Function calling with OpenAI
   - File: `api/main.py` (agent routes at end of file)
 
-- [x] **3.2** Build top bar AI agent UI component (React)
-  - Slide-out panel or modal
+- [x] **3.2** Build AI agent UI components (Streamlit)
+  - Sidebar panel for admin agent
+  - Command box for quote commands
   - Chat interface with message history
-  - Cmd+K keyboard shortcut
-  - File: `frontend/src/components/AiAgentPanel.jsx`
+  - Files: `pages_components/admin_agent_sidebar.py`, `pages_components/ai_command_box.py`
+  - Note: React `AiAgentPanel.jsx` exists in `frontend/` but main implementation is Streamlit
 
 - [x] **3.3** Implement UW Assistant functions
   - Process broker response (parse email, update values)
@@ -986,6 +987,31 @@ UI improvements in progress (separate from this roadmap):
 - Control update workflow spec
 
 ---
+
+## Related Planning Documents
+
+This roadmap is part of a larger planning ecosystem. See:
+
+- **[MASTER_ROADMAP.md](MASTER_ROADMAP.md)** - Central hub for all planning documents
+- **[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)** - Detailed status of all planning documents
+
+### Feature-Specific Plans Referenced in This Roadmap
+
+- **[review-uw-redesign-roadmap.md](implemented/review-uw-redesign-roadmap.md)** - Review/UW page redesign (Phase 1-4 complete) ✅
+- **[unified-extraction-panel-plan.md](implemented/unified-extraction-panel-plan.md)** - Unified extraction panel (Phases 1-5 complete) ✅
+- **[benchmarking_tab_plan.md](implemented/benchmarking_tab_plan.md)** - Benchmarking tab (✅ Complete)
+- **[conflict_review_implementation_plan.md](implemented/conflict_review_implementation_plan.md)** - Conflict detection system (✅ Complete)
+- **[broker_relationship_management_plan.md](broker_relationship_management_plan.md)** - Broker CRM (⚠️ Partial)
+- **[collaborative-uw-workflow-spec.md](collaborative-uw-workflow-spec.md)** - Collaborative voting workflow (⚠️ Partial)
+- **[coverage_sublimits_plan.md](implemented/coverage_sublimits_plan.md)** - Coverage/sublimits management (✅ Complete)
+- **[loss-history-enhancements.md](implemented/loss-history-enhancements.md)** - Loss history improvements (✅ Complete)
+- **[PLAN_midterm_endorsement_redesign.md](../PLAN_midterm_endorsement_redesign.md)** - Endorsement system redesign (✅ Mostly complete)
+
+### Other Planning Documents
+
+- **[page-consolidation-project.md](page-consolidation-project.md)** - Page consolidation (7→5 pages) - ❌ Not started
+- **[document_library_redesign.md](document_library_redesign.md)** - Document library component architecture - ❌ Not started
+- **[retro_schedule_plan.md](retro_schedule_plan.md)** - Retro schedule smart defaults - ❌ Not started
 
 ## Reference Documents
 
