@@ -411,58 +411,94 @@ Preserve "what we knew when we made the decision" as an artifact. Useful for cla
 
 ---
 
-## Phase 5: Claims Feedback Loop (Future)
+## Phase 5: Claims Feedback Loop ✅
 
 Use claims data to evolve importance priorities.
 
-### Tasks
+### Completed
 
-- [ ] **5.1** Claims root cause analysis UI
-- [ ] **5.2** Loss ratio by field value analysis
-- [ ] **5.3** Loss ratio by priority version analysis
-- [ ] **5.4** Generate v2 priorities from claims data
+- [x] **5.1** Claims correlation materialized view
+  - `mv_claims_by_control` aggregates bind-time controls with claims outcomes
+  - Joins `decision_snapshots` with `loss_history` for fast analytics
+  - Migration: `db_setup/claims_correlation.sql`
+
+- [x] **5.2** Control impact analysis
+  - `calculate_control_impact()` function compares loss ratios with/without each control
+  - Calculates lift percentage (how much a control reduces losses)
+  - Statistical confidence levels based on sample size
+
+- [x] **5.3** Loss ratio by importance version
+  - `v_loss_ratio_by_version` view compares portfolio performance across versions
+  - Enables A/B testing of importance configurations
+
+- [x] **5.4** Importance recommendations from claims
+  - `generate_importance_recommendations()` analyzes all controls
+  - Recommends importance level changes based on lift thresholds
+  - `claims_correlation_recommendations` table stores recommendations for review
+  - `apply_recommendations()` creates new importance version with changes
+
+- [x] **5.5** Claims Analytics UI
+  - AdminPage "Claims Analytics" tab with summary cards
+  - Control impact table showing lift by field
+  - Loss ratio by version comparison
+  - Core module: `core/claims_correlation.py`
+  - API endpoints: `/api/claims-analytics/*`
 
 ---
 
-## Phase 6: Proactive Agent Notifications (Future)
+## Phase 6: Proactive Agent Notifications ✅
 
 Add intelligent notifications that surface issues without user asking.
 
 ### Concept
 
-Badge on AI button shows count: `[✨ 3]` meaning "3 things to review"
-When panel opens, "Heads up" section shows notifications before chat.
+Badge on AI button shows count with priority color (red for critical, amber for warning).
+When panel opens, "Heads Up" section shows notifications before chat.
 No toast/popup interruptions - user-initiated only.
 
-### Notification Types
+### Completed
 
-**Intake/Setup:**
-- [ ] Missing documents detection ("No loss runs found")
-- [ ] Stale application warning ("Application is 30+ days old")
-- [ ] Duplicate submission detection
+- [x] **6.1** Notification priority levels
+  - Three levels: critical (red), warning (amber), info (blue)
+  - Critical notifications pulse the badge
 
-**Analyze:**
-- [ ] Critical controls gap alert ("3 critical controls not confirmed")
-- [ ] Claims history flags ("Ransomware incident 18 months ago")
-- [ ] Data anomalies ("Revenue changed 50% from prior year")
+- [x] **6.2** Notification computation service
+  - `core/agent_notifications.py` computes notifications on-demand
+  - 5 notification types implemented:
+    - Critical/important controls not confirmed (gap analysis)
+    - Subjectivity deadlines (overdue/due soon)
+    - Missing documents (no loss runs)
+    - Data quality issues (unresolved conflicts)
+    - Stale submissions (30+ days old)
 
-**Quote:**
-- [ ] Pricing outlier warning ("Premium 40% below peer average")
-- [ ] Tower gap detection ("$5M to $10M layer uninsured")
+- [x] **6.3** Badge on AI button
+  - Shows count in header
+  - Red + pulsing for critical notifications
+  - Amber for warnings only
+  - Toggle to hide badge (stored in localStorage)
 
-**Policy:**
-- [ ] Pending subjectivities with deadline ("2 pending, effective in 5 days")
-- [ ] Renewal reminder ("Expires in 30 days")
-- [ ] Unprocessed documents ("BOR letter received but not processed")
+- [x] **6.4** "Heads Up" section in agent panel
+  - `HeadsUpSection.jsx` component
+  - Collapsible section with priority-colored cards
+  - Click notification to navigate to relevant tab
+  - Appears between quick actions and "What can I do?"
 
-### Implementation Approach
+- [x] **6.5** Dismiss/snooze functionality
+  - Dismiss button on each notification card
+  - Snooze with configurable hours (reappears after expiry)
+  - Dismissal state stored in `workflow_notifications` table
+  - API: `POST /api/submissions/{id}/agent-notifications/{key}/dismiss`
 
-- [ ] **6.1** Define notification priority levels (critical, warning, info)
-- [ ] **6.2** Create notification computation service (runs on submission load)
-- [ ] **6.3** Add badge count to AI button
-- [ ] **6.4** Build "Heads up" section in agent panel
-- [ ] **6.5** Add dismiss/snooze functionality per notification
-- [ ] **6.6** Track notification effectiveness (did user act on it?)
+- [x] **6.6** "What can I do?" improvements
+  - Clicking action pills now triggers AI to ask clarifying question
+  - Actions without questions (Show Gaps, Summarize) run immediately
+  - Clicking new action clears any pending question
+
+### Future Enhancements
+- [ ] Track notification effectiveness (did user act on it?)
+- [ ] Pricing outlier warning
+- [ ] Tower gap detection
+- [ ] Renewal reminder notifications
 
 ---
 
