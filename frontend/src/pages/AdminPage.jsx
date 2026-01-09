@@ -2850,11 +2850,11 @@ function ClaimsAnalyticsTab() {
           </div>
           <div className="bg-blue-50 rounded-lg p-4">
             <div className="text-2xl font-bold text-blue-700">
-              {summary?.avg_loss_ratio != null
-                ? `${(summary.avg_loss_ratio * 100).toFixed(1)}%`
+              {summary?.loss_ratio != null
+                ? `${(summary.loss_ratio * 100).toFixed(1)}%`
                 : '—'}
             </div>
-            <div className="text-sm text-blue-600">Avg Loss Ratio</div>
+            <div className="text-sm text-blue-600">Loss Ratio</div>
           </div>
           <div className="bg-orange-50 rounded-lg p-4">
             <div className="text-2xl font-bold text-orange-700">

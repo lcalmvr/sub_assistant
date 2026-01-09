@@ -207,8 +207,10 @@ SELECT
     COALESCE(SUM(sold_premium), 0) as total_earned_premium,
     COALESCE(SUM(claim_count), 0) as total_claims,
     COALESCE(SUM(total_incurred), 0) as total_incurred,
-    ROUND((AVG(loss_ratio) FILTER (WHERE loss_ratio IS NOT NULL))::NUMERIC, 4) as avg_loss_ratio,
-    ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY loss_ratio))::NUMERIC, 4) as median_loss_ratio,
+    -- Aggregate loss ratio (total incurred / total premium)
+    CASE WHEN SUM(sold_premium) > 0
+         THEN ROUND((SUM(total_incurred) / SUM(sold_premium))::NUMERIC, 4)
+         ELSE NULL END as loss_ratio,
     COUNT(*) FILTER (WHERE claim_count > 0) as policies_with_claims,
     ROUND((100.0 * COUNT(*) FILTER (WHERE claim_count > 0) / NULLIF(COUNT(*), 0))::NUMERIC, 1) as claim_frequency_pct
 FROM mv_claims_by_control;

@@ -11,6 +11,7 @@ from typing import Optional
 import json
 from datetime import date
 
+from sqlalchemy import text
 from core.db import get_conn
 
 # Default thresholds
@@ -54,9 +55,8 @@ def get_claims_analytics_summary() -> dict:
         claim_frequency_pct
     """
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM v_claims_analytics_summary")
-            row = cur.fetchone()
+        result = conn.execute(text("SELECT * FROM v_claims_analytics_summary"))
+        row = result.mappings().fetchone()
 
     if not row:
         return {
@@ -64,8 +64,7 @@ def get_claims_analytics_summary() -> dict:
             'total_earned_premium': 0,
             'total_claims': 0,
             'total_incurred': 0,
-            'avg_loss_ratio': None,
-            'median_loss_ratio': None,
+            'loss_ratio': None,
             'policies_with_claims': 0,
             'claim_frequency_pct': 0,
         }
@@ -75,8 +74,7 @@ def get_claims_analytics_summary() -> dict:
         'total_earned_premium': float(row['total_earned_premium'] or 0),
         'total_claims': row['total_claims'] or 0,
         'total_incurred': float(row['total_incurred'] or 0),
-        'avg_loss_ratio': float(row['avg_loss_ratio']) if row['avg_loss_ratio'] else None,
-        'median_loss_ratio': float(row['median_loss_ratio']) if row['median_loss_ratio'] else None,
+        'loss_ratio': float(row['loss_ratio']) if row['loss_ratio'] else None,
         'policies_with_claims': row['policies_with_claims'] or 0,
         'claim_frequency_pct': float(row['claim_frequency_pct']) if row['claim_frequency_pct'] else 0,
     }
@@ -107,25 +105,27 @@ def get_control_impact_analysis(
 
     with get_conn() as conn:
         # Get field metadata and current importance
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT sf.key, sf.display_name, fis.importance
-                FROM schema_fields sf
-                LEFT JOIN field_importance_settings fis ON fis.field_key = sf.key
-                LEFT JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
-                WHERE sf.key = ANY(%s)
-            """, (field_keys,))
-            field_meta = {r['key']: r for r in cur.fetchall()}
+        result = conn.execute(text("""
+            SELECT sf.key, sf.display_name, fis.importance
+            FROM schema_fields sf
+            LEFT JOIN field_importance_settings fis ON fis.field_key = sf.key
+            LEFT JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
+            WHERE sf.key = ANY(:field_keys)
+        """), {"field_keys": field_keys})
+        field_meta = {r[0]: {'key': r[0], 'display_name': r[1], 'importance': r[2]} for r in result.fetchall()}
 
         # Analyze each field
         for field_key in field_keys:
             meta = field_meta.get(field_key, {})
 
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT * FROM calculate_control_impact(%s, %s, %s)
-                """, (field_key, min_sample_size, min_exposure_months))
-                row = cur.fetchone()
+            result = conn.execute(text("""
+                SELECT * FROM calculate_control_impact(:field_key, :min_sample, :min_months)
+            """), {
+                "field_key": field_key,
+                "min_sample": min_sample_size,
+                "min_months": min_exposure_months
+            })
+            row = result.mappings().fetchone()
 
             if not row or (row['value_present_count'] == 0 and row['value_absent_count'] == 0):
                 continue
@@ -173,12 +173,11 @@ def get_loss_ratio_by_version() -> list[dict]:
         aggregate_loss_ratio, avg_loss_ratio
     """
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT * FROM v_loss_ratio_by_version
-                ORDER BY version_number DESC
-            """)
-            rows = cur.fetchall()
+        result = conn.execute(text("""
+            SELECT * FROM v_loss_ratio_by_version
+            ORDER BY version_number DESC
+        """))
+        rows = result.mappings().fetchall()
 
     return [
         {
@@ -239,29 +238,27 @@ def generate_importance_recommendations(
 
     # Store recommendation
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO claims_correlation_recommendations
-                (analyzed_by, claims_through, min_sample_size, min_exposure_months,
-                 recommendations, total_fields_analyzed, fields_with_changes)
-                VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s)
-                RETURNING id, analyzed_at, recommendations, status
-            """, (
-                created_by,
-                min_sample_size,
-                min_exposure_months,
-                json.dumps(recommendations),
-                len(impacts),
-                len(recommendations),
-            ))
-            result = cur.fetchone()
-            conn.commit()
+        result = conn.execute(text("""
+            INSERT INTO claims_correlation_recommendations
+            (analyzed_by, claims_through, min_sample_size, min_exposure_months,
+             recommendations, total_fields_analyzed, fields_with_changes)
+            VALUES (:created_by, CURRENT_DATE, :min_sample, :min_months, :recs, :total, :changes)
+            RETURNING id, analyzed_at, recommendations, status
+        """), {
+            "created_by": created_by,
+            "min_sample": min_sample_size,
+            "min_months": min_exposure_months,
+            "recs": json.dumps(recommendations),
+            "total": len(impacts),
+            "changes": len(recommendations),
+        })
+        row = result.mappings().fetchone()
 
     return {
-        'id': str(result['id']),
-        'analyzed_at': result['analyzed_at'].isoformat(),
-        'recommendations': result['recommendations'],
-        'status': result['status'],
+        'id': str(row['id']),
+        'analyzed_at': row['analyzed_at'].isoformat(),
+        'recommendations': row['recommendations'],
+        'status': row['status'],
         'total_fields_analyzed': len(impacts),
         'fields_with_changes': len(recommendations),
     }
@@ -279,29 +276,28 @@ def get_recommendations(status: Optional[str] = None, limit: int = 50) -> list[d
         List of recommendation records
     """
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            if status:
-                cur.execute("""
-                    SELECT id, analyzed_at, analyzed_by, claims_through,
-                           min_sample_size, min_exposure_months,
-                           recommendations, total_fields_analyzed, fields_with_changes,
-                           status, reviewed_by, reviewed_at, review_notes, applied_version_id
-                    FROM claims_correlation_recommendations
-                    WHERE status = %s
-                    ORDER BY analyzed_at DESC
-                    LIMIT %s
-                """, (status, limit))
-            else:
-                cur.execute("""
-                    SELECT id, analyzed_at, analyzed_by, claims_through,
-                           min_sample_size, min_exposure_months,
-                           recommendations, total_fields_analyzed, fields_with_changes,
-                           status, reviewed_by, reviewed_at, review_notes, applied_version_id
-                    FROM claims_correlation_recommendations
-                    ORDER BY analyzed_at DESC
-                    LIMIT %s
-                """, (limit,))
-            rows = cur.fetchall()
+        if status:
+            result = conn.execute(text("""
+                SELECT id, analyzed_at, analyzed_by, claims_through,
+                       min_sample_size, min_exposure_months,
+                       recommendations, total_fields_analyzed, fields_with_changes,
+                       status, reviewed_by, reviewed_at, review_notes, applied_version_id
+                FROM claims_correlation_recommendations
+                WHERE status = :status
+                ORDER BY analyzed_at DESC
+                LIMIT :limit
+            """), {"status": status, "limit": limit})
+        else:
+            result = conn.execute(text("""
+                SELECT id, analyzed_at, analyzed_by, claims_through,
+                       min_sample_size, min_exposure_months,
+                       recommendations, total_fields_analyzed, fields_with_changes,
+                       status, reviewed_by, reviewed_at, review_notes, applied_version_id
+                FROM claims_correlation_recommendations
+                ORDER BY analyzed_at DESC
+                LIMIT :limit
+            """), {"limit": limit})
+        rows = result.mappings().fetchall()
 
     return [
         {
@@ -346,67 +342,70 @@ def apply_recommendations(
         ValueError: If recommendation not found or already processed
     """
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            # Get the recommendation
-            cur.execute("""
-                SELECT * FROM claims_correlation_recommendations
-                WHERE id = %s AND status = 'pending'
-            """, (recommendation_id,))
-            rec = cur.fetchone()
+        # Get the recommendation
+        result = conn.execute(text("""
+            SELECT * FROM claims_correlation_recommendations
+            WHERE id = :rec_id AND status = 'pending'
+        """), {"rec_id": recommendation_id})
+        rec = result.mappings().fetchone()
 
-            if not rec:
-                raise ValueError("Recommendation not found or already processed")
+        if not rec:
+            raise ValueError("Recommendation not found or already processed")
 
-            recommendations = rec['recommendations']
-            claims_through = rec['claims_through']
+        recommendations = rec['recommendations']
+        claims_through = rec['claims_through']
 
-            # Get next version number
-            cur.execute("SELECT COALESCE(MAX(version_number), 0) + 1 FROM importance_versions")
-            next_ver = cur.fetchone()[0]
+        # Get next version number
+        result = conn.execute(text("SELECT COALESCE(MAX(version_number), 0) + 1 FROM importance_versions"))
+        next_ver = result.fetchone()[0]
 
-            # Create new version
-            cur.execute("""
-                INSERT INTO importance_versions
-                (version_number, name, description, is_active, created_by, based_on_claims_through)
-                VALUES (%s, %s, %s, false, %s, %s)
-                RETURNING id
-            """, (next_ver, version_name, version_description, applied_by, claims_through))
-            new_version_id = cur.fetchone()['id']
+        # Create new version
+        result = conn.execute(text("""
+            INSERT INTO importance_versions
+            (version_number, name, description, is_active, created_by, based_on_claims_through)
+            VALUES (:ver_num, :name, :desc, false, :by, :claims_through)
+            RETURNING id
+        """), {
+            "ver_num": next_ver,
+            "name": version_name,
+            "desc": version_description,
+            "by": applied_by,
+            "claims_through": claims_through,
+        })
+        new_version_id = result.fetchone()[0]
 
-            # Copy existing settings from active version
-            cur.execute("""
+        # Copy existing settings from active version
+        result = conn.execute(text("""
+            INSERT INTO field_importance_settings (version_id, field_key, importance, rationale)
+            SELECT :new_ver, field_key, importance, rationale
+            FROM field_importance_settings fis
+            JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
+        """), {"new_ver": new_version_id})
+        copied_count = result.rowcount
+
+        # Apply the recommended changes
+        for rec_item in recommendations:
+            conn.execute(text("""
                 INSERT INTO field_importance_settings (version_id, field_key, importance, rationale)
-                SELECT %s, field_key, importance, rationale
-                FROM field_importance_settings fis
-                JOIN importance_versions iv ON iv.id = fis.version_id AND iv.is_active = true
-            """, (new_version_id,))
-            copied_count = cur.rowcount
+                VALUES (:ver_id, :field_key, :importance, :rationale)
+                ON CONFLICT (version_id, field_key)
+                DO UPDATE SET importance = EXCLUDED.importance, rationale = EXCLUDED.rationale
+            """), {
+                "ver_id": new_version_id,
+                "field_key": rec_item['field_key'],
+                "importance": rec_item['recommended_importance'],
+                "rationale": rec_item['rationale'],
+            })
 
-            # Apply the recommended changes
-            for rec_item in recommendations:
-                cur.execute("""
-                    INSERT INTO field_importance_settings (version_id, field_key, importance, rationale)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (version_id, field_key)
-                    DO UPDATE SET importance = EXCLUDED.importance, rationale = EXCLUDED.rationale
-                """, (
-                    new_version_id,
-                    rec_item['field_key'],
-                    rec_item['recommended_importance'],
-                    rec_item['rationale'],
-                ))
-
-            # Update recommendation status
-            cur.execute("""
-                UPDATE claims_correlation_recommendations
-                SET status = 'applied',
-                    reviewed_by = %s,
-                    reviewed_at = NOW(),
-                    applied_version_id = %s
-                WHERE id = %s
-            """, (applied_by, new_version_id, recommendation_id))
-
-            conn.commit()
+        # Update recommendation status
+        conn.execute(text("""
+            UPDATE claims_correlation_recommendations
+            SET status = 'applied',
+                reviewed_by = :by,
+                reviewed_at = NOW(),
+                applied_version_id = :ver_id
+            WHERE id = :rec_id
+        """), {"by": applied_by, "ver_id": new_version_id, "rec_id": recommendation_id})
 
     return {
         'version_id': str(new_version_id),
@@ -419,7 +418,5 @@ def apply_recommendations(
 def refresh_materialized_view():
     """Refresh the claims correlation materialized view."""
     with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT refresh_claims_correlation()")
-            conn.commit()
+        conn.execute(text("SELECT refresh_claims_correlation()"))
     return {'status': 'refreshed'}
