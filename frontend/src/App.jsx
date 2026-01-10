@@ -67,6 +67,7 @@ import AnalyzePageV2 from './pages/AnalyzePageV2';
 import CompsPage from './pages/CompsPage';
 import RatingPage from './pages/RatingPage';
 import QuotePage from './pages/QuotePage';
+import QuotePageV2 from './pages/QuotePageV2';
 import PolicyPage from './pages/PolicyPage';
 import RenewalPage from './pages/RenewalPage';
 
@@ -134,6 +135,8 @@ function App() {
             <Route path="rating" element={<Navigate to="../analyze" replace />} />
             {/* Quote and Policy remain unchanged */}
             <Route path="quote" element={<QuotePage />} />
+            {/* V2 Quote page for testing */}
+            <Route path="quote-v2" element={<QuotePageV2 />} />
             <Route path="policy" element={<PolicyPage />} />
           </Route>
 
