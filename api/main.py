@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Any
 import json
 import os
+import time
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from dotenv import load_dotenv
@@ -5364,6 +5365,7 @@ class SubjectivityUpdate(BaseModel):
 @app.patch("/api/subjectivities/{subjectivity_id}")
 def update_subjectivity(subjectivity_id: str, data: SubjectivityUpdate):
     """Update a subjectivity."""
+    start = time.perf_counter()
     updates = {}
     for k, v in data.model_dump(exclude_unset=True).items():
         updates[k] = v
@@ -5384,12 +5386,15 @@ def update_subjectivity(subjectivity_id: str, data: SubjectivityUpdate):
             if not result:
                 raise HTTPException(status_code=404, detail="Subjectivity not found")
             conn.commit()
-            return result
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] update_subjectivity: {elapsed_ms:.1f}ms")
+            return {**result, "timing_ms": round(elapsed_ms, 1)}
 
 
 @app.delete("/api/subjectivities/{subjectivity_id}")
 def delete_subjectivity(subjectivity_id: str):
     """Delete a subjectivity (cascades to junction table)."""
+    start = time.perf_counter()
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -5400,12 +5405,15 @@ def delete_subjectivity(subjectivity_id: str):
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Subjectivity not found")
             conn.commit()
-            return {"status": "deleted", "id": subjectivity_id}
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] delete_subjectivity: {elapsed_ms:.1f}ms")
+            return {"status": "deleted", "id": subjectivity_id, "timing_ms": round(elapsed_ms, 1)}
 
 
 @app.post("/api/quotes/{quote_id}/subjectivities/{subjectivity_id}/link")
 def link_subjectivity_to_quote(quote_id: str, subjectivity_id: str):
     """Link an existing subjectivity to a quote option."""
+    start = time.perf_counter()
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -5416,12 +5424,15 @@ def link_subjectivity_to_quote(quote_id: str, subjectivity_id: str):
             """, (quote_id, subjectivity_id))
             result = cur.fetchone()
             conn.commit()
-            return {"status": "linked" if result else "already_linked"}
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] link_subjectivity_to_quote: {elapsed_ms:.1f}ms")
+            return {"status": "linked" if result else "already_linked", "timing_ms": round(elapsed_ms, 1)}
 
 
 @app.delete("/api/quotes/{quote_id}/subjectivities/{subjectivity_id}/link")
 def unlink_subjectivity_from_quote(quote_id: str, subjectivity_id: str):
     """Unlink a subjectivity from a quote option (doesn't delete the subjectivity)."""
+    start = time.perf_counter()
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -5431,9 +5442,11 @@ def unlink_subjectivity_from_quote(quote_id: str, subjectivity_id: str):
             """, (quote_id, subjectivity_id))
             result = cur.fetchone()
             conn.commit()
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] unlink_subjectivity_from_quote: {elapsed_ms:.1f}ms")
             if not result:
                 raise HTTPException(status_code=404, detail="Link not found")
-            return {"status": "unlinked"}
+            return {"status": "unlinked", "timing_ms": round(elapsed_ms, 1)}
 
 
 @app.post("/api/quotes/{quote_id}/subjectivities/pull/{source_quote_id}")
@@ -5456,6 +5469,7 @@ def pull_subjectivities_from_quote(quote_id: str, source_quote_id: str):
 @app.delete("/api/subjectivities/{subjectivity_id}/position/{position}")
 def unlink_subjectivity_from_position(subjectivity_id: str, position: str):
     """Unlink a subjectivity from all quotes of a specific position (primary/excess)."""
+    start = time.perf_counter()
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -5468,7 +5482,9 @@ def unlink_subjectivity_from_position(subjectivity_id: str, position: str):
             """, (subjectivity_id, position))
             unlinked_count = cur.rowcount
             conn.commit()
-            return {"status": "unlinked", "position": position, "unlinked_count": unlinked_count}
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] unlink_subjectivity_from_position: {elapsed_ms:.1f}ms")
+            return {"status": "unlinked", "position": position, "unlinked_count": unlinked_count, "timing_ms": round(elapsed_ms, 1)}
 
 
 @app.get("/api/subjectivity-templates")
@@ -7567,6 +7583,7 @@ class EndorsementFieldValues(BaseModel):
 @app.post("/api/quotes/{quote_id}/endorsements/{endorsement_id}")
 def link_endorsement_to_quote(quote_id: str, endorsement_id: str, data: EndorsementFieldValues = None):
     """Link an endorsement to a quote option."""
+    start = time.perf_counter()
     with get_conn() as conn:
         with conn.cursor() as cur:
             # Verify quote exists
@@ -7592,12 +7609,15 @@ def link_endorsement_to_quote(quote_id: str, endorsement_id: str, data: Endorsem
             result = cur.fetchone()
             conn.commit()
 
-    return {"id": str(result["id"]), "linked": True}
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    print(f"[TIMING] link_endorsement_to_quote: {elapsed_ms:.1f}ms")
+    return {"id": str(result["id"]), "linked": True, "timing_ms": round(elapsed_ms, 1)}
 
 
 @app.delete("/api/quotes/{quote_id}/endorsements/{endorsement_id}")
 def unlink_endorsement_from_quote(quote_id: str, endorsement_id: str):
     """Unlink an endorsement from a quote option."""
+    start = time.perf_counter()
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -7608,7 +7628,9 @@ def unlink_endorsement_from_quote(quote_id: str, endorsement_id: str):
             deleted = cur.rowcount > 0
             conn.commit()
 
-    return {"unlinked": deleted}
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    print(f"[TIMING] unlink_endorsement_from_quote: {elapsed_ms:.1f}ms")
+    return {"unlinked": deleted, "timing_ms": round(elapsed_ms, 1)}
 
 
 @app.patch("/api/quotes/{quote_id}/endorsements/{endorsement_id}")
@@ -7754,6 +7776,302 @@ def get_quote_auto_endorsements(quote_id: str):
     except Exception as e:
         # If auto-attach fails, return empty list
         return {"auto_endorsements": [], "error": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────
+# Quote Enhancements & Enhancement Types
+# ─────────────────────────────────────────────────────────────
+
+class EnhancementTypeCreate(BaseModel):
+    code: str
+    name: str
+    data_schema: dict
+    description: str = None
+    linked_endorsement_code: str = None
+    position: str = "either"
+    sort_order: int = 100
+
+
+class EnhancementTypeUpdate(BaseModel):
+    code: str = None
+    name: str = None
+    description: str = None
+    data_schema: dict = None
+    linked_endorsement_code: str = None
+    position: str = None
+    sort_order: int = None
+    active: bool = None
+
+
+class QuoteEnhancementCreate(BaseModel):
+    enhancement_type_id: str
+    data: dict = {}
+    auto_attach_endorsement: bool = True
+
+
+class QuoteEnhancementUpdate(BaseModel):
+    data: dict
+
+
+@app.get("/api/enhancement-types")
+def list_enhancement_types(position: str = None, active_only: bool = True):
+    """List all enhancement types with optional filters."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import get_enhancement_types
+
+        types = get_enhancement_types(position=position, active_only=active_only)
+
+        # Convert datetime objects to ISO strings
+        for t in types:
+            if t.get("created_at"):
+                t["created_at"] = t["created_at"].isoformat()
+            if t.get("updated_at"):
+                t["updated_at"] = t["updated_at"].isoformat()
+
+        return {"enhancement_types": types, "count": len(types)}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/enhancement-types/{type_id}")
+def get_enhancement_type_by_id(type_id: str):
+    """Get a single enhancement type by ID."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import get_enhancement_type
+
+        enhancement_type = get_enhancement_type(type_id)
+        if not enhancement_type:
+            raise HTTPException(status_code=404, detail="Enhancement type not found")
+
+        if enhancement_type.get("created_at"):
+            enhancement_type["created_at"] = enhancement_type["created_at"].isoformat()
+        if enhancement_type.get("updated_at"):
+            enhancement_type["updated_at"] = enhancement_type["updated_at"].isoformat()
+
+        return enhancement_type
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/enhancement-types")
+def create_enhancement_type_endpoint(data: EnhancementTypeCreate):
+    """Create a new enhancement type (admin)."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import create_enhancement_type
+
+        type_id = create_enhancement_type(
+            code=data.code,
+            name=data.name,
+            data_schema=data.data_schema,
+            description=data.description,
+            linked_endorsement_code=data.linked_endorsement_code,
+            position=data.position,
+            sort_order=data.sort_order
+        )
+
+        return {"id": type_id, "created": True}
+
+    except Exception as e:
+        if "duplicate key" in str(e).lower():
+            raise HTTPException(status_code=409, detail=f"Enhancement type with code '{data.code}' already exists")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/enhancement-types/{type_id}")
+def update_enhancement_type_endpoint(type_id: str, data: EnhancementTypeUpdate):
+    """Update an enhancement type (admin)."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import update_enhancement_type
+
+        # Build updates dict from non-None values
+        updates = {k: v for k, v in data.model_dump().items() if v is not None}
+        if not updates:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        success = update_enhancement_type(type_id, updates)
+        if not success:
+            raise HTTPException(status_code=404, detail="Enhancement type not found")
+
+        return {"id": type_id, "updated": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/enhancement-types/{type_id}")
+def delete_enhancement_type_endpoint(type_id: str):
+    """Delete an enhancement type (admin). Fails if in use."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import delete_enhancement_type
+
+        success = delete_enhancement_type(type_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Enhancement type not found")
+
+        return {"id": type_id, "deleted": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if "foreign key" in str(e).lower() or "violates" in str(e).lower():
+            raise HTTPException(status_code=409, detail="Cannot delete: enhancement type is in use")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/quotes/{quote_id}/enhancements")
+def get_quote_enhancements_endpoint(quote_id: str):
+    """Get all enhancements for a quote with type details."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import get_quote_enhancements
+
+        # Verify quote exists
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM insurance_towers WHERE id = %s", (quote_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Quote not found")
+
+        enhancements = get_quote_enhancements(quote_id)
+
+        # Convert datetime objects to ISO strings
+        for e in enhancements:
+            if e.get("created_at"):
+                e["created_at"] = e["created_at"].isoformat()
+            if e.get("updated_at"):
+                e["updated_at"] = e["updated_at"].isoformat()
+
+        return {"enhancements": enhancements, "count": len(enhancements)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/quotes/{quote_id}/enhancements")
+def add_quote_enhancement_endpoint(quote_id: str, data: QuoteEnhancementCreate):
+    """Add an enhancement to a quote. Auto-attaches linked endorsement if configured."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import add_quote_enhancement
+
+        # Verify quote exists
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM insurance_towers WHERE id = %s", (quote_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Quote not found")
+
+        result = add_quote_enhancement(
+            quote_id=quote_id,
+            enhancement_type_id=data.enhancement_type_id,
+            data=data.data,
+            auto_attach_endorsement=data.auto_attach_endorsement
+        )
+
+        return {
+            "id": result["enhancement_id"],
+            "linked_endorsement_junction_id": result.get("linked_endorsement_junction_id"),
+            "created": True
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        if "duplicate key" in str(e).lower() or "unique" in str(e).lower():
+            raise HTTPException(status_code=409, detail="This enhancement type is already added to the quote")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/api/enhancements/{enhancement_id}")
+def update_quote_enhancement_endpoint(enhancement_id: str, data: QuoteEnhancementUpdate):
+    """Update a quote enhancement's data. Also updates linked endorsement field_values."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import update_quote_enhancement
+
+        success = update_quote_enhancement(enhancement_id, data.data)
+        if not success:
+            raise HTTPException(status_code=404, detail="Enhancement not found")
+
+        return {"id": enhancement_id, "updated": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/enhancements/{enhancement_id}")
+def remove_quote_enhancement_endpoint(enhancement_id: str, also_remove_endorsement: bool = True):
+    """Remove a quote enhancement. Optionally removes linked endorsement too."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import remove_quote_enhancement
+
+        success = remove_quote_enhancement(enhancement_id, also_remove_endorsement=also_remove_endorsement)
+        if not success:
+            raise HTTPException(status_code=404, detail="Enhancement not found")
+
+        return {"id": enhancement_id, "deleted": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/submissions/{submission_id}/enhancements")
+def get_submission_enhancements_endpoint(submission_id: str):
+    """Get all enhancements across all quotes in a submission."""
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.enhancement_management import get_submission_enhancements
+
+        # Verify submission exists
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM submissions WHERE id = %s", (submission_id,))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="Submission not found")
+
+        enhancements = get_submission_enhancements(submission_id)
+
+        # Convert datetime objects to ISO strings
+        for e in enhancements:
+            if e.get("created_at"):
+                e["created_at"] = e["created_at"].isoformat()
+
+        return {"enhancements": enhancements, "count": len(enhancements)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class PackageGenerateRequest(BaseModel):
