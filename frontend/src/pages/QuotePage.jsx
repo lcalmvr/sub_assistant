@@ -38,6 +38,7 @@ import CoverageEditor from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
 import RetroScheduleEditor from '../components/RetroScheduleEditor';
 import TowerComparison from '../components/TowerComparison';
+import EnhancementsPanel from '../components/EnhancementsPanel';
 
 // Format currency
 function formatCurrency(value) {
@@ -987,74 +988,247 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
     },
   });
 
-  // Remove subjectivity from this quote only
+  // Remove subjectivity from this quote only (OPTIMISTIC)
   const unlinkSubjectivityMutation = useMutation({
     mutationFn: (subjectivityId) => unlinkSubjectivityFromQuote(quote.id, subjectivityId),
-    onSuccess: () => {
-      refetchSubjectivities();
+
+    onMutate: async (subjectivityId) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submission.id] });
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submission.id]);
+
+      queryClient.setQueryData(['submissionSubjectivities', submission.id], (old) => {
+        if (!old) return old;
+        return old.map(subj => {
+          if (subj.id !== subjectivityId) return subj;
+          let quoteIds = subj.quote_ids || [];
+          if (typeof quoteIds === 'string') {
+            quoteIds = quoteIds.replace(/^\{|\}$/g, '').split(',').filter(Boolean);
+          }
+          return { ...subj, quote_ids: quoteIds.filter(id => id !== quote.id) };
+        });
+      });
+
+      return { previousData };
     },
+
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submission.id], context.previousData);
+      }
+    },
+
+    onSettled: () => refetchSubjectivities(),
   });
 
-  // Remove subjectivity from all quotes of this position (primary/excess)
+  // Remove subjectivity from all quotes of this position (OPTIMISTIC)
   const unlinkFromPositionMutation = useMutation({
     mutationFn: (subjectivityId) => unlinkSubjectivityFromPosition(subjectivityId, position),
-    onSuccess: () => {
+
+    onMutate: async (subjectivityId) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submission.id] });
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submission.id]);
+
+      const positionQuoteIds = allQuotes?.filter(q => q.position === position).map(q => q.id) || [];
+      queryClient.setQueryData(['submissionSubjectivities', submission.id], (old) => {
+        if (!old) return old;
+        return old.map(subj => {
+          if (subj.id !== subjectivityId) return subj;
+          let quoteIds = subj.quote_ids || [];
+          if (typeof quoteIds === 'string') {
+            quoteIds = quoteIds.replace(/^\{|\}$/g, '').split(',').filter(Boolean);
+          }
+          return { ...subj, quote_ids: quoteIds.filter(id => !positionQuoteIds.includes(id)) };
+        });
+      });
+
+      return { previousData };
+    },
+
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submission.id], context.previousData);
+      }
+    },
+
+    onSettled: () => {
       refetchSubjectivities();
-      // Invalidate same-position quotes
       allQuotes?.filter(q => q.position === position).forEach(q => {
         queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
       });
     },
   });
 
-  // Delete subjectivity entirely (removes from all quotes)
+  // Delete subjectivity entirely (OPTIMISTIC)
   const deleteSubjectivityMutation = useMutation({
     mutationFn: (subjectivityId) => deleteSubjectivity(subjectivityId),
-    onSuccess: () => {
+
+    onMutate: async (subjectivityId) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submission.id] });
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submission.id]);
+
+      queryClient.setQueryData(['submissionSubjectivities', submission.id], (old) => {
+        if (!old) return old;
+        return old.filter(subj => subj.id !== subjectivityId);
+      });
+
+      return { previousData };
+    },
+
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submission.id], context.previousData);
+      }
+    },
+
+    onSettled: () => {
       refetchSubjectivities();
-      // Invalidate all quotes since this deletes from all
       allQuotes?.forEach(q => {
         queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
       });
     },
   });
 
-  // Toggle link between subjectivity and quote option
+  // Toggle link between subjectivity and quote option (OPTIMISTIC for instant UI)
   const toggleSubjQuoteMutation = useMutation({
     mutationFn: ({ subjectivityId, quoteId, isLinked }) =>
       isLinked
         ? unlinkSubjectivityFromQuote(quoteId, subjectivityId)
         : linkSubjectivityToQuote(quoteId, subjectivityId),
-    onSuccess: () => {
-      refetchSubjectivities();
-      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submission.id] });
-      allQuotes?.forEach(q => {
-        queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
+
+    // OPTIMISTIC UPDATE - update UI instantly before network responds
+    onMutate: async ({ subjectivityId, quoteId, isLinked }) => {
+      // Cancel outgoing refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submission.id] });
+
+      // Snapshot previous value for rollback
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submission.id]);
+
+      // Optimistically update the cache
+      queryClient.setQueryData(['submissionSubjectivities', submission.id], (old) => {
+        if (!old) return old;
+        return old.map(subj => {
+          if (subj.id !== subjectivityId) return subj;
+
+          // Parse quote_ids (handles postgres array string or JS array)
+          let quoteIds = subj.quote_ids || [];
+          if (typeof quoteIds === 'string') {
+            quoteIds = quoteIds.replace(/^\{|\}$/g, '').split(',').filter(Boolean);
+          }
+          if (!Array.isArray(quoteIds)) quoteIds = [];
+
+          // Toggle the quoteId
+          if (isLinked) {
+            quoteIds = quoteIds.filter(id => id !== quoteId);
+          } else {
+            quoteIds = [...quoteIds, quoteId];
+          }
+
+          return { ...subj, quote_ids: quoteIds };
+        });
       });
+
+      return { previousData };
+    },
+
+    // Rollback on error
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submission.id], context.previousData);
+      }
+    },
+
+    // Background sync after optimistic update
+    onSettled: () => {
+      // Refetch to ensure consistency with server
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', quote.id] });
     },
   });
 
-  // Toggle link between endorsement and quote option
+  // Toggle link between endorsement and quote option (OPTIMISTIC for instant UI)
   const toggleEndorsementQuoteMutation = useMutation({
     mutationFn: ({ endorsementId, quoteId, isLinked }) =>
       isLinked
         ? unlinkEndorsementFromQuote(quoteId, endorsementId)
         : linkEndorsementToQuote(quoteId, endorsementId),
-    onSuccess: () => {
-      refetchEndorsements();
-      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submission.id] });
-      allQuotes?.forEach(q => {
-        queryClient.invalidateQueries({ queryKey: ['quoteEndorsements', q.id] });
+
+    // OPTIMISTIC UPDATE - update UI instantly before network responds
+    onMutate: async ({ endorsementId, quoteId, isLinked }) => {
+      // Cancel outgoing refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['submissionEndorsements', submission.id] });
+
+      // Snapshot previous value for rollback
+      const previousData = queryClient.getQueryData(['submissionEndorsements', submission.id]);
+
+      // Optimistically update the cache
+      queryClient.setQueryData(['submissionEndorsements', submission.id], (old) => {
+        if (!old?.endorsements) return old;
+        return {
+          ...old,
+          endorsements: old.endorsements.map(endt => {
+            if (endt.endorsement_id !== endorsementId) return endt;
+
+            // Parse quote_ids (handles postgres array string or JS array)
+            let quoteIds = endt.quote_ids || [];
+            if (typeof quoteIds === 'string') {
+              quoteIds = quoteIds.replace(/^\{|\}$/g, '').split(',').filter(Boolean);
+            }
+            if (!Array.isArray(quoteIds)) quoteIds = [];
+
+            // Toggle the quoteId
+            if (isLinked) {
+              quoteIds = quoteIds.filter(id => id !== quoteId);
+            } else {
+              quoteIds = [...quoteIds, quoteId];
+            }
+
+            return { ...endt, quote_ids: quoteIds };
+          }),
+        };
       });
+
+      return { previousData };
+    },
+
+    // Rollback on error
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionEndorsements', submission.id], context.previousData);
+      }
+    },
+
+    // Background sync after optimistic update
+    onSettled: () => {
+      // Refetch to ensure consistency with server
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submission.id] });
+      queryClient.invalidateQueries({ queryKey: ['quoteEndorsements', quote.id] });
     },
   });
 
-  // Update subjectivity status (received/waived)
+  // Update subjectivity status (received/waived) (OPTIMISTIC)
   const updateSubjectivityMutation = useMutation({
     mutationFn: ({ id, status }) => updateSubjectivity(id, { status }),
-    onSuccess: () => {
+
+    onMutate: async ({ id, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submission.id] });
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submission.id]);
+
+      queryClient.setQueryData(['submissionSubjectivities', submission.id], (old) => {
+        if (!old) return old;
+        return old.map(subj => subj.id === id ? { ...subj, status } : subj);
+      });
+
+      return { previousData };
+    },
+
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submission.id], context.previousData);
+      }
+    },
+
+    onSettled: () => {
       refetchSubjectivities();
-      // Status is shared across all linked quotes
       allQuotes?.forEach(q => {
         queryClient.invalidateQueries({ queryKey: ['quoteSubjectivities', q.id] });
       });
@@ -2086,6 +2260,13 @@ function QuoteDetailPanel({ quote, submission, onRefresh, allQuotes }) {
 
       </div>
 
+      {/* Enhancements & Modifications */}
+      <EnhancementsPanel
+        quoteId={quote.id}
+        position={position}
+        allQuoteOptions={allQuoteOptions}
+      />
+
       {/* Endorsements */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
@@ -2452,12 +2633,31 @@ export default function QuotePage() {
     },
   });
 
-  // Delete mutation
+  // Delete mutation (OPTIMISTIC)
   const deleteMutation = useMutation({
     mutationFn: () => deleteQuoteOption(selectedQuote?.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
+
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ['quotes', submissionId] });
+      const previousData = queryClient.getQueryData(['quotes', submissionId]);
+
+      queryClient.setQueryData(['quotes', submissionId], (old) => {
+        if (!old) return old;
+        return old.filter(q => q.id !== selectedQuote?.id);
+      });
+
       setSelectedQuoteId(null);
+      return { previousData };
+    },
+
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['quotes', submissionId], context.previousData);
+      }
+    },
+
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
     },
   });
 
