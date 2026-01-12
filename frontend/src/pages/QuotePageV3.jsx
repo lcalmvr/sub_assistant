@@ -4465,7 +4465,7 @@ export default function QuotePageV3() {
         {isStructurePickerExpanded && (
           <>
             <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setIsStructurePickerExpanded(false)} />
-            <div className="fixed left-6 top-24 z-50 w-72">
+            <div className="fixed right-6 top-20 z-50 w-80">
               <StructurePicker
                 structures={structures}
                 activeStructureId={activeStructureId}
