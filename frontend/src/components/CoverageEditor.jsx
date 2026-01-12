@@ -414,7 +414,7 @@ export default function CoverageEditor({
   return (
     <div ref={tableRef} className="bg-white">
       {/* Header with Batch Edit button */}
-      {mode === 'quote' && showBatchEditProp && primaryQuotes.length > 1 && !embedded && (
+      {mode === 'quote' && showBatchEditProp && primaryQuotes.length > 1 && (
         <div className="flex items-center justify-end py-2 border-b border-gray-100">
           <button
             className="text-xs text-purple-600 hover:text-purple-700 font-medium"
