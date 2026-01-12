@@ -413,18 +413,6 @@ export default function CoverageEditor({
 
   return (
     <div ref={tableRef} className="bg-white">
-      {/* Header with Batch Edit button */}
-      {mode === 'quote' && showBatchEditProp && primaryQuotes.length > 1 && (
-        <div className="flex items-center justify-end py-2 border-b border-gray-100">
-          <button
-            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
-            onClick={() => setShowBatchEdit(!showBatchEdit)}
-          >
-            {showBatchEdit ? 'Close Batch Edit' : 'Batch Edit'}
-          </button>
-        </div>
-      )}
-
       {/* Batch Edit Panel */}
       {mode === 'quote' && showBatchEdit && (
         <div className="mb-4 p-4 bg-purple-50 rounded-lg border border-purple-200">
@@ -679,6 +667,18 @@ export default function CoverageEditor({
         >
           Standard Limits
         </button>
+        {/* Spacer + Batch Edit button */}
+        {mode === 'quote' && showBatchEditProp && primaryQuotes.length > 1 && (
+          <>
+            <div className="flex-1" />
+            <button
+              className="text-xs text-purple-600 hover:text-purple-700 font-medium px-2"
+              onClick={() => setShowBatchEdit(!showBatchEdit)}
+            >
+              {showBatchEdit ? 'Close Batch Edit' : 'Batch Edit'}
+            </button>
+          </>
+        )}
       </div>
 
       {/* Table */}
