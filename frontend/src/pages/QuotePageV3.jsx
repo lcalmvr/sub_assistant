@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -110,6 +111,65 @@ function getScopeTargetIds(structures, scope, currentId) {
     return structures.filter(s => getStructurePosition(s) === 'excess').map(s => String(s.id));
   }
   return structures.map(s => String(s.id));
+}
+
+// Portal-based dropdown that renders outside container hierarchy
+function PortalDropdown({ isOpen, onClose, triggerRef, children, className = '' }) {
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen && triggerRef?.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const dropdownHeight = 300; // estimated max height
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+
+      // Position below trigger, or above if not enough space below
+      if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {
+        setPosition({
+          top: rect.bottom + 4,
+          left: rect.right - 256, // 256 = dropdown width (w-64)
+        });
+      } else {
+        setPosition({
+          top: rect.top - dropdownHeight - 4,
+          left: rect.right - 256,
+        });
+      }
+    }
+  }, [isOpen, triggerRef]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current?.contains(e.target)) return;
+      if (triggerRef?.current?.contains(e.target)) return;
+      onClose();
+    };
+    const handleEscape = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen, onClose, triggerRef]);
+
+  if (!isOpen) return null;
+
+  return createPortal(
+    <div
+      ref={dropdownRef}
+      className={`fixed z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl ${className}`}
+      style={{ top: position.top, left: Math.max(8, position.left) }}
+    >
+      {children}
+    </div>,
+    document.body
+  );
 }
 
 function calculateAttachment(layers, targetIdx) {
@@ -3487,11 +3547,12 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                           + Add Option
                         </button>
                       )}
-                      {isMenuOpen && (
-                        <div
-                          ref={(el) => { ruleMenuRefs.current[rule.id] = el; }}
-                          className="absolute right-0 top-full mt-2 w-64 rounded-lg border border-gray-200 bg-white shadow-lg p-2 z-20"
-                        >
+                      <PortalDropdown
+                        isOpen={isMenuOpen}
+                        onClose={() => setActiveRuleMenu(null)}
+                        triggerRef={{ current: ruleTriggerRefs.current[rule.id] }}
+                      >
+                        <div className="p-2">
                           <div className="space-y-1">
                             <button
                               onClick={() => {
@@ -3558,7 +3619,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             })}
                           </div>
                         </div>
-                      )}
+                      </PortalDropdown>
                     </div>
                   </div>
                 );
