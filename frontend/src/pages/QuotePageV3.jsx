@@ -13,6 +13,8 @@ import {
   deleteVariation,
   getQuoteEndorsements,
   getQuoteSubjectivities,
+  getSubmissionEndorsements,
+  getSubmissionSubjectivities,
   getDocumentLibraryEntries,
   getSubjectivityTemplates,
   linkEndorsementToQuote,
@@ -21,6 +23,7 @@ import {
   unlinkSubjectivityFromQuote,
   createSubjectivity,
   updateSubjectivity,
+  deleteSubjectivity,
   createDocumentLibraryEntry,
   generateQuoteDocument,
   getQuoteDocuments,
@@ -31,7 +34,6 @@ import {
 import CoverageEditor, { SUBLIMIT_COVERAGES } from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
 import RetroScheduleEditor from '../components/RetroScheduleEditor';
-import CrossOptionMatrix from '../components/CrossOptionMatrix';
 
 // ============================================================================
 // UTILITIES
@@ -75,6 +77,39 @@ function formatNumberWithCommas(value) {
 function parseFormattedNumber(value) {
   if (!value) return '';
   return value.replace(/[^0-9.]/g, '');
+}
+
+function normalizeText(value) {
+  return (value || '').trim().toLowerCase();
+}
+
+function parseQuoteIds(quoteIds) {
+  if (!quoteIds) return [];
+  if (Array.isArray(quoteIds)) return quoteIds.map(id => String(id));
+  if (typeof quoteIds === 'string') {
+    return quoteIds
+      .replace(/^\{|\}$/g, '')
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function getStructurePosition(structure) {
+  return structure?.position === 'excess' ? 'excess' : 'primary';
+}
+
+function getScopeTargetIds(structures, scope, currentId) {
+  if (!structures?.length) return [];
+  if (scope === 'single') return [String(currentId)];
+  if (scope === 'primary') {
+    return structures.filter(s => getStructurePosition(s) === 'primary').map(s => String(s.id));
+  }
+  if (scope === 'excess') {
+    return structures.filter(s => getStructurePosition(s) === 'excess').map(s => String(s.id));
+  }
+  return structures.map(s => String(s.id));
 }
 
 function calculateAttachment(layers, targetIdx) {
@@ -131,6 +166,115 @@ function generateOptionName(quote) {
 
   const retention = tower[0]?.retention || 25000;
   return `${limitStr} x ${formatCompact(retention)}`;
+}
+
+// ============================================================================
+// SMART SAVE + SHARED REMOVAL MODALS
+// ============================================================================
+
+function SmartSaveModal({ isOpen, title, defaultScope, onConfirm, onCancel }) {
+  const [scope, setScope] = useState(defaultScope || 'single');
+
+  useEffect(() => {
+    if (isOpen) {
+      setScope(defaultScope || 'single');
+    }
+  }, [defaultScope, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-xl w-[420px] p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-800">{title || 'Apply change'}</h3>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">x</button>
+        </div>
+        <div className="space-y-2 text-sm text-gray-700">
+          {[
+            { value: 'single', label: 'Only this option' },
+            { value: 'primary', label: 'All Primary options' },
+            { value: 'excess', label: 'All Excess options' },
+            { value: 'all', label: 'All options' },
+          ].map(option => (
+            <label key={option.value} className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="smart-save-scope"
+                value={option.value}
+                checked={scope === option.value}
+                onChange={() => setScope(option.value)}
+                className="text-purple-600"
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button onClick={onCancel} className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button
+            onClick={() => onConfirm(scope)}
+            className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700"
+          >
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SharedRemovalModal({ isOpen, title, sharedCount, onConfirm, onCancel }) {
+  const [scope, setScope] = useState('single');
+
+  useEffect(() => {
+    if (isOpen) {
+      setScope('single');
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+      <div className="bg-white rounded-lg shadow-xl w-[420px] p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-800">{title || 'Remove shared item'}</h3>
+          <button onClick={onCancel} className="text-gray-400 hover:text-gray-600">x</button>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          This item is shared across {sharedCount || 0} options.
+        </p>
+        <div className="space-y-2 text-sm text-gray-700">
+          {[
+            { value: 'single', label: 'Remove from this option only' },
+            { value: 'all', label: 'Remove from all options' },
+          ].map(option => (
+            <label key={option.value} className="flex items-center gap-2">
+              <input
+                type="radio"
+                name="shared-remove-scope"
+                value={option.value}
+                checked={scope === option.value}
+                onChange={() => setScope(option.value)}
+                className="text-purple-600"
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button onClick={onCancel} className="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+          <button
+            onClick={() => onConfirm(scope)}
+            className="text-sm bg-red-600 text-white px-3 py-1.5 rounded hover:bg-red-700"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ============================================================================
@@ -1119,7 +1263,10 @@ function EndorsementsPanel({ structureId, submissionId }) {
       return { previous };
     },
     onError: (err, vars, ctx) => queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
   });
 
   // Unlink endorsement mutation
@@ -1135,7 +1282,10 @@ function EndorsementsPanel({ structureId, submissionId }) {
       return { previous };
     },
     onError: (err, vars, ctx) => queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
   });
 
   const handleAddEndorsement = (endorsementId) => {
@@ -2548,15 +2698,408 @@ function SubjectivitiesTablePanel({ structureId }) {
   );
 }
 
+function TriStateCheckbox({ state, onChange, disabled, title }) {
+  const checkboxRef = useRef(null);
+
+  useEffect(() => {
+    if (!checkboxRef.current) return;
+    checkboxRef.current.indeterminate = state === 'some';
+  }, [state]);
+
+  return (
+    <input
+      ref={checkboxRef}
+      type="checkbox"
+      checked={state === 'all'}
+      onChange={onChange}
+      disabled={disabled}
+      title={title}
+      className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-300"
+    />
+  );
+}
+
 // ============================================================================
 // TAB CONTENT COMPONENTS (Main Card)
 // ============================================================================
 
-function AllOptionsTabContent({ structures, activeStructureId, onSelect, submission, onUpdateOption }) {
+function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submissionId }) {
+  const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState({});
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [gridTab, setGridTab] = useState('options');
+  const [filterPosition, setFilterPosition] = useState('all');
+  const [manageType, setManageType] = useState(null);
+  const [manageMode, setManageMode] = useState('review');
+  const [rulesFilter, setRulesFilter] = useState('any');
+  const [activeRuleMenu, setActiveRuleMenu] = useState(null);
+  const [manageSearchTerm, setManageSearchTerm] = useState('');
+  const [manageAddSearchTerm, setManageAddSearchTerm] = useState('');
+  const [sectionVisibility, setSectionVisibility] = useState({ all: false, none: false });
+  const [confirmRemoval, setConfirmRemoval] = useState(null);
+  const [activePopover, setActivePopover] = useState(null);
+  const [popoverPlacement, setPopoverPlacement] = useState({});
+  const [showAddPanel, setShowAddPanel] = useState(false);
   const tableRef = useRef(null);
   const inputRefs = useRef({});
+  const ruleMenuRefs = useRef({});
+  const ruleTriggerRefs = useRef({});
+
+  const filteredStructures = useMemo(() => (
+    structures.filter(struct => {
+      if (filterPosition === 'all') return true;
+      return getStructurePosition(struct) === filterPosition;
+    })
+  ), [structures, filterPosition]);
+
+  const selectedIdSet = useMemo(() => new Set(selectedIds.map(id => String(id))), [selectedIds]);
+  const selectedIdStrings = useMemo(() => selectedIds.map(id => String(id)), [selectedIds]);
+  const allOptionIds = useMemo(() => structures.map(struct => String(struct.id)), [structures]);
+  const visibleIds = filteredStructures.map(struct => String(struct.id));
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIdSet.has(id));
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev.map(id => String(id)));
+      if (allVisibleSelected) {
+        visibleIds.forEach(id => next.delete(id));
+      } else {
+        visibleIds.forEach(id => next.add(id));
+      }
+      return Array.from(next);
+    });
+  };
+
+  const toggleRowSelection = (id) => {
+    const idString = String(id);
+    setSelectedIds(prev => {
+      const next = new Set(prev.map(val => String(val)));
+      if (next.has(idString)) {
+        next.delete(idString);
+      } else {
+        next.add(idString);
+      }
+      return Array.from(next);
+    });
+  };
+
+  useEffect(() => {
+    setSelectedIds(prev => prev.filter(id => structures.some(struct => String(struct.id) === String(id))));
+  }, [structures]);
+
+  useEffect(() => {
+    if (selectedIds.length === 0 && manageType) {
+      setManageType(null);
+      setConfirmRemoval(null);
+    }
+  }, [selectedIds, manageType]);
+
+  useEffect(() => {
+    if (manageType) {
+      setManageMode('review');
+      setActiveRuleMenu(null);
+      setManageSearchTerm('');
+      setManageAddSearchTerm('');
+      setShowAddPanel(false);
+      setSectionVisibility({ all: false, none: false });
+    }
+  }, [manageType]);
+
+  useEffect(() => {
+    if (!activeRuleMenu) return;
+    const handleClick = (event) => {
+      const menuEl = ruleMenuRefs.current[activeRuleMenu];
+      const triggerEl = ruleTriggerRefs.current[activeRuleMenu];
+      if (menuEl?.contains(event.target)) return;
+      if (triggerEl?.contains(event.target)) return;
+      setActiveRuleMenu(null);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [activeRuleMenu]);
+
+  const { data: submissionSubjectivitiesData = [] } = useQuery({
+    queryKey: ['submissionSubjectivities', submissionId],
+    queryFn: () => getSubmissionSubjectivities(submissionId).then(r => r.data),
+    enabled: !!submissionId,
+  });
+
+  const { data: submissionEndorsementsData } = useQuery({
+    queryKey: ['submissionEndorsements', submissionId],
+    queryFn: () => getSubmissionEndorsements(submissionId).then(r => r.data),
+    enabled: !!submissionId,
+  });
+
+  const { data: endorsementLibraryData } = useQuery({
+    queryKey: ['endorsement-library', 'manage'],
+    queryFn: () => getDocumentLibraryEntries({ document_type: 'endorsement', status: 'active' }).then(r => r.data),
+    enabled: manageType === 'endorsements',
+  });
+
+  const { data: subjectivityTemplatesData } = useQuery({
+    queryKey: ['subjectivity-templates', 'manage'],
+    queryFn: () => getSubjectivityTemplates().then(r => r.data),
+    enabled: manageType === 'subjectivities',
+  });
+
+  const subjectivitiesByQuote = useMemo(() => {
+    const map = new Map();
+    (submissionSubjectivitiesData || []).forEach(subj => {
+      const label = subj.text || subj.subjectivity_text || subj.title || 'Subjectivity';
+      const quoteIds = parseQuoteIds(subj.quote_ids);
+      const isShared = quoteIds.length > 1;
+      quoteIds.forEach(id => {
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push({
+          id: subj.id,
+          label,
+          status: subj.status,
+          isShared,
+        });
+      });
+    });
+    return map;
+  }, [submissionSubjectivitiesData]);
+
+  const endorsementsByQuote = useMemo(() => {
+    const map = new Map();
+    const endorsements = submissionEndorsementsData?.endorsements || [];
+    endorsements.forEach(endt => {
+      const label = endt.title || endt.code || 'Endorsement';
+      const quoteIds = parseQuoteIds(endt.quote_ids);
+      const isShared = quoteIds.length > 1;
+      quoteIds.forEach(id => {
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push({
+          id: endt.endorsement_id,
+          label,
+          code: endt.code,
+          isShared,
+        });
+      });
+    });
+    map.forEach(list => list.sort((a, b) => a.label.localeCompare(b.label)));
+    return map;
+  }, [submissionEndorsementsData]);
+
+  const getPopoverPosition = (event, key) => {
+    if (!event?.currentTarget) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const popoverHeight = 320;
+    const margin = 24;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const placeTop = spaceBelow < popoverHeight && spaceAbove > popoverHeight - margin;
+    setPopoverPlacement(prev => ({ ...prev, [key]: placeTop ? 'top' : 'bottom' }));
+  };
+
+  const togglePopover = (type, quoteId, event) => {
+    const key = `${type}-${quoteId}`;
+    if (activePopover === key) {
+      setActivePopover(null);
+      return;
+    }
+    getPopoverPosition(event, key);
+    setActivePopover(key);
+  };
+
+  const openPopover = (type, quoteId, event) => {
+    const key = `${type}-${quoteId}`;
+    getPopoverPosition(event, key);
+    setActivePopover(key);
+  };
+
+  const subjectivityItems = useMemo(() => {
+    return (submissionSubjectivitiesData || []).map(subj => {
+      const label = subj.text || subj.subjectivity_text || subj.title || 'Subjectivity';
+      const quoteIds = parseQuoteIds(subj.quote_ids);
+      const presentIds = selectedIdStrings.filter(id => quoteIds.includes(id));
+      const missingIds = selectedIdStrings.filter(id => !quoteIds.includes(id));
+      const count = presentIds.length;
+      const state = count === 0 ? 'none' : count === selectedIdStrings.length ? 'all' : 'some';
+      return {
+        id: subj.id,
+        label,
+        state,
+        count,
+        presentIds,
+        missingIds,
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+  }, [submissionSubjectivitiesData, selectedIdStrings]);
+
+  const allOptions = useMemo(() => (
+    structures.map(struct => ({
+      id: String(struct.id),
+      name: struct.quote_name || generateOptionName(struct),
+      position: getStructurePosition(struct),
+    }))
+  ), [structures]);
+
+  const allPrimaryIds = useMemo(() => (
+    allOptions.filter(opt => opt.position !== 'excess').map(opt => opt.id)
+  ), [allOptions]);
+
+  const allExcessIds = useMemo(() => (
+    allOptions.filter(opt => opt.position === 'excess').map(opt => opt.id)
+  ), [allOptions]);
+
+  const allOptionLabelMap = useMemo(() => (
+    new Map(allOptions.map(opt => [opt.id, opt.name]))
+  ), [allOptions]);
+
+  const subjectivityRulesAll = useMemo(() => {
+    const getScope = (linkedIds) => {
+      if (linkedIds.length === 0) return 'none';
+      const linkedSet = new Set(linkedIds);
+      const isAll = allOptionIds.length > 0 && allOptionIds.every(id => linkedSet.has(id));
+      if (isAll) return 'all';
+      const isPrimary = allPrimaryIds.length > 0
+        && allPrimaryIds.length === linkedSet.size
+        && allPrimaryIds.every(id => linkedSet.has(id));
+      if (isPrimary) return 'primary';
+      const isExcess = allExcessIds.length > 0
+        && allExcessIds.length === linkedSet.size
+        && allExcessIds.every(id => linkedSet.has(id));
+      if (isExcess) return 'excess';
+      return 'custom';
+    };
+
+    const getAppliesLabel = (linkedIds, scope) => {
+      if (scope === 'none') return 'No options';
+      if (scope === 'all') return `All ${allOptionIds.length} Options`;
+      if (scope === 'primary') return 'All Primary';
+      if (scope === 'excess') return 'All Excess';
+      const linkedSet = new Set(linkedIds);
+      const firstId = allOptions.find(opt => linkedSet.has(opt.id))?.id;
+      const firstLabel = allOptionLabelMap.get(firstId) || 'Option';
+      const extra = linkedIds.length - 1;
+      return extra > 0 ? `${firstLabel} +${extra}` : firstLabel;
+    };
+
+    return (submissionSubjectivitiesData || []).map(subj => {
+      const linkedIds = parseQuoteIds(subj.quote_ids).map(id => String(id));
+      const scope = getScope(linkedIds);
+      return {
+        id: subj.id,
+        label: subj.text || subj.subjectivity_text || subj.title || 'Subjectivity',
+        linkedIds,
+        linkedSet: new Set(linkedIds),
+        scope,
+        appliesLabel: getAppliesLabel(linkedIds, scope),
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+  }, [submissionSubjectivitiesData, allOptionIds, allPrimaryIds, allExcessIds, allOptions, allOptionLabelMap]);
+
+  const filteredSubjectivityRulesAll = useMemo(() => {
+    if (rulesFilter === 'any') return subjectivityRulesAll;
+    return subjectivityRulesAll.filter(rule => rule.scope === rulesFilter);
+  }, [rulesFilter, subjectivityRulesAll]);
+
+  const endorsementItems = useMemo(() => {
+    const endorsements = submissionEndorsementsData?.endorsements || [];
+    return endorsements.map(endt => {
+      const label = endt.title || endt.code || 'Endorsement';
+      const quoteIds = parseQuoteIds(endt.quote_ids);
+      const presentIds = selectedIdStrings.filter(id => quoteIds.includes(id));
+      const missingIds = selectedIdStrings.filter(id => !quoteIds.includes(id));
+      const count = presentIds.length;
+      const state = count === 0 ? 'none' : count === selectedIdStrings.length ? 'all' : 'some';
+      return {
+        id: endt.endorsement_id,
+        label,
+        code: endt.code,
+        state,
+        count,
+        presentIds,
+        missingIds,
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+  }, [submissionEndorsementsData, selectedIdStrings]);
+
+
+  const refreshAfterManage = (targetIds = []) => {
+    const ids = targetIds.length ? targetIds : selectedIdStrings;
+    ids.forEach(id => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', id] });
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', id] });
+    });
+    queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+  };
+
+  const applyManageAction = useMutation({
+    mutationFn: async ({ type, action, item }) => {
+      if (!selectedIdStrings.length) return;
+      if (type === 'subjectivities') {
+        if (action === 'add') {
+          await Promise.all(selectedIdStrings.map(id => linkSubjectivityToQuote(id, item.id)));
+        }
+        if (action === 'remove') {
+          await Promise.all(item.presentIds.map(id => unlinkSubjectivityFromQuote(id, item.id)));
+        }
+        if (action === 'align') {
+          await Promise.all(item.missingIds.map(id => linkSubjectivityToQuote(id, item.id)));
+        }
+      }
+      if (type === 'endorsements') {
+        if (action === 'add') {
+          await Promise.all(selectedIdStrings.map(id => linkEndorsementToQuote(id, item.id)));
+        }
+        if (action === 'remove') {
+          await Promise.all(item.presentIds.map(id => unlinkEndorsementFromQuote(id, item.id)));
+        }
+        if (action === 'align') {
+          await Promise.all(item.missingIds.map(id => linkEndorsementToQuote(id, item.id)));
+        }
+      }
+    },
+    onSuccess: () => {
+      refreshAfterManage(selectedIdStrings);
+    },
+  });
+
+  const toggleSubjectivityLink = useMutation({
+    mutationFn: ({ subjectivityId, quoteId, isLinked }) =>
+      isLinked ? unlinkSubjectivityFromQuote(quoteId, subjectivityId) : linkSubjectivityToQuote(quoteId, subjectivityId),
+    onSuccess: (_, variables) => {
+      refreshAfterManage([String(variables.quoteId)]);
+    },
+  });
+
+  const applySubjectivitySelection = useMutation({
+    mutationFn: async ({ subjectivityId, currentIds, targetIds }) => {
+      const currentSet = new Set(currentIds);
+      const targetSet = new Set(targetIds);
+      const toLink = targetIds.filter(id => !currentSet.has(id));
+      const toUnlink = currentIds.filter(id => !targetSet.has(id));
+      await Promise.all([
+        ...toLink.map(id => linkSubjectivityToQuote(id, subjectivityId)),
+        ...toUnlink.map(id => unlinkSubjectivityFromQuote(id, subjectivityId)),
+      ]);
+    },
+    onSuccess: (_, variables) => {
+      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
+      refreshAfterManage(ids);
+    },
+  });
+
+  const addNewToSelected = useMutation({
+    mutationFn: async ({ type, payload }) => {
+      if (type === 'subjectivities') {
+        await createSubjectivity(submissionId, { text: payload, quote_ids: selectedIdStrings });
+      }
+      if (type === 'endorsements') {
+        await Promise.all(selectedIdStrings.map(id => linkEndorsementToQuote(id, payload)));
+      }
+    },
+    onSuccess: () => {
+      refreshAfterManage(selectedIdStrings);
+      setManageAddSearchTerm('');
+      setManageSearchTerm('');
+    },
+  });
 
   // Format number with commas
   const formatWithCommas = (num) => {
@@ -2673,88 +3216,846 @@ function AllOptionsTabContent({ structures, activeStructureId, onSelect, submiss
 
   return (
     <div ref={tableRef}>
-      <table className="w-full text-sm">
-        <thead className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
-          <tr>
-            <th className="px-4 py-3 text-left font-semibold">Option</th>
-            <th className="px-4 py-3 text-right font-semibold">Premium</th>
-            <th className="px-4 py-3 text-center font-semibold">Status</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {structures.map((struct, idx) => {
-            const tower = struct.tower_json || [];
-            const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-            const currentPremium = cmaiLayer?.premium || 0;
-            const currentStatus = struct.status || 'draft';
+      <div className="flex items-center gap-2 mb-4">
+        {[
+          { key: 'options', label: 'Options' },
+          { key: 'subjectivities', label: 'Subjectivities' },
+        ].map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setGridTab(tab.key)}
+            className={`px-3 py-1 rounded-full text-xs font-medium border ${
+              gridTab === tab.key
+                ? 'border-purple-300 bg-purple-50 text-purple-700'
+                : 'border-gray-200 text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-            const draftPremium = draft[struct.id]?.premium ?? currentPremium;
-
-            return (
-              <tr
-                key={struct.id}
-                className="transition-colors hover:bg-gray-50"
-                onClick={() => !isEditing && enterEditMode(idx)}
-              >
-                {/* Option Name - Clickable to navigate */}
-                <td className="px-4 py-3">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onSelect(struct.id); }}
-                    className="hover:text-purple-600 transition-colors"
-                  >
-                    <span className="font-medium text-gray-900">
-                      {struct.quote_name || 'Unnamed Option'}
-                    </span>
-                  </button>
-                </td>
-                {/* Premium */}
-                <td className="px-4 py-3 text-right">
-                  {isEditing ? (
-                    <input
-                      ref={el => inputRefs.current[idx] = el}
-                      type="text"
-                      value={formatWithCommas(draftPremium)}
-                      onChange={(e) => {
-                        const val = parseNumber(e.target.value);
-                        updateDraft(struct.id, val);
-                      }}
-                      onKeyDown={(e) => handleKeyDown(e, idx)}
-                      className="w-32 px-2 py-1 text-right border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-300 text-sm"
-                    />
-                  ) : (
-                    <span className="font-semibold text-green-600">{formatCurrency(currentPremium)}</span>
-                  )}
-                </td>
-                {/* Status - Read only */}
-                <td className="px-4 py-3 text-center">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
-                    currentStatus === 'bound' ? 'bg-green-100 text-green-700' :
-                    currentStatus === 'quoted' ? 'bg-purple-100 text-purple-700' :
-                    currentStatus === 'indication' ? 'bg-amber-100 text-amber-700' :
-                    'bg-gray-100 text-gray-500'
-                  }`}>
-                    {currentStatus.toUpperCase()}
-                  </span>
-                </td>
+      {gridTab === 'options' && (
+        <>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400 uppercase tracking-wide">Type</span>
+              {['all', 'primary', 'excess'].map(option => (
+                <button
+                  key={option}
+                  onClick={() => setFilterPosition(option)}
+                  className={`px-2 py-1 rounded text-[11px] font-medium border ${
+                    filterPosition === option
+                      ? 'border-purple-300 bg-purple-50 text-purple-700'
+                      : 'border-gray-200 text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {option === 'all' ? 'All' : option.charAt(0).toUpperCase() + option.slice(1)}
+                </button>
+              ))}
+            </div>
+            {selectedIds.length > 0 && (
+              <span className="text-xs text-gray-500">{selectedIds.length} selected</span>
+            )}
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
+              <tr>
+                <th className="px-4 py-3 text-left font-semibold w-10">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                  />
+                </th>
+                <th className="px-4 py-3 text-left font-semibold">Option</th>
+                <th className="px-4 py-3 text-right font-semibold">Premium</th>
+                <th className="px-4 py-3 text-left font-semibold">Subjectivities</th>
+                <th className="px-4 py-3 text-left font-semibold">Endorsements</th>
+                <th className="px-4 py-3 text-center font-semibold">Status</th>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filteredStructures.map((struct, idx) => {
+                const tower = struct.tower_json || [];
+                const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+                const currentPremium = cmaiLayer?.premium || 0;
+                const currentStatus = struct.status || 'draft';
+                const isSelected = selectedIdSet.has(String(struct.id));
+                const subjectivityList = subjectivitiesByQuote.get(String(struct.id)) || [];
+                const endorsementList = endorsementsByQuote.get(String(struct.id)) || [];
+                const subjectivityCount = subjectivityList.length;
+                const endorsementCount = endorsementList.length;
+                const subjectivityKey = `subjectivities-${struct.id}`;
+                const endorsementKey = `endorsements-${struct.id}`;
+                const subjectivityPopoverPosition = popoverPlacement[subjectivityKey] === 'top' ? 'bottom-full mb-2' : 'mt-2';
+                const endorsementPopoverPosition = popoverPlacement[endorsementKey] === 'top' ? 'bottom-full mb-2' : 'mt-2';
+                const subjectivityRemainder = subjectivityCount > 1 ? subjectivityCount - 1 : 0;
+
+                const draftPremium = draft[struct.id]?.premium ?? currentPremium;
+
+                return (
+                  <tr
+                    key={struct.id}
+                    className={`transition-colors hover:bg-gray-50 ${isSelected ? 'bg-purple-50/40' : ''}`}
+                    onClick={() => !isEditing && enterEditMode(idx)}
+                  >
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleRowSelection(struct.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                      />
+                    </td>
+                    {/* Option Name - Clickable to navigate */}
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onSelect(struct.id); }}
+                        className="hover:text-purple-600 transition-colors"
+                      >
+                        <span className="font-medium text-gray-900">
+                          {struct.quote_name || 'Unnamed Option'}
+                        </span>
+                      </button>
+                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
+                        getStructurePosition(struct) === 'excess'
+                          ? 'bg-blue-100 text-blue-600'
+                          : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {getStructurePosition(struct) === 'excess' ? 'EXCESS' : 'PRIMARY'}
+                      </span>
+                    </td>
+                    {/* Premium */}
+                    <td className="px-4 py-3 text-right">
+                      {isEditing ? (
+                        <input
+                          ref={el => inputRefs.current[idx] = el}
+                          type="text"
+                          value={formatWithCommas(draftPremium)}
+                          onChange={(e) => {
+                            const val = parseNumber(e.target.value);
+                            updateDraft(struct.id, val);
+                          }}
+                          onKeyDown={(e) => handleKeyDown(e, idx)}
+                          className="w-32 px-2 py-1 text-right border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-300 text-sm"
+                        />
+                      ) : (
+                        <span className="font-semibold text-green-600">{formatCurrency(currentPremium)}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-left">
+                      <div
+                        className="relative"
+                        onMouseEnter={(e) => openPopover('subjectivities', struct.id, e)}
+                        onMouseLeave={() => setActivePopover(null)}
+                      >
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); togglePopover('subjectivities', struct.id, e); }}
+                          className="inline-flex items-center gap-2 text-xs text-gray-700 hover:text-gray-900 min-w-0 max-w-[240px]"
+                        >
+                          <span className={`truncate ${subjectivityCount === 0 ? 'text-gray-400' : ''}`}>
+                            {subjectivityCount === 0 ? '—' : (subjectivityList[0]?.label || 'Subjectivity')}
+                          </span>
+                          {subjectivityRemainder > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 whitespace-nowrap">
+                              +{subjectivityRemainder}
+                            </span>
+                          )}
+                        </button>
+                        {activePopover === subjectivityKey && subjectivityList.length > 0 && (
+                          <div className={`absolute z-30 ${subjectivityPopoverPosition} w-64 rounded-lg border border-gray-200 bg-white shadow-lg p-3`}>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Subjectivities</div>
+                            <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                              {subjectivityList.map(item => (
+                                <div key={item.id} className="text-xs text-gray-700">
+                                  {item.label}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-left">
+                      <div
+                        className="relative"
+                        onMouseEnter={(e) => openPopover('endorsements', struct.id, e)}
+                        onMouseLeave={() => setActivePopover(null)}
+                      >
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); togglePopover('endorsements', struct.id, e); }}
+                          className={`inline-flex items-center gap-2 text-xs ${
+                            endorsementCount === 0 ? 'text-gray-400' : 'text-gray-600 hover:text-gray-800'
+                          }`}
+                        >
+                          <span>({endorsementCount}) Endorsements</span>
+                        </button>
+                        {activePopover === endorsementKey && endorsementList.length > 0 && (
+                          <div className={`absolute z-30 ${endorsementPopoverPosition} w-64 rounded-lg border border-gray-200 bg-white shadow-lg p-3`}>
+                            <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Endorsements</div>
+                            <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                              {endorsementList.map(item => (
+                                <div key={item.id} className="flex items-center justify-between gap-2 text-xs">
+                                  <span className="text-gray-700">{item.label}</span>
+                                  <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                                    item.isShared ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+                                  }`}>
+                                    {item.isShared ? 'Shared' : 'Local'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    {/* Status - Read only */}
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                        currentStatus === 'bound' ? 'bg-green-100 text-green-700' :
+                        currentStatus === 'quoted' ? 'bg-purple-100 text-purple-700' :
+                        currentStatus === 'indication' ? 'bg-amber-100 text-amber-700' :
+                        'bg-gray-100 text-gray-500'
+                      }`}>
+                        {currentStatus.toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {gridTab === 'subjectivities' && (
+        <div className="space-y-4">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            Assignment Rules
+          </div>
+          <div className="flex items-center gap-2">
+            {[
+              { key: 'all', label: 'Apply to All' },
+              { key: 'primary', label: 'Apply to Primary' },
+              { key: 'excess', label: 'Apply to Excess' },
+            ].map(filter => (
+              <button
+                key={filter.key}
+                onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
+                className={`px-3 py-1 rounded-full text-xs font-medium border ${
+                  rulesFilter === filter.key
+                    ? 'border-purple-300 bg-purple-50 text-purple-700'
+                    : 'border-gray-200 text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="grid grid-cols-[1fr_220px] gap-4 px-4 py-2 text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
+              <span>Subjectivity Name</span>
+              <span className="text-right">Applies To</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {filteredSubjectivityRulesAll.map(rule => {
+                const isMenuOpen = activeRuleMenu === rule.id;
+                return (
+                  <div key={rule.id} className="grid grid-cols-[1fr_220px] gap-4 px-4 py-3 items-start">
+                    <div className="text-sm text-gray-800">
+                      {rule.label}
+                    </div>
+                    <div className="relative flex flex-col items-end gap-1">
+                      <button
+                        ref={(el) => { ruleTriggerRefs.current[rule.id] = el; }}
+                        onClick={() => setActiveRuleMenu(isMenuOpen ? null : rule.id)}
+                        className="text-xs text-gray-600 border border-gray-200 bg-gray-50 rounded-full px-2 py-1 hover:text-gray-800"
+                      >
+                        {rule.appliesLabel}
+                      </button>
+                      {rule.scope !== 'all' && (
+                        <button
+                          onClick={() => setActiveRuleMenu(isMenuOpen ? null : rule.id)}
+                          className="text-[11px] text-purple-600 hover:text-purple-700"
+                        >
+                          + Add Option
+                        </button>
+                      )}
+                      {isMenuOpen && (
+                        <div
+                          ref={(el) => { ruleMenuRefs.current[rule.id] = el; }}
+                          className="absolute right-0 top-full mt-2 w-64 rounded-lg border border-gray-200 bg-white shadow-lg p-2 z-20"
+                        >
+                          <div className="space-y-1">
+                            <button
+                              onClick={() => {
+                                applySubjectivitySelection.mutate({
+                                  subjectivityId: rule.id,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allOptionIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applySubjectivitySelection.isPending}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Options
+                            </button>
+                            <button
+                              onClick={() => {
+                                applySubjectivitySelection.mutate({
+                                  subjectivityId: rule.id,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allPrimaryIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applySubjectivitySelection.isPending || allPrimaryIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Primary
+                            </button>
+                            <button
+                              onClick={() => {
+                                applySubjectivitySelection.mutate({
+                                  subjectivityId: rule.id,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allExcessIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applySubjectivitySelection.isPending || allExcessIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Excess
+                            </button>
+                          </div>
+                          <div className="mt-2 border-t border-gray-100 pt-2 space-y-1 max-h-48 overflow-y-auto">
+                            {allOptions.map(opt => {
+                              const isLinked = rule.linkedSet.has(opt.id);
+                              return (
+                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600">
+                                  <input
+                                    type="checkbox"
+                                    checked={isLinked}
+                                    onChange={() => toggleSubjectivityLink.mutate({
+                                      subjectivityId: rule.id,
+                                      quoteId: opt.id,
+                                      isLinked,
+                                    })}
+                                    disabled={toggleSubjectivityLink.isPending}
+                                    className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                                  />
+                                  <span className="truncate">{opt.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {filteredSubjectivityRulesAll.length === 0 && (
+                <div className="px-4 py-6 text-sm text-gray-400 text-center">
+                  No subjectivities match this filter.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gridTab === 'options' && selectedIds.length > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white border border-gray-200 shadow-lg rounded-full px-4 py-2 flex items-center gap-3 z-40">
+          <span className="text-xs text-gray-500">{selectedIds.length} selected</span>
+          <button
+            onClick={() => { setManageType('subjectivities'); setSectionVisibility({ all: false, none: false }); setManageSearchTerm(''); setManageAddSearchTerm(''); setShowAddPanel(false); }}
+            className="text-xs bg-purple-600 text-white px-3 py-1 rounded-full hover:bg-purple-700"
+          >
+            Manage Subjectivities
+          </button>
+          <button
+            onClick={() => { setManageType('endorsements'); setSectionVisibility({ all: false, none: false }); setManageSearchTerm(''); setManageAddSearchTerm(''); setShowAddPanel(false); }}
+            className="text-xs bg-gray-800 text-white px-3 py-1 rounded-full hover:bg-gray-900"
+          >
+            Manage Endorsements
+          </button>
+          <button
+            onClick={() => setSelectedIds([])}
+            className="text-xs text-gray-400 hover:text-gray-600"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {manageType && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl w-[720px] max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    {manageType === 'subjectivities' ? 'Manage Subjectivities' : 'Manage Endorsements'}
+                  </h3>
+                  {manageType !== 'subjectivities' && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {selectedIdStrings.length} selected
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {manageType !== 'subjectivities' && (
+                    manageMode === 'review' ? (
+                      <button
+                        onClick={() => setManageMode('edit')}
+                        className="text-xs bg-purple-600 text-white px-3 py-1 rounded-full hover:bg-purple-700"
+                      >
+                        Edit assignments
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { setManageMode('review'); setManageSearchTerm(''); setShowAddPanel(false); }}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Back to review
+                      </button>
+                    )
+                  )}
+                  <button
+                    onClick={() => { setManageType(null); setManageSearchTerm(''); setManageAddSearchTerm(''); setConfirmRemoval(null); setManageMode('review'); }}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    x
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              {(() => {
+                if (manageType === 'subjectivities') {
+                  const sortedItems = [...subjectivityItems].sort((a, b) => a.label.localeCompare(b.label));
+                  const diffItems = sortedItems.filter(item => item.state === 'some');
+                  const commonItems = sortedItems.filter(item => item.state === 'all');
+
+                  const handleToggle = (item, event) => {
+                    if (applyManageAction.isPending) return;
+                    if (item.state === 'some') {
+                      if (event?.altKey) {
+                        setConfirmRemoval({ type: manageType, item, count: item.presentIds.length });
+                        return;
+                      }
+                      applyManageAction.mutate({ type: manageType, action: 'align', item });
+                      return;
+                    }
+                    if (item.state === 'all') {
+                      setConfirmRemoval({ type: manageType, item, count: item.presentIds.length });
+                      return;
+                    }
+                    applyManageAction.mutate({ type: manageType, action: 'add', item });
+                  };
+
+                  const getCheckboxTitle = (item) => {
+                    if (item.state === 'some') return 'Click to align to all. Option-click to remove from some.';
+                    if (item.state === 'all') return 'Click to remove from all.';
+                    return 'Click to add to all.';
+                  };
+
+                  return (
+                    <div className="space-y-3">
+                      <div>
+                        <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-2">Differences</div>
+                        <div className="space-y-1">
+                          {diffItems.length === 0 ? (
+                            <div className="text-xs text-gray-400">All aligned.</div>
+                          ) : (
+                            diffItems.map(item => (
+                              <div
+                                key={item.id}
+                                className="flex items-center gap-3 px-2 py-1.5 rounded-md border border-gray-100 border-l-2 border-l-amber-200"
+                              >
+                                <TriStateCheckbox
+                                  state={item.state}
+                                  onChange={(event) => handleToggle(item, event)}
+                                  disabled={applyManageAction.isPending}
+                                  title={getCheckboxTitle(item)}
+                                />
+                                <span className="text-sm text-gray-800">{item.label}</span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <button
+                          onClick={() => setSectionVisibility(prev => ({ ...prev, all: !prev.all }))}
+                          className="flex items-center justify-between w-full text-[11px] uppercase tracking-wide text-gray-400"
+                        >
+                          <span>Common</span>
+                          <span className="text-[11px] text-gray-400">{sectionVisibility.all ? 'Hide' : 'Show'}</span>
+                        </button>
+                        {sectionVisibility.all && (
+                          <div className="mt-2 space-y-1">
+                            {commonItems.map(item => (
+                              <div
+                                key={item.id}
+                                className="flex items-center gap-3 px-2 py-1.5 rounded-md border border-gray-100"
+                              >
+                                <TriStateCheckbox
+                                  state={item.state}
+                                  onChange={(event) => handleToggle(item, event)}
+                                  disabled={applyManageAction.isPending}
+                                  title={getCheckboxTitle(item)}
+                                />
+                                <span className="text-sm text-gray-800">{item.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-3">
+                        <button
+                          onClick={() => setShowAddPanel(!showAddPanel)}
+                          className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                        >
+                          {showAddPanel ? 'Hide add' : 'Add new'}
+                        </button>
+                        {showAddPanel && (
+                          <div className="mt-2 border border-gray-100 rounded-lg p-3 bg-gray-50">
+                            <input
+                              type="text"
+                              placeholder="Search or type subjectivity..."
+                              value={manageAddSearchTerm}
+                              onChange={(e) => setManageAddSearchTerm(e.target.value)}
+                              className="w-full text-sm border border-gray-200 rounded px-3 py-2 outline-none focus:border-purple-300"
+                            />
+                            <div className="mt-2 max-h-36 overflow-y-auto space-y-1">
+                              {(subjectivityTemplatesData || [])
+                                .filter(subj => !manageAddSearchTerm || (subj.text || '').toLowerCase().includes(manageAddSearchTerm.toLowerCase()))
+                                .slice(0, 6)
+                                .map(subj => (
+                                  <button
+                                    key={subj.id}
+                                    onClick={() => addNewToSelected.mutate({ type: 'subjectivities', payload: subj.text })}
+                                    disabled={addNewToSelected.isPending}
+                                    className="w-full text-left p-2 rounded border border-gray-100 hover:bg-white text-sm disabled:opacity-50"
+                                  >
+                                    {subj.text}
+                                  </button>
+                                ))}
+                              {manageAddSearchTerm.trim() && (
+                                <button
+                                  onClick={() => addNewToSelected.mutate({ type: 'subjectivities', payload: manageAddSearchTerm.trim() })}
+                                  disabled={addNewToSelected.isPending}
+                                  className="w-full text-left p-2 rounded border border-purple-200 bg-white text-sm text-purple-700 font-medium disabled:opacity-50"
+                                >
+                                  + Create "{manageAddSearchTerm.trim()}"
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const items = manageType === 'subjectivities' ? subjectivityItems : endorsementItems;
+                const filteredItems = manageMode === 'edit' && manageSearchTerm
+                  ? items.filter(item => item.label.toLowerCase().includes(manageSearchTerm.toLowerCase()))
+                  : items;
+                const diffItems = filteredItems.filter(item => item.state === 'some');
+                const allItems = filteredItems.filter(item => item.state === 'all');
+                const noneItems = filteredItems.filter(item => item.state === 'none');
+
+                const renderReviewItem = (item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between gap-3 p-2 rounded-lg border border-amber-100 bg-amber-50/50"
+                  >
+                    <span className="text-sm text-gray-800">{item.label}</span>
+                    <span className="text-[10px] text-amber-700 uppercase tracking-wide">Varies</span>
+                  </div>
+                );
+
+                const renderReadOnlyItem = (item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between gap-3 p-2 rounded-lg border border-gray-100 bg-white"
+                  >
+                    <span className="text-sm text-gray-800">{item.label}</span>
+                  </div>
+                );
+
+                const renderEditItem = (item) => {
+                  const isDiff = item.state === 'some';
+                  return (
+                    <div
+                      key={item.id}
+                      className={`flex items-center justify-between gap-3 p-2 rounded-lg border ${
+                        isDiff ? 'border-amber-100 bg-amber-50/40 border-l-2 border-l-amber-400' : 'border-gray-100 bg-white'
+                      }`}
+                    >
+                      <span className="text-sm text-gray-800">{item.label}</span>
+                      <div className="flex items-center gap-2">
+                        {item.state === 'some' && (
+                          <>
+                            <button
+                              onClick={() => applyManageAction.mutate({ type: manageType, action: 'align', item })}
+                              className="text-[11px] text-purple-600 hover:text-purple-700 font-medium disabled:opacity-50"
+                              disabled={applyManageAction.isPending}
+                            >
+                              Align to all
+                            </button>
+                            <button
+                              onClick={() => setConfirmRemoval({
+                                type: manageType,
+                                item,
+                                count: item.presentIds.length,
+                              })}
+                              className="text-[11px] text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                              disabled={applyManageAction.isPending}
+                            >
+                              Remove from all
+                            </button>
+                          </>
+                        )}
+                        {item.state === 'all' && (
+                          <button
+                            onClick={() => setConfirmRemoval({
+                              type: manageType,
+                              item,
+                              count: item.presentIds.length,
+                            })}
+                            className="text-[11px] text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                            disabled={applyManageAction.isPending}
+                          >
+                            Remove from all
+                          </button>
+                        )}
+                        {item.state === 'none' && (
+                          <button
+                            onClick={() => applyManageAction.mutate({ type: manageType, action: 'add', item })}
+                            className="text-[11px] text-purple-600 hover:text-purple-700 font-medium disabled:opacity-50"
+                            disabled={applyManageAction.isPending}
+                          >
+                            Add to all
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                };
+
+                return (
+                  <div className="space-y-4">
+                    {manageMode === 'edit' && (
+                      <input
+                        type="text"
+                        placeholder={`Search ${manageType === 'subjectivities' ? 'subjectivities' : 'endorsements'}...`}
+                        value={manageSearchTerm}
+                        onChange={(e) => setManageSearchTerm(e.target.value)}
+                        className="w-full text-xs border border-gray-200 rounded px-2 py-1 outline-none focus:border-purple-300"
+                      />
+                    )}
+
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-2">Differences</div>
+                      <div className="space-y-2">
+                        {diffItems.length === 0 ? (
+                          <div className="text-xs text-gray-400">No differences across selected options.</div>
+                        ) : manageMode === 'review' ? (
+                          diffItems.map(renderReviewItem)
+                        ) : (
+                          diffItems.map(renderEditItem)
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <button
+                        onClick={() => setSectionVisibility(prev => ({ ...prev, all: !prev.all }))}
+                        className="flex items-center justify-between w-full text-[11px] uppercase tracking-wide text-gray-400 mb-2"
+                      >
+                        <span>On all</span>
+                        <span className="text-[11px] text-gray-400">{sectionVisibility.all ? 'Hide' : 'Show'}</span>
+                      </button>
+                      {sectionVisibility.all && (
+                        <div className="space-y-2">
+                          {allItems.length === 0 ? (
+                            <div className="text-xs text-gray-400">No items on all selected options.</div>
+                          ) : manageMode === 'review' ? (
+                            allItems.map(renderReadOnlyItem)
+                          ) : (
+                            allItems.map(renderEditItem)
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {manageMode === 'edit' && (
+                      <div>
+                        <button
+                          onClick={() => setSectionVisibility(prev => ({ ...prev, none: !prev.none }))}
+                          className="flex items-center justify-between w-full text-[11px] uppercase tracking-wide text-gray-400 mb-2"
+                        >
+                          <span>On none</span>
+                          <span className="text-[11px] text-gray-400">{sectionVisibility.none ? 'Hide' : 'Show'}</span>
+                        </button>
+                        {sectionVisibility.none && (
+                          <div className="space-y-2">
+                            {noneItems.length === 0 ? (
+                              <div className="text-xs text-gray-400">No items available to add.</div>
+                            ) : (
+                              noneItems.map(renderEditItem)
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {manageMode === 'edit' && (
+                      <div className="pt-4 border-t border-gray-100">
+                        <button
+                          onClick={() => setShowAddPanel(!showAddPanel)}
+                          className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                        >
+                          {showAddPanel ? 'Hide add' : 'Add new'}
+                        </button>
+                        {showAddPanel && (
+                          <div className="mt-3 border border-purple-100 rounded-lg p-3 bg-purple-50/40">
+                            <div className="text-[11px] text-purple-700 font-semibold uppercase tracking-wide mb-2">Add to selected</div>
+                            <input
+                              type="text"
+                              placeholder={manageType === 'subjectivities' ? 'Search or type subjectivity...' : 'Search endorsements...'}
+                              value={manageAddSearchTerm}
+                              onChange={(e) => setManageAddSearchTerm(e.target.value)}
+                              className="w-full text-sm border border-gray-200 rounded px-3 py-2 outline-none focus:border-purple-300"
+                            />
+                            <div className="mt-2 max-h-36 overflow-y-auto space-y-1">
+                              {manageType === 'subjectivities' && (
+                                <>
+                                  {(subjectivityTemplatesData || [])
+                                    .filter(subj => !manageAddSearchTerm || (subj.text || '').toLowerCase().includes(manageAddSearchTerm.toLowerCase()))
+                                    .slice(0, 6)
+                                    .map(subj => (
+                                      <button
+                                        key={subj.id}
+                                        onClick={() => addNewToSelected.mutate({ type: 'subjectivities', payload: subj.text })}
+                                        disabled={addNewToSelected.isPending}
+                                        className="w-full text-left p-2 rounded border border-gray-100 hover:bg-white text-sm disabled:opacity-50"
+                                      >
+                                        {subj.text}
+                                      </button>
+                                    ))}
+                                  {manageAddSearchTerm.trim() && (
+                                    <button
+                                      onClick={() => addNewToSelected.mutate({ type: 'subjectivities', payload: manageAddSearchTerm.trim() })}
+                                      disabled={addNewToSelected.isPending}
+                                      className="w-full text-left p-2 rounded border border-purple-200 bg-white text-sm text-purple-700 font-medium disabled:opacity-50"
+                                    >
+                                      + Create "{manageAddSearchTerm.trim()}"
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                              {manageType === 'endorsements' && (
+                                (endorsementLibraryData || [])
+                                  .filter(endt => !manageAddSearchTerm || (endt.title || endt.name || '').toLowerCase().includes(manageAddSearchTerm.toLowerCase()))
+                                  .slice(0, 8)
+                                  .map(endt => (
+                                    <button
+                                      key={endt.id}
+                                      onClick={() => addNewToSelected.mutate({ type: 'endorsements', payload: endt.id })}
+                                      disabled={addNewToSelected.isPending}
+                                      className="w-full text-left p-2 rounded border border-gray-100 hover:bg-white text-sm disabled:opacity-50"
+                                    >
+                                      <span className="font-medium text-gray-700">{endt.title || endt.name}</span>
+                                      {endt.code && <span className="ml-2 text-xs text-gray-400">{endt.code}</span>}
+                                    </button>
+                                  ))
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmRemoval && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-lg shadow-xl w-[420px] p-4">
+            <div className="text-sm font-semibold text-gray-800 mb-2">Confirm removal</div>
+            <p className="text-sm text-gray-600">
+              Remove "{confirmRemoval.item.label}" from selected options?
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setConfirmRemoval(null)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  applyManageAction.mutate({ type: confirmRemoval.type, action: 'remove', item: confirmRemoval.item });
+                  setConfirmRemoval(null);
+                }}
+                disabled={applyManageAction.isPending}
+                className="text-sm bg-red-600 text-white px-3 py-1.5 rounded hover:bg-red-700 disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function SummaryTabContent({ structure, variation, submission, structureId, onMainTabChange }) {
+function SummaryTabContent({ structure, variation, submission, structureId, structures, onMainTabChange }) {
+  const queryClient = useQueryClient();
   const [notes, setNotes] = useState(structure?.notes || '');
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [showAllSublimits, setShowAllSublimits] = useState(false);
+  const submissionId = submission?.id;
+
+  const quoteType = getStructurePosition(structure) === 'excess' ? 'excess' : 'primary';
+  const peerLabel = quoteType === 'excess' ? 'Excess' : 'Primary';
+  const peerIds = useMemo(() => (
+    (structures || [])
+      .filter(struct => getStructurePosition(struct) === quoteType && String(struct.id) !== String(structureId))
+      .map(struct => String(struct.id))
+  ), [structures, quoteType, structureId]);
 
   // Fetch endorsements
   const { data: endorsementsData } = useQuery({
     queryKey: ['quote-endorsements', structureId],
     queryFn: () => getQuoteEndorsements(structureId).then(r => r.data),
     enabled: !!structureId,
+  });
+  const { data: submissionEndorsementsData } = useQuery({
+    queryKey: ['submissionEndorsements', submissionId],
+    queryFn: () => getSubmissionEndorsements(submissionId).then(r => r.data),
+    enabled: !!submissionId,
   });
   // Sort endorsements: required first, automatic next, manual last
   const endorsements = [...(endorsementsData?.endorsements || [])].sort((a, b) => {
@@ -2773,6 +4074,11 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
     queryFn: () => getQuoteSubjectivities(structureId).then(r => r.data),
     enabled: !!structureId,
   });
+  const { data: submissionSubjectivitiesData = [] } = useQuery({
+    queryKey: ['submissionSubjectivities', submissionId],
+    queryFn: () => getSubmissionSubjectivities(submissionId).then(r => r.data),
+    enabled: !!submissionId,
+  });
   // Sort required subjectivities to top
   const subjectivities = [...(subjectivitiesData || [])].sort((a, b) => {
     const aRequired = a.is_required || a.category === 'required' ? 1 : 0;
@@ -2781,6 +4087,121 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
   });
   const pendingSubjectivities = subjectivities.filter(s => s.status === 'pending' || !s.status).length;
   const receivedSubjectivities = subjectivities.filter(s => s.status === 'received').length;
+
+  const currentSubjectivityItems = useMemo(() => (
+    subjectivities.map(subj => ({
+      id: String(subj.subjectivity_id || subj.template_id || subj.id || ''),
+      label: subj.subjectivity_text || subj.text || subj.title || 'Subjectivity',
+      status: subj.status,
+    })).filter(item => item.id)
+  ), [subjectivities]);
+
+  const currentEndorsementItems = useMemo(() => (
+    endorsements.map(endt => ({
+      id: String(endt.endorsement_id || endt.document_library_id || endt.id || ''),
+      label: endt.title || endt.name || endt.code || 'Endorsement',
+      category: endt.category,
+    })).filter(item => item.id)
+  ), [endorsements]);
+
+  const subjectivityStandardData = useMemo(() => {
+    const labelById = new Map();
+    const counts = new Map();
+    (submissionSubjectivitiesData || []).forEach(subj => {
+      const id = String(subj.id || '');
+      if (!id) return;
+      const label = subj.text || subj.subjectivity_text || subj.title || 'Subjectivity';
+      labelById.set(id, label);
+      const quoteIds = parseQuoteIds(subj.quote_ids).map(val => String(val));
+      const count = peerIds.filter(peerId => quoteIds.includes(peerId)).length;
+      counts.set(id, count);
+    });
+    const standardIds = new Set();
+    if (peerIds.length === 0) {
+      currentSubjectivityItems.forEach(item => standardIds.add(item.id));
+    } else {
+      counts.forEach((count, id) => {
+        if (count > peerIds.length / 2) standardIds.add(id);
+      });
+    }
+    return { standardIds, labelById };
+  }, [submissionSubjectivitiesData, peerIds, currentSubjectivityItems]);
+
+  const endorsementStandardData = useMemo(() => {
+    const labelById = new Map();
+    const counts = new Map();
+    const submissionEndorsements = submissionEndorsementsData?.endorsements || [];
+    submissionEndorsements.forEach(endt => {
+      const id = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+      if (!id) return;
+      const label = endt.title || endt.name || endt.code || 'Endorsement';
+      labelById.set(id, label);
+      const quoteIds = parseQuoteIds(endt.quote_ids).map(val => String(val));
+      const count = peerIds.filter(peerId => quoteIds.includes(peerId)).length;
+      counts.set(id, count);
+    });
+    const standardIds = new Set();
+    if (peerIds.length === 0) {
+      currentEndorsementItems.forEach(item => standardIds.add(item.id));
+    } else {
+      counts.forEach((count, id) => {
+        if (count > peerIds.length / 2) standardIds.add(id);
+      });
+    }
+    return { standardIds, labelById };
+  }, [submissionEndorsementsData, peerIds, currentEndorsementItems]);
+
+  const currentSubjectivityIdSet = useMemo(() => (
+    new Set(currentSubjectivityItems.map(item => item.id))
+  ), [currentSubjectivityItems]);
+
+  const currentEndorsementIdSet = useMemo(() => (
+    new Set(currentEndorsementItems.map(item => item.id))
+  ), [currentEndorsementItems]);
+
+  const missingSubjectivities = useMemo(() => (
+    Array.from(subjectivityStandardData.standardIds)
+      .filter(id => !currentSubjectivityIdSet.has(id))
+      .map(id => ({ id, label: subjectivityStandardData.labelById.get(id) || 'Subjectivity' }))
+  ), [subjectivityStandardData, currentSubjectivityIdSet]);
+
+  const missingEndorsements = useMemo(() => (
+    Array.from(endorsementStandardData.standardIds)
+      .filter(id => !currentEndorsementIdSet.has(id))
+      .map(id => ({ id, label: endorsementStandardData.labelById.get(id) || 'Endorsement' }))
+  ), [endorsementStandardData, currentEndorsementIdSet]);
+
+  const uniqueSubjectivities = useMemo(() => (
+    currentSubjectivityItems.filter(item => !subjectivityStandardData.standardIds.has(item.id))
+  ), [currentSubjectivityItems, subjectivityStandardData]);
+
+  const uniqueEndorsements = useMemo(() => (
+    currentEndorsementItems.filter(item => !endorsementStandardData.standardIds.has(item.id))
+  ), [currentEndorsementItems, endorsementStandardData]);
+
+  const alignedSubjectivities = useMemo(() => (
+    currentSubjectivityItems.filter(item => subjectivityStandardData.standardIds.has(item.id))
+  ), [currentSubjectivityItems, subjectivityStandardData]);
+
+  const alignedEndorsements = useMemo(() => (
+    currentEndorsementItems.filter(item => endorsementStandardData.standardIds.has(item.id))
+  ), [currentEndorsementItems, endorsementStandardData]);
+
+  const restoreSubjectivity = useMutation({
+    mutationFn: (subjectivityId) => linkSubjectivityToQuote(structureId, subjectivityId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    },
+  });
+
+  const restoreEndorsement = useMutation({
+    mutationFn: (endorsementId) => linkEndorsementToQuote(structureId, endorsementId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
+  });
 
   // Calculate tower info
   const tower = structure?.tower_json || [];
@@ -2813,6 +4234,17 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
     bound: { label: 'Bound', bg: 'bg-green-100', text: 'text-green-700', dot: 'bg-green-500' },
   };
   const status = statusConfig[structure?.status] || statusConfig.draft;
+
+  const endorsementDrift = missingEndorsements.length + uniqueEndorsements.length;
+  const subjectivityDrift = missingSubjectivities.length + uniqueSubjectivities.length;
+  const endorsementStatusText = endorsementDrift === 0
+    ? `Matches Standard ${peerLabel} Set`
+    : `Missing ${missingEndorsements.length} Standard | ${uniqueEndorsements.length} Option Specific`;
+  const subjectivityStatusText = subjectivityDrift === 0
+    ? `Matches Standard ${peerLabel} Set`
+    : `Missing ${missingSubjectivities.length} Standard | ${uniqueSubjectivities.length} Option Specific`;
+  const endorsementsEmpty = missingEndorsements.length === 0 && uniqueEndorsements.length === 0 && alignedEndorsements.length === 0;
+  const subjectivitiesEmpty = missingSubjectivities.length === 0 && uniqueSubjectivities.length === 0 && alignedSubjectivities.length === 0;
 
   return (
     <div className="space-y-6">
@@ -3001,7 +4433,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
           {/* Endorsements */}
           <div className="border border-gray-200 rounded-lg overflow-hidden">
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
+                <span className={`text-[11px] ${endorsementDrift === 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                  {endorsementStatusText}
+                </span>
+              </div>
               {endorsements.length > 0 && (
                 <button
                   onClick={() => onMainTabChange?.('endorsements')}
@@ -3012,14 +4449,43 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
               )}
             </div>
             <div className="p-4">
-              {endorsements.length === 0 ? (
+              {endorsementsEmpty ? (
                 <p className="text-sm text-gray-400">No endorsements attached</p>
               ) : (
                 <div className="space-y-2">
-                  {endorsements.map((endt, idx) => (
-                    <div key={endt.id || idx} className="flex items-center gap-2 text-sm">
-                      <span className={`w-1.5 h-1.5 rounded-full ${endt.category === 'standard' ? 'bg-green-500' : 'bg-amber-500'}`}></span>
-                      <span className="text-gray-700">{endt.title || endt.name || `Endorsement ${idx + 1}`}</span>
+                  {missingEndorsements.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => restoreEndorsement.mutate(item.id)}
+                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-gray-300 rounded px-2 py-1.5 opacity-60"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-gray-700 truncate">{item.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                          Standard
+                        </span>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); restoreEndorsement.mutate(item.id); }}
+                        className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:text-gray-900"
+                      >
+                        + Restore
+                      </button>
+                    </div>
+                  ))}
+                  {uniqueEndorsements.map((item) => (
+                    <div key={item.id} className="flex items-center gap-2 text-sm">
+                      <span className={`w-1.5 h-1.5 rounded-full ${item.category === 'standard' ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+                      <span className="text-gray-700">{item.label}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                        Option Specific
+                      </span>
+                    </div>
+                  ))}
+                  {alignedEndorsements.map((item) => (
+                    <div key={item.id} className="flex items-center gap-2 text-sm">
+                      <span className={`w-1.5 h-1.5 rounded-full ${item.category === 'standard' ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+                      <span className="text-gray-700">{item.label}</span>
                     </div>
                   ))}
                 </div>
@@ -3030,7 +4496,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
           {/* Subjectivities */}
           <div className="border border-gray-200 rounded-lg overflow-hidden">
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
+                <span className={`text-[11px] ${subjectivityDrift === 0 ? 'text-green-600' : 'text-amber-600'}`}>
+                  {subjectivityStatusText}
+                </span>
+              </div>
               {subjectivities.length > 0 && (
                 <button
                   onClick={() => onMainTabChange?.('subjectivities')}
@@ -3041,13 +4512,33 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
               )}
             </div>
             <div className="p-4">
-              {subjectivities.length === 0 ? (
+              {subjectivitiesEmpty ? (
                 <p className="text-sm text-gray-400">No subjectivities attached</p>
               ) : (
                 <div className="space-y-2">
-                  {subjectivities.map((subj, idx) => (
-                    <div key={subj.id || idx} className="flex items-center gap-2 text-sm">
-                      {subj.status === 'received' ? (
+                  {missingSubjectivities.map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => restoreSubjectivity.mutate(item.id)}
+                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-gray-300 rounded px-2 py-1.5 opacity-60"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-gray-700 truncate">{item.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                          Standard
+                        </span>
+                      </div>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); restoreSubjectivity.mutate(item.id); }}
+                        className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:text-gray-900"
+                      >
+                        + Restore
+                      </button>
+                    </div>
+                  ))}
+                  {uniqueSubjectivities.map((item) => (
+                    <div key={item.id} className="flex items-center gap-2 text-sm">
+                      {item.status === 'received' ? (
                         <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
@@ -3056,7 +4547,24 @@ function SummaryTabContent({ structure, variation, submission, structureId, onMa
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                       )}
-                      <span className="text-gray-700">{subj.subjectivity_text || subj.text || subj.title || `Subjectivity ${idx + 1}`}</span>
+                      <span className="text-gray-700">{item.label}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                        Option Specific
+                      </span>
+                    </div>
+                  ))}
+                  {alignedSubjectivities.map((item) => (
+                    <div key={item.id} className="flex items-center gap-2 text-sm">
+                      {item.status === 'received' ? (
+                        <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      )}
+                      <span className="text-gray-700">{item.label}</span>
                     </div>
                   ))}
                 </div>
@@ -3617,15 +5125,18 @@ function ExcessCoverageCompact({ sublimits, towerJson, onSave, setEditControls }
   );
 }
 
-function EndorsementsTabContent({ structureId, setEditControls }) {
+function EndorsementsTabContent({ structureId, structure, structures, submissionId, setEditControls }) {
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState([]);
   const [isAddingOpen, setIsAddingOpen] = useState(false);
   const [addSearchTerm, setAddSearchTerm] = useState('');
+  const [smartSaveContext, setSmartSaveContext] = useState(null);
+  const [sharedRemovalContext, setSharedRemovalContext] = useState(null);
   const containerRef = useRef(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const defaultScope = getStructurePosition(structure) === 'excess' ? 'excess' : 'primary';
 
   const { data: endorsementsData, isLoading } = useQuery({
     queryKey: ['quote-endorsements', structureId],
@@ -3648,11 +5159,33 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
   });
   const libraryEndorsements = libraryEndorsementsData || [];
 
+  const { data: submissionEndorsementsData } = useQuery({
+    queryKey: ['submissionEndorsements', submissionId],
+    queryFn: () => getSubmissionEndorsements(submissionId).then(r => r.data),
+    enabled: !!submissionId,
+  });
+  const submissionEndorsements = submissionEndorsementsData?.endorsements || [];
+  const sharedEndorsementMap = useMemo(() => {
+    const map = new Map();
+    submissionEndorsements.forEach(endt => {
+      const key = String(endt.endorsement_id || endt.document_library_id || endt.id || endt.code || endt.title);
+      map.set(key, new Set(parseQuoteIds(endt.quote_ids)));
+    });
+    return map;
+  }, [submissionEndorsementsData]);
+
   const linkedIds = new Set(endorsements.map(e => e.endorsement_id || e.document_library_id));
   const availableEndorsements = libraryEndorsements.filter(e => !linkedIds.has(e.id));
   const filteredAvailable = availableEndorsements.filter(e =>
     !addSearchTerm || e.title?.toLowerCase().includes(addSearchTerm.toLowerCase())
   );
+
+  const getSharedEndorsementInfo = (endt) => {
+    const key = String(endt.endorsement_id || endt.document_library_id || endt.id || endt.code || endt.title);
+    const quoteIds = Array.from(sharedEndorsementMap.get(key) || []);
+    const otherCount = quoteIds.filter(id => id !== String(structureId)).length;
+    return { quoteIds, otherCount, totalCount: quoteIds.length };
+  };
 
   const linkMutation = useMutation({
     mutationFn: (endorsementId) => linkEndorsementToQuote(structureId, endorsementId),
@@ -3683,7 +5216,19 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
     onError: (err, vars, ctx) => {
       queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
+    onSuccess: (result, title) => {
+      const newId = result?.data?.id;
+      if (newId) {
+        setSmartSaveContext({
+          endorsementId: newId,
+          label: title,
+        });
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
   });
 
   const unlinkMutation = useMutation({
@@ -3703,7 +5248,10 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
     onError: (err, vars, ctx) => {
       queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
   });
 
   const createMutation = useMutation({
@@ -3740,7 +5288,34 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
     onError: (err, vars, ctx) => {
       queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
+  });
+
+  const applyScopeMutation = useMutation({
+    mutationFn: async ({ endorsementId, targetIds }) => {
+      await Promise.all(targetIds.map(id => linkEndorsementToQuote(id, endorsementId)));
+    },
+    onSuccess: (_, vars) => {
+      (vars?.targetIds || []).forEach(id => {
+        queryClient.invalidateQueries({ queryKey: ['quote-endorsements', id] });
+      });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
+  });
+
+  const removeSharedMutation = useMutation({
+    mutationFn: async ({ endorsementId, quoteIds }) => {
+      await Promise.all(quoteIds.map(id => unlinkEndorsementFromQuote(id, endorsementId)));
+    },
+    onSuccess: (_, vars) => {
+      (vars?.quoteIds || []).forEach(id => {
+        queryClient.invalidateQueries({ queryKey: ['quote-endorsements', id] });
+      });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
   });
 
   const getTypeIcon = (endt) => {
@@ -3805,6 +5380,55 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
     };
   }, [isEditing]);
 
+  const handleSmartSaveConfirm = (scope) => {
+    if (!smartSaveContext) return;
+    if (scope === 'single') {
+      setSmartSaveContext(null);
+      return;
+    }
+    const targetIds = getScopeTargetIds(structures, scope, structureId);
+    applyScopeMutation.mutate({ endorsementId: smartSaveContext.endorsementId, targetIds });
+    setSmartSaveContext(null);
+  };
+
+  const handleRemoveEndorsement = (endt) => {
+    const sharedInfo = getSharedEndorsementInfo(endt);
+    if (sharedInfo.otherCount > 0) {
+      setSharedRemovalContext({
+        endorsementId: endt.endorsement_id,
+        label: endt.title || endt.name || endt.code || 'Endorsement',
+        quoteIds: sharedInfo.quoteIds,
+        sharedCount: sharedInfo.totalCount,
+      });
+      return;
+    }
+    unlinkMutation.mutate(endt.endorsement_id);
+  };
+
+  const handleSharedRemovalConfirm = (scope) => {
+    if (!sharedRemovalContext) return;
+    if (scope === 'single') {
+      unlinkMutation.mutate(sharedRemovalContext.endorsementId);
+    } else {
+      removeSharedMutation.mutate({
+        endorsementId: sharedRemovalContext.endorsementId,
+        quoteIds: sharedRemovalContext.quoteIds,
+      });
+    }
+    setSharedRemovalContext(null);
+  };
+
+  const handleAddEndorsement = (endt) => {
+    linkMutation.mutate(endt.id, {
+      onSuccess: () => {
+        setSmartSaveContext({
+          endorsementId: endt.id,
+          label: endt.title || endt.name || endt.code || 'Endorsement',
+        });
+      },
+    });
+  };
+
   if (isLoading) return <div className="text-center text-gray-400 py-8">Loading...</div>;
 
   return (
@@ -3822,27 +5446,40 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {(isEditing ? draft : endorsements).map(endt => (
-              <tr
-                key={endt.id}
-                className={`hover:bg-gray-50 ${!isEditing ? 'cursor-pointer' : ''}`}
-                onClick={!isEditing ? handleEdit : undefined}
-              >
-                <td className="px-4 py-2.5">{getTypeIcon(endt)}</td>
-                <td className="px-4 py-2.5 font-medium text-gray-600">{endt.code || '—'}</td>
-                <td className="px-4 py-2.5 text-gray-700">{endt.title || endt.name || '—'}</td>
-                {isEditing && (
-                  <td className="px-4 py-2.5">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); unlinkMutation.mutate(endt.endorsement_id); }}
-                      className="text-gray-400 hover:text-red-500"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
+            {(isEditing ? draft : endorsements).map(endt => {
+              const sharedInfo = getSharedEndorsementInfo(endt);
+              const isShared = sharedInfo.otherCount > 0;
+              return (
+                <tr
+                  key={endt.id}
+                  className={`hover:bg-gray-50 ${!isEditing ? 'cursor-pointer' : ''}`}
+                  onClick={!isEditing ? handleEdit : undefined}
+                >
+                  <td className="px-4 py-2.5">{getTypeIcon(endt)}</td>
+                  <td className="px-4 py-2.5 font-medium text-gray-600">{endt.code || '—'}</td>
+                  <td className="px-4 py-2.5 text-gray-700">
+                    <div className="flex items-center gap-2">
+                      <span>{endt.title || endt.name || '—'}</span>
+                      {isShared && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                          Shared
+                        </span>
+                      )}
+                    </div>
                   </td>
-                )}
-              </tr>
-            ))}
+                  {isEditing && (
+                    <td className="px-4 py-2.5">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleRemoveEndorsement(endt); }}
+                        className="text-gray-400 hover:text-red-500"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -3870,7 +5507,7 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
           </div>
           <div className="max-h-40 overflow-y-auto space-y-1">
             {filteredAvailable.slice(0, 8).map(endt => (
-              <button key={endt.id} onClick={() => linkMutation.mutate(endt.id)} className="w-full p-2 rounded border border-gray-100 bg-white hover:bg-purple-50 hover:border-purple-200 text-left text-sm">
+              <button key={endt.id} onClick={() => handleAddEndorsement(endt)} className="w-full p-2 rounded border border-gray-100 bg-white hover:bg-purple-50 hover:border-purple-200 text-left text-sm">
                 <span className="font-medium text-gray-700">{endt.title}</span>
               </button>
             ))}
@@ -3890,17 +5527,36 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
       ) : (
         <button onClick={() => { setIsAddingOpen(true); if (!isEditing) handleEdit(); }} className="text-sm text-purple-600 hover:text-purple-700 font-medium">+ Add Endorsement</button>
       )}
+
+      <SmartSaveModal
+        isOpen={!!smartSaveContext}
+        title="Apply this endorsement to"
+        defaultScope={defaultScope}
+        onConfirm={handleSmartSaveConfirm}
+        onCancel={() => setSmartSaveContext(null)}
+      />
+
+      <SharedRemovalModal
+        isOpen={!!sharedRemovalContext}
+        title={`Remove "${sharedRemovalContext?.label || 'Endorsement'}"`}
+        sharedCount={sharedRemovalContext?.sharedCount}
+        onConfirm={handleSharedRemovalConfirm}
+        onCancel={() => setSharedRemovalContext(null)}
+      />
     </div>
   );
 }
 
-function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }) {
+function SubjectivitiesTabContent({ structureId, submissionId, structures, structure, setEditControls }) {
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState([]);
   const [isAddingOpen, setIsAddingOpen] = useState(false);
   const [addSearchTerm, setAddSearchTerm] = useState('');
+  const [smartSaveContext, setSmartSaveContext] = useState(null);
+  const [sharedRemovalContext, setSharedRemovalContext] = useState(null);
   const containerRef = useRef(null);
+  const defaultScope = getStructurePosition(structure) === 'excess' ? 'excess' : 'primary';
 
   const { data: subjectivitiesData, isLoading } = useQuery({
     queryKey: ['quote-subjectivities', structureId],
@@ -3921,11 +5577,36 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
   });
   const librarySubjectivities = librarySubjectivitiesData || [];
 
+  const { data: submissionSubjectivitiesData } = useQuery({
+    queryKey: ['submissionSubjectivities', submissionId],
+    queryFn: () => getSubmissionSubjectivities(submissionId).then(r => r.data),
+    enabled: !!submissionId,
+  });
+  const submissionSubjectivities = submissionSubjectivitiesData || [];
+  const sharedSubjectivityMap = useMemo(() => {
+    const map = new Map();
+    submissionSubjectivities.forEach(subj => {
+      const key = normalizeText(subj.text || subj.subjectivity_text || subj.title);
+      if (!key) return;
+      const existing = map.get(key) || new Set();
+      parseQuoteIds(subj.quote_ids).forEach(id => existing.add(id));
+      map.set(key, existing);
+    });
+    return map;
+  }, [submissionSubjectivitiesData]);
+
   const linkedIds = new Set(subjectivities.map(s => s.subjectivity_id || s.template_id));
   const availableSubjectivities = librarySubjectivities.filter(s => !linkedIds.has(s.id));
   const filteredAvailable = availableSubjectivities.filter(s =>
     !addSearchTerm || (s.text || s.subjectivity_text)?.toLowerCase().includes(addSearchTerm.toLowerCase())
   );
+
+  const getSharedSubjectivityInfo = (subj) => {
+    const key = normalizeText(subj.text || subj.subjectivity_text || subj.title);
+    const quoteIds = Array.from(sharedSubjectivityMap.get(key) || []);
+    const otherCount = quoteIds.filter(id => id !== String(structureId)).length;
+    return { quoteIds, otherCount, totalCount: quoteIds.length };
+  };
 
   const linkMutation = useMutation({
     mutationFn: (subjectivityId) => linkSubjectivityToQuote(structureId, subjectivityId),
@@ -3946,13 +5627,32 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
     onError: (err, vars, ctx) => {
       queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (subjectivityId) => deleteSubjectivity(subjectivityId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    },
   });
 
   const createMutation = useMutation({
     mutationFn: (text) => createSubjectivity(submissionId, { text, quote_ids: [structureId] }),
-    onSuccess: () => {
+    onSuccess: (data, text) => {
       queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      if (data?.id) {
+        setSmartSaveContext({
+          type: 'add',
+          subjectivityId: data.id,
+          text,
+        });
+      }
       setAddSearchTerm('');
       setIsAddingOpen(false);
     },
@@ -3961,7 +5661,10 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
   // Update subjectivity mutation (status or text)
   const updateMutation = useMutation({
     mutationFn: ({ subjectivityId, updates }) => updateSubjectivity(subjectivityId, updates),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    },
   });
 
   // Refs to avoid stale closures
@@ -3969,19 +5672,30 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
   draftRef.current = draft;
 
   // Save all changes
-  const handleSave = async () => {
+  const handleSave = () => {
     const currentDraft = draftRef.current;
-    for (const item of currentDraft) {
+    const updates = currentDraft.reduce((acc, item) => {
       const original = subjectivities.find(s => s.id === item.id);
       const origText = original?.text || original?.subjectivity_text || '';
       const origStatus = original?.status || 'pending';
       if (item.text !== origText || item.status !== origStatus) {
-        await updateMutation.mutateAsync({ subjectivityId: item.id, updates: { text: item.text, status: item.status } });
+        acc.push({
+          subjectivityId: item.id,
+          updates: { text: item.text, status: item.status },
+          text: item.text || origText,
+        });
       }
+      return acc;
+    }, []);
+
+    if (updates.length === 0) {
+      setIsEditing(false);
+      setDraft([]);
+      setEditControls?.(null);
+      return;
     }
-    setIsEditing(false);
-    setDraft([]);
-    setEditControls?.(null);
+
+    setSmartSaveContext({ type: 'edit', updates });
   };
 
   // Cancel edit mode
@@ -4033,6 +5747,73 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isEditing, draft]);
 
+  const applySubjectivityScope = (text, scope) => {
+    if (!submissionId) return Promise.resolve();
+    if (scope === 'primary') {
+      return createSubjectivity(submissionId, { text, position: 'primary' });
+    }
+    if (scope === 'excess') {
+      return createSubjectivity(submissionId, { text, position: 'excess' });
+    }
+    if (scope === 'all') {
+      return createSubjectivity(submissionId, { text });
+    }
+    return Promise.resolve();
+  };
+
+  const handleSmartSaveConfirm = async (scope) => {
+    if (!smartSaveContext) return;
+    const targetIds = getScopeTargetIds(structures, scope, structureId);
+
+    if (smartSaveContext.type === 'edit') {
+      for (const item of smartSaveContext.updates) {
+        await updateMutation.mutateAsync({ subjectivityId: item.subjectivityId, updates: item.updates });
+      }
+      if (scope !== 'single') {
+        for (const item of smartSaveContext.updates) {
+          await applySubjectivityScope(item.text, scope);
+        }
+      }
+    }
+
+    if (smartSaveContext.type === 'add' && scope !== 'single') {
+      await applySubjectivityScope(smartSaveContext.text, scope);
+    }
+
+    targetIds.forEach(id => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', id] });
+    });
+    queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+
+    setIsEditing(false);
+    setDraft([]);
+    setEditControls?.(null);
+    setSmartSaveContext(null);
+  };
+
+  const handleRemoveSubjectivity = (subj) => {
+    const sharedInfo = getSharedSubjectivityInfo(subj);
+    if (sharedInfo.otherCount > 0) {
+      setSharedRemovalContext({
+        subjectivityId: subj.id,
+        label: subj.text || subj.subjectivity_text || subj.title || 'Subjectivity',
+        sharedCount: sharedInfo.totalCount,
+      });
+      return;
+    }
+    unlinkMutation.mutate(subj.id);
+  };
+
+  const handleSharedRemovalConfirm = (scope) => {
+    if (!sharedRemovalContext) return;
+    if (scope === 'single') {
+      unlinkMutation.mutate(sharedRemovalContext.subjectivityId);
+    } else {
+      deleteMutation.mutate(sharedRemovalContext.subjectivityId);
+    }
+    setSharedRemovalContext(null);
+  };
+
   // Status icon helper
   const getStatusIcon = (status) => {
     if (status === 'received') return <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
@@ -4061,6 +5842,8 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
             {data.map(subj => {
               const status = isEditing ? subj.status : (subj.status || 'pending');
               const text = isEditing ? subj.text : (subj.text || subj.subjectivity_text || '');
+              const sharedInfo = getSharedSubjectivityInfo(subj);
+              const isShared = sharedInfo.otherCount > 0;
 
               return (
                 <tr
@@ -4096,12 +5879,19 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
                         className="w-full text-sm text-gray-700 border border-gray-200 rounded px-2 py-1 outline-none focus:border-purple-400"
                       />
                     ) : (
-                      <span className="text-gray-700">{text}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-700">{text}</span>
+                        {isShared && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                            Shared
+                          </span>
+                        )}
+                      </div>
                     )}
                   </td>
                   {isEditing && (
                     <td className="px-3 py-2.5">
-                      <button onClick={(e) => { e.stopPropagation(); unlinkMutation.mutate(subj.id); }} className="text-gray-400 hover:text-red-500">
+                      <button onClick={(e) => { e.stopPropagation(); handleRemoveSubjectivity(subj); }} className="text-gray-400 hover:text-red-500">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                         </svg>
@@ -4160,6 +5950,22 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
       ) : (
         <button onClick={() => setIsAddingOpen(true)} className="text-sm text-purple-600 hover:text-purple-700 font-medium">+ Add Subjectivity</button>
       )}
+
+      <SmartSaveModal
+        isOpen={!!smartSaveContext}
+        title="Apply this subjectivity to"
+        defaultScope={defaultScope}
+        onConfirm={handleSmartSaveConfirm}
+        onCancel={() => setSmartSaveContext(null)}
+      />
+
+      <SharedRemovalModal
+        isOpen={!!sharedRemovalContext}
+        title={`Remove "${sharedRemovalContext?.label || 'Subjectivity'}"`}
+        sharedCount={sharedRemovalContext?.sharedCount}
+        onConfirm={handleSharedRemovalConfirm}
+        onCancel={() => setSharedRemovalContext(null)}
+      />
     </div>
   );
 }
@@ -4563,9 +6369,8 @@ export default function QuotePageV3() {
             <div className="p-6">
               <AllOptionsTabContent
                 structures={structures}
-                activeStructureId={activeStructureId}
                 onSelect={(id) => { handleStructureChange(id); setViewMode('single'); }}
-                submission={submission}
+                submissionId={submissionId}
                 onUpdateOption={(quoteId, data) => updateTowerMutation.mutate({ quoteId, data })}
               />
             </div>
@@ -4628,16 +6433,6 @@ export default function QuotePageV3() {
                 >
                   Subjectivities
                 </button>
-                <button
-                  onClick={() => setMainTab('sharing')}
-                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                    mainTab === 'sharing'
-                      ? 'border-purple-600 text-purple-600 bg-purple-50/50'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  Sharing
-                </button>
                 {/* Spacer + Edit Controls */}
                 <div className="flex-1" />
                 {editControls && (
@@ -4655,6 +6450,7 @@ export default function QuotePageV3() {
                     variation={activeVariation}
                     submission={submission}
                     structureId={activeStructureId}
+                    structures={structures}
                     onMainTabChange={setMainTab}
                   />
                 )}
@@ -4686,20 +6482,25 @@ export default function QuotePageV3() {
                 )}
 
                 {mainTab === 'endorsements' && (
-                  <EndorsementsTabContent structureId={activeStructureId} setEditControls={setEditControls} />
+                  <EndorsementsTabContent
+                    structureId={activeStructureId}
+                    structure={activeStructure}
+                    structures={structures}
+                    submissionId={submissionId}
+                    setEditControls={setEditControls}
+                  />
                 )}
 
                 {mainTab === 'subjectivities' && (
-                  <SubjectivitiesTabContent structureId={activeStructureId} submissionId={submissionId} setEditControls={setEditControls} />
-                )}
-
-                {mainTab === 'sharing' && (
-                  <CrossOptionMatrix
+                  <SubjectivitiesTabContent
+                    structureId={activeStructureId}
                     submissionId={submissionId}
-                    quotes={structures}
-                    currentQuoteId={activeStructureId}
+                    structures={structures}
+                    structure={activeStructure}
+                    setEditControls={setEditControls}
                   />
                 )}
+
               </div>
             </div>
           </div>
