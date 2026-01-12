@@ -27,6 +27,7 @@ import {
   getDocumentUrl,
   getBindValidation,
   bindQuoteOption,
+  applyToAllQuotes,
 } from '../api/client';
 import CoverageEditor, { SUBLIMIT_COVERAGES } from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
@@ -3180,6 +3181,9 @@ function TowerTabContent({ quote, onSave, isPending }) {
 }
 
 function CoveragesTabContent({ structure, onSave, allQuotes, submissionId, setEditControls }) {
+  const queryClient = useQueryClient();
+  const [applySuccess, setApplySuccess] = useState(null);
+
   // Get aggregate limit from tower (CMAI layer or first layer)
   const getAggregateLimit = () => {
     if (!structure?.tower_json?.length) return 1000000;
@@ -3188,6 +3192,21 @@ function CoveragesTabContent({ structure, onSave, allQuotes, submissionId, setEd
   };
 
   const aggregateLimit = getAggregateLimit();
+
+  // Count other quotes with same position
+  const samePositionCount = (allQuotes || []).filter(q =>
+    q.id !== structure?.id && q.position === structure?.position
+  ).length;
+
+  // Apply coverages to all same-position quotes
+  const applyToAllMutation = useMutation({
+    mutationFn: () => applyToAllQuotes(structure.id, { coverages: true }),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+      setApplySuccess(response.data?.coverages_updated || 0);
+      setTimeout(() => setApplySuccess(null), 3000);
+    },
+  });
 
   // Handle coverage changes for primary quotes
   const handlePrimaryCoveragesSave = (updatedCoverages) => {
@@ -3217,17 +3236,40 @@ function CoveragesTabContent({ structure, onSave, allQuotes, submissionId, setEd
 
   // For primary quotes - show CoverageEditor
   return (
-    <div className="px-4 py-2">
-      <CoverageEditor
-        coverages={structure?.coverages || { aggregate_coverages: {}, sublimit_coverages: {} }}
-        aggregateLimit={aggregateLimit}
-        onSave={handlePrimaryCoveragesSave}
-        mode="quote"
-        allQuotes={allQuotes}
-        submissionId={submissionId}
-        embedded={true}
-        setEditControls={setEditControls}
-      />
+    <div>
+      {/* Apply to All button */}
+      {samePositionCount > 0 && (
+        <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+          <span className="text-xs text-gray-500">
+            {samePositionCount} other {structure?.position || 'primary'} option{samePositionCount !== 1 ? 's' : ''}
+          </span>
+          {applySuccess !== null ? (
+            <span className="text-xs text-green-600">
+              Applied to {applySuccess} option{applySuccess !== 1 ? 's' : ''}
+            </span>
+          ) : (
+            <button
+              onClick={() => applyToAllMutation.mutate()}
+              disabled={applyToAllMutation.isPending}
+              className="text-xs text-purple-600 hover:text-purple-700 font-medium disabled:opacity-50"
+            >
+              {applyToAllMutation.isPending ? 'Applying...' : 'Apply to All'}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="px-4 py-2">
+        <CoverageEditor
+          coverages={structure?.coverages || { aggregate_coverages: {}, sublimit_coverages: {} }}
+          aggregateLimit={aggregateLimit}
+          onSave={handlePrimaryCoveragesSave}
+          mode="quote"
+          allQuotes={allQuotes}
+          submissionId={submissionId}
+          embedded={true}
+          setEditControls={setEditControls}
+        />
+      </div>
     </div>
   );
 }

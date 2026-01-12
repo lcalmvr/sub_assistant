@@ -3288,6 +3288,7 @@ class ApplyToAllRequest(BaseModel):
     endorsements: Optional[bool] = False
     subjectivities: Optional[bool] = False
     retro_schedule: Optional[bool] = False
+    coverages: Optional[bool] = False
 
 
 @app.post("/api/quotes/{quote_id}/apply-to-all")
@@ -3298,8 +3299,8 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
     """
     import json
 
-    if not request.endorsements and not request.subjectivities and not request.retro_schedule:
-        raise HTTPException(status_code=400, detail="Must specify endorsements, subjectivities, or retro_schedule to apply")
+    if not request.endorsements and not request.subjectivities and not request.retro_schedule and not request.coverages:
+        raise HTTPException(status_code=400, detail="Must specify endorsements, subjectivities, retro_schedule, or coverages to apply")
 
     # Block if source quote is bound (can't copy from bound quote)
     with get_conn() as conn:
@@ -3327,7 +3328,7 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
         with conn.cursor() as cur:
             # Get source quote's data, submission_id, and position
             cur.execute("""
-                SELECT submission_id, position, endorsements, retro_schedule, retro_notes
+                SELECT submission_id, position, endorsements, retro_schedule, retro_notes, coverages
                 FROM insurance_towers
                 WHERE id = %s
             """, (quote_id,))
@@ -3340,6 +3341,7 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
             endorsements = source.get("endorsements") or []
             retro_schedule = source.get("retro_schedule")
             retro_notes = source.get("retro_notes")
+            coverages = source.get("coverages")
 
             # Parse JSON if needed
             if isinstance(endorsements, str):
@@ -3372,6 +3374,19 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
                 retro_updated = cur.rowcount
                 updated_count = max(updated_count, retro_updated)
 
+            # Handle coverages - position-aware (only apply to same position)
+            coverages_updated = 0
+            if request.coverages and coverages:
+                cur.execute("""
+                    UPDATE insurance_towers
+                    SET coverages = %s, updated_at = NOW()
+                    WHERE submission_id = %s AND id != %s
+                      AND COALESCE(position, 'primary') = %s
+                    RETURNING id
+                """, (json.dumps(coverages) if isinstance(coverages, dict) else coverages, submission_id, quote_id, position))
+                coverages_updated = cur.rowcount
+                updated_count = max(updated_count, coverages_updated)
+
             # Handle subjectivities (uses junction table)
             if request.subjectivities:
                 # Get all other quote IDs for this submission
@@ -3402,7 +3417,9 @@ def apply_to_all_quotes(quote_id: str, request: ApplyToAllRequest):
         "endorsements_applied": request.endorsements,
         "subjectivities_applied": request.subjectivities,
         "retro_schedule_applied": request.retro_schedule,
+        "coverages_applied": request.coverages,
         "subjectivity_links_created": subj_links_created if request.subjectivities else 0,
+        "coverages_updated": coverages_updated if request.coverages else 0,
     }
 
 
