@@ -2399,6 +2399,620 @@ def get_latest_quote_document(submission_id: str):
             return row if row else None
 
 
+# ─────────────────────────────────────────────────────────────
+# Quote Structures & Variations Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@app.get("/api/submissions/{submission_id}/structures")
+def list_quote_structures(submission_id: str):
+    """List quote structures with nested variations for a submission."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all parent structures (rows where variation_parent_id IS NULL)
+            cur.execute("""
+                SELECT
+                    id, quote_name, option_descriptor, tower_json, primary_retention, position,
+                    policy_form, coverages, sublimits, retro_schedule, retroactive_date,
+                    default_term_months, variation_label, variation_name, period_months,
+                    effective_date_override, expiration_date_override, commission_override, dates_tbd,
+                    sold_premium, technical_premium, risk_adjusted_premium,
+                    is_bound, bound_at, created_at
+                FROM insurance_towers
+                WHERE submission_id = %s AND variation_parent_id IS NULL
+                ORDER BY created_at DESC
+            """, (submission_id,))
+            structures = cur.fetchall()
+
+            if not structures:
+                return []
+
+            structure_ids = [str(s['id']) for s in structures]
+
+            # Get variations for each structure
+            cur.execute("""
+                SELECT
+                    id, variation_parent_id, variation_label, variation_name, period_months,
+                    effective_date_override, expiration_date_override, commission_override, dates_tbd,
+                    sold_premium, technical_premium, risk_adjusted_premium,
+                    is_bound, bound_at, created_at
+                FROM insurance_towers
+                WHERE variation_parent_id = ANY(%s::uuid[])
+                ORDER BY variation_label
+            """, (structure_ids,))
+            all_variations = cur.fetchall()
+
+            # Build result with nested variations
+            result = []
+            for structure in structures:
+                struct_dict = dict(structure)
+                # Find child variations for this structure
+                child_variations = [
+                    dict(v) for v in all_variations
+                    if v['variation_parent_id'] == structure['id']
+                ]
+
+                # Always include the parent row as the first variation (label A)
+                # This represents the "default" or "original" variation
+                parent_as_variation = {
+                    'id': structure['id'],
+                    'variation_parent_id': None,
+                    'label': structure.get('variation_label') or 'A',
+                    'name': structure.get('variation_name') or 'Standard',
+                    'period_months': structure.get('period_months') or 12,
+                    'effective_date_override': structure.get('effective_date_override'),
+                    'expiration_date_override': structure.get('expiration_date_override'),
+                    'commission_override': structure.get('commission_override'),
+                    'dates_tbd': structure.get('dates_tbd', False),
+                    'sold_premium': structure.get('sold_premium'),
+                    'technical_premium': structure.get('technical_premium'),
+                    'risk_adjusted_premium': structure.get('risk_adjusted_premium'),
+                    'is_bound': structure.get('is_bound', False),
+                    'bound_at': structure.get('bound_at'),
+                    'created_at': structure.get('created_at'),
+                    'is_self': True,  # Flag indicating this is the structure row itself
+                }
+
+                # Build variations list: parent first, then children sorted by label
+                all_vars = [parent_as_variation]
+                for v in child_variations:
+                    all_vars.append({
+                        'id': v['id'],
+                        'variation_parent_id': v['variation_parent_id'],
+                        'label': v['variation_label'],
+                        'name': v['variation_name'],
+                        'period_months': v['period_months'],
+                        'effective_date_override': v['effective_date_override'],
+                        'expiration_date_override': v['expiration_date_override'],
+                        'commission_override': v['commission_override'],
+                        'dates_tbd': v.get('dates_tbd', False),
+                        'sold_premium': v['sold_premium'],
+                        'technical_premium': v['technical_premium'],
+                        'risk_adjusted_premium': v['risk_adjusted_premium'],
+                        'is_bound': v['is_bound'],
+                        'bound_at': v['bound_at'],
+                        'created_at': v['created_at'],
+                        'is_self': False,
+                    })
+
+                # Sort by label
+                all_vars.sort(key=lambda x: x['label'] or 'Z')
+                struct_dict['variations'] = all_vars
+
+                result.append(struct_dict)
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] list_quote_structures: {elapsed_ms:.1f}ms ({len(result)} structures)")
+            return result
+
+
+class VariationCreate(BaseModel):
+    label: Optional[str] = None  # Auto-assigned if not provided
+    name: Optional[str] = None
+    period_months: Optional[int] = 12
+    effective_date_override: Optional[str] = None
+    expiration_date_override: Optional[str] = None
+    commission_override: Optional[float] = None
+
+
+@app.post("/api/structures/{structure_id}/variations")
+def create_variation(structure_id: str, data: VariationCreate):
+    """Create a new variation under a structure."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Verify structure exists and get its data
+            cur.execute("""
+                SELECT id, submission_id, quote_name, tower_json, primary_retention, position,
+                       policy_form, coverages, sublimits, retro_schedule, default_term_months
+                FROM insurance_towers
+                WHERE id = %s AND variation_parent_id IS NULL
+            """, (structure_id,))
+            structure = cur.fetchone()
+            if not structure:
+                raise HTTPException(status_code=404, detail="Structure not found")
+
+            # Get existing variation labels to determine next label
+            cur.execute("""
+                SELECT variation_label FROM insurance_towers
+                WHERE variation_parent_id = %s OR id = %s
+                ORDER BY variation_label
+            """, (structure_id, structure_id))
+            existing_labels = [row['variation_label'] for row in cur.fetchall() if row['variation_label']]
+
+            # Auto-assign next label if not provided
+            if data.label:
+                new_label = data.label
+            else:
+                # Find next available letter
+                for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                    if letter not in existing_labels:
+                        new_label = letter
+                        break
+                else:
+                    raise HTTPException(status_code=400, detail="Maximum variations reached")
+
+            # Create the variation row (inherit tower_json and coverages from parent)
+            cur.execute("""
+                INSERT INTO insurance_towers (
+                    submission_id, variation_parent_id, variation_label, variation_name,
+                    period_months, effective_date_override, expiration_date_override,
+                    commission_override, quote_name, position, primary_retention,
+                    policy_form, default_term_months, tower_json, coverages, sublimits, retro_schedule
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, variation_label, variation_name, period_months,
+                          effective_date_override, expiration_date_override,
+                          commission_override, created_at
+            """, (
+                structure['submission_id'],
+                structure_id,
+                new_label,
+                data.name or f"Variation {new_label}",
+                data.period_months or structure.get('default_term_months') or 12,
+                data.effective_date_override,
+                data.expiration_date_override,
+                data.commission_override,
+                structure['quote_name'],  # Inherit structure name
+                structure['position'],
+                structure['primary_retention'],
+                structure['policy_form'],
+                structure.get('default_term_months') or 12,
+                Json(structure['tower_json']) if structure.get('tower_json') else Json([]),
+                Json(structure['coverages']) if structure.get('coverages') else None,
+                Json(structure['sublimits']) if structure.get('sublimits') else None,
+                Json(structure['retro_schedule']) if structure.get('retro_schedule') else None,
+            ))
+            new_variation = cur.fetchone()
+            conn.commit()
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] create_variation: {elapsed_ms:.1f}ms")
+            return {
+                'id': new_variation['id'],
+                'label': new_variation['variation_label'],
+                'name': new_variation['variation_name'],
+                'period_months': new_variation['period_months'],
+                'effective_date_override': new_variation['effective_date_override'],
+                'expiration_date_override': new_variation['expiration_date_override'],
+                'commission_override': new_variation['commission_override'],
+                'created_at': new_variation['created_at'],
+                'timing_ms': round(elapsed_ms, 1),
+            }
+
+
+class VariationUpdate(BaseModel):
+    name: Optional[str] = None
+    period_months: Optional[int] = None
+    effective_date_override: Optional[str] = None
+    expiration_date_override: Optional[str] = None
+    commission_override: Optional[float] = None
+    sold_premium: Optional[int] = None
+    dates_tbd: Optional[bool] = None
+
+
+@app.patch("/api/variations/{variation_id}")
+def update_variation(variation_id: str, data: VariationUpdate):
+    """Update a variation's fields."""
+    start = time.perf_counter()
+
+    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items()}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
+    values = list(updates.values()) + [variation_id]
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE insurance_towers
+                SET {set_clause}, updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, variation_label, variation_name, period_months,
+                          effective_date_override, expiration_date_override,
+                          commission_override, sold_premium, dates_tbd
+            """, values)
+            result = cur.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Variation not found")
+            conn.commit()
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] update_variation: {elapsed_ms:.1f}ms")
+            return {**dict(result), 'timing_ms': round(elapsed_ms, 1)}
+
+
+@app.delete("/api/variations/{variation_id}")
+def delete_variation(variation_id: str):
+    """Delete a variation. Structure must have at least one variation remaining."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get the variation and its parent
+            cur.execute("""
+                SELECT id, variation_parent_id FROM insurance_towers WHERE id = %s
+            """, (variation_id,))
+            variation = cur.fetchone()
+            if not variation:
+                raise HTTPException(status_code=404, detail="Variation not found")
+
+            parent_id = variation['variation_parent_id']
+
+            # If this is a structure row itself (no parent), cannot delete via this endpoint
+            if parent_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot delete structure via variation endpoint. Use quote delete endpoint."
+                )
+
+            # Check if this is the last variation
+            cur.execute("""
+                SELECT COUNT(*) as count FROM insurance_towers
+                WHERE variation_parent_id = %s
+            """, (parent_id,))
+            count = cur.fetchone()['count']
+
+            if count <= 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot delete last variation. Delete the structure instead."
+                )
+
+            # Delete the variation
+            cur.execute("DELETE FROM insurance_towers WHERE id = %s", (variation_id,))
+            conn.commit()
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] delete_variation: {elapsed_ms:.1f}ms")
+            return {'status': 'deleted', 'id': variation_id, 'timing_ms': round(elapsed_ms, 1)}
+
+
+@app.get("/api/structures/{structure_id}/endorsements")
+def get_structure_endorsements_with_scope(structure_id: str):
+    """Get endorsements for a structure with per-variation scope labels."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all variations for this structure (including self if no children)
+            cur.execute("""
+                SELECT id, variation_label as label FROM insurance_towers
+                WHERE id = %s OR variation_parent_id = %s
+                ORDER BY variation_label
+            """, (structure_id, structure_id))
+            variations = cur.fetchall()
+            variation_ids = [v['id'] for v in variations]
+
+            if not variation_ids:
+                raise HTTPException(status_code=404, detail="Structure not found")
+
+            # Get endorsements linked to any variation
+            cur.execute("""
+                SELECT
+                    dl.id as endorsement_id,
+                    dl.title,
+                    dl.code,
+                    dl.category,
+                    array_agg(DISTINCT qe.quote_id::text) as linked_variation_ids
+                FROM document_library dl
+                JOIN quote_endorsements qe ON qe.endorsement_id = dl.id
+                WHERE qe.quote_id = ANY(%s)
+                GROUP BY dl.id, dl.title, dl.code, dl.category
+                ORDER BY dl.code
+            """, (variation_ids,))
+            endorsements = cur.fetchall()
+
+            # Calculate scope label for each endorsement
+            result_endorsements = []
+            for endt in endorsements:
+                linked = set(endt['linked_variation_ids'] or [])
+                all_var_ids = set(str(v['id']) for v in variations)
+
+                if linked == all_var_ids:
+                    scope_label = 'All variations'
+                    scope_tone = 'success'
+                elif len(linked) == 1:
+                    # Find the label for this single variation
+                    var = next((v for v in variations if str(v['id']) in linked), None)
+                    scope_label = f"Only {var['label']}" if var else 'Custom'
+                    scope_tone = 'warning'
+                else:
+                    scope_label = 'Custom scope'
+                    scope_tone = 'warning'
+
+                result_endorsements.append({
+                    'endorsement_id': endt['endorsement_id'],
+                    'title': endt['title'],
+                    'code': endt['code'],
+                    'category': endt['category'],
+                    'linked_variation_ids': list(linked),
+                    'scope_label': scope_label,
+                    'scope_tone': scope_tone,
+                })
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] get_structure_endorsements_with_scope: {elapsed_ms:.1f}ms")
+            return {
+                'variations': [dict(v) for v in variations],
+                'endorsements': result_endorsements,
+                'timing_ms': round(elapsed_ms, 1),
+            }
+
+
+class EndorsementScopeUpdate(BaseModel):
+    variation_ids: list[str]
+
+
+@app.post("/api/structures/{structure_id}/endorsements/{endorsement_id}/scope")
+def set_endorsement_scope(structure_id: str, endorsement_id: str, data: EndorsementScopeUpdate):
+    """Set which variations have this endorsement."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all variations for this structure
+            cur.execute("""
+                SELECT id FROM insurance_towers
+                WHERE id = %s OR variation_parent_id = %s
+            """, (structure_id, structure_id))
+            all_variations = [row['id'] for row in cur.fetchall()]
+
+            if not all_variations:
+                raise HTTPException(status_code=404, detail="Structure not found")
+
+            # Remove endorsement from all variations first
+            cur.execute("""
+                DELETE FROM quote_endorsements
+                WHERE quote_id = ANY(%s) AND endorsement_id = %s
+            """, (all_variations, endorsement_id))
+
+            # Add endorsement to specified variations
+            if data.variation_ids:
+                for var_id in data.variation_ids:
+                    if var_id in [str(v) for v in all_variations]:
+                        cur.execute("""
+                            INSERT INTO quote_endorsements (quote_id, endorsement_id)
+                            VALUES (%s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, (var_id, endorsement_id))
+
+            conn.commit()
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] set_endorsement_scope: {elapsed_ms:.1f}ms")
+            return {
+                'status': 'updated',
+                'endorsement_id': endorsement_id,
+                'variation_ids': data.variation_ids,
+                'timing_ms': round(elapsed_ms, 1),
+            }
+
+
+@app.post("/api/structures/{structure_id}/endorsements/{endorsement_id}/sync-all")
+def sync_endorsement_to_all(structure_id: str, endorsement_id: str):
+    """Apply endorsement to all variations in structure."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all variations for this structure
+            cur.execute("""
+                SELECT id FROM insurance_towers
+                WHERE id = %s OR variation_parent_id = %s
+            """, (structure_id, structure_id))
+            all_variations = [row['id'] for row in cur.fetchall()]
+
+            if not all_variations:
+                raise HTTPException(status_code=404, detail="Structure not found")
+
+            # Add endorsement to all variations
+            linked_count = 0
+            for var_id in all_variations:
+                cur.execute("""
+                    INSERT INTO quote_endorsements (quote_id, endorsement_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING id
+                """, (var_id, endorsement_id))
+                if cur.fetchone():
+                    linked_count += 1
+
+            conn.commit()
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] sync_endorsement_to_all: {elapsed_ms:.1f}ms")
+            return {
+                'status': 'synced',
+                'endorsement_id': endorsement_id,
+                'variation_count': len(all_variations),
+                'newly_linked': linked_count,
+                'timing_ms': round(elapsed_ms, 1),
+            }
+
+
+# Same pattern for subjectivities
+@app.get("/api/structures/{structure_id}/subjectivities")
+def get_structure_subjectivities_with_scope(structure_id: str):
+    """Get subjectivities for a structure with per-variation scope labels."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get structure's submission_id
+            cur.execute("""
+                SELECT submission_id FROM insurance_towers WHERE id = %s
+            """, (structure_id,))
+            structure = cur.fetchone()
+            if not structure:
+                raise HTTPException(status_code=404, detail="Structure not found")
+
+            submission_id = structure['submission_id']
+
+            # Get all variations for this structure
+            cur.execute("""
+                SELECT id, variation_label as label FROM insurance_towers
+                WHERE id = %s OR variation_parent_id = %s
+                ORDER BY variation_label
+            """, (structure_id, structure_id))
+            variations = cur.fetchall()
+            variation_ids = [v['id'] for v in variations]
+
+            # Get subjectivities with their linked variations
+            cur.execute("""
+                SELECT
+                    ss.id as subjectivity_id,
+                    ss.text,
+                    ss.category,
+                    ss.status,
+                    array_agg(DISTINCT qs.quote_id::text) FILTER (WHERE qs.quote_id = ANY(%s)) as linked_variation_ids
+                FROM submission_subjectivities ss
+                LEFT JOIN quote_subjectivities qs ON qs.subjectivity_id = ss.id
+                WHERE ss.submission_id = %s
+                GROUP BY ss.id, ss.text, ss.category, ss.status
+                ORDER BY ss.created_at
+            """, (variation_ids, submission_id))
+            subjectivities = cur.fetchall()
+
+            # Calculate scope label for each
+            result_subjectivities = []
+            for subj in subjectivities:
+                linked = set(subj['linked_variation_ids'] or [])
+                all_var_ids = set(str(v['id']) for v in variations)
+
+                if linked == all_var_ids:
+                    scope_label = 'All variations'
+                    scope_tone = 'success'
+                elif len(linked) == 0:
+                    scope_label = 'None'
+                    scope_tone = 'muted'
+                elif len(linked) == 1:
+                    var = next((v for v in variations if str(v['id']) in linked), None)
+                    scope_label = f"Only {var['label']}" if var else 'Custom'
+                    scope_tone = 'warning'
+                else:
+                    scope_label = 'Custom scope'
+                    scope_tone = 'warning'
+
+                result_subjectivities.append({
+                    'subjectivity_id': subj['subjectivity_id'],
+                    'text': subj['text'],
+                    'category': subj['category'],
+                    'status': subj['status'],
+                    'linked_variation_ids': list(linked),
+                    'scope_label': scope_label,
+                    'scope_tone': scope_tone,
+                })
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] get_structure_subjectivities_with_scope: {elapsed_ms:.1f}ms")
+            return {
+                'variations': [dict(v) for v in variations],
+                'subjectivities': result_subjectivities,
+                'timing_ms': round(elapsed_ms, 1),
+            }
+
+
+@app.post("/api/structures/{structure_id}/subjectivities/{subjectivity_id}/scope")
+def set_subjectivity_scope(structure_id: str, subjectivity_id: str, data: EndorsementScopeUpdate):
+    """Set which variations have this subjectivity."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all variations for this structure
+            cur.execute("""
+                SELECT id FROM insurance_towers
+                WHERE id = %s OR variation_parent_id = %s
+            """, (structure_id, structure_id))
+            all_variations = [row['id'] for row in cur.fetchall()]
+
+            if not all_variations:
+                raise HTTPException(status_code=404, detail="Structure not found")
+
+            # Remove subjectivity from all variations first
+            cur.execute("""
+                DELETE FROM quote_subjectivities
+                WHERE quote_id = ANY(%s) AND subjectivity_id = %s
+            """, (all_variations, subjectivity_id))
+
+            # Add subjectivity to specified variations
+            if data.variation_ids:
+                for var_id in data.variation_ids:
+                    if var_id in [str(v) for v in all_variations]:
+                        cur.execute("""
+                            INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                            VALUES (%s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, (var_id, subjectivity_id))
+
+            conn.commit()
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] set_subjectivity_scope: {elapsed_ms:.1f}ms")
+            return {
+                'status': 'updated',
+                'subjectivity_id': subjectivity_id,
+                'variation_ids': data.variation_ids,
+                'timing_ms': round(elapsed_ms, 1),
+            }
+
+
+@app.post("/api/structures/{structure_id}/subjectivities/{subjectivity_id}/sync-all")
+def sync_subjectivity_to_all(structure_id: str, subjectivity_id: str):
+    """Apply subjectivity to all variations in structure."""
+    start = time.perf_counter()
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            # Get all variations for this structure
+            cur.execute("""
+                SELECT id FROM insurance_towers
+                WHERE id = %s OR variation_parent_id = %s
+            """, (structure_id, structure_id))
+            all_variations = [row['id'] for row in cur.fetchall()]
+
+            if not all_variations:
+                raise HTTPException(status_code=404, detail="Structure not found")
+
+            # Add subjectivity to all variations
+            linked_count = 0
+            for var_id in all_variations:
+                cur.execute("""
+                    INSERT INTO quote_subjectivities (quote_id, subjectivity_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                    RETURNING quote_id
+                """, (var_id, subjectivity_id))
+                if cur.fetchone():
+                    linked_count += 1
+
+            conn.commit()
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            print(f"[TIMING] sync_subjectivity_to_all: {elapsed_ms:.1f}ms")
+            return {
+                'status': 'synced',
+                'subjectivity_id': subjectivity_id,
+                'variation_count': len(all_variations),
+                'newly_linked': linked_count,
+                'timing_ms': round(elapsed_ms, 1),
+            }
+
+
 @app.get("/api/submissions/{submission_id}/policy-documents")
 def get_submission_policy_documents(submission_id: str):
     """Get all generated quote/binder documents for a submission."""
@@ -2567,13 +3181,32 @@ def create_quote(submission_id: str, data: QuoteCreate):
                 risk_adjusted_premium,  # sold_premium defaults to risk_adjusted
             ))
             row = cur.fetchone()
+            quote_id = row["id"]
+
+            # Auto-attach required endorsements
+            cur.execute("""
+                SELECT id FROM document_library
+                WHERE document_type = 'endorsement'
+                AND category = 'required'
+                AND status = 'active'
+            """)
+            required_endorsements = cur.fetchall()
+
+            for endt in required_endorsements:
+                cur.execute("""
+                    INSERT INTO quote_endorsements (quote_id, endorsement_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (quote_id, endt['id']))
+
             conn.commit()
             return {
-                "id": row["id"],
+                "id": quote_id,
                 "quote_name": row["quote_name"],
                 "created_at": row["created_at"],
                 "technical_premium": technical_premium,
                 "risk_adjusted_premium": risk_adjusted_premium,
+                "required_endorsements_attached": len(required_endorsements),
             }
 
 
