@@ -93,6 +93,9 @@ export default function CoverageEditor({
   const [activeTab, setActiveTab] = useState('variable');
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState({});
+  const [showBatchEdit, setShowBatchEdit] = useState(false);
+  const [batchCoverages, setBatchCoverages] = useState([{ id: '', value: 0 }]);
+  const [selectedQuotes, setSelectedQuotes] = useState({});
   const tableRef = useRef(null);
   const treatmentRefs = useRef({});
   const limitInputRefs = useRef({});
@@ -113,6 +116,111 @@ export default function CoverageEditor({
   // For endorsement mode, determine effective aggregate limit
   const effectiveAggregateLimit = newAggregateLimit || aggregateLimit;
   const isAggregateChanging = mode === 'endorsement' && newAggregateLimit && newAggregateLimit !== aggregateLimit;
+
+  // Primary quotes for batch selection (filter out excess)
+  const primaryQuotes = (allQuotes || []).filter(q => q.position !== 'excess');
+
+  // All coverage options for batch edit dropdown
+  const allCoverageOptions = [
+    ...SUBLIMIT_COVERAGES.map(c => ({ ...c, type: 'sublimit' })),
+    ...AGGREGATE_COVERAGES.map(c => ({ ...c, type: 'aggregate' })),
+  ];
+
+  // Sublimit options for batch edit
+  const sublimitOptions = [
+    { label: '$100K', value: 100000 },
+    { label: '$250K', value: 250000 },
+    { label: '$500K', value: 500000 },
+    { label: '$1M', value: 1000000 },
+    { label: '50% Agg', value: Math.floor(effectiveAggregateLimit / 2) },
+    { label: 'Aggregate', value: effectiveAggregateLimit },
+    { label: 'None', value: 0 },
+    { label: 'Custom...', value: 'custom' },
+  ];
+
+  // Aggregate options for batch edit
+  const aggregateOptions = [
+    { label: 'Full Limits', value: 'full' },
+    { label: '$1M', value: 1000000 },
+    { label: 'No Coverage', value: 0 },
+    { label: 'Custom...', value: 'custom' },
+  ];
+
+  // Initialize selected quotes when batch edit opens
+  useEffect(() => {
+    if (showBatchEdit && primaryQuotes.length > 0) {
+      const initial = {};
+      primaryQuotes.forEach(q => { initial[q.id] = true; });
+      setSelectedQuotes(initial);
+    }
+  }, [showBatchEdit]);
+
+  // Get tower limit for a quote
+  const getTowerLimit = (q) => {
+    const tower = q?.tower_json || [];
+    const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI')) || tower[0];
+    return cmaiLayer?.limit || 1000000;
+  };
+
+  // Batch edit mutation
+  const batchMutation = useMutation({
+    mutationFn: async ({ coverageUpdates, quoteIds, quotesData }) => {
+      const results = [];
+      for (const qId of quoteIds) {
+        const targetQuote = quotesData.find(q => q.id === qId);
+        if (!targetQuote) continue;
+
+        const targetLimit = getTowerLimit(targetQuote) || 1000000;
+        const existingCoverages = targetQuote.coverages || {};
+
+        const updatedCoverages = {
+          ...existingCoverages,
+          aggregate_coverages: { ...(existingCoverages.aggregate_coverages || {}) },
+          sublimit_coverages: { ...(existingCoverages.sublimit_coverages || {}) },
+        };
+
+        coverageUpdates.forEach(({ id, value, type }) => {
+          const actualValue = value === 'full' ? targetLimit : value;
+          if (type === 'sublimit') {
+            updatedCoverages.sublimit_coverages[id] = actualValue;
+          } else {
+            updatedCoverages.aggregate_coverages[id] = actualValue;
+          }
+        });
+
+        const result = await updateQuoteOption(qId, { coverages: updatedCoverages });
+        results.push(result);
+      }
+      return results;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+      setShowBatchEdit(false);
+      setBatchCoverages([{ id: '', value: 0 }]);
+    },
+  });
+
+  const handleBatchApply = () => {
+    const selectedIds = Object.entries(selectedQuotes)
+      .filter(([_, selected]) => selected)
+      .map(([id]) => id);
+
+    const coverageUpdates = batchCoverages
+      .filter(bc => bc.id)
+      .map(bc => {
+        const covDef = allCoverageOptions.find(c => c.id === bc.id);
+        return { id: bc.id, value: bc.value, type: covDef?.type || 'sublimit' };
+      });
+
+    if (selectedIds.length > 0 && coverageUpdates.length > 0) {
+      batchMutation.mutate({
+        coverageUpdates,
+        quoteIds: selectedIds,
+        quotesData: allQuotes || primaryQuotes
+      });
+    }
+  };
 
   // Reset editing state when coverages change externally
   useEffect(() => {
@@ -305,6 +413,227 @@ export default function CoverageEditor({
 
   return (
     <div ref={tableRef} className="bg-white">
+      {/* Header with Batch Edit button */}
+      {mode === 'quote' && showBatchEditProp && primaryQuotes.length > 1 && !embedded && (
+        <div className="flex items-center justify-end py-2 border-b border-gray-100">
+          <button
+            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+            onClick={() => setShowBatchEdit(!showBatchEdit)}
+          >
+            {showBatchEdit ? 'Close Batch Edit' : 'Batch Edit'}
+          </button>
+        </div>
+      )}
+
+      {/* Batch Edit Panel */}
+      {mode === 'quote' && showBatchEdit && (
+        <div className="mb-4 p-4 bg-purple-50 rounded-lg border border-purple-200">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-medium text-purple-800">
+              Update coverages across multiple quote options
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="text-xs text-purple-600 hover:text-purple-800 underline"
+                onClick={() => {
+                  const rows = [];
+                  SUBLIMIT_COVERAGES.forEach(cov => {
+                    const val = getSublimitValue(cov.id, cov.default);
+                    rows.push({ id: cov.id, value: val });
+                  });
+                  AGGREGATE_COVERAGES.forEach(cov => {
+                    const val = getAggregateValue(cov.id);
+                    rows.push({ id: cov.id, value: val === effectiveAggregateLimit ? 'full' : val });
+                  });
+                  setBatchCoverages(rows);
+                }}
+              >
+                Load Current Settings
+              </button>
+              <button
+                className="text-xs text-gray-500 hover:text-gray-700 underline"
+                onClick={() => setBatchCoverages([{ id: '', value: 0 }])}
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
+
+          {/* Column headers */}
+          <div className="grid grid-cols-[1fr_140px_32px] gap-2 mb-1 text-xs text-gray-500 font-medium px-1">
+            <div>Coverage</div>
+            <div>New Value</div>
+            <div></div>
+          </div>
+
+          {/* Coverage rows */}
+          <div className="space-y-2 mb-4">
+            {batchCoverages.map((bc, idx) => {
+              const isAggregate = allCoverageOptions.find(c => c.id === bc.id)?.type === 'aggregate';
+              const baseOptions = isAggregate ? aggregateOptions : sublimitOptions;
+              const isBatchEditing = bc.customMode;
+
+              const presetValues = isAggregate
+                ? ['full', 1000000, 0]
+                : [100000, 250000, 500000, 1000000, Math.floor(effectiveAggregateLimit / 2), effectiveAggregateLimit, 0];
+              const isCustomValue = bc.value !== 'full' && typeof bc.value === 'number' && !presetValues.includes(bc.value);
+
+              const options = [...baseOptions];
+              if (isCustomValue) {
+                options.splice(options.length - 1, 0, {
+                  label: formatCurrency(bc.value),
+                  value: bc.value
+                });
+              }
+
+              return (
+                <div key={idx} className="grid grid-cols-[1fr_140px_32px] gap-2 items-center">
+                  <select
+                    className="text-sm border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-purple-400"
+                    value={bc.id}
+                    onChange={(e) => {
+                      const newBatch = [...batchCoverages];
+                      const covDef = allCoverageOptions.find(c => c.id === e.target.value);
+                      newBatch[idx] = {
+                        id: e.target.value,
+                        value: covDef?.type === 'aggregate' ? 'full' : (covDef?.default || 250000)
+                      };
+                      setBatchCoverages(newBatch);
+                    }}
+                  >
+                    <option value="">Select coverage...</option>
+                    <optgroup label="Variable Limits">
+                      {SUBLIMIT_COVERAGES.map(c => (
+                        <option key={c.id} value={c.id}>{c.label}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Standard Limits">
+                      {AGGREGATE_COVERAGES.map(c => (
+                        <option key={c.id} value={c.id}>{c.label}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                  {isBatchEditing ? (
+                    <input
+                      type="text"
+                      className="text-sm border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-purple-400"
+                      placeholder="Enter amount"
+                      autoFocus
+                      value={bc.customInput || ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                        const formatted = raw ? formatNumberWithCommas(Number(raw)) : '';
+                        const newBatch = [...batchCoverages];
+                        newBatch[idx] = { ...newBatch[idx], customInput: formatted };
+                        setBatchCoverages(newBatch);
+                      }}
+                      onBlur={(e) => {
+                        const parsed = parseFormattedNumber(e.target.value);
+                        const newBatch = [...batchCoverages];
+                        if (parsed && Number(parsed) >= 0) {
+                          newBatch[idx] = { ...newBatch[idx], value: Number(parsed), customMode: false, customInput: undefined };
+                        } else {
+                          newBatch[idx] = { ...newBatch[idx], customMode: false, customInput: undefined };
+                        }
+                        setBatchCoverages(newBatch);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.target.blur();
+                        if (e.key === 'Escape') {
+                          const newBatch = [...batchCoverages];
+                          newBatch[idx] = { ...newBatch[idx], customMode: false, customInput: undefined };
+                          setBatchCoverages(newBatch);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <select
+                      className="text-sm border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-purple-400"
+                      value={bc.value}
+                      onChange={(e) => {
+                        const newBatch = [...batchCoverages];
+                        if (e.target.value === 'custom') {
+                          newBatch[idx] = { ...newBatch[idx], customMode: true, customInput: '' };
+                        } else {
+                          const val = e.target.value === 'full' ? 'full' : Number(e.target.value);
+                          newBatch[idx] = { ...newBatch[idx], value: val };
+                        }
+                        setBatchCoverages(newBatch);
+                      }}
+                    >
+                      {options.map(opt => (
+                        <option key={opt.label} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    className="text-red-500 hover:text-red-700 text-lg"
+                    onClick={() => {
+                      if (batchCoverages.length > 1) {
+                        setBatchCoverages(batchCoverages.filter((_, i) => i !== idx));
+                      } else {
+                        setBatchCoverages([{ id: '', value: 0 }]);
+                      }
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            className="text-xs text-purple-600 hover:text-purple-800 mb-4"
+            onClick={() => setBatchCoverages([...batchCoverages, { id: '', value: 0 }])}
+          >
+            + Add coverage
+          </button>
+
+          {/* Quote selection */}
+          <div className="text-sm font-medium text-gray-700 mb-2">Apply to:</div>
+          <div className="flex flex-wrap gap-3 mb-4">
+            {primaryQuotes.map(q => (
+              <label key={q.id} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedQuotes[q.id] || false}
+                  onChange={(e) => setSelectedQuotes({ ...selectedQuotes, [q.id]: e.target.checked })}
+                  className="rounded border-gray-300 text-purple-600"
+                />
+                {q.quote_name || 'Unnamed'}
+              </label>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              className="text-sm bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50"
+              onClick={handleBatchApply}
+              disabled={batchMutation.isPending || batchCoverages.every(bc => !bc.id)}
+            >
+              {batchMutation.isPending ? 'Applying...' : 'Apply to Selected'}
+            </button>
+            <button
+              className="text-sm border border-gray-300 text-gray-600 px-3 py-1.5 rounded hover:bg-gray-50"
+              onClick={() => {
+                const all = {};
+                primaryQuotes.forEach(q => { all[q.id] = true; });
+                setSelectedQuotes(all);
+              }}
+            >
+              Select All
+            </button>
+            <button
+              className="text-sm border border-gray-300 text-gray-600 px-3 py-1.5 rounded hover:bg-gray-50"
+              onClick={() => setSelectedQuotes({})}
+            >
+              Select None
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Edit controls - shown when editing (not in embedded mode where controls are in parent) */}
       {isEditing && !embedded && (
         <div className="flex items-center justify-end gap-2 py-2 border-b border-gray-100">

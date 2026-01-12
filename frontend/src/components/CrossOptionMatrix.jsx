@@ -7,7 +7,6 @@ import {
   unlinkSubjectivityFromQuote,
   linkEndorsementToQuote,
   unlinkEndorsementFromQuote,
-  applyToAllQuotes,
 } from '../api/client';
 
 // Format compact currency (e.g., $5M, $25K)
@@ -160,16 +159,6 @@ export default function CrossOptionMatrix({ submissionId, quotes, currentQuoteId
             >
               Subjectivities ({subjectivities.length})
             </button>
-            <button
-              className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                activeTab === 'coverages'
-                  ? 'border-purple-500 text-purple-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-              onClick={() => setActiveTab('coverages')}
-            >
-              Coverages
-            </button>
           </div>
 
           {/* Matrix Table */}
@@ -284,139 +273,12 @@ export default function CrossOptionMatrix({ submissionId, quotes, currentQuoteId
           </div>
           )}
 
-          {/* Coverages Tab Content */}
-          {activeTab === 'coverages' && (
-            <CoveragesMatrixContent
-              quotes={quotes}
-              quoteOptions={quoteOptions}
-              currentQuoteId={currentQuoteId}
-              submissionId={submissionId}
-            />
-          )}
-
           {/* Quick tip */}
-          {activeTab !== 'coverages' && (
-            <p className="text-xs text-gray-400 mt-3">
-              Check boxes to assign items to each quote option. Changes save automatically.
-            </p>
-          )}
+          <p className="text-xs text-gray-400 mt-3">
+            Check boxes to assign items to each quote option. Changes save automatically.
+          </p>
         </div>
       )}
-    </div>
-  );
-}
-
-// Coverages comparison and apply component
-function CoveragesMatrixContent({ quotes, quoteOptions, currentQuoteId, submissionId }) {
-  const queryClient = useQueryClient();
-  const [sourceQuoteId, setSourceQuoteId] = useState('');
-  const [applySuccess, setApplySuccess] = useState(null);
-
-  // Group quotes by position
-  const primaryQuotes = quotes.filter(q => q.position !== 'excess');
-  const excessQuotes = quotes.filter(q => q.position === 'excess');
-
-  // Apply coverages mutation
-  const applyMutation = useMutation({
-    mutationFn: (fromQuoteId) => applyToAllQuotes(fromQuoteId, { coverages: true }),
-    onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
-      setApplySuccess(response.data?.coverages_updated || 0);
-      setTimeout(() => setApplySuccess(null), 3000);
-      setSourceQuoteId('');
-    },
-  });
-
-  // Count coverage differences
-  const countCoverageKeys = (coverages) => {
-    if (!coverages) return 0;
-    const agg = Object.keys(coverages.aggregate_coverages || {}).length;
-    const sub = Object.keys(coverages.sublimit_coverages || {}).length;
-    return agg + sub;
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Primary Quotes */}
-      {primaryQuotes.length > 0 && (
-        <div>
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Primary Options
-          </div>
-          <div className="space-y-2">
-            {primaryQuotes.map(q => {
-              const opt = quoteOptions.find(o => o.id === q.id);
-              const covCount = countCoverageKeys(q.coverages);
-              return (
-                <div
-                  key={q.id}
-                  className={`flex items-center justify-between p-2 rounded border ${
-                    q.id === currentQuoteId
-                      ? 'border-purple-200 bg-purple-50'
-                      : 'border-gray-100 bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-700">{opt?.name || 'Option'}</span>
-                    <span className="text-xs text-gray-400">{covCount} coverages configured</span>
-                  </div>
-                  {primaryQuotes.length > 1 && q.id !== currentQuoteId && (
-                    <button
-                      onClick={() => applyMutation.mutate(q.id)}
-                      disabled={applyMutation.isPending}
-                      className="text-xs text-purple-600 hover:text-purple-700 font-medium disabled:opacity-50"
-                    >
-                      Apply to others
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Excess Quotes */}
-      {excessQuotes.length > 0 && (
-        <div>
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Excess Options
-          </div>
-          <div className="space-y-2">
-            {excessQuotes.map(q => {
-              const opt = quoteOptions.find(o => o.id === q.id);
-              const sublimitCount = (q.sublimits || []).length;
-              return (
-                <div
-                  key={q.id}
-                  className={`flex items-center justify-between p-2 rounded border ${
-                    q.id === currentQuoteId
-                      ? 'border-purple-200 bg-purple-50'
-                      : 'border-gray-100 bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-gray-700">{opt?.name || 'Option'}</span>
-                    <span className="text-xs text-gray-400">{sublimitCount} sublimits</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Success message */}
-      {applySuccess !== null && (
-        <div className="text-sm text-green-600 text-center py-2">
-          Coverages applied to {applySuccess} option{applySuccess !== 1 ? 's' : ''}
-        </div>
-      )}
-
-      {/* Tip */}
-      <p className="text-xs text-gray-400">
-        Click "Apply to others" to copy coverages to all options of the same type.
-      </p>
     </div>
   );
 }
