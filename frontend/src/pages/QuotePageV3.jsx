@@ -4485,59 +4485,6 @@ export default function QuotePageV3() {
           </>
         )}
 
-        {/* Header Row */}
-        <div className="flex items-center justify-between mb-4">
-          {/* Structure Selector */}
-          <button
-            onClick={() => setIsStructurePickerExpanded(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg hover:border-purple-300 transition-colors text-sm"
-          >
-            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-            </svg>
-            <span className="font-semibold text-gray-800">{activeStructure?.quote_name || 'Select Structure'}</span>
-            {activeStructure?.position === 'excess' && (
-              <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">XS</span>
-            )}
-            <span className="text-xs text-gray-400">{structures.length} options</span>
-          </button>
-
-          {/* Action Buttons */}
-          <div className="flex items-center gap-2 ml-auto">
-            <button
-              onClick={handlePreviewDocument}
-              disabled={isPreviewLoading || !activeStructureId}
-              className="py-2 px-4 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-              </svg>
-              Preview
-            </button>
-            <button
-              onClick={handleGenerateDocument}
-              disabled={generateDocumentMutation.isPending || !activeStructureId}
-              className="py-2 px-4 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Generate
-            </button>
-            <button
-              onClick={handleBindQuote}
-              disabled={isBindLoading || !activeStructureId}
-              className="py-2 px-4 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-1.5 disabled:opacity-50"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Bind
-            </button>
-          </div>
-        </div>
-
         {/* Grid View - Full width comparison table */}
         {viewMode === 'grid' ? (
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
@@ -4701,7 +4648,59 @@ export default function QuotePageV3() {
           </div>
 
           {/* RIGHT - Side Panel */}
-          <div className="w-80 flex-shrink-0 sticky top-6">
+          <div className="w-80 flex-shrink-0 space-y-2">
+            {/* Option Selector + Action Buttons */}
+            <div className="space-y-2">
+              <button
+                onClick={() => setIsStructurePickerExpanded(true)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-lg hover:border-purple-300 transition-colors text-sm"
+              >
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                  </svg>
+                  <span className="font-semibold text-gray-800">{activeStructure?.quote_name || 'Select Structure'}</span>
+                  {activeStructure?.position === 'excess' && (
+                    <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">XS</span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-400">{structures.length} options</span>
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handlePreviewDocument}
+                  disabled={isPreviewLoading || !activeStructureId}
+                  className="flex-1 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  Preview
+                </button>
+                <button
+                  onClick={handleGenerateDocument}
+                  disabled={generateDocumentMutation.isPending || !activeStructureId}
+                  className="flex-1 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Generate
+                </button>
+                <button
+                  onClick={handleBindQuote}
+                  disabled={isBindLoading || !activeStructureId}
+                  className="flex-1 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Bind
+                </button>
+              </div>
+            </div>
+
             <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
 
               {/* Tab Navigation - Variation-specific only (Terms + Premium) */}
