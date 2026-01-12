@@ -3458,7 +3458,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
             ))}
           </div>
 
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="border border-gray-200 rounded-lg">
             <div className="grid grid-cols-[1fr_220px] gap-4 px-4 py-2 text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
               <span>Subjectivity Name</span>
               <span className="text-right">Applies To</span>
@@ -6350,7 +6350,7 @@ export default function QuotePageV3() {
 
         {/* Grid View - Full width comparison table */}
         {viewMode === 'grid' ? (
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-lg">
             <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-gray-800">All Quote Options</h2>
