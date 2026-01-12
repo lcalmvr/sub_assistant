@@ -31,6 +31,7 @@ import {
 import CoverageEditor, { SUBLIMIT_COVERAGES } from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
 import RetroScheduleEditor from '../components/RetroScheduleEditor';
+import CrossOptionMatrix from '../components/CrossOptionMatrix';
 
 // ============================================================================
 // UTILITIES
@@ -4623,6 +4624,16 @@ export default function QuotePageV3() {
                 >
                   Subjectivities
                 </button>
+                <button
+                  onClick={() => setMainTab('sharing')}
+                  className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                    mainTab === 'sharing'
+                      ? 'border-purple-600 text-purple-600 bg-purple-50/50'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  Sharing
+                </button>
                 {/* Spacer + Edit Controls */}
                 <div className="flex-1" />
                 {editControls && (
@@ -4676,6 +4687,14 @@ export default function QuotePageV3() {
 
                 {mainTab === 'subjectivities' && (
                   <SubjectivitiesTabContent structureId={activeStructureId} submissionId={submissionId} setEditControls={setEditControls} />
+                )}
+
+                {mainTab === 'sharing' && (
+                  <CrossOptionMatrix
+                    submissionId={submissionId}
+                    quotes={structures}
+                    currentQuoteId={activeStructureId}
+                  />
                 )}
               </div>
             </div>
