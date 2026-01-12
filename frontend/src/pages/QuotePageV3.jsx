@@ -211,14 +211,13 @@ function StructurePicker({ structures, activeStructureId, onSelect, onCreate, on
                   <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium flex-shrink-0">XS</span>
                 )}
               </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-500">{structure.variations?.length || 1} variation{(structure.variations?.length || 1) !== 1 ? 's' : ''}</span>
-                {premium > 0 && (
+              {premium > 0 && (
+                <div className="text-xs">
                   <span className={isActive ? 'text-purple-600 font-medium' : 'text-gray-600'}>
                     {formatCurrency(premium)}
                   </span>
-                )}
-              </div>
+                </div>
+              )}
             </button>
           );
         })}
@@ -4464,29 +4463,6 @@ export default function QuotePageV3() {
                 </div>
               </div>
 
-              {/* Context Header */}
-              <div className="px-4 py-2 border-b border-gray-100 bg-gray-50/70">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-[9px] text-gray-400 uppercase">Editing</div>
-                    <div className="text-xs font-semibold text-gray-700 flex items-center gap-2">
-                      <span>{activeStructure?.quote_name}</span>
-                      {variations.length > 1 && (
-                        <span className="text-[10px] text-gray-500">Variation {activeVariation?.label || 'A'}</span>
-                      )}
-                    </div>
-                  </div>
-                  {variations.length === 1 && (
-                    <button
-                      onClick={() => createVariationMutation.mutate(activeStructureId)}
-                      disabled={createVariationMutation.isPending}
-                      className="text-[10px] text-purple-600 hover:text-purple-700 font-medium disabled:opacity-50"
-                    >
-                      + Add Variation
-                    </button>
-                  )}
-                </div>
-              </div>
 
               {/* Tab Content */}
               <div className="p-4 max-h-[500px] overflow-y-auto">
