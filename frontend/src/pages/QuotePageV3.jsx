@@ -1540,7 +1540,7 @@ const RETRO_OPTIONS = [
 const DEFAULT_COVERAGES = ['Cyber', 'Tech E&O'];
 const ADDITIONAL_COVERAGES = ['Media'];
 
-function CompactRetroEditor({ schedule = [], position = 'primary', onSave }) {
+function CompactRetroEditor({ schedule = [], position = 'primary', excludedCoverages = [], onSave }) {
   const [localSchedule, setLocalSchedule] = useState(() => {
     if (schedule.length > 0) return schedule;
     return DEFAULT_COVERAGES.map(cov => ({
@@ -1548,6 +1548,11 @@ function CompactRetroEditor({ schedule = [], position = 'primary', onSave }) {
       retro: cov === 'Cyber' ? 'full_prior_acts' : 'inception'
     }));
   });
+
+  // Filter out excluded coverages from display
+  const displaySchedule = localSchedule.filter(
+    entry => !excludedCoverages.includes(entry.coverage)
+  );
   const [showAddCoverage, setShowAddCoverage] = useState(false);
   const [customCoverage, setCustomCoverage] = useState('');
 
@@ -1594,11 +1599,11 @@ function CompactRetroEditor({ schedule = [], position = 'primary', onSave }) {
     <div className="space-y-3">
       <label className="text-xs font-semibold text-gray-500 uppercase">Retro Dates</label>
 
-      {localSchedule.map((entry) => (
+      {displaySchedule.map((entry) => (
         <div key={entry.coverage} className="space-y-1">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-700">{entry.coverage}</span>
-            {!DEFAULT_COVERAGES.includes(entry.coverage) && (
+            {!DEFAULT_COVERAGES.includes(entry.coverage) && !excludedCoverages.includes(entry.coverage) && (
               <button onClick={() => removeCoverage(entry.coverage)} className="text-gray-400 hover:text-red-500">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1892,11 +1897,23 @@ function RetroPanel({ structure, submissionId }) {
     },
   });
 
+  // Get excluded coverages from aggregate_coverages (value === 0 means excluded)
+  const aggregateCoverages = structure?.coverages?.aggregate_coverages || {};
+  const excludedCoverages = Object.entries(aggregateCoverages)
+    .filter(([_, value]) => value === 0)
+    .map(([id]) => {
+      // Map coverage IDs to display names used in retro schedule
+      if (id === 'tech_eo') return 'Tech E&O';
+      if (id === 'network_security_privacy') return 'Cyber';
+      return id;
+    });
+
   return (
     <div className="space-y-4">
       <CompactRetroEditor
         schedule={structure?.retro_schedule || []}
         position={structure?.position || 'primary'}
+        excludedCoverages={excludedCoverages}
         onSave={(schedule) => updateStructureMutation.mutate({ retro_schedule: schedule })}
       />
     </div>
@@ -4164,6 +4181,40 @@ export default function QuotePageV3() {
   const [isStructurePickerExpanded, setIsStructurePickerExpanded] = useState(false);
   const [editControls, setEditControls] = useState(null); // For Cancel/Save buttons from child components
   const dropdownRef = useRef(null);
+  const optionSelectorButtonRef = useRef(null);
+  const [modalPosition, setModalPosition] = useState({ top: 0, right: 0 });
+
+  // Calculate modal position relative to button when it opens
+  useEffect(() => {
+    if (isStructurePickerExpanded && optionSelectorButtonRef.current) {
+      const buttonRect = optionSelectorButtonRef.current.getBoundingClientRect();
+      const modalWidth = 320; // w-80 = 320px
+      const viewportPadding = 16; // 16px padding from viewport edges
+      
+      // Position modal directly over the button, with top edges aligned
+      let top = buttonRect.top;
+      let right = window.innerWidth - buttonRect.right;
+      
+      // Ensure modal doesn't go off bottom of screen
+      const estimatedModalHeight = 500; // Approximate max height
+      if (top + estimatedModalHeight > window.innerHeight - viewportPadding) {
+        // Adjust to fit within viewport, keeping top aligned if possible
+        top = Math.max(viewportPadding, window.innerHeight - estimatedModalHeight - viewportPadding);
+      }
+      
+      // Ensure modal doesn't go off right edge
+      if (right < viewportPadding) {
+        right = viewportPadding;
+      }
+      
+      // Ensure modal doesn't go off left edge
+      if (right + modalWidth > window.innerWidth - viewportPadding) {
+        right = window.innerWidth - modalWidth - viewportPadding;
+      }
+      
+      setModalPosition({ top, right });
+    }
+  }, [isStructurePickerExpanded]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -4465,7 +4516,13 @@ export default function QuotePageV3() {
         {isStructurePickerExpanded && (
           <>
             <div className="fixed inset-0 bg-black/20 z-40" onClick={() => setIsStructurePickerExpanded(false)} />
-            <div className="fixed right-6 top-20 z-50 w-80">
+            <div 
+              className="fixed z-50 w-80"
+              style={{ 
+                top: `${modalPosition.top}px`, 
+                right: `${modalPosition.right}px` 
+              }}
+            >
               <StructurePicker
                 structures={structures}
                 activeStructureId={activeStructureId}
@@ -4652,6 +4709,7 @@ export default function QuotePageV3() {
             {/* Option Selector + Action Buttons */}
             <div className="space-y-2">
               <button
+                ref={optionSelectorButtonRef}
                 onClick={() => setIsStructurePickerExpanded(true)}
                 className="w-full flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-lg hover:border-purple-300 transition-colors text-sm"
               >
