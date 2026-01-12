@@ -656,6 +656,42 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
             # Terms text
             context["terms"] = """Coverage is subject to the terms, conditions, and exclusions of the policy. This quote is valid for 30 days from the date of issuance. Binding is subject to receipt of completed application, premium payment, and underwriter approval. Claims-made policy form applies; coverage is provided for claims first made during the policy period. Defense costs are included within the policy limit unless otherwise stated."""
 
+    # Fetch enhancement data for document generation
+    # Enhancements provide data like Additional Insureds, Modified ERP Terms, etc.
+    try:
+        from core.enhancement_management import get_quote_enhancements
+        quote_enhancements = get_quote_enhancements(quote_option_id)
+
+        for enhancement in quote_enhancements:
+            type_code = enhancement.get("type_code", "")
+            data = enhancement.get("data", {})
+
+            # Map enhancement data to context based on type
+            if type_code == "ADD-INSURED":
+                # Additional insureds - array of {name, street, city, state, zip, relationship}
+                context["additional_insureds"] = data if isinstance(data, list) else []
+            elif type_code == "MOD-ERP":
+                # Modified ERP terms - object with period and premium details
+                context["erp_basic_period_days"] = data.get("basic_period_days", 60)
+                context["erp_supplemental_period_months"] = data.get("supplemental_period_months", 12)
+                context["erp_supplemental_premium_pct"] = data.get("supplemental_premium_pct", 100)
+                context["erp_notes"] = data.get("notes", "")
+            elif type_code == "MOD-HAMMER":
+                # Modified hammer clause - just insurer/insured percentage split
+                context["hammer_insurer_pct"] = data.get("insurer_percentage", 50)
+                context["hammer_insured_pct"] = data.get("insured_percentage", 50)
+            elif type_code == "SUB-THRESHOLD":
+                # Subsidiary acquisition threshold
+                context["sub_revenue_threshold"] = data.get("revenue_threshold")
+                context["sub_asset_threshold"] = data.get("asset_threshold")
+                context["sub_notice_days"] = data.get("notice_days", 90)
+                context["sub_coverage_period_days"] = data.get("coverage_period_days", 90)
+
+    except Exception as e:
+        # Don't fail document generation if enhancement lookup fails
+        import logging
+        logging.warning(f"Failed to load quote enhancements: {e}")
+
     # Fetch endorsement component templates (header, lead_in, closing)
     component_templates = get_endorsement_component_templates(context.get("position", "primary"))
 

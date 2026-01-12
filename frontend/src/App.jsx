@@ -68,6 +68,7 @@ import CompsPage from './pages/CompsPage';
 import RatingPage from './pages/RatingPage';
 import QuotePage from './pages/QuotePage';
 import QuotePageV2 from './pages/QuotePageV2';
+import QuotePageV3 from './pages/QuotePageV3';
 import PolicyPage from './pages/PolicyPage';
 import RenewalPage from './pages/RenewalPage';
 
@@ -137,6 +138,8 @@ function App() {
             <Route path="quote" element={<QuotePage />} />
             {/* V2 Quote page for testing */}
             <Route path="quote-v2" element={<QuotePageV2 />} />
+            {/* V3 Quote page with Structure/Variation model */}
+            <Route path="quote-v3" element={<QuotePageV3 />} />
             <Route path="policy" element={<PolicyPage />} />
           </Route>
 

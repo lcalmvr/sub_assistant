@@ -38,6 +38,10 @@ import {
   getClaimsRecommendations,
   applyClaimsRecommendations,
   refreshClaimsAnalytics,
+  getEnhancementTypes,
+  createEnhancementType,
+  updateEnhancementType,
+  deleteEnhancementType,
 } from '../api/client';
 import RemarketAnalyticsCard from '../components/RemarketAnalyticsCard';
 import RenewalQueueCard from '../components/RenewalQueueCard';
@@ -3230,6 +3234,405 @@ function ClaimsAnalyticsTab() {
   );
 }
 
+// Enhancement Types Admin Tab
+function EnhancementTypesTab() {
+  const queryClient = useQueryClient();
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [schemaText, setSchemaText] = useState('');
+  const [schemaError, setSchemaError] = useState(null);
+  const [newType, setNewType] = useState({
+    code: '',
+    name: '',
+    description: '',
+    data_schema: {},
+    linked_endorsement_code: '',
+    position: 'either',
+    sort_order: 100,
+  });
+
+  const { data: enhancementTypes, isLoading } = useQuery({
+    queryKey: ['enhancement-types-admin'],
+    queryFn: () => getEnhancementTypes(null, false).then(res => res.data),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data) => createEnhancementType(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['enhancement-types-admin'] });
+      setShowAddForm(false);
+      setNewType({
+        code: '',
+        name: '',
+        description: '',
+        data_schema: {},
+        linked_endorsement_code: '',
+        position: 'either',
+        sort_order: 100,
+      });
+      setSchemaText('');
+      setSchemaError(null);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }) => updateEnhancementType(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['enhancement-types-admin'] });
+      setEditingId(null);
+      setEditForm({});
+      setSchemaText('');
+      setSchemaError(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id) => deleteEnhancementType(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['enhancement-types-admin'] });
+    },
+  });
+
+  const startEdit = (type) => {
+    setEditingId(type.id);
+    setEditForm({
+      code: type.code,
+      name: type.name,
+      description: type.description || '',
+      linked_endorsement_code: type.linked_endorsement_code || '',
+      position: type.position || 'either',
+      sort_order: type.sort_order || 100,
+      active: type.active !== false,
+    });
+    setSchemaText(JSON.stringify(type.data_schema, null, 2));
+    setSchemaError(null);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+    setSchemaText('');
+    setSchemaError(null);
+  };
+
+  const saveEdit = () => {
+    try {
+      const schema = JSON.parse(schemaText);
+      updateMutation.mutate({
+        id: editingId,
+        data: {
+          ...editForm,
+          data_schema: schema,
+          linked_endorsement_code: editForm.linked_endorsement_code || null,
+        },
+      });
+    } catch (e) {
+      setSchemaError('Invalid JSON schema');
+    }
+  };
+
+  const handleCreate = () => {
+    if (!newType.code.trim() || !newType.name.trim()) return;
+    try {
+      const schema = schemaText ? JSON.parse(schemaText) : { type: 'object', properties: {} };
+      createMutation.mutate({
+        ...newType,
+        data_schema: schema,
+        linked_endorsement_code: newType.linked_endorsement_code || null,
+      });
+    } catch (e) {
+      setSchemaError('Invalid JSON schema');
+    }
+  };
+
+  const positionLabel = (pos) => {
+    if (!pos || pos === 'either') return 'Either';
+    return pos.charAt(0).toUpperCase() + pos.slice(1);
+  };
+
+  if (isLoading) {
+    return <div className="text-gray-500">Loading enhancement types...</div>;
+  }
+
+  const types = enhancementTypes?.enhancement_types || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-gray-500">
+          {types.length} enhancement types
+        </div>
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="btn btn-primary btn-sm"
+        >
+          {showAddForm ? 'Cancel' : '+ Add Type'}
+        </button>
+      </div>
+
+      {/* Add Form */}
+      {showAddForm && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 space-y-3">
+          <div className="text-sm font-medium text-purple-900">New Enhancement Type</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Code</label>
+              <input
+                type="text"
+                className="form-input w-full text-sm"
+                placeholder="e.g., MOD-DEDUCTIBLE"
+                value={newType.code}
+                onChange={(e) => setNewType({ ...newType, code: e.target.value.toUpperCase() })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Name</label>
+              <input
+                type="text"
+                className="form-input w-full text-sm"
+                placeholder="e.g., Modified Deductible"
+                value={newType.name}
+                onChange={(e) => setNewType({ ...newType, name: e.target.value })}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Description</label>
+            <input
+              type="text"
+              className="form-input w-full text-sm"
+              placeholder="Short description..."
+              value={newType.description}
+              onChange={(e) => setNewType({ ...newType, description: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Position</label>
+              <select
+                className="form-select text-sm w-full"
+                value={newType.position}
+                onChange={(e) => setNewType({ ...newType, position: e.target.value })}
+              >
+                <option value="either">Either</option>
+                <option value="primary">Primary only</option>
+                <option value="excess">Excess only</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Linked Endorsement Code</label>
+              <input
+                type="text"
+                className="form-input w-full text-sm"
+                placeholder="e.g., END-DED-001"
+                value={newType.linked_endorsement_code}
+                onChange={(e) => setNewType({ ...newType, linked_endorsement_code: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Sort Order</label>
+              <input
+                type="number"
+                className="form-input w-full text-sm"
+                value={newType.sort_order}
+                onChange={(e) => setNewType({ ...newType, sort_order: parseInt(e.target.value) || 100 })}
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Data Schema (JSON)</label>
+            <textarea
+              className={`form-input w-full text-xs font-mono ${schemaError ? 'border-red-500' : ''}`}
+              rows={5}
+              placeholder='{"type": "object", "properties": {...}}'
+              value={schemaText}
+              onChange={(e) => {
+                setSchemaText(e.target.value);
+                setSchemaError(null);
+              }}
+            />
+            {schemaError && <div className="text-xs text-red-600 mt-1">{schemaError}</div>}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleCreate}
+              disabled={!newType.code.trim() || !newType.name.trim() || createMutation.isPending}
+              className="btn btn-primary btn-sm"
+            >
+              {createMutation.isPending ? 'Creating...' : 'Create'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Types List */}
+      <div className="space-y-2">
+        {types.map((type) => (
+          <div
+            key={type.id}
+            className={`border rounded-lg p-4 ${
+              type.active === false ? 'bg-gray-50 border-gray-200 opacity-60' : 'bg-white border-gray-200'
+            }`}
+          >
+            {editingId === type.id ? (
+              /* Edit Mode */
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Code</label>
+                    <input
+                      type="text"
+                      className="form-input w-full text-sm"
+                      value={editForm.code}
+                      onChange={(e) => setEditForm({ ...editForm, code: e.target.value.toUpperCase() })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Name</label>
+                    <input
+                      type="text"
+                      className="form-input w-full text-sm"
+                      value={editForm.name}
+                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Description</label>
+                  <input
+                    type="text"
+                    className="form-input w-full text-sm"
+                    value={editForm.description}
+                    onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  />
+                </div>
+                <div className="grid grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Position</label>
+                    <select
+                      className="form-select text-sm w-full"
+                      value={editForm.position}
+                      onChange={(e) => setEditForm({ ...editForm, position: e.target.value })}
+                    >
+                      <option value="either">Either</option>
+                      <option value="primary">Primary only</option>
+                      <option value="excess">Excess only</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Linked Endorsement</label>
+                    <input
+                      type="text"
+                      className="form-input w-full text-sm"
+                      value={editForm.linked_endorsement_code}
+                      onChange={(e) => setEditForm({ ...editForm, linked_endorsement_code: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 mb-1">Sort Order</label>
+                    <input
+                      type="number"
+                      className="form-input w-full text-sm"
+                      value={editForm.sort_order}
+                      onChange={(e) => setEditForm({ ...editForm, sort_order: parseInt(e.target.value) || 100 })}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={editForm.active}
+                        onChange={(e) => setEditForm({ ...editForm, active: e.target.checked })}
+                      />
+                      Active
+                    </label>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-600 mb-1">Data Schema (JSON)</label>
+                  <textarea
+                    className={`form-input w-full text-xs font-mono ${schemaError ? 'border-red-500' : ''}`}
+                    rows={6}
+                    value={schemaText}
+                    onChange={(e) => {
+                      setSchemaText(e.target.value);
+                      setSchemaError(null);
+                    }}
+                  />
+                  {schemaError && <div className="text-xs text-red-600 mt-1">{schemaError}</div>}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={saveEdit}
+                    disabled={updateMutation.isPending}
+                    className="btn btn-primary btn-sm"
+                  >
+                    {updateMutation.isPending ? 'Saving...' : 'Save'}
+                  </button>
+                  <button onClick={cancelEdit} className="btn btn-sm">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* View Mode */
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs bg-gray-100 px-2 py-0.5 rounded">
+                      {type.code}
+                    </span>
+                    <span className="font-medium text-gray-900">{type.name}</span>
+                    {type.active === false && (
+                      <span className="text-xs text-gray-400">(inactive)</span>
+                    )}
+                  </div>
+                  {type.description && (
+                    <p className="text-sm text-gray-600 mt-1">{type.description}</p>
+                  )}
+                  <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                    <span>Position: {positionLabel(type.position)}</span>
+                    {type.linked_endorsement_code && (
+                      <span>Endorsement: <code className="bg-gray-100 px-1 rounded">{type.linked_endorsement_code}</code></span>
+                    )}
+                    <span>Order: {type.sort_order}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => startEdit(type)}
+                    className="text-sm text-purple-600 hover:underline"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Delete "${type.name}"? This cannot be undone.`)) {
+                        deleteMutation.mutate(type.id);
+                      }
+                    }}
+                    disabled={deleteMutation.isPending}
+                    className="text-sm text-red-600 hover:underline"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {types.length === 0 && (
+          <div className="text-center text-gray-500 py-8">
+            No enhancement types configured yet.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState('search');
 
@@ -3240,6 +3643,7 @@ export default function AdminPage() {
     { id: 'bound', label: 'Bound Policies' },
     { id: 'templates', label: 'Subjectivity Templates' },
     { id: 'endorsement-components', label: 'Endorsement Components' },
+    { id: 'enhancement-types', label: 'Enhancement Types' },
     { id: 'form-catalog', label: 'Form Catalog' },
     { id: 'schemas', label: 'Extraction Schema' },
     { id: 'extraction', label: 'Extraction Stats' },
@@ -3298,6 +3702,7 @@ export default function AdminPage() {
           {activeTab === 'bound' && <BoundPoliciesTab />}
           {activeTab === 'templates' && <SubjectivityTemplatesTab />}
           {activeTab === 'endorsement-components' && <EndorsementComponentTemplatesTab />}
+          {activeTab === 'enhancement-types' && <EnhancementTypesTab />}
           {activeTab === 'form-catalog' && <PolicyFormCatalogTab />}
           {activeTab === 'schemas' && <ExtractionSchemaTab />}
           {activeTab === 'extraction' && <ExtractionStatsTab />}

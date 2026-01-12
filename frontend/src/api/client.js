@@ -125,6 +125,32 @@ export const bindQuoteOption = (id, force = false) => api.post(`/quotes/${id}/bi
 export const unbindQuoteOption = (id, reason, performedBy = 'frontend_user') =>
   api.post(`/quotes/${id}/unbind`, { reason, performed_by: performedBy });
 
+// Quote Structures & Variations (V3 architecture)
+export const getQuoteStructures = (submissionId) =>
+  api.get(`/submissions/${submissionId}/structures`);
+export const createVariation = (structureId, data) =>
+  api.post(`/structures/${structureId}/variations`, data);
+export const updateVariation = (variationId, data) =>
+  api.patch(`/variations/${variationId}`, data);
+export const deleteVariation = (variationId) =>
+  api.delete(`/variations/${variationId}`);
+
+// Structure Endorsement Scope
+export const getStructureEndorsements = (structureId) =>
+  api.get(`/structures/${structureId}/endorsements`);
+export const setEndorsementScope = (structureId, endorsementId, variationIds) =>
+  api.post(`/structures/${structureId}/endorsements/${endorsementId}/scope`, { variation_ids: variationIds });
+export const syncEndorsementToAll = (structureId, endorsementId) =>
+  api.post(`/structures/${structureId}/endorsements/${endorsementId}/sync-all`);
+
+// Structure Subjectivity Scope
+export const getStructureSubjectivities = (structureId) =>
+  api.get(`/structures/${structureId}/subjectivities`);
+export const setSubjectivityScope = (structureId, subjectivityId, variationIds) =>
+  api.post(`/structures/${structureId}/subjectivities/${subjectivityId}/scope`, { variation_ids: variationIds });
+export const syncSubjectivityToAll = (structureId, subjectivityId) =>
+  api.post(`/structures/${structureId}/subjectivities/${subjectivityId}/sync-all`);
+
 // Documents
 export const generateQuoteDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-document`);
 export const generateBinderDocument = (quoteId) => api.post(`/quotes/${quoteId}/generate-binder`);
@@ -152,6 +178,27 @@ export const updateEndorsementFieldValues = (quoteId, endorsementId, fieldValues
   api.patch(`/quotes/${quoteId}/endorsements/${endorsementId}`, { field_values: fieldValues });
 export const getSubmissionEndorsements = (submissionId) =>
   api.get(`/submissions/${submissionId}/endorsements`);
+
+// Enhancement Types (Admin)
+export const getEnhancementTypes = (position = null, activeOnly = true) => {
+  const params = new URLSearchParams();
+  if (position) params.append('position', position);
+  params.append('active_only', activeOnly);
+  return api.get(`/enhancement-types?${params.toString()}`);
+};
+export const getEnhancementType = (typeId) => api.get(`/enhancement-types/${typeId}`);
+export const createEnhancementType = (data) => api.post('/enhancement-types', data);
+export const updateEnhancementType = (typeId, data) => api.patch(`/enhancement-types/${typeId}`, data);
+export const deleteEnhancementType = (typeId) => api.delete(`/enhancement-types/${typeId}`);
+
+// Quote Enhancements
+export const getQuoteEnhancements = (quoteId) => api.get(`/quotes/${quoteId}/enhancements`);
+export const addQuoteEnhancement = (quoteId, data) => api.post(`/quotes/${quoteId}/enhancements`, data);
+export const updateQuoteEnhancement = (enhancementId, data) => api.patch(`/enhancements/${enhancementId}`, { data });
+export const removeQuoteEnhancement = (enhancementId, alsoRemoveEndorsement = true) =>
+  api.delete(`/enhancements/${enhancementId}?also_remove_endorsement=${alsoRemoveEndorsement}`);
+export const getSubmissionEnhancements = (submissionId) =>
+  api.get(`/submissions/${submissionId}/enhancements`);
 
 // Rating
 export const calculatePremium = (submissionId, params) => api.post(`/submissions/${submissionId}/calculate-premium`, params);

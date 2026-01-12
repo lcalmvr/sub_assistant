@@ -515,6 +515,7 @@ FILL_IN_VARIABLES = {
     "{{aggregate_limit}}": "Aggregate limit (formatted)",
     "{{retention}}": "Retention (formatted)",
     "{{sublimits_schedule}}": "Sublimits schedule table",
+    "{{additional_insureds_schedule}}": "Additional insureds schedule table",
     # Mid-term endorsement data (from change_details)
     "{{endorsement_effective_date}}": "Endorsement effective date",
     "{{endorsement_number}}": "Endorsement number",

@@ -16,6 +16,7 @@ const baseTabs = [
   { name: 'Analyze V2', path: 'analyze-v2' },
   { name: 'Quote', path: 'quote' },
   { name: 'Quote V2', path: 'quote-v2' },
+  { name: 'Quote V3', path: 'quote-v3' },
   { name: 'Policy', path: 'policy' },
 ];
 

@@ -138,6 +138,8 @@ def process_endorsement_fill_ins(
         # Special rendering for certain variables
         if variable == "{{sublimits_schedule}}" or context_field == "sublimits":
             value = _render_sublimits_schedule(context)
+        elif variable == "{{additional_insureds_schedule}}" or context_field == "additional_insureds":
+            value = _render_additional_insureds_schedule(context)
         elif variable in ("{{aggregate_limit}}", "{{retention}}") or \
              context_field in ("aggregate_limit", "retention", "limit"):
             raw_value = context.get(context_field, 0)
@@ -154,6 +156,11 @@ def process_endorsement_fill_ins(
     if "{{sublimits_schedule}}" in content:
         sublimits_html = _render_sublimits_schedule(context)
         content = content.replace("{{sublimits_schedule}}", sublimits_html)
+
+    # Handle additional_insureds_schedule if not already processed via mappings
+    if "{{additional_insureds_schedule}}" in content:
+        ai_html = _render_additional_insureds_schedule(context)
+        content = content.replace("{{additional_insureds_schedule}}", ai_html)
 
     return content
 
@@ -199,6 +206,58 @@ def _render_sublimits_schedule(context: dict) -> str:
                 <th style="text-align: left; padding: 8px;">Coverage</th>
                 <th style="text-align: right; padding: 8px;">Sublimit</th>
                 <th style="text-align: right; padding: 8px;">Drop-Down Attachment</th>
+            </tr>
+        </thead>
+        <tbody>
+            {''.join(rows)}
+        </tbody>
+    </table>
+    """
+
+
+def _render_additional_insureds_schedule(context: dict) -> str:
+    """
+    Render additional insureds as an HTML table for endorsement fill-in.
+
+    Uses additional_insureds from context which contains a list of dicts:
+    [{"name": "...", "street": "...", "city": "...", "state": "...", "zip": "...", "relationship": "..."}]
+    """
+    insureds = context.get("additional_insureds", [])
+
+    if not insureds:
+        return "<p><em>No additional insureds specified.</em></p>"
+
+    rows = []
+    for idx, ai in enumerate(insureds, 1):
+        name = ai.get("name", "")
+        street = ai.get("street", "")
+        city = ai.get("city", "")
+        state = ai.get("state", "")
+        zip_code = ai.get("zip", "")
+        relationship = ai.get("relationship", "")
+
+        # Build address string
+        address_line1 = street
+        address_line2 = f"{city}, {state} {zip_code}".strip(", ")
+        address = f"{address_line1}<br>{address_line2}" if address_line1 else address_line2
+
+        rows.append(f"""
+            <tr>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;">{idx}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;">{name}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;">{address}</td>
+                <td style="padding: 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;">{relationship}</td>
+            </tr>
+        """)
+
+    return f"""
+    <table class="additional-insureds-schedule" style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <thead>
+            <tr style="background-color: #f8f9fa; border-bottom: 2px solid #1a365d;">
+                <th style="text-align: left; padding: 8px; width: 40px;">#</th>
+                <th style="text-align: left; padding: 8px;">Name</th>
+                <th style="text-align: left; padding: 8px;">Address</th>
+                <th style="text-align: left; padding: 8px; width: 140px;">Relationship</th>
             </tr>
         </thead>
         <tbody>
