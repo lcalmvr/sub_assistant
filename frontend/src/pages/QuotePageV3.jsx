@@ -172,6 +172,51 @@ function PortalDropdown({ isOpen, onClose, triggerRef, children, className = '' 
   );
 }
 
+// Portal-based popover for hover interactions
+function PortalPopover({ isOpen, onClose, triggerRef, children, className = '' }) {
+  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const popoverRef = useRef(null);
+  const isHoveringPopover = useRef(false);
+
+  useEffect(() => {
+    if (isOpen && triggerRef?.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const popoverHeight = 350;
+      const spaceBelow = window.innerHeight - rect.bottom;
+
+      if (spaceBelow >= popoverHeight) {
+        setPosition({
+          top: rect.bottom + 4,
+          left: rect.left,
+        });
+      } else {
+        setPosition({
+          top: rect.top - popoverHeight - 4,
+          left: rect.left,
+        });
+      }
+    }
+  }, [isOpen, triggerRef]);
+
+  if (!isOpen) return null;
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      className={`fixed z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3 ${className}`}
+      style={{ top: position.top, left: Math.max(8, position.left) }}
+      onMouseEnter={() => { isHoveringPopover.current = true; }}
+      onMouseLeave={() => {
+        isHoveringPopover.current = false;
+        onClose();
+      }}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+}
+
 function calculateAttachment(layers, targetIdx) {
   if (!layers || targetIdx <= 0) return 0;
 
@@ -2805,6 +2850,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   const inputRefs = useRef({});
   const ruleMenuRefs = useRef({});
   const ruleTriggerRefs = useRef({});
+  const popoverTriggerRefs = useRef({});
 
   const filteredStructures = useMemo(() => (
     structures.filter(struct => {
@@ -3408,11 +3454,11 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                     </td>
                     <td className="px-4 py-3 text-left">
                       <div
-                        className="relative"
                         onMouseEnter={(e) => openPopover('subjectivities', struct.id, e)}
                         onMouseLeave={() => setActivePopover(null)}
                       >
                         <button
+                          ref={el => { popoverTriggerRefs.current[subjectivityKey] = el; }}
                           type="button"
                           onClick={(e) => { e.stopPropagation(); togglePopover('subjectivities', struct.id, e); }}
                           className="inline-flex items-center gap-2 text-xs text-gray-700 hover:text-gray-900 min-w-0 max-w-[240px]"
@@ -3426,27 +3472,29 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             </span>
                           )}
                         </button>
-                        {activePopover === subjectivityKey && subjectivityList.length > 0 && (
-                          <div className={`absolute z-30 ${subjectivityPopoverPosition} w-64 rounded-lg border border-gray-200 bg-white shadow-lg p-3`}>
-                            <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Subjectivities</div>
-                            <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                              {subjectivityList.map(item => (
-                                <div key={item.id} className="text-xs text-gray-700">
-                                  {item.label}
-                                </div>
-                              ))}
-                            </div>
+                        <PortalPopover
+                          isOpen={activePopover === subjectivityKey && subjectivityList.length > 0}
+                          onClose={() => setActivePopover(null)}
+                          triggerRef={{ current: popoverTriggerRefs.current[subjectivityKey] }}
+                        >
+                          <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Subjectivities</div>
+                          <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                            {subjectivityList.map(item => (
+                              <div key={item.id} className="text-xs text-gray-700">
+                                {item.label}
+                              </div>
+                            ))}
                           </div>
-                        )}
+                        </PortalPopover>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-left">
                       <div
-                        className="relative"
                         onMouseEnter={(e) => openPopover('endorsements', struct.id, e)}
                         onMouseLeave={() => setActivePopover(null)}
                       >
                         <button
+                          ref={el => { popoverTriggerRefs.current[endorsementKey] = el; }}
                           type="button"
                           onClick={(e) => { e.stopPropagation(); togglePopover('endorsements', struct.id, e); }}
                           className={`inline-flex items-center gap-2 text-xs ${
@@ -3455,23 +3503,25 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                         >
                           <span>({endorsementCount}) Endorsements</span>
                         </button>
-                        {activePopover === endorsementKey && endorsementList.length > 0 && (
-                          <div className={`absolute z-30 ${endorsementPopoverPosition} w-64 rounded-lg border border-gray-200 bg-white shadow-lg p-3`}>
-                            <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Endorsements</div>
-                            <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                              {endorsementList.map(item => (
-                                <div key={item.id} className="flex items-center justify-between gap-2 text-xs">
-                                  <span className="text-gray-700">{item.label}</span>
-                                  <span className={`text-[9px] px-1.5 py-0.5 rounded ${
-                                    item.isShared ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-                                  }`}>
-                                    {item.isShared ? 'Shared' : 'Local'}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
+                        <PortalPopover
+                          isOpen={activePopover === endorsementKey && endorsementList.length > 0}
+                          onClose={() => setActivePopover(null)}
+                          triggerRef={{ current: popoverTriggerRefs.current[endorsementKey] }}
+                        >
+                          <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Endorsements</div>
+                          <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                            {endorsementList.map(item => (
+                              <div key={item.id} className="flex items-center justify-between gap-2 text-xs">
+                                <span className="text-gray-700">{item.label}</span>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                                  item.isShared ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {item.isShared ? 'Shared' : 'Local'}
+                                </span>
+                              </div>
+                            ))}
                           </div>
-                        )}
+                        </PortalPopover>
                       </div>
                     </td>
                     {/* Status - Read only */}
