@@ -3638,35 +3638,91 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
 
   const linkMutation = useMutation({
     mutationFn: (endorsementId) => linkEndorsementToQuote(structureId, endorsementId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
+    onMutate: async (endorsementId) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
+      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
+      // Find the endorsement from library to add optimistically
+      const libEntry = libraryEndorsements.find(e => e.id === endorsementId);
+      if (libEntry) {
+        const optimisticEntry = {
+          id: `temp-${endorsementId}`,
+          endorsement_id: endorsementId,
+          title: libEntry.title,
+          code: libEntry.code,
+          category: libEntry.category,
+        };
+        queryClient.setQueryData(['quote-endorsements', structureId], (old) => ({
+          ...old,
+          endorsements: [...(old?.endorsements || []), optimisticEntry],
+          matched_library_ids: [...(old?.matched_library_ids || []), endorsementId]
+        }));
+        setDraft(d => [...d, optimisticEntry]);
+      }
+      setAddSearchTerm('');
+      setIsAddingOpen(false);
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
   });
 
   const unlinkMutation = useMutation({
     mutationFn: (endorsementId) => unlinkEndorsementFromQuote(structureId, endorsementId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
+    onMutate: async (endorsementId) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
+      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
+      // Data structure is { endorsements: [...], matched_library_ids: [...] }
+      queryClient.setQueryData(['quote-endorsements', structureId], (old) => ({
+        ...old,
+        endorsements: (old?.endorsements || []).filter(e => e.endorsement_id !== endorsementId),
+        matched_library_ids: (old?.matched_library_ids || []).filter(id => id !== endorsementId)
+      }));
+      setDraft(d => d.filter(x => x.endorsement_id !== endorsementId));
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
   });
 
   const createMutation = useMutation({
     mutationFn: async (title) => {
-      // Create manuscript endorsement in document library
+      const code = `MS-${Date.now().toString(36).toUpperCase()}`;
       const result = await createDocumentLibraryEntry({
-        document_type: 'endorsement',
-        title: title,
-        category: 'manuscript',
-        status: 'active',
+        code, document_type: 'endorsement', title, category: 'manuscript', status: 'active',
       });
-      // Then link it to this quote
       if (result.data?.id) {
         await linkEndorsementToQuote(structureId, result.data.id);
       }
-      return result;
+      return { ...result, code };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
-      queryClient.invalidateQueries({ queryKey: ['endorsement-library'] });
+    onMutate: async (title) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
+      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
+      const tempId = `temp-ms-${Date.now()}`;
+      const optimisticEntry = {
+        id: tempId,
+        endorsement_id: tempId,
+        title,
+        code: 'MS-...',
+        category: 'manuscript',
+      };
+      queryClient.setQueryData(['quote-endorsements', structureId], (old) => ({
+        ...old,
+        endorsements: [...(old?.endorsements || []), optimisticEntry],
+      }));
+      setDraft(d => [...d, optimisticEntry]);
       setAddSearchTerm('');
       setIsAddingOpen(false);
+      return { previous };
     },
+    onError: (err, vars, ctx) => {
+      queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] }),
   });
 
   const getTypeIcon = (endt) => {
@@ -3760,7 +3816,7 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
                 {isEditing && (
                   <td className="px-4 py-2.5">
                     <button
-                      onClick={(e) => { e.stopPropagation(); unlinkMutation.mutate(endt.endorsement_id); setDraft(d => d.filter(x => x.id !== endt.id)); }}
+                      onClick={(e) => { e.stopPropagation(); unlinkMutation.mutate(endt.endorsement_id); }}
                       className="text-gray-400 hover:text-red-500"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -3783,6 +3839,7 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
               onChange={(e) => setAddSearchTerm(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && addSearchTerm.trim()) {
+                  console.log('Enter pressed, creating:', addSearchTerm.trim());
                   createMutation.mutate(addSearchTerm.trim());
                 }
               }}
@@ -3795,7 +3852,7 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
           </div>
           <div className="max-h-40 overflow-y-auto space-y-1">
             {filteredAvailable.slice(0, 8).map(endt => (
-              <button key={endt.id} onClick={() => { linkMutation.mutate(endt.id); setAddSearchTerm(''); }} className="w-full p-2 rounded border border-gray-100 bg-white hover:bg-purple-50 hover:border-purple-200 text-left text-sm">
+              <button key={endt.id} onClick={() => linkMutation.mutate(endt.id)} className="w-full p-2 rounded border border-gray-100 bg-white hover:bg-purple-50 hover:border-purple-200 text-left text-sm">
                 <span className="font-medium text-gray-700">{endt.title}</span>
               </button>
             ))}
@@ -3803,9 +3860,11 @@ function EndorsementsTabContent({ structureId, setEditControls }) {
               <button
                 onClick={() => createMutation.mutate(addSearchTerm.trim())}
                 disabled={createMutation.isPending}
-                className="w-full p-2 rounded border border-purple-200 bg-purple-50 hover:bg-purple-100 text-left text-sm"
+                className="w-full p-2 rounded border border-purple-200 bg-purple-50 hover:bg-purple-100 text-left text-sm disabled:opacity-50"
               >
-                <span className="text-purple-700 font-medium">+ Create manuscript: "{addSearchTerm.trim()}"</span>
+                <span className="text-purple-700 font-medium">
+                  {createMutation.isPending ? 'Creating...' : `+ Create manuscript: "${addSearchTerm.trim()}"`}
+                </span>
               </button>
             )}
           </div>
@@ -3857,7 +3916,19 @@ function SubjectivitiesTabContent({ structureId, submissionId, setEditControls }
 
   const unlinkMutation = useMutation({
     mutationFn: (subjectivityId) => unlinkSubjectivityFromQuote(structureId, subjectivityId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
+    onMutate: async (subjectivityId) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-subjectivities', structureId] });
+      const previous = queryClient.getQueryData(['quote-subjectivities', structureId]);
+      queryClient.setQueryData(['quote-subjectivities', structureId], (old) =>
+        (old || []).filter(s => s.id !== subjectivityId)
+      );
+      setDraft(d => d.filter(x => x.id !== subjectivityId));
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
   });
 
   const createMutation = useMutation({
