@@ -892,7 +892,7 @@ function SidePanelTab({ icon, label, isActive, onClick, badge, badgeColor }) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+      className={`flex items-center gap-1 px-2 py-1.5 text-[11px] font-medium rounded-md transition-colors ${
         isActive
           ? 'bg-purple-100 text-purple-700'
           : 'text-gray-600 hover:bg-gray-100'
@@ -901,7 +901,7 @@ function SidePanelTab({ icon, label, isActive, onClick, badge, badgeColor }) {
       {icon}
       <span>{label}</span>
       {badge !== undefined && (
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${
+        <span className={`text-[9px] px-1 py-0.5 rounded-full font-semibold ${
           badgeColor || (isActive ? 'bg-purple-200 text-purple-800' : 'bg-gray-200 text-gray-600')
         }`}>
           {badge}
@@ -1832,88 +1832,33 @@ function TermsPanel({ structure, variation, submission, submissionId }) {
 // PREMIUM PANEL
 // ============================================================================
 
-function PremiumPanel({ structure, variation, submissionId }) {
-  const queryClient = useQueryClient();
-
-  // Local state for editable fields
-  const [commission, setCommission] = useState('');
-
-  // Initialize form values when variation changes
-  useEffect(() => {
-    if (variation) {
-      setCommission(variation.commission_override?.toString() || '15');
-    }
-  }, [variation?.id]);
-
-  // Update variation mutation
-  const updateMutation = useMutation({
-    mutationFn: (data) => updateVariation(variation.id, data),
-    onMutate: async (data) => {
-      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
-      const previous = queryClient.getQueryData(['structures', submissionId]);
-      queryClient.setQueryData(['structures', submissionId], (old) =>
-        (old || []).map(s => s.id === structure.id ? {
-          ...s,
-          variations: (s.variations || []).map(v => v.id === variation.id ? { ...v, ...data } : v)
-        } : s)
-      );
-      return { previous };
-    },
-    onError: (err, vars, ctx) => {
-      queryClient.setQueryData(['structures', submissionId], ctx.previous);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
-    },
-  });
-
-  const handleBlur = (field, value) => {
-    const numValue = value ? parseFloat(value) : null;
-    const currentValue = variation[field];
-    if (numValue !== currentValue) {
-      updateMutation.mutate({ [field]: numValue });
-    }
-  };
-
-  if (!variation) {
-    return <div className="py-8 text-center text-gray-400 text-sm">No variation selected</div>;
-  }
-
-  // Get the CMAI layer premium from tower_json for technical premium display
+function PremiumPanel({ structure, variation }) {
+  // Technical = CMAI layer premium from tower
   const cmaiLayer = (structure?.tower_json || []).find(l => l.carrier?.toUpperCase().includes('CMAI'));
-  const technicalPremium = cmaiLayer?.premium || variation.technical_premium || 0;
+  const technical = cmaiLayer?.premium || 0;
+
+  // Sold = what the deal actually closed at
+  const sold = variation?.sold_premium || structure?.sold_premium || 0;
+
+  // % difference
+  const pctDiff = technical > 0 && sold > 0
+    ? ((sold - technical) / technical * 100).toFixed(1)
+    : null;
 
   return (
-    <div className="space-y-4">
-      {/* Technical Premium (read-only) */}
-      <div className="p-3 bg-gray-50 rounded-lg">
-        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Technical Premium</div>
-        <div className="text-xl font-bold text-gray-700">{formatCurrency(technicalPremium)}</div>
-        <div className="text-[10px] text-gray-400 mt-1">From tower layer calculation</div>
+    <div className="grid grid-cols-3 gap-3">
+      <div>
+        <div className="text-[10px] text-gray-400 uppercase mb-0.5">Technical</div>
+        <div className="text-sm font-semibold text-gray-700">{formatCurrency(technical)}</div>
       </div>
-
-      {/* Commission */}
-      <div className="pt-3 border-t border-gray-100">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-gray-500 uppercase">Commission</span>
-          {structure.commission !== null && structure.commission !== 15 ? (
-            <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">Custom</span>
-          ) : (
-            <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded font-medium">Default</span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            value={commission}
-            onChange={(e) => setCommission(e.target.value)}
-            onBlur={() => handleBlur('commission_override', commission)}
-            step="0.5"
-            min="0"
-            max="100"
-            className="w-20 text-sm border border-gray-300 rounded px-2 py-1.5 text-right focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none"
-          />
-          <span className="text-gray-500">%</span>
+      <div>
+        <div className="text-[10px] text-gray-400 uppercase mb-0.5">Sold</div>
+        <div className="text-sm font-semibold text-gray-700">{sold > 0 ? formatCurrency(sold) : '—'}</div>
+      </div>
+      <div>
+        <div className="text-[10px] text-gray-400 uppercase mb-0.5">Diff</div>
+        <div className={`text-sm font-semibold ${pctDiff !== null ? (parseFloat(pctDiff) >= 0 ? 'text-green-600' : 'text-red-600') : 'text-gray-400'}`}>
+          {pctDiff !== null ? `${parseFloat(pctDiff) >= 0 ? '+' : ''}${pctDiff}%` : '—'}
         </div>
       </div>
     </div>
@@ -1953,6 +1898,235 @@ function RetroPanel({ structure, submissionId }) {
         position={structure?.position || 'primary'}
         onSave={(schedule) => updateStructureMutation.mutate({ retro_schedule: schedule })}
       />
+    </div>
+  );
+}
+
+// ============================================================================
+// COMMISSION PANEL
+// ============================================================================
+
+function CommissionPanel({ structure, variation, submissionId }) {
+  const queryClient = useQueryClient();
+  const [commission, setCommission] = useState('15');
+  const [netOutTo, setNetOutTo] = useState('');
+  const [netOutApplied, setNetOutApplied] = useState(null); // { originalPremium, originalCommission, newPremium, newCommission, originalTower }
+
+  // Get premium from CMAI layer
+  const tower = structure?.tower_json || [];
+  const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+  const grossPremium = cmaiLayer?.premium || 0;
+
+  useEffect(() => {
+    if (variation) {
+      setCommission((variation.commission_override ?? 15).toString());
+    }
+  }, [variation?.id]);
+
+  const updateCommissionMutation = useMutation({
+    mutationFn: (data) => updateVariation(variation.id, data),
+    onMutate: async (data) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => s.id === structure.id ? {
+          ...s,
+          variations: (s.variations || []).map(v => v.id === variation.id ? { ...v, ...data } : v)
+        } : s)
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      queryClient.setQueryData(['structures', submissionId], ctx.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  const updateTowerMutation = useMutation({
+    mutationFn: (data) => updateQuoteOption(structure.id, data),
+    onMutate: async (data) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => s.id === structure.id ? { ...s, ...data } : s)
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      queryClient.setQueryData(['structures', submissionId], ctx.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  const handleBlur = () => {
+    const value = commission ? parseFloat(commission) : null;
+    if (value !== variation.commission_override) {
+      updateCommissionMutation.mutate({ commission_override: value });
+    }
+  };
+
+  const commissionNum = parseFloat(commission) || 0;
+  const brokerAmount = grossPremium * (commissionNum / 100);
+  const netToCarrier = grossPremium - brokerAmount;
+
+  // Net out calculations
+  const netOutNum = parseFloat(netOutTo) || 0;
+  const newGross = netOutNum > 0 && netOutNum < 100
+    ? Math.round(netToCarrier / (1 - netOutNum / 100))
+    : null;
+  const newCommissionAmount = newGross ? newGross * (netOutNum / 100) : 0;
+
+  const applyNetOut = async () => {
+    if (!newGross) return;
+
+    // Store original values for undo
+    setNetOutApplied({
+      originalPremium: grossPremium,
+      originalCommission: commissionNum,
+      newPremium: newGross,
+      newCommission: netOutNum,
+    });
+
+    // Build updated tower with new premium
+    const currentTower = structure?.tower_json || [];
+    const updatedTower = currentTower.map(layer => {
+      if (layer.carrier?.toUpperCase().includes('CMAI')) {
+        return { ...layer, premium: newGross };
+      }
+      return layer;
+    });
+
+    // Update tower and commission sequentially to avoid race conditions
+    await updateTowerMutation.mutateAsync({ tower_json: updatedTower });
+    await updateCommissionMutation.mutateAsync({ commission_override: netOutNum });
+
+    // Clear the net out input
+    setNetOutTo('');
+  };
+
+  const undoNetOut = async () => {
+    if (!netOutApplied) return;
+
+    // Build tower with original premium from CURRENT tower structure
+    const currentTower = structure?.tower_json || [];
+    const restoredTower = currentTower.map(layer => {
+      if (layer.carrier?.toUpperCase().includes('CMAI')) {
+        return { ...layer, premium: netOutApplied.originalPremium };
+      }
+      return layer;
+    });
+
+    // Restore tower and commission sequentially
+    await updateTowerMutation.mutateAsync({ tower_json: restoredTower });
+    await updateCommissionMutation.mutateAsync({ commission_override: netOutApplied.originalCommission });
+
+    // Clear the applied state
+    setNetOutApplied(null);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Commission Inputs - Side by Side */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-[10px] text-gray-400 uppercase mb-1">Broker Commission</div>
+          <div className="flex items-center gap-1">
+            <input
+              type="number"
+              value={commission}
+              onChange={(e) => setCommission(e.target.value)}
+              onBlur={handleBlur}
+              step="0.5"
+              min="0"
+              max="100"
+              className="w-16 text-sm border border-gray-300 rounded px-2 py-1.5 text-right focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none"
+            />
+            <span className="text-gray-500 text-sm">%</span>
+          </div>
+        </div>
+        {!netOutApplied && (
+          <div>
+            <div className="text-[10px] text-gray-400 uppercase mb-1">Net Out To</div>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                value={netOutTo}
+                onChange={(e) => setNetOutTo(e.target.value)}
+                placeholder={commission}
+                step="0.5"
+                min="0"
+                max={commission}
+                className="w-16 text-sm border border-gray-300 rounded px-2 py-1.5 text-right focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none"
+              />
+              <span className="text-gray-500 text-sm">%</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Breakdown */}
+      <div className="pt-3 border-t border-gray-100 space-y-1.5">
+        <div className="flex justify-between items-center text-sm">
+          <span className="text-gray-500">Gross Premium</span>
+          <span className="font-medium">{formatCurrency(grossPremium)}</span>
+        </div>
+        <div className="flex justify-between items-center text-sm">
+          <span className="text-gray-500">Commission</span>
+          <span className="font-medium text-red-600">-{formatCurrency(brokerAmount)}</span>
+        </div>
+        <div className="flex justify-between items-center text-sm pt-1.5 border-t border-gray-100">
+          <span className="text-gray-700 font-medium">Net to Carrier</span>
+          <span className="font-semibold text-green-600">{formatCurrency(netToCarrier)}</span>
+        </div>
+      </div>
+
+      {/* Net Out Applied Summary */}
+      {netOutApplied && (
+        <div className="p-2 bg-purple-50 border border-purple-200 rounded-md">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium text-purple-700">Net Out Applied</span>
+            <button
+              onClick={undoNetOut}
+              className="text-xs text-purple-600 hover:text-purple-800 font-medium"
+            >
+              Undo
+            </button>
+          </div>
+          <div className="text-xs text-purple-600 space-y-0.5">
+            <div>Commission: {netOutApplied.originalCommission}% → {netOutApplied.newCommission}%</div>
+            <div>Premium: {formatCurrency(netOutApplied.originalPremium)} → {formatCurrency(netOutApplied.newPremium)}</div>
+            <div>Commission Paid: {formatCurrency(netOutApplied.originalPremium * netOutApplied.originalCommission / 100)} → {formatCurrency(netOutApplied.newPremium * netOutApplied.newCommission / 100)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Net Out Preview */}
+      {!netOutApplied && newGross && netOutNum < commissionNum && (
+        <div className="p-2 bg-green-50 rounded-md space-y-1">
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-600">New Premium</span>
+            <span className="font-medium">{formatCurrency(newGross)}</span>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-600">Commission Paid</span>
+            <span className="font-medium text-red-600">-{formatCurrency(newCommissionAmount)}</span>
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-600">Net to Carrier</span>
+            <span className="font-medium">{formatCurrency(netToCarrier)}</span>
+          </div>
+          <button
+            onClick={applyNetOut}
+            className="mt-2 w-full text-xs font-medium py-1.5 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+          >
+            Apply Net Out
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2553,7 +2727,7 @@ function AllOptionsTabContent({ structures, activeStructureId, onSelect, submiss
   );
 }
 
-function SummaryTabContent({ structure, submission, structureId, onMainTabChange }) {
+function SummaryTabContent({ structure, variation, submission, structureId, onMainTabChange }) {
   const [notes, setNotes] = useState(structure?.notes || '');
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [showAllSublimits, setShowAllSublimits] = useState(false);
@@ -2596,7 +2770,7 @@ function SummaryTabContent({ structure, submission, structureId, onMainTabChange
   const ourLimit = cmaiLayer?.limit || tower[0]?.limit || 0;
   const totalProgramLimit = tower.reduce((sum, l) => sum + (l.limit || 0), 0);
   const premium = cmaiLayer?.premium || 0;
-  const commission = structure?.commission ?? 15;
+  const commission = variation?.commission_override ?? 15;
 
   // Get coverage exceptions (non-standard sublimits)
   const coverages = structure?.coverages || {};
@@ -4392,6 +4566,7 @@ export default function QuotePageV3() {
                 {mainTab === 'summary' && (
                   <SummaryTabContent
                     structure={activeStructure}
+                    variation={activeVariation}
                     submission={submission}
                     structureId={activeStructureId}
                     onMainTabChange={setMainTab}
@@ -4460,6 +4635,12 @@ export default function QuotePageV3() {
                     isActive={sidePanelTab === 'retro'}
                     onClick={() => setSidePanelTab('retro')}
                   />
+                  <SidePanelTab
+                    icon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>}
+                    label="Comm"
+                    isActive={sidePanelTab === 'commission'}
+                    onClick={() => setSidePanelTab('commission')}
+                  />
                 </div>
               </div>
 
@@ -4478,18 +4659,23 @@ export default function QuotePageV3() {
                 )}
 
                 {/* PREMIUM TAB */}
-                {sidePanelTab === 'premium' && activeStructure && activeVariation && (
-                  <PremiumPanel
-                    structure={activeStructure}
-                    variation={activeVariation}
-                    submissionId={submissionId}
-                  />
+                {sidePanelTab === 'premium' && activeStructure && (
+                  <PremiumPanel structure={activeStructure} variation={activeVariation} />
                 )}
 
                 {/* RETRO TAB */}
                 {sidePanelTab === 'retro' && activeStructure && (
                   <RetroPanel
                     structure={activeStructure}
+                    submissionId={submissionId}
+                  />
+                )}
+
+                {/* COMMISSION TAB */}
+                {sidePanelTab === 'commission' && activeStructure && activeVariation && (
+                  <CommissionPanel
+                    structure={activeStructure}
+                    variation={activeVariation}
                     submissionId={submissionId}
                   />
                 )}
