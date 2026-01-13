@@ -565,12 +565,21 @@ def get_document_context(submission_id: str, quote_option_id: str) -> dict:
                 context["has_dropdown_sublimits"] = False
 
             # Endorsements as list of strings
-            if isinstance(endorsements, list):
+            # First check legacy endorsements column
+            if isinstance(endorsements, list) and len(endorsements) > 0:
                 context["endorsements"] = endorsements.copy()
-            elif isinstance(endorsements, dict):
+            elif isinstance(endorsements, dict) and len(endorsements) > 0:
                 context["endorsements"] = list(endorsements.keys())
             else:
-                context["endorsements"] = []
+                # Fall back to quote_endorsements junction table (V3 pattern)
+                endt_result = conn.execute(text("""
+                    SELECT dl.title
+                    FROM quote_endorsements qe
+                    JOIN document_library dl ON dl.id = qe.endorsement_id
+                    WHERE qe.quote_id = :quote_option_id
+                    ORDER BY dl.code, dl.title
+                """), {"quote_option_id": quote_option_id})
+                context["endorsements"] = [row[0] for row in endt_result.fetchall()]
 
             # Tower data for excess quotes
             context["tower"] = tower_json

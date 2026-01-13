@@ -274,7 +274,8 @@ def generate_package(
     package_type: str = "quote_only",
     selected_documents: list[str] = None,
     created_by: str = "user",
-    include_specimen: bool = False
+    include_specimen: bool = False,
+    include_endorsements: bool = True
 ) -> dict:
     """
     Generate a document package.
@@ -287,6 +288,7 @@ def generate_package(
         selected_documents: List of library entry IDs to include
         created_by: User generating the package
         include_specimen: Include the policy specimen form
+        include_endorsements: Include endorsement documents linked to quote
 
     Returns:
         dict with id, pdf_url, document_number, manifest
@@ -309,6 +311,39 @@ def generate_package(
     # Get library documents if full package
     library_docs = []
     manifest = []
+    endorsement_docs = []
+
+    # Fetch endorsements linked to this quote if requested
+    if include_endorsements:
+        with get_conn() as conn:
+            result = conn.execute(text("""
+                SELECT dl.id, dl.code, dl.title, dl.category, dl.document_type, dl.status,
+                       dl.default_sort_order, dl.version
+                FROM quote_endorsements qe
+                JOIN document_library dl ON dl.id = qe.endorsement_id
+                WHERE qe.quote_id = :quote_id
+                  AND dl.status = 'active'
+                ORDER BY dl.default_sort_order, dl.code
+            """), {"quote_id": quote_option_id})
+            for row in result.fetchall():
+                entry = {
+                    "id": str(row[0]),
+                    "code": row[1],
+                    "title": row[2],
+                    "category": row[3],
+                    "document_type": row[4],
+                    "status": row[5],
+                    "default_sort_order": row[6] or 50,  # Endorsements sort early
+                    "version": row[7] or 1,
+                }
+                endorsement_docs.append(entry)
+                manifest.append({
+                    "library_id": entry["id"],
+                    "code": entry["code"],
+                    "title": entry["title"],
+                    "version": entry["version"],
+                    "document_type": "endorsement",
+                })
 
     if package_type == "full_package" and selected_documents:
         for doc_id in selected_documents:
@@ -325,17 +360,21 @@ def generate_package(
 
         # Sort by default_sort_order
         library_docs.sort(key=lambda x: x.get("default_sort_order", 100))
-        manifest.sort(key=lambda x: next(
-            (d.get("default_sort_order", 100) for d in library_docs if d["id"] == x["library_id"]),
-            100
-        ))
+
+    # Combine endorsements and library docs (endorsements first)
+    all_docs = endorsement_docs + library_docs
+    all_docs.sort(key=lambda x: x.get("default_sort_order", 100))
+
+    # Sort manifest by doc order
+    doc_order = {d["id"]: i for i, d in enumerate(all_docs)}
+    manifest.sort(key=lambda x: doc_order.get(x["library_id"], 999))
 
     # Render combined HTML
-    if library_docs or include_specimen:
+    if all_docs or include_specimen:
         html_content = render_package_html(
             doc_config["template"],
             context,
-            library_docs,
+            all_docs,
             include_specimen=include_specimen
         )
     else:

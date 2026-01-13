@@ -8711,6 +8711,7 @@ class PackageGenerateRequest(BaseModel):
     package_type: str = "quote_only"  # "quote_only" or "full_package"
     selected_documents: list = []  # List of document library IDs
     include_specimen: bool = False  # Include policy specimen form
+    include_endorsements: bool = True  # Include endorsement package (default true)
 
 
 @app.post("/api/quotes/{quote_id}/generate-package")
@@ -8744,7 +8745,7 @@ def generate_quote_package(quote_id: str, request: PackageGenerateRequest):
         # Determine doc type based on position
         doc_type = "quote_excess" if position == "excess" else "quote_primary"
 
-        if request.package_type == "full_package" or request.include_specimen:
+        if request.package_type == "full_package" or request.include_specimen or request.include_endorsements:
             # Generate full package with library documents and/or specimen
             result = generate_package(
                 submission_id=str(submission_id),
@@ -8753,7 +8754,8 @@ def generate_quote_package(quote_id: str, request: PackageGenerateRequest):
                 package_type="full_package",
                 selected_documents=request.selected_documents,
                 created_by="api",
-                include_specimen=request.include_specimen
+                include_specimen=request.include_specimen,
+                include_endorsements=request.include_endorsements
             )
         else:
             # Generate quote only

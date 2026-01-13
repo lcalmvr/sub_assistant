@@ -87,7 +87,7 @@ export const getExtractionStats = (days = 30) => api.get(`/extraction/stats?days
 
 // Document content (for PDF viewer)
 export const getDocumentContent = (documentId) => api.get(`/documents/${documentId}/content`, { responseType: 'blob' });
-export const getDocumentUrl = (documentId) => `/api/documents/${documentId}/content`;
+export const getDocumentUrl = (documentId) => `/api/documents/${documentId}/file`;
 
 // Document bbox data for highlighting
 export const getDocumentBbox = (documentId, searchText = null, page = null) => {

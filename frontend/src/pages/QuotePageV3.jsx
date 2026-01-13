@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { useParams } from 'react-router-dom';
+import * as Popover from '@radix-ui/react-popover';
+import * as HoverCard from '@radix-ui/react-hover-card';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   getSubmission,
@@ -17,6 +18,7 @@ import {
   getSubmissionEndorsements,
   getSubmissionSubjectivities,
   getDocumentLibraryEntries,
+  getPackageDocuments,
   getSubjectivityTemplates,
   linkEndorsementToQuote,
   unlinkEndorsementFromQuote,
@@ -27,7 +29,9 @@ import {
   deleteSubjectivity,
   createDocumentLibraryEntry,
   generateQuoteDocument,
+  generateQuotePackage,
   getQuoteDocuments,
+  getSubmissionDocuments,
   getDocumentUrl,
   getBindValidation,
   bindQuoteOption,
@@ -113,109 +117,7 @@ function getScopeTargetIds(structures, scope, currentId) {
   return structures.map(s => String(s.id));
 }
 
-// Portal-based dropdown that renders outside container hierarchy
-function PortalDropdown({ isOpen, onClose, triggerRef, children, className = '' }) {
-  const [position, setPosition] = useState({ top: 0, left: 0 });
-  const dropdownRef = useRef(null);
-
-  useEffect(() => {
-    if (isOpen && triggerRef?.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const dropdownHeight = 300; // estimated max height
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
-
-      // Position below trigger, or above if not enough space below
-      if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {
-        setPosition({
-          top: rect.bottom + 4,
-          left: rect.right - 256, // 256 = dropdown width (w-64)
-        });
-      } else {
-        setPosition({
-          top: rect.top - dropdownHeight - 4,
-          left: rect.right - 256,
-        });
-      }
-    }
-  }, [isOpen, triggerRef]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClickOutside = (e) => {
-      if (dropdownRef.current?.contains(e.target)) return;
-      if (triggerRef?.current?.contains(e.target)) return;
-      onClose();
-    };
-    const handleEscape = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleEscape);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape);
-    };
-  }, [isOpen, onClose, triggerRef]);
-
-  if (!isOpen) return null;
-
-  return createPortal(
-    <div
-      ref={dropdownRef}
-      className={`fixed z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl ${className}`}
-      style={{ top: position.top, left: Math.max(8, position.left) }}
-    >
-      {children}
-    </div>,
-    document.body
-  );
-}
-
-// Portal-based popover for hover interactions
-function PortalPopover({ isOpen, onClose, triggerRef, children, className = '' }) {
-  const [position, setPosition] = useState({ top: 0, left: 0 });
-  const popoverRef = useRef(null);
-  const isHoveringPopover = useRef(false);
-
-  useEffect(() => {
-    if (isOpen && triggerRef?.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      const popoverHeight = 350;
-      const spaceBelow = window.innerHeight - rect.bottom;
-
-      if (spaceBelow >= popoverHeight) {
-        setPosition({
-          top: rect.bottom + 4,
-          left: rect.left,
-        });
-      } else {
-        setPosition({
-          top: rect.top - popoverHeight - 4,
-          left: rect.left,
-        });
-      }
-    }
-  }, [isOpen, triggerRef]);
-
-  if (!isOpen) return null;
-
-  return createPortal(
-    <div
-      ref={popoverRef}
-      className={`fixed z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3 ${className}`}
-      style={{ top: position.top, left: Math.max(8, position.left) }}
-      onMouseEnter={() => { isHoveringPopover.current = true; }}
-      onMouseLeave={() => {
-        isHoveringPopover.current = false;
-        onClose();
-      }}
-    >
-      {children}
-    </div>,
-    document.body
-  );
-}
+// Radix UI is used for dropdowns and popovers - imported at top of file
 
 function calculateAttachment(layers, targetIdx) {
   if (!layers || targetIdx <= 0) return 0;
@@ -2843,14 +2745,9 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   const [manageAddSearchTerm, setManageAddSearchTerm] = useState('');
   const [sectionVisibility, setSectionVisibility] = useState({ all: false, none: false });
   const [confirmRemoval, setConfirmRemoval] = useState(null);
-  const [activePopover, setActivePopover] = useState(null);
-  const [popoverPlacement, setPopoverPlacement] = useState({});
   const [showAddPanel, setShowAddPanel] = useState(false);
   const tableRef = useRef(null);
   const inputRefs = useRef({});
-  const ruleMenuRefs = useRef({});
-  const ruleTriggerRefs = useRef({});
-  const popoverTriggerRefs = useRef({});
 
   const filteredStructures = useMemo(() => (
     structures.filter(struct => {
@@ -2911,19 +2808,6 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       setSectionVisibility({ all: false, none: false });
     }
   }, [manageType]);
-
-  useEffect(() => {
-    if (!activeRuleMenu) return;
-    const handleClick = (event) => {
-      const menuEl = ruleMenuRefs.current[activeRuleMenu];
-      const triggerEl = ruleTriggerRefs.current[activeRuleMenu];
-      if (menuEl?.contains(event.target)) return;
-      if (triggerEl?.contains(event.target)) return;
-      setActiveRuleMenu(null);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [activeRuleMenu]);
 
   const { data: submissionSubjectivitiesData = [] } = useQuery({
     queryKey: ['submissionSubjectivities', submissionId],
@@ -2989,31 +2873,95 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
     return map;
   }, [submissionEndorsementsData]);
 
-  const getPopoverPosition = (event, key) => {
-    if (!event?.currentTarget) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const popoverHeight = 320;
-    const margin = 24;
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    const placeTop = spaceBelow < popoverHeight && spaceAbove > popoverHeight - margin;
-    setPopoverPlacement(prev => ({ ...prev, [key]: placeTop ? 'top' : 'bottom' }));
-  };
+  // Compute position-based comparison stats (missing/extra vs same-position siblings)
+  const positionComparisonStats = useMemo(() => {
+    const stats = new Map();
 
-  const togglePopover = (type, quoteId, event) => {
-    const key = `${type}-${quoteId}`;
-    if (activePopover === key) {
-      setActivePopover(null);
-      return;
+    // Group structures by position
+    const primaryIds = structures.filter(s => getStructurePosition(s) !== 'excess').map(s => String(s.id));
+    const excessIds = structures.filter(s => getStructurePosition(s) === 'excess').map(s => String(s.id));
+
+    // Helper to compute union of items across sibling IDs (excluding self)
+    const computeSiblingUnion = (selfId, siblingIds, itemsByQuote) => {
+      const union = new Map(); // id -> label
+      siblingIds.forEach(sibId => {
+        if (sibId === selfId) return;
+        const items = itemsByQuote.get(sibId) || [];
+        items.forEach(item => {
+          if (!union.has(item.id)) {
+            union.set(item.id, item.label);
+          }
+        });
+      });
+      return union;
+    };
+
+    structures.forEach(struct => {
+      const structId = String(struct.id);
+      const isExcess = getStructurePosition(struct) === 'excess';
+      const siblingIds = isExcess ? excessIds : primaryIds;
+
+      // Get this structure's items
+      const mySubjectivities = subjectivitiesByQuote.get(structId) || [];
+      const myEndorsements = endorsementsByQuote.get(structId) || [];
+      const mySubjIds = new Set(mySubjectivities.map(s => s.id));
+      const myEndtIds = new Set(myEndorsements.map(e => e.id));
+
+      // Compute sibling unions
+      const subjSiblingUnion = computeSiblingUnion(structId, siblingIds, subjectivitiesByQuote);
+      const endtSiblingUnion = computeSiblingUnion(structId, siblingIds, endorsementsByQuote);
+
+      // Missing = in sibling union but not on this option
+      const missingSubjectivities = [];
+      subjSiblingUnion.forEach((label, id) => {
+        if (!mySubjIds.has(id)) {
+          missingSubjectivities.push({ id, label });
+        }
+      });
+
+      const missingEndorsements = [];
+      endtSiblingUnion.forEach((label, id) => {
+        if (!myEndtIds.has(id)) {
+          missingEndorsements.push({ id, label });
+        }
+      });
+
+      // Extra = on this option but not in sibling union
+      const extraSubjectivities = mySubjectivities.filter(s => !subjSiblingUnion.has(s.id));
+      const extraEndorsements = myEndorsements.filter(e => !endtSiblingUnion.has(e.id));
+
+      stats.set(structId, {
+        subjectivities: {
+          total: mySubjectivities.length,
+          missing: missingSubjectivities,
+          extra: extraSubjectivities,
+        },
+        endorsements: {
+          total: myEndorsements.length,
+          missing: missingEndorsements,
+          extra: extraEndorsements,
+        },
+      });
+    });
+
+    return stats;
+  }, [structures, subjectivitiesByQuote, endorsementsByQuote]);
+
+  // Helper to format the comparison display text
+  const formatComparisonText = (missing, extra) => {
+    const missingCount = missing.length;
+    const extraCount = extra.length;
+
+    if (missingCount === 0 && extraCount === 0) {
+      return { text: 'Aligned', tone: 'text-gray-500' };
     }
-    getPopoverPosition(event, key);
-    setActivePopover(key);
-  };
-
-  const openPopover = (type, quoteId, event) => {
-    const key = `${type}-${quoteId}`;
-    getPopoverPosition(event, key);
-    setActivePopover(key);
+    if (missingCount > 0 && extraCount === 0) {
+      return { text: `${missingCount} missing`, tone: 'text-amber-600' };
+    }
+    if (missingCount === 0 && extraCount > 0) {
+      return { text: `${extraCount} extra`, tone: 'text-purple-600' };
+    }
+    return { text: `Mixed +${extraCount}, −${missingCount}`, tone: 'text-amber-600' };
   };
 
   const subjectivityItems = useMemo(() => {
@@ -3103,6 +3051,306 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
     return subjectivityRulesAll.filter(rule => rule.scope === rulesFilter);
   }, [rulesFilter, subjectivityRulesAll]);
 
+  const endorsementRulesAll = useMemo(() => {
+    const getScope = (linkedIds) => {
+      if (linkedIds.length === 0) return 'none';
+      const linkedSet = new Set(linkedIds);
+      const isAll = allOptionIds.length > 0 && allOptionIds.every(id => linkedSet.has(id));
+      if (isAll) return 'all';
+      const isPrimary = allPrimaryIds.length > 0
+        && allPrimaryIds.length === linkedSet.size
+        && allPrimaryIds.every(id => linkedSet.has(id));
+      if (isPrimary) return 'primary';
+      const isExcess = allExcessIds.length > 0
+        && allExcessIds.length === linkedSet.size
+        && allExcessIds.every(id => linkedSet.has(id));
+      if (isExcess) return 'excess';
+      return 'custom';
+    };
+
+    const getAppliesLabel = (linkedIds, scope) => {
+      if (scope === 'none') return 'No options';
+      if (scope === 'all') return `All ${allOptionIds.length} Options`;
+      if (scope === 'primary') return 'All Primary';
+      if (scope === 'excess') return 'All Excess';
+      const linkedSet = new Set(linkedIds);
+      const firstId = allOptions.find(opt => linkedSet.has(opt.id))?.id;
+      const firstLabel = allOptionLabelMap.get(firstId) || 'Option';
+      const extra = linkedIds.length - 1;
+      return extra > 0 ? `${firstLabel} +${extra}` : firstLabel;
+    };
+
+    const endorsements = submissionEndorsementsData?.endorsements || [];
+    return endorsements.map(endt => {
+      const linkedIds = parseQuoteIds(endt.quote_ids).map(id => String(id));
+      const scope = getScope(linkedIds);
+      return {
+        id: endt.endorsement_id,
+        label: endt.title || endt.code || 'Endorsement',
+        code: endt.code,
+        linkedIds,
+        linkedSet: new Set(linkedIds),
+        scope,
+        appliesLabel: getAppliesLabel(linkedIds, scope),
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+  }, [submissionEndorsementsData, allOptionIds, allPrimaryIds, allExcessIds, allOptions, allOptionLabelMap]);
+
+  const filteredEndorsementRulesAll = useMemo(() => {
+    if (rulesFilter === 'any') return endorsementRulesAll;
+    return endorsementRulesAll.filter(rule => rule.scope === rulesFilter);
+  }, [rulesFilter, endorsementRulesAll]);
+
+  // Helper to normalize retro schedule for comparison (stringify for deep equality)
+  const normalizeRetroSchedule = (schedule) => {
+    if (!schedule || schedule.length === 0) return '[]';
+    return JSON.stringify(schedule.sort((a, b) => (a.coverage || '').localeCompare(b.coverage || '')));
+  };
+
+  // Helper to format retro schedule for display
+  const formatRetroScheduleLabel = (schedule) => {
+    if (!schedule || schedule.length === 0) return 'No retro dates';
+    const entries = schedule.map(entry => {
+      const coverage = entry.coverage || 'Unknown';
+      let retro = 'Inception';
+      if (entry.retro === 'full_prior_acts') retro = 'Full Prior Acts';
+      else if (entry.retro === 'date' && entry.date) retro = new Date(entry.date).toLocaleDateString();
+      else if (entry.retro === 'custom' && entry.custom_text) retro = entry.custom_text;
+      else if (entry.retro === 'custom') retro = 'Custom';
+      return `${coverage}: ${retro}`;
+    });
+    return entries.join(', ');
+  };
+
+  const retroRulesAll = useMemo(() => {
+    const getScope = (linkedIds) => {
+      if (linkedIds.length === 0) return 'none';
+      const linkedSet = new Set(linkedIds);
+      const isAll = allOptionIds.length > 0 && allOptionIds.every(id => linkedSet.has(id));
+      if (isAll) return 'all';
+      const isPrimary = allPrimaryIds.length > 0
+        && allPrimaryIds.length === linkedSet.size
+        && allPrimaryIds.every(id => linkedSet.has(id));
+      if (isPrimary) return 'primary';
+      const isExcess = allExcessIds.length > 0
+        && allExcessIds.length === linkedSet.size
+        && allExcessIds.every(id => linkedSet.has(id));
+      if (isExcess) return 'excess';
+      return 'custom';
+    };
+
+    const getAppliesLabel = (linkedIds, scope) => {
+      if (scope === 'none') return 'No options';
+      if (scope === 'all') return `All ${allOptionIds.length} Options`;
+      if (scope === 'primary') return 'All Primary';
+      if (scope === 'excess') return 'All Excess';
+      const linkedSet = new Set(linkedIds);
+      const firstId = allOptions.find(opt => linkedSet.has(opt.id))?.id;
+      const firstLabel = allOptionLabelMap.get(firstId) || 'Option';
+      const extra = linkedIds.length - 1;
+      return extra > 0 ? `${firstLabel} +${extra}` : firstLabel;
+    };
+
+    // Group structures by their retro schedule (normalized)
+    const retroScheduleMap = new Map(); // normalized schedule -> { schedule, linkedIds }
+    
+    structures.forEach(struct => {
+      const schedule = struct.retro_schedule || [];
+      const normalized = normalizeRetroSchedule(schedule);
+      
+      if (!retroScheduleMap.has(normalized)) {
+        retroScheduleMap.set(normalized, {
+          schedule: schedule,
+          linkedIds: [],
+        });
+      }
+      retroScheduleMap.get(normalized).linkedIds.push(String(struct.id));
+    });
+
+    // Convert to rules array
+    return Array.from(retroScheduleMap.entries()).map(([normalized, data]) => {
+      const linkedIds = data.linkedIds;
+      const scope = getScope(linkedIds);
+      return {
+        id: normalized, // Use normalized string as ID
+        schedule: data.schedule,
+        linkedIds,
+        linkedSet: new Set(linkedIds),
+        scope,
+        appliesLabel: getAppliesLabel(linkedIds, scope),
+        label: formatRetroScheduleLabel(data.schedule),
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+  }, [structures, allOptionIds, allPrimaryIds, allExcessIds, allOptions, allOptionLabelMap]);
+
+  const filteredRetroRulesAll = useMemo(() => {
+    if (rulesFilter === 'any') return retroRulesAll;
+    return retroRulesAll.filter(rule => rule.scope === rulesFilter);
+  }, [rulesFilter, retroRulesAll]);
+
+  // Helper to get policy term from structure (from first variation or structure level)
+  const getPolicyTerm = (struct) => {
+    const firstVariation = struct.variations?.[0];
+    return firstVariation?.period_months || struct.period_months || 12;
+  };
+
+  // Helper to get commission from structure (from first variation)
+  const getCommission = (struct) => {
+    const firstVariation = struct.variations?.[0];
+    return firstVariation?.commission_override ?? null;
+  };
+
+  // Helper to format policy term
+  const formatPolicyTerm = (months) => {
+    if (months === 12) return '12 Months';
+    if (months === 18) return '18 Months';
+    if (months === 24) return '24 Months';
+    return `${months} Months`;
+  };
+
+  // Helper to format commission
+  const formatCommission = (commission) => {
+    if (commission === null || commission === undefined) return 'Default (15%)';
+    return `${commission}%`;
+  };
+
+  const policyTermRulesAll = useMemo(() => {
+    const getScope = (linkedIds) => {
+      if (linkedIds.length === 0) return 'none';
+      const linkedSet = new Set(linkedIds);
+      const isAll = allOptionIds.length > 0 && allOptionIds.every(id => linkedSet.has(id));
+      if (isAll) return 'all';
+      const isPrimary = allPrimaryIds.length > 0
+        && allPrimaryIds.length === linkedSet.size
+        && allPrimaryIds.every(id => linkedSet.has(id));
+      if (isPrimary) return 'primary';
+      const isExcess = allExcessIds.length > 0
+        && allExcessIds.length === linkedSet.size
+        && allExcessIds.every(id => linkedSet.has(id));
+      if (isExcess) return 'excess';
+      return 'custom';
+    };
+
+    const getAppliesLabel = (linkedIds, scope) => {
+      if (scope === 'none') return 'No options';
+      if (scope === 'all') return `All ${allOptionIds.length} Options`;
+      if (scope === 'primary') return 'All Primary';
+      if (scope === 'excess') return 'All Excess';
+      const linkedSet = new Set(linkedIds);
+      const firstId = allOptions.find(opt => linkedSet.has(opt.id))?.id;
+      const firstLabel = allOptionLabelMap.get(firstId) || 'Option';
+      const extra = linkedIds.length - 1;
+      return extra > 0 ? `${firstLabel} +${extra}` : firstLabel;
+    };
+
+    // Group structures by their policy term
+    const policyTermMap = new Map(); // term value -> { term, linkedIds }
+    
+    structures.forEach(struct => {
+      const term = getPolicyTerm(struct);
+      
+      if (!policyTermMap.has(term)) {
+        policyTermMap.set(term, {
+          term: term,
+          linkedIds: [],
+        });
+      }
+      policyTermMap.get(term).linkedIds.push(String(struct.id));
+    });
+
+    // Convert to rules array
+    return Array.from(policyTermMap.entries()).map(([term, data]) => {
+      const linkedIds = data.linkedIds;
+      const scope = getScope(linkedIds);
+      return {
+        id: `term-${term}`,
+        term: data.term,
+        linkedIds,
+        linkedSet: new Set(linkedIds),
+        scope,
+        appliesLabel: getAppliesLabel(linkedIds, scope),
+        label: formatPolicyTerm(data.term),
+      };
+    }).sort((a, b) => a.term - b.term);
+  }, [structures, allOptionIds, allPrimaryIds, allExcessIds, allOptions, allOptionLabelMap]);
+
+  const filteredPolicyTermRulesAll = useMemo(() => {
+    if (rulesFilter === 'any') return policyTermRulesAll;
+    return policyTermRulesAll.filter(rule => rule.scope === rulesFilter);
+  }, [rulesFilter, policyTermRulesAll]);
+
+  const commissionRulesAll = useMemo(() => {
+    const getScope = (linkedIds) => {
+      if (linkedIds.length === 0) return 'none';
+      const linkedSet = new Set(linkedIds);
+      const isAll = allOptionIds.length > 0 && allOptionIds.every(id => linkedSet.has(id));
+      if (isAll) return 'all';
+      const isPrimary = allPrimaryIds.length > 0
+        && allPrimaryIds.length === linkedSet.size
+        && allPrimaryIds.every(id => linkedSet.has(id));
+      if (isPrimary) return 'primary';
+      const isExcess = allExcessIds.length > 0
+        && allExcessIds.length === linkedSet.size
+        && allExcessIds.every(id => linkedSet.has(id));
+      if (isExcess) return 'excess';
+      return 'custom';
+    };
+
+    const getAppliesLabel = (linkedIds, scope) => {
+      if (scope === 'none') return 'No options';
+      if (scope === 'all') return `All ${allOptionIds.length} Options`;
+      if (scope === 'primary') return 'All Primary';
+      if (scope === 'excess') return 'All Excess';
+      const linkedSet = new Set(linkedIds);
+      const firstId = allOptions.find(opt => linkedSet.has(opt.id))?.id;
+      const firstLabel = allOptionLabelMap.get(firstId) || 'Option';
+      const extra = linkedIds.length - 1;
+      return extra > 0 ? `${firstLabel} +${extra}` : firstLabel;
+    };
+
+    // Group structures by their commission
+    const commissionMap = new Map(); // commission value -> { commission, linkedIds }
+    
+    structures.forEach(struct => {
+      const commission = getCommission(struct);
+      const key = commission === null ? 'default' : String(commission);
+      
+      if (!commissionMap.has(key)) {
+        commissionMap.set(key, {
+          commission: commission,
+          linkedIds: [],
+        });
+      }
+      commissionMap.get(key).linkedIds.push(String(struct.id));
+    });
+
+    // Convert to rules array
+    return Array.from(commissionMap.entries()).map(([key, data]) => {
+      const linkedIds = data.linkedIds;
+      const scope = getScope(linkedIds);
+      return {
+        id: `commission-${key}`,
+        commission: data.commission,
+        linkedIds,
+        linkedSet: new Set(linkedIds),
+        scope,
+        appliesLabel: getAppliesLabel(linkedIds, scope),
+        label: formatCommission(data.commission),
+      };
+    }).sort((a, b) => {
+      // Sort: null/default first, then by value
+      if (a.commission === null && b.commission !== null) return -1;
+      if (a.commission !== null && b.commission === null) return 1;
+      if (a.commission === null && b.commission === null) return 0;
+      return (a.commission || 0) - (b.commission || 0);
+    });
+  }, [structures, allOptionIds, allPrimaryIds, allExcessIds, allOptions, allOptionLabelMap]);
+
+  const filteredCommissionRulesAll = useMemo(() => {
+    if (rulesFilter === 'any') return commissionRulesAll;
+    return commissionRulesAll.filter(rule => rule.scope === rulesFilter);
+  }, [rulesFilter, commissionRulesAll]);
+
   const endorsementItems = useMemo(() => {
     const endorsements = submissionEndorsementsData?.endorsements || [];
     return endorsements.map(endt => {
@@ -3167,10 +3415,50 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   });
 
   const toggleSubjectivityLink = useMutation({
-    mutationFn: ({ subjectivityId, quoteId, isLinked }) =>
-      isLinked ? unlinkSubjectivityFromQuote(quoteId, subjectivityId) : linkSubjectivityToQuote(quoteId, subjectivityId),
-    onSuccess: (_, variables) => {
-      refreshAfterManage([String(variables.quoteId)]);
+    mutationFn: async ({ subjectivityId, quoteId, isLinked }) => {
+      if (isLinked) {
+        return unlinkSubjectivityFromQuote(quoteId, subjectivityId);
+      } else {
+        return linkSubjectivityToQuote(quoteId, subjectivityId);
+      }
+    },
+    onMutate: async ({ subjectivityId, quoteId, isLinked }) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+
+      // Snapshot previous value
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submissionId]);
+
+      // Optimistically update
+      queryClient.setQueryData(['submissionSubjectivities', submissionId], (old) => {
+        if (!old) return old;
+        return old.map(subj => {
+          if (String(subj.id) !== String(subjectivityId)) return subj;
+          const currentIds = parseQuoteIds(subj.quote_ids);
+          let newIds;
+          if (isLinked) {
+            // Remove quoteId
+            newIds = currentIds.filter(id => String(id) !== String(quoteId));
+          } else {
+            // Add quoteId
+            newIds = [...currentIds, String(quoteId)];
+          }
+          return { ...subj, quote_ids: newIds };
+        });
+      });
+
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      // Rollback on error
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submissionId], context.previousData);
+      }
+      console.error('Failed to toggle subjectivity link:', err);
+    },
+    onSettled: () => {
+      // Refetch to ensure consistency
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
     },
   });
 
@@ -3188,6 +3476,294 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
     onSuccess: (_, variables) => {
       const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
       refreshAfterManage(ids);
+    },
+  });
+
+  const toggleEndorsementLink = useMutation({
+    mutationFn: async ({ endorsementId, quoteId, isLinked }) => {
+      if (isLinked) {
+        return unlinkEndorsementFromQuote(quoteId, endorsementId);
+      } else {
+        return linkEndorsementToQuote(quoteId, endorsementId);
+      }
+    },
+    onMutate: async ({ endorsementId, quoteId, isLinked }) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['submissionEndorsements', submissionId] });
+
+      // Snapshot previous value
+      const previousData = queryClient.getQueryData(['submissionEndorsements', submissionId]);
+
+      // Optimistically update
+      queryClient.setQueryData(['submissionEndorsements', submissionId], (old) => {
+        if (!old?.endorsements) return old;
+        return {
+          ...old,
+          endorsements: old.endorsements.map(endt => {
+            if (String(endt.endorsement_id) !== String(endorsementId)) return endt;
+            const currentIds = parseQuoteIds(endt.quote_ids);
+            let newIds;
+            if (isLinked) {
+              // Remove quoteId
+              newIds = currentIds.filter(id => String(id) !== String(quoteId));
+            } else {
+              // Add quoteId
+              newIds = [...currentIds, String(quoteId)];
+            }
+            return { ...endt, quote_ids: newIds };
+          }),
+        };
+      });
+
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      // Rollback on error
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionEndorsements', submissionId], context.previousData);
+      }
+      console.error('Failed to toggle endorsement link:', err);
+    },
+    onSettled: () => {
+      // Refetch to ensure consistency
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
+  });
+
+  const applyEndorsementSelection = useMutation({
+    mutationFn: async ({ endorsementId, currentIds, targetIds }) => {
+      const currentSet = new Set(currentIds);
+      const targetSet = new Set(targetIds);
+      const toLink = targetIds.filter(id => !currentSet.has(id));
+      const toUnlink = currentIds.filter(id => !targetSet.has(id));
+      await Promise.all([
+        ...toLink.map(id => linkEndorsementToQuote(id, endorsementId)),
+        ...toUnlink.map(id => unlinkEndorsementFromQuote(id, endorsementId)),
+      ]);
+    },
+    onSuccess: (_, variables) => {
+      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
+      refreshAfterManage(ids);
+    },
+  });
+
+  const applyRetroSelection = useMutation({
+    mutationFn: async ({ schedule, currentIds, targetIds }) => {
+      const currentSet = new Set(currentIds);
+      const targetSet = new Set(targetIds);
+      const toApply = targetIds.filter(id => !currentSet.has(id));
+      const toRemove = currentIds.filter(id => !targetSet.has(id));
+      
+      // Apply schedule to new quotes
+      await Promise.all(
+        toApply.map(id => updateQuoteOption(id, { retro_schedule: schedule }))
+      );
+      
+      // Remove schedule from quotes (set to empty array)
+      await Promise.all(
+        toRemove.map(id => updateQuoteOption(id, { retro_schedule: [] }))
+      );
+    },
+    onSuccess: (_, variables) => {
+      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
+      refreshAfterManage(ids);
+    },
+  });
+
+  const toggleRetroLink = useMutation({
+    mutationFn: async ({ schedule, quoteId, isLinked }) => {
+      if (isLinked) {
+        // Remove retro schedule
+        return updateQuoteOption(quoteId, { retro_schedule: [] });
+      } else {
+        // Apply retro schedule
+        return updateQuoteOption(quoteId, { retro_schedule: schedule });
+      }
+    },
+    onMutate: async ({ schedule, quoteId, isLinked }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => 
+          String(s.id) === String(quoteId) 
+            ? { ...s, retro_schedule: isLinked ? [] : schedule }
+            : s
+        )
+      );
+      return { previous };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['structures', submissionId], context.previous);
+      }
+      console.error('Failed to toggle retro schedule:', err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  const applyPolicyTermSelection = useMutation({
+    mutationFn: async ({ term, currentIds, targetIds }) => {
+      const currentSet = new Set(currentIds);
+      const targetSet = new Set(targetIds);
+      const toApply = targetIds.filter(id => !currentSet.has(id));
+      const toRemove = currentIds.filter(id => !targetSet.has(id));
+      
+      await Promise.all(
+        toApply.map(id => {
+          const struct = structures.find(s => String(s.id) === id);
+          const firstVariation = struct?.variations?.[0];
+          if (firstVariation) {
+            return updateVariation(firstVariation.id, { period_months: term });
+          } else if (struct) {
+            return updateQuoteOption(id, { period_months: term });
+          }
+        }).filter(Boolean)
+      );
+      
+      await Promise.all(
+        toRemove.map(id => {
+          const struct = structures.find(s => String(s.id) === id);
+          const firstVariation = struct?.variations?.[0];
+          if (firstVariation) {
+            return updateVariation(firstVariation.id, { period_months: 12 });
+          } else if (struct) {
+            return updateQuoteOption(id, { period_months: 12 });
+          }
+        }).filter(Boolean)
+      );
+    },
+    onSuccess: (_, variables) => {
+      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
+      refreshAfterManage(ids);
+    },
+  });
+
+  const togglePolicyTermLink = useMutation({
+    mutationFn: async ({ term, quoteId, isLinked }) => {
+      const struct = structures.find(s => String(s.id) === quoteId);
+      const firstVariation = struct?.variations?.[0];
+      if (isLinked) {
+        if (firstVariation) {
+          return updateVariation(firstVariation.id, { period_months: 12 });
+        } else if (struct) {
+          return updateQuoteOption(quoteId, { period_months: 12 });
+        }
+      } else {
+        if (firstVariation) {
+          return updateVariation(firstVariation.id, { period_months: term });
+        } else if (struct) {
+          return updateQuoteOption(quoteId, { period_months: term });
+        }
+      }
+    },
+    onMutate: async ({ term, quoteId, isLinked }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          if (String(s.id) !== String(quoteId)) return s;
+          const firstVariation = s.variations?.[0];
+          if (firstVariation) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) => 
+                idx === 0 ? { ...v, period_months: isLinked ? 12 : term } : v
+              ),
+            };
+          }
+          return { ...s, period_months: isLinked ? 12 : term };
+        })
+      );
+      return { previous };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['structures', submissionId], context.previous);
+      }
+      console.error('Failed to toggle policy term:', err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  const applyCommissionSelection = useMutation({
+    mutationFn: async ({ commission, currentIds, targetIds }) => {
+      const currentSet = new Set(currentIds);
+      const targetSet = new Set(targetIds);
+      const toApply = targetIds.filter(id => !currentSet.has(id));
+      const toRemove = currentIds.filter(id => !targetSet.has(id));
+      
+      await Promise.all(
+        toApply.map(id => {
+          const struct = structures.find(s => String(s.id) === id);
+          const firstVariation = struct?.variations?.[0];
+          if (firstVariation) {
+            return updateVariation(firstVariation.id, { commission_override: commission });
+          }
+        }).filter(Boolean)
+      );
+      
+      await Promise.all(
+        toRemove.map(id => {
+          const struct = structures.find(s => String(s.id) === id);
+          const firstVariation = struct?.variations?.[0];
+          if (firstVariation) {
+            return updateVariation(firstVariation.id, { commission_override: null });
+          }
+        }).filter(Boolean)
+      );
+    },
+    onSuccess: (_, variables) => {
+      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
+      refreshAfterManage(ids);
+    },
+  });
+
+  const toggleCommissionLink = useMutation({
+    mutationFn: async ({ commission, quoteId, isLinked }) => {
+      const struct = structures.find(s => String(s.id) === quoteId);
+      const firstVariation = struct?.variations?.[0];
+      if (isLinked) {
+        if (firstVariation) {
+          return updateVariation(firstVariation.id, { commission_override: null });
+        }
+      } else {
+        if (firstVariation) {
+          return updateVariation(firstVariation.id, { commission_override: commission });
+        }
+      }
+    },
+    onMutate: async ({ commission, quoteId, isLinked }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          if (String(s.id) !== String(quoteId)) return s;
+          const firstVariation = s.variations?.[0];
+          if (firstVariation) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) => 
+                idx === 0 ? { ...v, commission_override: isLinked ? null : commission } : v
+              ),
+            };
+          }
+          return s;
+        })
+      );
+      return { previous };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['structures', submissionId], context.previous);
+      }
+      console.error('Failed to toggle commission:', err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
     },
   });
 
@@ -3326,6 +3902,10 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
         {[
           { key: 'options', label: 'Options' },
           { key: 'subjectivities', label: 'Subjectivities' },
+          { key: 'endorsements', label: 'Endorsements' },
+          { key: 'retro', label: 'Retro Dates' },
+          { key: 'policy_term', label: 'Policy Term' },
+          { key: 'commission', label: 'Commission' },
         ].map(tab => (
           <button
             key={tab.key}
@@ -3391,15 +3971,21 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                 const isSelected = selectedIdSet.has(String(struct.id));
                 const subjectivityList = subjectivitiesByQuote.get(String(struct.id)) || [];
                 const endorsementList = endorsementsByQuote.get(String(struct.id)) || [];
-                const subjectivityCount = subjectivityList.length;
-                const endorsementCount = endorsementList.length;
                 const subjectivityKey = `subjectivities-${struct.id}`;
                 const endorsementKey = `endorsements-${struct.id}`;
-                const subjectivityPopoverPosition = popoverPlacement[subjectivityKey] === 'top' ? 'bottom-full mb-2' : 'mt-2';
-                const endorsementPopoverPosition = popoverPlacement[endorsementKey] === 'top' ? 'bottom-full mb-2' : 'mt-2';
-                const subjectivityRemainder = subjectivityCount > 1 ? subjectivityCount - 1 : 0;
+
+                // Get position-based comparison stats
+                const stats = positionComparisonStats.get(String(struct.id)) || {
+                  subjectivities: { total: 0, missing: [], extra: [] },
+                  endorsements: { total: 0, missing: [], extra: [] },
+                };
+                const subjStats = stats.subjectivities;
+                const endtStats = stats.endorsements;
+                const subjDisplay = formatComparisonText(subjStats.missing, subjStats.extra);
+                const endtDisplay = formatComparisonText(endtStats.missing, endtStats.extra);
 
                 const draftPremium = draft[struct.id]?.premium ?? currentPremium;
+                const isExcess = getStructurePosition(struct) === 'excess';
 
                 return (
                   <tr
@@ -3418,21 +4004,23 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                     </td>
                     {/* Option Name - Clickable to navigate */}
                     <td className="px-4 py-3">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onSelect(struct.id); }}
-                        className="hover:text-purple-600 transition-colors"
-                      >
-                        <span className="font-medium text-gray-900">
-                          {struct.quote_name || 'Unnamed Option'}
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                          isExcess
+                            ? 'bg-blue-100 text-blue-600'
+                            : 'bg-emerald-100 text-emerald-700'
+                        }`}>
+                          {isExcess ? 'EXCESS' : 'PRIMARY'}
                         </span>
-                      </button>
-                      <span className={`ml-2 text-[10px] px-1.5 py-0.5 rounded ${
-                        getStructurePosition(struct) === 'excess'
-                          ? 'bg-blue-100 text-blue-600'
-                          : 'bg-emerald-100 text-emerald-700'
-                      }`}>
-                        {getStructurePosition(struct) === 'excess' ? 'EXCESS' : 'PRIMARY'}
-                      </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onSelect(struct.id); }}
+                          className="hover:text-purple-600 transition-colors"
+                        >
+                          <span className="font-medium text-gray-900">
+                            {struct.quote_name || 'Unnamed Option'}
+                          </span>
+                        </button>
+                      </div>
                     </td>
                     {/* Premium */}
                     <td className="px-4 py-3 text-right">
@@ -3453,76 +4041,130 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                       )}
                     </td>
                     <td className="px-4 py-3 text-left">
-                      <div
-                        onMouseEnter={(e) => openPopover('subjectivities', struct.id, e)}
-                        onMouseLeave={() => setActivePopover(null)}
-                      >
-                        <button
-                          ref={el => { popoverTriggerRefs.current[subjectivityKey] = el; }}
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); togglePopover('subjectivities', struct.id, e); }}
-                          className="inline-flex items-center gap-2 text-xs text-gray-700 hover:text-gray-900 min-w-0 max-w-[240px]"
-                        >
-                          <span className={`truncate ${subjectivityCount === 0 ? 'text-gray-400' : ''}`}>
-                            {subjectivityCount === 0 ? '—' : (subjectivityList[0]?.label || 'Subjectivity')}
-                          </span>
-                          {subjectivityRemainder > 0 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 whitespace-nowrap">
-                              +{subjectivityRemainder}
-                            </span>
-                          )}
-                        </button>
-                        <PortalPopover
-                          isOpen={activePopover === subjectivityKey && subjectivityList.length > 0}
-                          onClose={() => setActivePopover(null)}
-                          triggerRef={{ current: popoverTriggerRefs.current[subjectivityKey] }}
-                        >
-                          <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Subjectivities</div>
-                          <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                            {subjectivityList.map(item => (
-                              <div key={item.id} className="text-xs text-gray-700">
-                                {item.label}
-                              </div>
-                            ))}
-                          </div>
-                        </PortalPopover>
-                      </div>
+                      {(subjectivityList.length > 0 || subjStats.missing.length > 0) ? (
+                        <HoverCard.Root openDelay={200} closeDelay={100}>
+                          <HoverCard.Trigger asChild>
+                            <button
+                              type="button"
+                              className={`text-xs ${subjDisplay.tone} hover:opacity-80`}
+                            >
+                              {subjDisplay.text}
+                            </button>
+                          </HoverCard.Trigger>
+                          <HoverCard.Portal>
+                            <HoverCard.Content
+                              className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                              sideOffset={4}
+                            >
+                              {subjStats.missing.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-amber-600 uppercase tracking-wide mb-1">Missing from peers</div>
+                                  <div className="space-y-1 mb-3">
+                                    {subjStats.missing.map(item => (
+                                      <div key={item.id} className="text-xs text-gray-700 flex items-start gap-2">
+                                        <span className="text-amber-400">•</span>
+                                        <span>{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {subjStats.extra.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-purple-600 uppercase tracking-wide mb-1">Extra (not on peers)</div>
+                                  <div className="space-y-1 mb-3">
+                                    {subjStats.extra.map(item => (
+                                      <div key={item.id} className="text-xs text-gray-700 flex items-start gap-2">
+                                        <span className="text-purple-400">•</span>
+                                        <span>{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {subjectivityList.length > 0 && subjStats.missing.length === 0 && subjStats.extra.length === 0 && (
+                                <>
+                                  <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Subjectivities ({subjectivityList.length})</div>
+                                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                    {subjectivityList.map(item => (
+                                      <div key={item.id} className="text-xs text-gray-700 flex items-start gap-2">
+                                        <span className="text-gray-400">•</span>
+                                        <span>{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              <HoverCard.Arrow className="fill-white" />
+                            </HoverCard.Content>
+                          </HoverCard.Portal>
+                        </HoverCard.Root>
+                      ) : (
+                        <span className={`text-xs ${subjDisplay.tone}`}>{subjDisplay.text}</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-left">
-                      <div
-                        onMouseEnter={(e) => openPopover('endorsements', struct.id, e)}
-                        onMouseLeave={() => setActivePopover(null)}
-                      >
-                        <button
-                          ref={el => { popoverTriggerRefs.current[endorsementKey] = el; }}
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); togglePopover('endorsements', struct.id, e); }}
-                          className={`inline-flex items-center gap-2 text-xs ${
-                            endorsementCount === 0 ? 'text-gray-400' : 'text-gray-600 hover:text-gray-800'
-                          }`}
-                        >
-                          <span>({endorsementCount}) Endorsements</span>
-                        </button>
-                        <PortalPopover
-                          isOpen={activePopover === endorsementKey && endorsementList.length > 0}
-                          onClose={() => setActivePopover(null)}
-                          triggerRef={{ current: popoverTriggerRefs.current[endorsementKey] }}
-                        >
-                          <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Endorsements</div>
-                          <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                            {endorsementList.map(item => (
-                              <div key={item.id} className="flex items-center justify-between gap-2 text-xs">
-                                <span className="text-gray-700">{item.label}</span>
-                                <span className={`text-[9px] px-1.5 py-0.5 rounded ${
-                                  item.isShared ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-                                }`}>
-                                  {item.isShared ? 'Shared' : 'Local'}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </PortalPopover>
-                      </div>
+                      {(endorsementList.length > 0 || endtStats.missing.length > 0) ? (
+                        <HoverCard.Root openDelay={200} closeDelay={100}>
+                          <HoverCard.Trigger asChild>
+                            <button
+                              type="button"
+                              className={`text-xs ${endtDisplay.tone} hover:opacity-80`}
+                            >
+                              {endtDisplay.text}
+                            </button>
+                          </HoverCard.Trigger>
+                          <HoverCard.Portal>
+                            <HoverCard.Content
+                              className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                              sideOffset={4}
+                            >
+                              {endtStats.missing.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-amber-600 uppercase tracking-wide mb-1">Missing from peers</div>
+                                  <div className="space-y-1 mb-3">
+                                    {endtStats.missing.map(item => (
+                                      <div key={item.id} className="text-xs text-gray-700 flex items-start gap-2">
+                                        <span className="text-amber-400">•</span>
+                                        <span>{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {endtStats.extra.length > 0 && (
+                                <>
+                                  <div className="text-[10px] text-purple-600 uppercase tracking-wide mb-1">Extra (not on peers)</div>
+                                  <div className="space-y-1 mb-3">
+                                    {endtStats.extra.map(item => (
+                                      <div key={item.id} className="text-xs text-gray-700 flex items-start gap-2">
+                                        <span className="text-purple-400">•</span>
+                                        <span>{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {endorsementList.length > 0 && endtStats.missing.length === 0 && endtStats.extra.length === 0 && (
+                                <>
+                                  <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Endorsements ({endorsementList.length})</div>
+                                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                    {endorsementList.map(item => (
+                                      <div key={item.id} className="text-xs text-gray-700 flex items-start gap-2">
+                                        <span className="text-gray-400">•</span>
+                                        <span>{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              <HoverCard.Arrow className="fill-white" />
+                            </HoverCard.Content>
+                          </HoverCard.Portal>
+                        </HoverCard.Root>
+                      ) : (
+                        <span className={`text-xs ${endtDisplay.tone}`}>{endtDisplay.text}</span>
+                      )}
                     </td>
                     {/* Status - Read only */}
                     <td className="px-4 py-3 text-center">
@@ -3544,65 +4186,71 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       )}
 
       {gridTab === 'subjectivities' && (
-        <div className="space-y-4">
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-            Assignment Rules
-          </div>
-          <div className="flex items-center gap-2">
-            {[
-              { key: 'all', label: 'Apply to All' },
-              { key: 'primary', label: 'Apply to Primary' },
-              { key: 'excess', label: 'Apply to Excess' },
-            ].map(filter => (
-              <button
-                key={filter.key}
-                onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
-                className={`px-3 py-1 rounded-full text-xs font-medium border ${
-                  rulesFilter === filter.key
-                    ? 'border-purple-300 bg-purple-50 text-purple-700'
-                    : 'border-gray-200 text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {filter.label}
-              </button>
-            ))}
+        <div className="space-y-6">
+          <div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+              Assignment Rules
+            </div>
+            <div className="flex items-center gap-3">
+              {[
+                { key: 'all', label: 'Apply to All' },
+                { key: 'primary', label: 'Apply to Primary' },
+                { key: 'excess', label: 'Apply to Excess' },
+              ].map(filter => (
+                <button
+                  key={filter.key}
+                  onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all duration-200 ${
+                    rulesFilter === filter.key
+                      ? 'border-purple-300 bg-purple-50 text-purple-700 shadow-sm'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="border border-gray-200 rounded-lg">
-            <div className="grid grid-cols-[1fr_220px] gap-4 px-4 py-2 text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
-              <span>Subjectivity Name</span>
-              <span className="text-right">Applies To</span>
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="grid grid-cols-[1fr_240px] gap-6 px-6 py-3.5 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Subjectivity Name</span>
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider text-right">Applies To</span>
             </div>
             <div className="divide-y divide-gray-100">
-              {filteredSubjectivityRulesAll.map(rule => {
+              {filteredSubjectivityRulesAll.map((rule, index) => {
                 const isMenuOpen = activeRuleMenu === rule.id;
                 return (
-                  <div key={rule.id} className="grid grid-cols-[1fr_220px] gap-4 px-4 py-3 items-start">
-                    <div className="text-sm text-gray-800">
+                  <div 
+                    key={rule.id} 
+                    className="grid grid-cols-[1fr_240px] gap-6 px-6 py-4 items-center group hover:bg-purple-50/30 transition-colors duration-150"
+                  >
+                    <div className="text-sm font-medium text-slate-800 leading-relaxed">
                       {rule.label}
                     </div>
-                    <div className="relative flex flex-col items-end gap-1">
-                      <button
-                        ref={(el) => { ruleTriggerRefs.current[rule.id] = el; }}
-                        onClick={() => setActiveRuleMenu(isMenuOpen ? null : rule.id)}
-                        className="text-xs text-gray-600 border border-gray-200 bg-gray-50 rounded-full px-2 py-1 hover:text-gray-800"
-                      >
-                        {rule.appliesLabel}
-                      </button>
-                      {rule.scope !== 'all' && (
-                        <button
-                          onClick={() => setActiveRuleMenu(isMenuOpen ? null : rule.id)}
-                          className="text-[11px] text-purple-600 hover:text-purple-700"
+                    <Popover.Root open={isMenuOpen} onOpenChange={(open) => setActiveRuleMenu(open ? rule.id : null)}>
+                      <div className="flex flex-col items-end gap-2">
+                        <Popover.Trigger asChild>
+                          <button
+                            className="text-xs font-semibold text-slate-700 border border-gray-300 bg-white rounded-full px-3 py-1.5 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 transition-all duration-150 shadow-sm hover:shadow"
+                          >
+                            {rule.appliesLabel}
+                          </button>
+                        </Popover.Trigger>
+                        {rule.scope !== 'all' && (
+                          <Popover.Trigger asChild>
+                            <button className="text-[11px] font-medium text-purple-600 hover:text-purple-700 hover:underline transition-colors">
+                              + Add Option
+                            </button>
+                          </Popover.Trigger>
+                        )}
+                      </div>
+                      <Popover.Portal>
+                        <Popover.Content
+                          className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                          sideOffset={4}
+                          align="end"
                         >
-                          + Add Option
-                        </button>
-                      )}
-                      <PortalDropdown
-                        isOpen={isMenuOpen}
-                        onClose={() => setActiveRuleMenu(null)}
-                        triggerRef={{ current: ruleTriggerRefs.current[rule.id] }}
-                      >
-                        <div className="p-2">
                           <div className="space-y-1">
                             <button
                               onClick={() => {
@@ -3651,7 +4299,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             {allOptions.map(opt => {
                               const isLinked = rule.linkedSet.has(opt.id);
                               return (
-                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600">
+                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
                                   <input
                                     type="checkbox"
                                     checked={isLinked}
@@ -3660,7 +4308,6 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                       quoteId: opt.id,
                                       isLinked,
                                     })}
-                                    disabled={toggleSubjectivityLink.isPending}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
                                   />
                                   <span className="truncate">{opt.name}</span>
@@ -3668,16 +4315,607 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                               );
                             })}
                           </div>
-                        </div>
-                      </PortalDropdown>
-                    </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
                   </div>
                 );
               })}
 
               {filteredSubjectivityRulesAll.length === 0 && (
-                <div className="px-4 py-6 text-sm text-gray-400 text-center">
-                  No subjectivities match this filter.
+                <div className="px-6 py-12 text-sm text-gray-400 text-center">
+                  <div className="text-gray-300 mb-2">No subjectivities match this filter.</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gridTab === 'endorsements' && (
+        <div className="space-y-6">
+          <div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+              Assignment Rules
+            </div>
+            <div className="flex items-center gap-3">
+              {[
+                { key: 'all', label: 'Apply to All' },
+                { key: 'primary', label: 'Apply to Primary' },
+                { key: 'excess', label: 'Apply to Excess' },
+              ].map(filter => (
+                <button
+                  key={filter.key}
+                  onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all duration-200 ${
+                    rulesFilter === filter.key
+                      ? 'border-purple-300 bg-purple-50 text-purple-700 shadow-sm'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="grid grid-cols-[1fr_240px] gap-6 px-6 py-3.5 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Endorsement Name</span>
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider text-right">Applies To</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {filteredEndorsementRulesAll.map((rule, index) => {
+                const isMenuOpen = activeRuleMenu === rule.id;
+                return (
+                  <div 
+                    key={rule.id} 
+                    className="grid grid-cols-[1fr_240px] gap-6 px-6 py-4 items-center group hover:bg-purple-50/30 transition-colors duration-150"
+                  >
+                    <div className="text-sm font-medium text-slate-800 leading-relaxed">
+                      {rule.label}
+                      {rule.code && (
+                        <span className="ml-2 text-xs text-slate-500 font-mono">({rule.code})</span>
+                      )}
+                    </div>
+                    <Popover.Root open={isMenuOpen} onOpenChange={(open) => setActiveRuleMenu(open ? rule.id : null)}>
+                      <div className="flex flex-col items-end gap-2">
+                        <Popover.Trigger asChild>
+                          <button
+                            className="text-xs font-semibold text-slate-700 border border-gray-300 bg-white rounded-full px-3 py-1.5 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 transition-all duration-150 shadow-sm hover:shadow"
+                          >
+                            {rule.appliesLabel}
+                          </button>
+                        </Popover.Trigger>
+                        {rule.scope !== 'all' && (
+                          <Popover.Trigger asChild>
+                            <button className="text-[11px] font-medium text-purple-600 hover:text-purple-700 hover:underline transition-colors">
+                              + Add Option
+                            </button>
+                          </Popover.Trigger>
+                        )}
+                      </div>
+                      <Popover.Portal>
+                        <Popover.Content
+                          className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                          sideOffset={4}
+                          align="end"
+                        >
+                          <div className="space-y-1">
+                            <button
+                              onClick={() => {
+                                applyEndorsementSelection.mutate({
+                                  endorsementId: rule.id,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allOptionIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyEndorsementSelection.isPending}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Options
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyEndorsementSelection.mutate({
+                                  endorsementId: rule.id,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allPrimaryIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyEndorsementSelection.isPending || allPrimaryIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Primary
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyEndorsementSelection.mutate({
+                                  endorsementId: rule.id,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allExcessIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyEndorsementSelection.isPending || allExcessIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Excess
+                            </button>
+                          </div>
+                          <div className="mt-2 border-t border-gray-100 pt-2 space-y-1 max-h-48 overflow-y-auto">
+                            {allOptions.map(opt => {
+                              const isLinked = rule.linkedSet.has(opt.id);
+                              return (
+                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                                  <input
+                                    type="checkbox"
+                                    checked={isLinked}
+                                    onChange={() => toggleEndorsementLink.mutate({
+                                      endorsementId: rule.id,
+                                      quoteId: opt.id,
+                                      isLinked,
+                                    })}
+                                    className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                                  />
+                                  <span className="truncate">{opt.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                  </div>
+                );
+              })}
+
+              {filteredEndorsementRulesAll.length === 0 && (
+                <div className="px-6 py-12 text-sm text-gray-400 text-center">
+                  <div className="text-gray-300 mb-2">No endorsements match this filter.</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gridTab === 'retro' && (
+        <div className="space-y-6">
+          <div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+              Assignment Rules
+            </div>
+            <div className="flex items-center gap-3">
+              {[
+                { key: 'all', label: 'Apply to All' },
+                { key: 'primary', label: 'Apply to Primary' },
+                { key: 'excess', label: 'Apply to Excess' },
+              ].map(filter => (
+                <button
+                  key={filter.key}
+                  onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all duration-200 ${
+                    rulesFilter === filter.key
+                      ? 'border-purple-300 bg-purple-50 text-purple-700 shadow-sm'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="grid grid-cols-[1fr_240px] gap-6 px-6 py-3.5 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Retro Schedule</span>
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider text-right">Applies To</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {filteredRetroRulesAll.map((rule, index) => {
+                const isMenuOpen = activeRuleMenu === rule.id;
+                return (
+                  <div 
+                    key={rule.id} 
+                    className="grid grid-cols-[1fr_240px] gap-6 px-6 py-4 items-center group hover:bg-purple-50/30 transition-colors duration-150"
+                  >
+                    <div className="text-sm font-medium text-slate-800 leading-relaxed">
+                      {rule.label}
+                    </div>
+                    <Popover.Root open={isMenuOpen} onOpenChange={(open) => setActiveRuleMenu(open ? rule.id : null)}>
+                      <div className="flex flex-col items-end gap-2">
+                        <Popover.Trigger asChild>
+                          <button
+                            className="text-xs font-semibold text-slate-700 border border-gray-300 bg-white rounded-full px-3 py-1.5 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 transition-all duration-150 shadow-sm hover:shadow"
+                          >
+                            {rule.appliesLabel}
+                          </button>
+                        </Popover.Trigger>
+                        {rule.scope !== 'all' && (
+                          <Popover.Trigger asChild>
+                            <button className="text-[11px] font-medium text-purple-600 hover:text-purple-700 hover:underline transition-colors">
+                              + Add Option
+                            </button>
+                          </Popover.Trigger>
+                        )}
+                      </div>
+                      <Popover.Portal>
+                        <Popover.Content
+                          className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                          sideOffset={4}
+                          align="end"
+                        >
+                          <div className="space-y-1">
+                            <button
+                              onClick={() => {
+                                applyRetroSelection.mutate({
+                                  schedule: rule.schedule,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allOptionIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyRetroSelection.isPending}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Options
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyRetroSelection.mutate({
+                                  schedule: rule.schedule,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allPrimaryIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyRetroSelection.isPending || allPrimaryIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Primary
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyRetroSelection.mutate({
+                                  schedule: rule.schedule,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allExcessIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyRetroSelection.isPending || allExcessIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Excess
+                            </button>
+                          </div>
+                          <div className="mt-2 border-t border-gray-100 pt-2 space-y-1 max-h-48 overflow-y-auto">
+                            {allOptions.map(opt => {
+                              const isLinked = rule.linkedSet.has(opt.id);
+                              return (
+                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                                  <input
+                                    type="checkbox"
+                                    checked={isLinked}
+                                    onChange={() => toggleRetroLink.mutate({
+                                      schedule: rule.schedule,
+                                      quoteId: opt.id,
+                                      isLinked,
+                                    })}
+                                    className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                                  />
+                                  <span className="truncate">{opt.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                  </div>
+                );
+              })}
+
+              {filteredRetroRulesAll.length === 0 && (
+                <div className="px-6 py-12 text-sm text-gray-400 text-center">
+                  <div className="text-gray-300 mb-2">No retro schedules match this filter.</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gridTab === 'policy_term' && (
+        <div className="space-y-6">
+          <div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+              Assignment Rules
+            </div>
+            <div className="flex items-center gap-3">
+              {[
+                { key: 'all', label: 'Apply to All' },
+                { key: 'primary', label: 'Apply to Primary' },
+                { key: 'excess', label: 'Apply to Excess' },
+              ].map(filter => (
+                <button
+                  key={filter.key}
+                  onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all duration-200 ${
+                    rulesFilter === filter.key
+                      ? 'border-purple-300 bg-purple-50 text-purple-700 shadow-sm'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="grid grid-cols-[1fr_240px] gap-6 px-6 py-3.5 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Policy Term</span>
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider text-right">Applies To</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {filteredPolicyTermRulesAll.map((rule, index) => {
+                const isMenuOpen = activeRuleMenu === rule.id;
+                return (
+                  <div 
+                    key={rule.id} 
+                    className="grid grid-cols-[1fr_240px] gap-6 px-6 py-4 items-center group hover:bg-purple-50/30 transition-colors duration-150"
+                  >
+                    <div className="text-sm font-medium text-slate-800 leading-relaxed">
+                      {rule.label}
+                    </div>
+                    <Popover.Root open={isMenuOpen} onOpenChange={(open) => setActiveRuleMenu(open ? rule.id : null)}>
+                      <div className="flex flex-col items-end gap-2">
+                        <Popover.Trigger asChild>
+                          <button
+                            className="text-xs font-semibold text-slate-700 border border-gray-300 bg-white rounded-full px-3 py-1.5 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 transition-all duration-150 shadow-sm hover:shadow"
+                          >
+                            {rule.appliesLabel}
+                          </button>
+                        </Popover.Trigger>
+                        {rule.scope !== 'all' && (
+                          <Popover.Trigger asChild>
+                            <button className="text-[11px] font-medium text-purple-600 hover:text-purple-700 hover:underline transition-colors">
+                              + Add Option
+                            </button>
+                          </Popover.Trigger>
+                        )}
+                      </div>
+                      <Popover.Portal>
+                        <Popover.Content
+                          className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                          sideOffset={4}
+                          align="end"
+                        >
+                          <div className="space-y-1">
+                            <button
+                              onClick={() => {
+                                applyPolicyTermSelection.mutate({
+                                  term: rule.term,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allOptionIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyPolicyTermSelection.isPending}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Options
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyPolicyTermSelection.mutate({
+                                  term: rule.term,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allPrimaryIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyPolicyTermSelection.isPending || allPrimaryIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Primary
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyPolicyTermSelection.mutate({
+                                  term: rule.term,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allExcessIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyPolicyTermSelection.isPending || allExcessIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Excess
+                            </button>
+                          </div>
+                          <div className="mt-2 border-t border-gray-100 pt-2 space-y-1 max-h-48 overflow-y-auto">
+                            {allOptions.map(opt => {
+                              const isLinked = rule.linkedSet.has(opt.id);
+                              return (
+                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                                  <input
+                                    type="checkbox"
+                                    checked={isLinked}
+                                    onChange={() => togglePolicyTermLink.mutate({
+                                      term: rule.term,
+                                      quoteId: opt.id,
+                                      isLinked,
+                                    })}
+                                    className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                                  />
+                                  <span className="truncate">{opt.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                  </div>
+                );
+              })}
+
+              {filteredPolicyTermRulesAll.length === 0 && (
+                <div className="px-6 py-12 text-sm text-gray-400 text-center">
+                  <div className="text-gray-300 mb-2">No policy terms match this filter.</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gridTab === 'commission' && (
+        <div className="space-y-6">
+          <div>
+            <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+              Assignment Rules
+            </div>
+            <div className="flex items-center gap-3">
+              {[
+                { key: 'all', label: 'Apply to All' },
+                { key: 'primary', label: 'Apply to Primary' },
+                { key: 'excess', label: 'Apply to Excess' },
+              ].map(filter => (
+                <button
+                  key={filter.key}
+                  onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
+                  className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all duration-200 ${
+                    rulesFilter === filter.key
+                      ? 'border-purple-300 bg-purple-50 text-purple-700 shadow-sm'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="grid grid-cols-[1fr_240px] gap-6 px-6 py-3.5 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Brokerage Commission</span>
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider text-right">Applies To</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {filteredCommissionRulesAll.map((rule, index) => {
+                const isMenuOpen = activeRuleMenu === rule.id;
+                return (
+                  <div 
+                    key={rule.id} 
+                    className="grid grid-cols-[1fr_240px] gap-6 px-6 py-4 items-center group hover:bg-purple-50/30 transition-colors duration-150"
+                  >
+                    <div className="text-sm font-medium text-slate-800 leading-relaxed">
+                      {rule.label}
+                    </div>
+                    <Popover.Root open={isMenuOpen} onOpenChange={(open) => setActiveRuleMenu(open ? rule.id : null)}>
+                      <div className="flex flex-col items-end gap-2">
+                        <Popover.Trigger asChild>
+                          <button
+                            className="text-xs font-semibold text-slate-700 border border-gray-300 bg-white rounded-full px-3 py-1.5 hover:border-purple-300 hover:bg-purple-50 hover:text-purple-700 transition-all duration-150 shadow-sm hover:shadow"
+                          >
+                            {rule.appliesLabel}
+                          </button>
+                        </Popover.Trigger>
+                        {rule.scope !== 'all' && (
+                          <Popover.Trigger asChild>
+                            <button className="text-[11px] font-medium text-purple-600 hover:text-purple-700 hover:underline transition-colors">
+                              + Add Option
+                            </button>
+                          </Popover.Trigger>
+                        )}
+                      </div>
+                      <Popover.Portal>
+                        <Popover.Content
+                          className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                          sideOffset={4}
+                          align="end"
+                        >
+                          <div className="space-y-1">
+                            <button
+                              onClick={() => {
+                                applyCommissionSelection.mutate({
+                                  commission: rule.commission,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allOptionIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyCommissionSelection.isPending}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Options
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyCommissionSelection.mutate({
+                                  commission: rule.commission,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allPrimaryIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyCommissionSelection.isPending || allPrimaryIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Primary
+                            </button>
+                            <button
+                              onClick={() => {
+                                applyCommissionSelection.mutate({
+                                  commission: rule.commission,
+                                  currentIds: rule.linkedIds,
+                                  targetIds: allExcessIds,
+                                });
+                                setActiveRuleMenu(null);
+                              }}
+                              disabled={applyCommissionSelection.isPending || allExcessIds.length === 0}
+                              className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
+                            >
+                              All Excess
+                            </button>
+                          </div>
+                          <div className="mt-2 border-t border-gray-100 pt-2 space-y-1 max-h-48 overflow-y-auto">
+                            {allOptions.map(opt => {
+                              const isLinked = rule.linkedSet.has(opt.id);
+                              return (
+                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                                  <input
+                                    type="checkbox"
+                                    checked={isLinked}
+                                    onChange={() => toggleCommissionLink.mutate({
+                                      commission: rule.commission,
+                                      quoteId: opt.id,
+                                      isLinked,
+                                    })}
+                                    className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                                  />
+                                  <span className="truncate">{opt.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </Popover.Content>
+                      </Popover.Portal>
+                    </Popover.Root>
+                  </div>
+                );
+              })}
+
+              {filteredCommissionRulesAll.length === 0 && (
+                <div className="px-6 py-12 text-sm text-gray-400 text-center">
+                  <div className="text-gray-300 mb-2">No commissions match this filter.</div>
                 </div>
               )}
             </div>
@@ -4212,55 +5450,51 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
       id: String(endt.endorsement_id || endt.document_library_id || endt.id || ''),
       label: endt.title || endt.name || endt.code || 'Endorsement',
       category: endt.category,
+      isRequired: endt.category === 'required' || endt.is_required,
+      isAuto: endt.is_auto || endt.auto_attach_rules || endt.attachment_type === 'auto',
     })).filter(item => item.id)
   ), [endorsements]);
 
-  const subjectivityStandardData = useMemo(() => {
-    const labelById = new Map();
-    const counts = new Map();
+  // Type icon helper for endorsements
+  const getEndorsementIcon = (item) => {
+    if (item.isRequired) return <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" /></svg>;
+    if (item.isAuto) return <svg className="w-4 h-4 text-purple-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>;
+    return <svg className="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>;
+  };
+
+  // Compute peer union - all items that exist on ANY same-position sibling
+  const peerSubjectivityUnion = useMemo(() => {
+    const union = new Map(); // id -> label
     (submissionSubjectivitiesData || []).forEach(subj => {
       const id = String(subj.id || '');
       if (!id) return;
       const label = subj.text || subj.subjectivity_text || subj.title || 'Subjectivity';
-      labelById.set(id, label);
       const quoteIds = parseQuoteIds(subj.quote_ids).map(val => String(val));
-      const count = peerIds.filter(peerId => quoteIds.includes(peerId)).length;
-      counts.set(id, count);
+      // Check if this subjectivity is on any peer (same-position sibling)
+      const isOnPeer = peerIds.some(peerId => quoteIds.includes(peerId));
+      if (isOnPeer) {
+        union.set(id, label);
+      }
     });
-    const standardIds = new Set();
-    if (peerIds.length === 0) {
-      currentSubjectivityItems.forEach(item => standardIds.add(item.id));
-    } else {
-      counts.forEach((count, id) => {
-        if (count > peerIds.length / 2) standardIds.add(id);
-      });
-    }
-    return { standardIds, labelById };
-  }, [submissionSubjectivitiesData, peerIds, currentSubjectivityItems]);
+    return union;
+  }, [submissionSubjectivitiesData, peerIds]);
 
-  const endorsementStandardData = useMemo(() => {
-    const labelById = new Map();
-    const counts = new Map();
+  const peerEndorsementUnion = useMemo(() => {
+    const union = new Map(); // id -> label
     const submissionEndorsements = submissionEndorsementsData?.endorsements || [];
     submissionEndorsements.forEach(endt => {
       const id = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
       if (!id) return;
       const label = endt.title || endt.name || endt.code || 'Endorsement';
-      labelById.set(id, label);
       const quoteIds = parseQuoteIds(endt.quote_ids).map(val => String(val));
-      const count = peerIds.filter(peerId => quoteIds.includes(peerId)).length;
-      counts.set(id, count);
+      // Check if this endorsement is on any peer (same-position sibling)
+      const isOnPeer = peerIds.some(peerId => quoteIds.includes(peerId));
+      if (isOnPeer) {
+        union.set(id, label);
+      }
     });
-    const standardIds = new Set();
-    if (peerIds.length === 0) {
-      currentEndorsementItems.forEach(item => standardIds.add(item.id));
-    } else {
-      counts.forEach((count, id) => {
-        if (count > peerIds.length / 2) standardIds.add(id);
-      });
-    }
-    return { standardIds, labelById };
-  }, [submissionEndorsementsData, peerIds, currentEndorsementItems]);
+    return union;
+  }, [submissionEndorsementsData, peerIds]);
 
   const currentSubjectivityIdSet = useMemo(() => (
     new Set(currentSubjectivityItems.map(item => item.id))
@@ -4270,33 +5504,44 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     new Set(currentEndorsementItems.map(item => item.id))
   ), [currentEndorsementItems]);
 
-  const missingSubjectivities = useMemo(() => (
-    Array.from(subjectivityStandardData.standardIds)
-      .filter(id => !currentSubjectivityIdSet.has(id))
-      .map(id => ({ id, label: subjectivityStandardData.labelById.get(id) || 'Subjectivity' }))
-  ), [subjectivityStandardData, currentSubjectivityIdSet]);
+  // Missing = in peer union but not on this option
+  const missingSubjectivities = useMemo(() => {
+    const missing = [];
+    peerSubjectivityUnion.forEach((label, id) => {
+      if (!currentSubjectivityIdSet.has(id)) {
+        missing.push({ id, label });
+      }
+    });
+    return missing;
+  }, [peerSubjectivityUnion, currentSubjectivityIdSet]);
 
-  const missingEndorsements = useMemo(() => (
-    Array.from(endorsementStandardData.standardIds)
-      .filter(id => !currentEndorsementIdSet.has(id))
-      .map(id => ({ id, label: endorsementStandardData.labelById.get(id) || 'Endorsement' }))
-  ), [endorsementStandardData, currentEndorsementIdSet]);
+  const missingEndorsements = useMemo(() => {
+    const missing = [];
+    peerEndorsementUnion.forEach((label, id) => {
+      if (!currentEndorsementIdSet.has(id)) {
+        missing.push({ id, label });
+      }
+    });
+    return missing;
+  }, [peerEndorsementUnion, currentEndorsementIdSet]);
 
+  // Extra = on this option but not in peer union (unique to this option)
   const uniqueSubjectivities = useMemo(() => (
-    currentSubjectivityItems.filter(item => !subjectivityStandardData.standardIds.has(item.id))
-  ), [currentSubjectivityItems, subjectivityStandardData]);
+    currentSubjectivityItems.filter(item => !peerSubjectivityUnion.has(item.id))
+  ), [currentSubjectivityItems, peerSubjectivityUnion]);
 
   const uniqueEndorsements = useMemo(() => (
-    currentEndorsementItems.filter(item => !endorsementStandardData.standardIds.has(item.id))
-  ), [currentEndorsementItems, endorsementStandardData]);
+    currentEndorsementItems.filter(item => !peerEndorsementUnion.has(item.id))
+  ), [currentEndorsementItems, peerEndorsementUnion]);
 
+  // Aligned = on this option AND in peer union
   const alignedSubjectivities = useMemo(() => (
-    currentSubjectivityItems.filter(item => subjectivityStandardData.standardIds.has(item.id))
-  ), [currentSubjectivityItems, subjectivityStandardData]);
+    currentSubjectivityItems.filter(item => peerSubjectivityUnion.has(item.id))
+  ), [currentSubjectivityItems, peerSubjectivityUnion]);
 
   const alignedEndorsements = useMemo(() => (
-    currentEndorsementItems.filter(item => endorsementStandardData.standardIds.has(item.id))
-  ), [currentEndorsementItems, endorsementStandardData]);
+    currentEndorsementItems.filter(item => peerEndorsementUnion.has(item.id))
+  ), [currentEndorsementItems, peerEndorsementUnion]);
 
   const restoreSubjectivity = useMutation({
     mutationFn: (subjectivityId) => linkSubjectivityToQuote(structureId, subjectivityId),
@@ -4346,50 +5591,222 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   };
   const status = statusConfig[structure?.status] || statusConfig.draft;
 
-  const endorsementDrift = missingEndorsements.length + uniqueEndorsements.length;
-  const subjectivityDrift = missingSubjectivities.length + uniqueSubjectivities.length;
-  const endorsementStatusText = endorsementDrift === 0
-    ? `Matches Standard ${peerLabel} Set`
-    : `Missing ${missingEndorsements.length} Standard | ${uniqueEndorsements.length} Option Specific`;
-  const subjectivityStatusText = subjectivityDrift === 0
-    ? `Matches Standard ${peerLabel} Set`
-    : `Missing ${missingSubjectivities.length} Standard | ${uniqueSubjectivities.length} Option Specific`;
+  // Format status text using same logic as grid
+  const formatStatusText = (missing, extra, peerCount) => {
+    const missingCount = missing.length;
+    const extraCount = extra.length;
+
+    if (peerCount === 0) {
+      return { text: 'No peers to compare', tone: 'text-gray-400' };
+    }
+    if (missingCount === 0 && extraCount === 0) {
+      return { text: `Aligned with ${peerLabel} peers`, tone: 'text-green-600' };
+    }
+    if (missingCount > 0 && extraCount === 0) {
+      return { text: `${missingCount} missing from peers`, tone: 'text-amber-600' };
+    }
+    if (missingCount === 0 && extraCount > 0) {
+      return { text: `${extraCount} extra (not on peers)`, tone: 'text-purple-600' };
+    }
+    return { text: `Mixed +${extraCount}, −${missingCount}`, tone: 'text-amber-600' };
+  };
+
+  const endorsementStatus = formatStatusText(missingEndorsements, uniqueEndorsements, peerIds.length);
+  const subjectivityStatus = formatStatusText(missingSubjectivities, uniqueSubjectivities, peerIds.length);
   const endorsementsEmpty = missingEndorsements.length === 0 && uniqueEndorsements.length === 0 && alignedEndorsements.length === 0;
   const subjectivitiesEmpty = missingSubjectivities.length === 0 && uniqueSubjectivities.length === 0 && alignedSubjectivities.length === 0;
+
+  // BIND READINESS checks
+  const bindReadinessChecks = useMemo(() => {
+    const checks = [];
+
+    // Premium set
+    const hasPremium = premium > 0;
+    checks.push({
+      id: 'premium',
+      label: hasPremium ? 'Premium set' : 'Premium not set',
+      passed: hasPremium,
+      severity: hasPremium ? 'success' : 'error',
+    });
+
+    // Effective date
+    const effectiveDate = structure?.effective_date || submission?.effective_date;
+    checks.push({
+      id: 'effective_date',
+      label: effectiveDate ? 'Effective date set' : 'Effective date missing',
+      passed: !!effectiveDate,
+      severity: effectiveDate ? 'success' : 'error',
+    });
+
+    // Pending subjectivities
+    if (pendingSubjectivities > 0) {
+      checks.push({
+        id: 'subjectivities',
+        label: `${pendingSubjectivities} pending ${pendingSubjectivities === 1 ? 'subjectivity' : 'subjectivities'}`,
+        passed: false,
+        severity: 'warning',
+        action: () => onMainTabChange?.('subjectivities'),
+      });
+    } else if (subjectivities.length > 0) {
+      checks.push({
+        id: 'subjectivities',
+        label: 'All subjectivities received',
+        passed: true,
+        severity: 'success',
+      });
+    }
+
+    // Tower validation - quota share
+    const towerLayers = structure?.tower_json || [];
+    const layersWithQS = towerLayers.filter(l => l.quota_share !== undefined && l.quota_share !== null);
+    if (layersWithQS.length > 0) {
+      // Group by attachment point to check quota share per layer
+      const totalQS = layersWithQS.reduce((sum, l) => sum + (parseFloat(l.quota_share) || 0), 0);
+      const expectedQS = layersWithQS.length * 100; // Each layer should sum to 100%
+      const qsValid = Math.abs(totalQS - expectedQS) < 0.01;
+      if (!qsValid) {
+        checks.push({
+          id: 'quota_share',
+          label: 'Quota share incomplete',
+          passed: false,
+          severity: 'warning',
+          action: () => onMainTabChange?.('tower'),
+        });
+      }
+    }
+
+    return checks;
+  }, [premium, structure, submission, pendingSubjectivities, subjectivities.length, onMainTabChange]);
+
+  const hasBindBlockers = bindReadinessChecks.some(c => !c.passed && c.severity === 'error');
+  const hasBindWarnings = bindReadinessChecks.some(c => !c.passed && c.severity === 'warning');
+
+  // CROSS-OPTION DRIFT items
+  const crossOptionDrift = useMemo(() => {
+    if (peerIds.length === 0) return [];
+
+    const items = [];
+
+    // Missing endorsements (peers have, we don't)
+    missingEndorsements.slice(0, 3).forEach(endt => {
+      items.push({
+        id: `missing-endt-${endt.id}`,
+        type: 'missing',
+        category: 'endorsement',
+        label: `Missing "${endt.label}"`,
+        description: `${peerLabel} peers have this endorsement`,
+        action: () => onMainTabChange?.('endorsements'),
+      });
+    });
+    if (missingEndorsements.length > 3) {
+      items.push({
+        id: 'missing-endt-more',
+        type: 'missing',
+        category: 'endorsement',
+        label: `+${missingEndorsements.length - 3} more missing endorsements`,
+        action: () => onMainTabChange?.('endorsements'),
+      });
+    }
+
+    // Extra endorsements (we have, peers don't)
+    uniqueEndorsements.slice(0, 2).forEach(endt => {
+      items.push({
+        id: `extra-endt-${endt.id}`,
+        type: 'extra',
+        category: 'endorsement',
+        label: `Has "${endt.label}"`,
+        description: `Not on ${peerLabel} peers`,
+        action: () => onMainTabChange?.('endorsements'),
+      });
+    });
+    if (uniqueEndorsements.length > 2) {
+      items.push({
+        id: 'extra-endt-more',
+        type: 'extra',
+        category: 'endorsement',
+        label: `+${uniqueEndorsements.length - 2} more unique endorsements`,
+        action: () => onMainTabChange?.('endorsements'),
+      });
+    }
+
+    // Missing subjectivities
+    missingSubjectivities.slice(0, 2).forEach(subj => {
+      items.push({
+        id: `missing-subj-${subj.id}`,
+        type: 'missing',
+        category: 'subjectivity',
+        label: `Missing "${subj.label}"`,
+        description: `${peerLabel} peers have this subjectivity`,
+        action: () => onMainTabChange?.('subjectivities'),
+      });
+    });
+    if (missingSubjectivities.length > 2) {
+      items.push({
+        id: 'missing-subj-more',
+        type: 'missing',
+        category: 'subjectivity',
+        label: `+${missingSubjectivities.length - 2} more missing subjectivities`,
+        action: () => onMainTabChange?.('subjectivities'),
+      });
+    }
+
+    // Extra subjectivities
+    uniqueSubjectivities.slice(0, 2).forEach(subj => {
+      items.push({
+        id: `extra-subj-${subj.id}`,
+        type: 'extra',
+        category: 'subjectivity',
+        label: `Has "${subj.label}"`,
+        description: `Not on ${peerLabel} peers`,
+        action: () => onMainTabChange?.('subjectivities'),
+      });
+    });
+    if (uniqueSubjectivities.length > 2) {
+      items.push({
+        id: 'extra-subj-more',
+        type: 'extra',
+        category: 'subjectivity',
+        label: `+${uniqueSubjectivities.length - 2} more unique subjectivities`,
+        action: () => onMainTabChange?.('subjectivities'),
+      });
+    }
+
+    return items;
+  }, [peerIds, peerLabel, missingEndorsements, uniqueEndorsements, missingSubjectivities, uniqueSubjectivities, onMainTabChange]);
 
   return (
     <div className="space-y-6">
       {/* KPI Row with Status */}
-      <div className="flex items-stretch gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Premium */}
-        <div className="flex-1 bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
+        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
           <div className="text-xs text-green-600 uppercase font-semibold mb-1">Premium</div>
           <div className="text-2xl font-bold text-green-700">{formatCurrency(premium)}</div>
         </div>
         {/* Our Limit */}
-        <div className="flex-1 bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
           <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Our Limit</div>
           <div className="text-2xl font-bold text-gray-800">{formatCompact(ourLimit)}</div>
         </div>
         {/* Retention */}
-        <div className="flex-1 bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
           <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Retention</div>
           <div className="text-2xl font-bold text-gray-800">{formatCompact(tower[0]?.retention || 25000)}</div>
         </div>
         {/* Commission */}
-        <div className="flex-1 bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
           <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Commission</div>
           <div className="text-2xl font-bold text-gray-800">{commission}%</div>
         </div>
         {/* Status Indicator */}
-        <div className={`w-32 ${status.bg} rounded-lg p-4 border flex flex-col items-center justify-center`}>
+        <div className={`${status.bg} rounded-lg p-4 border flex flex-col items-center justify-center`}>
           <div className={`w-3 h-3 rounded-full ${status.dot} mb-2`}></div>
           <div className={`text-sm font-bold ${status.text}`}>{status.label}</div>
         </div>
       </div>
 
       {/* Details Grid */}
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Left Column */}
         <div className="space-y-4">
           {/* Policy Terms */}
@@ -4546,8 +5963,8 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
-                <span className={`text-[11px] ${endorsementDrift === 0 ? 'text-green-600' : 'text-amber-600'}`}>
-                  {endorsementStatusText}
+                <span className={`text-[11px] ${endorsementStatus.tone}`}>
+                  {endorsementStatus.text}
                 </span>
               </div>
               {endorsements.length > 0 && (
@@ -4568,34 +5985,34 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                     <div
                       key={item.id}
                       onClick={() => restoreEndorsement.mutate(item.id)}
-                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-gray-300 rounded px-2 py-1.5 opacity-60"
+                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-2 py-1.5 bg-amber-50/50"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-gray-700 truncate">{item.label}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-                          Standard
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600">
+                          On peers
                         </span>
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); restoreEndorsement.mutate(item.id); }}
                         className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:text-gray-900"
                       >
-                        + Restore
+                        + Add
                       </button>
                     </div>
                   ))}
                   {uniqueEndorsements.map((item) => (
                     <div key={item.id} className="flex items-center gap-2 text-sm">
-                      <span className={`w-1.5 h-1.5 rounded-full ${item.category === 'standard' ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+                      {getEndorsementIcon(item)}
                       <span className="text-gray-700">{item.label}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-                        Option Specific
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">
+                        Only here
                       </span>
                     </div>
                   ))}
                   {alignedEndorsements.map((item) => (
                     <div key={item.id} className="flex items-center gap-2 text-sm">
-                      <span className={`w-1.5 h-1.5 rounded-full ${item.category === 'standard' ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+                      {getEndorsementIcon(item)}
                       <span className="text-gray-700">{item.label}</span>
                     </div>
                   ))}
@@ -4609,8 +6026,8 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
-                <span className={`text-[11px] ${subjectivityDrift === 0 ? 'text-green-600' : 'text-amber-600'}`}>
-                  {subjectivityStatusText}
+                <span className={`text-[11px] ${subjectivityStatus.tone}`}>
+                  {subjectivityStatus.text}
                 </span>
               </div>
               {subjectivities.length > 0 && (
@@ -4631,19 +6048,19 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                     <div
                       key={item.id}
                       onClick={() => restoreSubjectivity.mutate(item.id)}
-                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-gray-300 rounded px-2 py-1.5 opacity-60"
+                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-2 py-1.5 bg-amber-50/50"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-gray-700 truncate">{item.label}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-                          Standard
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600">
+                          On peers
                         </span>
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); restoreSubjectivity.mutate(item.id); }}
                         className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:text-gray-900"
                       >
-                        + Restore
+                        + Add
                       </button>
                     </div>
                   ))}
@@ -4659,8 +6076,8 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                         </svg>
                       )}
                       <span className="text-gray-700">{item.label}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-                        Option Specific
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">
+                        Only here
                       </span>
                     </div>
                   ))}
@@ -4682,6 +6099,138 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Compact Status Footer */}
+      <div className="border-t border-gray-200 pt-4 mt-2">
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
+          {/* Bind Readiness - inline */}
+          <div className="flex items-center gap-3">
+            <span className="text-gray-400 uppercase tracking-wide font-medium">Bind:</span>
+            {bindReadinessChecks.filter(c => !c.passed).length === 0 ? (
+              <span className="text-green-600 flex items-center gap-1">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Ready
+              </span>
+            ) : (
+              <HoverCard.Root openDelay={100} closeDelay={100}>
+                <HoverCard.Trigger asChild>
+                  <button className="flex items-center gap-2">
+                    {bindReadinessChecks.filter(c => !c.passed && c.severity === 'error').length > 0 && (
+                      <span className="text-red-600 flex items-center gap-1">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        {bindReadinessChecks.filter(c => !c.passed && c.severity === 'error').length} blocker{bindReadinessChecks.filter(c => !c.passed && c.severity === 'error').length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {bindReadinessChecks.filter(c => !c.passed && c.severity === 'warning').length > 0 && (
+                      <span className="text-amber-600 flex items-center gap-1">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        {bindReadinessChecks.filter(c => !c.passed && c.severity === 'warning').length} warning{bindReadinessChecks.filter(c => !c.passed && c.severity === 'warning').length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </button>
+                </HoverCard.Trigger>
+                <HoverCard.Portal>
+                  <HoverCard.Content className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3" sideOffset={4}>
+                    <div className="space-y-2">
+                      {bindReadinessChecks.filter(c => !c.passed).map(check => (
+                        <div
+                          key={check.id}
+                          className="flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="flex items-center gap-2">
+                            {check.severity === 'error' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                            ) : (
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                            )}
+                            <span className={check.severity === 'error' ? 'text-red-700' : 'text-amber-700'}>
+                              {check.label}
+                            </span>
+                          </div>
+                          {check.action && (
+                            <button
+                              onClick={check.action}
+                              className="text-gray-400 hover:text-gray-600"
+                            >
+                              →
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <HoverCard.Arrow className="fill-white" />
+                  </HoverCard.Content>
+                </HoverCard.Portal>
+              </HoverCard.Root>
+            )}
+          </div>
+
+          {/* Cross-Option Drift - inline */}
+          {crossOptionDrift.length > 0 && (
+            <div className="flex items-center gap-3">
+              <span className="text-gray-400 uppercase tracking-wide font-medium">Drift:</span>
+              <HoverCard.Root openDelay={100} closeDelay={100}>
+                <HoverCard.Trigger asChild>
+                  <button className="text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {crossOptionDrift.length} difference{crossOptionDrift.length > 1 ? 's' : ''} from {peerLabel} peers
+                  </button>
+                </HoverCard.Trigger>
+                <HoverCard.Portal>
+                  <HoverCard.Content className="z-[9999] w-72 rounded-lg border border-gray-200 bg-white shadow-xl p-3" sideOffset={4}>
+                    <div className="space-y-2">
+                      {crossOptionDrift.slice(0, 5).map(item => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.type === 'missing' ? 'bg-amber-500' : 'bg-purple-500'}`} />
+                            <span className="text-gray-700 truncate">{item.label}</span>
+                          </div>
+                          {item.action && (
+                            <button
+                              onClick={item.action}
+                              className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+                            >
+                              →
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {crossOptionDrift.length > 5 && (
+                        <div className="text-xs text-gray-400 pt-1">
+                          +{crossOptionDrift.length - 5} more...
+                        </div>
+                      )}
+                    </div>
+                    <HoverCard.Arrow className="fill-white" />
+                  </HoverCard.Content>
+                </HoverCard.Portal>
+              </HoverCard.Root>
+            </div>
+          )}
+          {peerIds.length > 0 && crossOptionDrift.length === 0 && (
+            <div className="flex items-center gap-3">
+              <span className="text-gray-400 uppercase tracking-wide font-medium">Drift:</span>
+              <span className="text-green-600 flex items-center gap-1">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Aligned with {peerLabel} peers
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -6192,6 +7741,13 @@ export default function QuotePageV3() {
   const subjectivityCount = subjectivitiesData?.length || 0;
   const pendingSubjectivityCount = subjectivitiesData?.filter(s => s.status === 'pending' || !s.status).length || 0;
 
+  // Fetch document history for the entire submission (persists across options)
+  const { data: documentHistory = [] } = useQuery({
+    queryKey: ['submission-documents', submissionId],
+    queryFn: () => getSubmissionDocuments(submissionId).then(r => r.data),
+    enabled: !!submissionId,
+  });
+
   // Create structure mutation
   const createStructureMutation = useMutation({
     mutationFn: (data) => createQuoteOption(submissionId, data),
@@ -6275,25 +7831,88 @@ export default function QuotePageV3() {
 
   // Generate quote document mutation
   const [generateSuccess, setGenerateSuccess] = useState(false);
+  const [generateError, setGenerateError] = useState(null);
   const generateDocumentMutation = useMutation({
     mutationFn: (quoteId) => generateQuoteDocument(quoteId),
     onSuccess: (response) => {
+      console.log('Generate document response:', response);
       setGenerateSuccess(true);
+      setGenerateError(null);
+      setShowGeneratePicker(false);
       setTimeout(() => setGenerateSuccess(false), 3000);
-      // If the response includes a document URL, could open it
-      if (response.data?.document_url) {
+      // Refresh document history
+      queryClient.invalidateQueries({ queryKey: ['submission-documents', submissionId] });
+      // If the response includes a document URL, open it
+      if (response.data?.pdf_url) {
+        window.open(response.data.pdf_url, '_blank');
+      } else if (response.data?.document_url) {
         window.open(response.data.document_url, '_blank');
+      } else {
+        console.log('No URL in response:', response.data);
       }
+    },
+    onError: (error) => {
+      console.error('Generate document error:', error);
+      setGenerateError(error.response?.data?.detail || error.message || 'Failed to generate');
+      setShowGeneratePicker(true); // Keep picker open to show error
+      setTimeout(() => setGenerateError(null), 5000);
     },
   });
 
   const handleGenerateDocument = () => {
+    console.log('handleGenerateDocument called', { activeStructureId, generateDocType, selectedPackageDocs, includeSpecimen });
     if (activeStructureId) {
-      generateDocumentMutation.mutate(activeStructureId);
+      if (generateDocType === 'package') {
+        console.log('Calling generatePackageMutation with:', activeStructureId, selectedPackageDocs, includeSpecimen, includeEndorsements);
+        generatePackageMutation.mutate({
+          quoteId: activeStructureId,
+          selectedDocuments: selectedPackageDocs,
+          includeSpecimen: includeSpecimen,
+          includeEndorsements: includeEndorsements,
+        });
+      } else {
+        console.log('Calling generateDocumentMutation with:', activeStructureId);
+        generateDocumentMutation.mutate(activeStructureId);
+      }
+    } else {
+      console.error('No activeStructureId available');
+      setGenerateError('No quote selected');
     }
   };
 
-  // Preview document handler
+  // Generate package mutation
+  const generatePackageMutation = useMutation({
+    mutationFn: ({ quoteId, selectedDocuments, includeSpecimen, includeEndorsements }) => generateQuotePackage(quoteId, {
+      package_type: 'full_package',
+      selected_documents: selectedDocuments || [],
+      include_specimen: includeSpecimen || false,
+      include_endorsements: includeEndorsements !== false, // Default true
+    }),
+    onSuccess: (response) => {
+      console.log('Generate package response:', response);
+      setGenerateSuccess(true);
+      setGenerateError(null);
+      setShowGeneratePicker(false);
+      setTimeout(() => setGenerateSuccess(false), 3000);
+      // Refresh document history
+      queryClient.invalidateQueries({ queryKey: ['submission-documents', submissionId] });
+      if (response.data?.pdf_url) {
+        window.open(response.data.pdf_url, '_blank');
+      } else if (response.data?.document_url) {
+        window.open(response.data.document_url, '_blank');
+      } else {
+        console.log('No URL in package response:', response.data);
+      }
+    },
+    onError: (error) => {
+      console.error('Generate package error:', error);
+      setGenerateError(error.response?.data?.detail || error.message || 'Failed to generate package');
+      setShowGeneratePicker(true); // Keep picker open to show error
+      setTimeout(() => setGenerateError(null), 5000);
+    },
+  });
+
+  // Preview document handler - read-only, only opens existing docs
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const handlePreviewDocument = async () => {
     if (!activeStructureId) return;
@@ -6304,21 +7923,64 @@ export default function QuotePageV3() {
       const documents = response.data || [];
 
       if (documents.length > 0) {
-        // Get the most recent document
         const latestDoc = documents[0];
-        const url = getDocumentUrl(latestDoc.id);
-        window.open(url, '_blank');
+        if (latestDoc.pdf_url) {
+          window.open(latestDoc.pdf_url, '_blank');
+        } else {
+          alert('Document URL not available');
+        }
       } else {
-        // No documents yet - could show a message or generate first
-        alert('No documents generated yet. Click Generate first.');
+        alert('No quote document yet. Click Generate to create one.');
       }
     } catch (error) {
-      console.error('Failed to fetch documents:', error);
+      console.error('Failed to preview document:', error);
       alert('Failed to load document preview');
     } finally {
       setIsPreviewLoading(false);
     }
   };
+
+  // Generate document picker state
+  const [showGeneratePicker, setShowGeneratePicker] = useState(false);
+  const [generateDocType, setGenerateDocType] = useState('quote'); // 'quote' or 'package'
+  const [selectedPackageDocs, setSelectedPackageDocs] = useState([]);
+  const [includeSpecimen, setIncludeSpecimen] = useState(true); // Default to true like V1
+  const [includeEndorsements, setIncludeEndorsements] = useState(true); // Default to true
+
+  // Fetch package documents (claims sheets, marketing materials only - not endorsements)
+  const position = activeStructure?.position || 'primary';
+  const { data: packageDocsData } = useQuery({
+    queryKey: ['package-documents', position],
+    queryFn: () => getPackageDocuments(position).then(r => r.data),
+    enabled: showGeneratePicker && generateDocType === 'package',
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
+
+  // Package documents come pre-grouped by document_type from the API
+  const packageDocsByType = packageDocsData?.documents || {};
+
+  // Document type display labels
+  const docTypeLabels = packageDocsData?.document_types || {
+    claims_sheet: 'Claims Sheets',
+    marketing: 'Marketing Materials',
+  };
+
+  // Calculate package summary
+  const packageSummary = useMemo(() => {
+    if (generateDocType !== 'package') return null;
+    const parts = ['Quote'];
+    let docCount = 1; // Quote itself
+    if (includeEndorsements && endorsementCount > 0) {
+      parts.push(`${endorsementCount} endorsements`);
+      docCount += endorsementCount;
+    }
+    if (includeSpecimen) {
+      parts.push('Specimen');
+      docCount += 1;
+    }
+    docCount += selectedPackageDocs.length;
+    return { text: parts.join(' + '), count: docCount };
+  }, [generateDocType, includeEndorsements, endorsementCount, includeSpecimen, selectedPackageDocs]);
 
   // Bind quote handler
   const [isBindLoading, setIsBindLoading] = useState(false);
@@ -6487,10 +8149,10 @@ export default function QuotePageV3() {
             </div>
           </div>
         ) : (
-        <div className="flex gap-4 items-start">
+        <div className="flex flex-col lg:flex-row gap-4 items-start">
 
           {/* LEFT - Main Content Card with Tabs */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 w-full lg:w-auto">
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               {/* Tab Navigation */}
               <div className="flex items-center border-b border-gray-200">
@@ -6617,7 +8279,7 @@ export default function QuotePageV3() {
           </div>
 
           {/* RIGHT - Side Panel */}
-          <div className="w-80 flex-shrink-0 space-y-2">
+          <div className="w-full lg:w-80 lg:flex-shrink-0 space-y-2">
             {/* Option Selector + Action Buttons */}
             <div className="space-y-2">
               <button
@@ -6648,16 +8310,219 @@ export default function QuotePageV3() {
                   </svg>
                   Preview
                 </button>
-                <button
-                  onClick={handleGenerateDocument}
-                  disabled={generateDocumentMutation.isPending || !activeStructureId}
-                  className="flex-1 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Generate
-                </button>
+                <Popover.Root open={showGeneratePicker} onOpenChange={setShowGeneratePicker}>
+                  <Popover.Trigger asChild>
+                    <button
+                      disabled={generateDocumentMutation.isPending || generatePackageMutation.isPending || !activeStructureId}
+                      className="flex-1 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Generate
+                    </button>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content className={`z-[9999] rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden ${generateDocType === 'package' ? 'w-[420px]' : 'w-80'}`} sideOffset={8} align="center">
+                      {/* Header with gradient */}
+                      <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-4">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          <h3 className="font-semibold text-white text-sm">Generate Document</h3>
+                        </div>
+                      </div>
+
+                      <div className="p-5 space-y-5">
+                        {/* Document Type Selection */}
+                        <div className="space-y-2">
+                          <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Document Type</div>
+                          <div className="flex items-center gap-4 p-2 bg-slate-50 rounded-lg">
+                            <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
+                              <input
+                                type="radio"
+                                name="docType"
+                                value="quote"
+                                checked={generateDocType === 'quote'}
+                                onChange={() => setGenerateDocType('quote')}
+                                className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                              />
+                              <span className={`text-sm font-medium transition-colors ${
+                                generateDocType === 'quote' ? 'text-purple-700' : 'text-gray-600 group-hover:text-gray-800'
+                              }`}>
+                                Quote Only
+                              </span>
+                            </label>
+                            <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
+                              <input
+                                type="radio"
+                                name="docType"
+                                value="package"
+                                checked={generateDocType === 'package'}
+                                onChange={() => setGenerateDocType('package')}
+                                className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                              />
+                              <span className={`text-sm font-medium transition-colors ${
+                                generateDocType === 'package' ? 'text-purple-700' : 'text-gray-600 group-hover:text-gray-800'
+                              }`}>
+                                Full Package
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Document selector for Full Package */}
+                        {generateDocType === 'package' && (
+                          <div className="border border-gray-200 rounded-lg bg-slate-50/50 overflow-hidden">
+                            <div className="max-h-[360px] overflow-y-auto p-4 space-y-4">
+                              {/* Quote Specimens section */}
+                              <div className="space-y-3 pb-3 border-b border-gray-200">
+                                <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Quote Specimens</div>
+                                <div className="space-y-2.5">
+                                  <label className="flex items-center gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
+                                    <input
+                                      type="checkbox"
+                                      checked={includeEndorsements}
+                                      onChange={(e) => setIncludeEndorsements(e.target.checked)}
+                                      className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0"
+                                    />
+                                    <div className="flex-1">
+                                      <span className="text-sm font-medium text-gray-800 block">
+                                        Endorsement Package
+                                      </span>
+                                      {endorsementCount > 0 && (
+                                        <span className="text-xs text-gray-500 mt-0.5 block">
+                                          {endorsementCount} {endorsementCount === 1 ? 'endorsement' : 'endorsements'} included
+                                        </span>
+                                      )}
+                                    </div>
+                                  </label>
+                                  <label className="flex items-center gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
+                                    <input
+                                      type="checkbox"
+                                      checked={includeSpecimen}
+                                      onChange={(e) => setIncludeSpecimen(e.target.checked)}
+                                      className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0"
+                                    />
+                                    <span className="text-sm font-medium text-gray-800">Policy Specimen</span>
+                                  </label>
+                                </div>
+                              </div>
+
+                              {/* Documents grouped by type */}
+                              {Object.entries(packageDocsByType).length > 0 ? (
+                                Object.entries(packageDocsByType).map(([docType, docs], idx) => (
+                                  <div key={docType} className={idx > 0 ? 'pt-3 border-t border-gray-200' : ''}>
+                                    <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2.5">
+                                      {docTypeLabels[docType] || docType.replace(/_/g, ' ')}
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      {docs.map((doc) => (
+                                        <label key={doc.id} className="flex items-start gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedPackageDocs.includes(doc.id)}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setSelectedPackageDocs([...selectedPackageDocs, doc.id]);
+                                              } else {
+                                                setSelectedPackageDocs(selectedPackageDocs.filter(id => id !== doc.id));
+                                              }
+                                            }}
+                                            className="w-4 h-4 text-purple-600 rounded border-gray-300 mt-0.5 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0"
+                                          />
+                                          <div className="flex-1 min-w-0">
+                                            {doc.code && (
+                                              <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded mr-1.5">
+                                                {doc.code}
+                                              </span>
+                                            )}
+                                            <span className="text-sm text-gray-700 group-hover:text-gray-900">
+                                              {doc.title}
+                                            </span>
+                                          </div>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="text-sm text-gray-400 text-center py-4">
+                                  No additional documents available
+                                </div>
+                              )}
+
+                              {/* Summary line */}
+                              {packageSummary && (
+                                <div className="pt-3 mt-3 border-t-2 border-purple-200 bg-purple-50/50 rounded-md p-3 -mx-1">
+                                  <div className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-1">
+                                    Package Summary
+                                  </div>
+                                  <div className="text-sm text-gray-700 font-medium">
+                                    {packageSummary.text}
+                                  </div>
+                                  <div className="text-xs text-gray-500 mt-1">
+                                    Total: {packageSummary.count} {packageSummary.count === 1 ? 'document' : 'documents'}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Status messages */}
+                        {(generateSuccess || generateError) && (
+                          <div className={`p-3 rounded-lg text-sm text-center ${
+                            generateSuccess ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+                          }`}>
+                            {generateSuccess && (
+                              <div className="flex items-center justify-center gap-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                                Quote generated successfully!
+                              </div>
+                            )}
+                            {generateError && generateError}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Button at bottom, full width */}
+                      <div className="px-5 pb-5">
+                        <button
+                          onClick={() => {
+                            setGenerateError(null);
+                            handleGenerateDocument();
+                          }}
+                          disabled={generateDocumentMutation.isPending || generatePackageMutation.isPending}
+                          className="w-full py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white text-sm font-semibold hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
+                        >
+                          {(generateDocumentMutation.isPending || generatePackageMutation.isPending) ? (
+                            <>
+                              <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              Generating...
+                            </>
+                          ) : generateDocType === 'package' ? (
+                            <>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                              </svg>
+                              Generate Package ({packageSummary?.count || 1} docs)
+                            </>
+                          ) : (
+                            'Generate Quote'
+                          )}
+                        </button>
+                      </div>
+                      <Popover.Arrow className="fill-white" />
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
                 <button
                   onClick={handleBindQuote}
                   disabled={isBindLoading || !activeStructureId}
@@ -6742,6 +8607,43 @@ export default function QuotePageV3() {
               </div>
 
             </div>
+
+            {/* Document History - persists across options */}
+            {documentHistory.length > 0 && (
+              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Document History</h4>
+                  <span className="text-xs text-gray-400">{documentHistory.length} doc{documentHistory.length !== 1 ? 's' : ''}</span>
+                </div>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {documentHistory.map((doc) => (
+                    <div key={doc.id} className="flex items-center justify-between text-sm group">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-mono text-gray-400 flex-shrink-0">{doc.document_number}</span>
+                        <span className="text-gray-600 truncate text-xs">
+                          {doc.quote_name || (doc.document_type === 'quote_excess' ? 'Excess' : 'Primary')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400">
+                          {new Date(doc.created_at).toLocaleDateString()}
+                        </span>
+                        {doc.pdf_url && (
+                          <a
+                            href={doc.pdf_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-purple-600 hover:text-purple-800 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            View
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
         </div>
