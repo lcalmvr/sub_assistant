@@ -265,6 +265,48 @@ def generate_document(
     }
 
 
+def preview_document(
+    submission_id: str,
+    quote_option_id: str,
+    doc_type: str
+) -> bytes:
+    """
+    Generate a preview PDF without saving to database or uploading.
+
+    Args:
+        submission_id: UUID of the submission
+        quote_option_id: UUID of the quote option (insurance_towers)
+        doc_type: Type of document ('quote_primary', 'quote_excess')
+
+    Returns:
+        PDF bytes
+    """
+    if doc_type not in DOCUMENT_TYPES:
+        raise ValueError(f"Invalid document type: {doc_type}")
+
+    doc_config = DOCUMENT_TYPES[doc_type]
+
+    # Gather context data
+    context = get_document_context(submission_id, quote_option_id)
+
+    # Use placeholder document number for preview
+    context["document_number"] = "PREVIEW"
+    context["document_id"] = "PREVIEW"
+    context["generated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # Render HTML
+    template = TEMPLATE_ENV.get_template(doc_config["template"])
+    html_content = template.render(**context)
+
+    # Generate PDF in memory
+    from io import BytesIO
+    pdf_buffer = BytesIO()
+    HTML(string=html_content).write_pdf(pdf_buffer)
+    pdf_buffer.seek(0)
+
+    return pdf_buffer.read()
+
+
 def get_document_context(submission_id: str, quote_option_id: str) -> dict:
     """
     Gather all data needed for document templates.

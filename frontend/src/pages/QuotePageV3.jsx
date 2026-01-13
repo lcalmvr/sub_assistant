@@ -31,6 +31,7 @@ import {
   generateQuoteDocument,
   generateQuotePackage,
   getQuoteDocuments,
+  getQuotePreviewUrl,
   getSubmissionDocuments,
   getDocumentUrl,
   getBindValidation,
@@ -1712,13 +1713,8 @@ const DEFAULT_COVERAGES = ['Cyber', 'Tech E&O'];
 const ADDITIONAL_COVERAGES = ['Media'];
 
 function CompactRetroEditor({ schedule = [], position = 'primary', excludedCoverages = [], onSave }) {
-  const [localSchedule, setLocalSchedule] = useState(() => {
-    if (schedule.length > 0) return schedule;
-    return DEFAULT_COVERAGES.map(cov => ({
-      coverage: cov,
-      retro: cov === 'Cyber' ? 'full_prior_acts' : 'inception'
-    }));
-  });
+  // Use actual schedule data - no fake defaults
+  const [localSchedule, setLocalSchedule] = useState(schedule);
 
   // Filter out excluded coverages from display
   const displaySchedule = localSchedule.filter(
@@ -1734,7 +1730,7 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
   }, [localSchedule]);
 
   useEffect(() => {
-    if (schedule.length > 0) setLocalSchedule(schedule);
+    setLocalSchedule(schedule);
   }, [schedule]);
 
   const updateEntry = (coverage, updates, saveImmediately = true) => {
@@ -1753,6 +1749,7 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
 
   const addCoverage = (coverageName) => {
     if (!coverageName || localSchedule.some(e => e.coverage === coverageName)) return;
+    // Default new restrictions to 'inception' (since we're adding a restriction)
     const newSchedule = [...localSchedule, { coverage: coverageName, retro: 'inception' }];
     setLocalSchedule(newSchedule);
     onSave(newSchedule);
@@ -1770,17 +1767,22 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
     <div className="space-y-3">
       <label className="text-xs font-semibold text-gray-500 uppercase">Retro Dates</label>
 
+      {/* Show default state when no restrictions */}
+      {displaySchedule.length === 0 && (
+        <div className="text-sm text-gray-600 py-1">
+          Full Prior Acts <span className="text-gray-400">(default)</span>
+        </div>
+      )}
+
       {displaySchedule.map((entry) => (
         <div key={entry.coverage} className="space-y-1">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-700">{entry.coverage}</span>
-            {!DEFAULT_COVERAGES.includes(entry.coverage) && !excludedCoverages.includes(entry.coverage) && (
-              <button onClick={() => removeCoverage(entry.coverage)} className="text-gray-400 hover:text-red-500">
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
+            <button onClick={() => removeCoverage(entry.coverage)} className="text-gray-400 hover:text-red-500">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
           <select
             value={entry.retro}
@@ -1812,7 +1814,7 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
         </div>
       ))}
 
-      {/* Add Coverage */}
+      {/* Add Coverage Restriction */}
       {showAddCoverage ? (
         <div className="flex items-center gap-1">
           <input
@@ -1826,7 +1828,7 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
             list="coverage-suggestions"
           />
           <datalist id="coverage-suggestions">
-            {ADDITIONAL_COVERAGES.filter(c => !localSchedule.some(e => e.coverage === c)).map(cov => (
+            {[...DEFAULT_COVERAGES, ...ADDITIONAL_COVERAGES].filter(c => !localSchedule.some(e => e.coverage === c)).map(cov => (
               <option key={cov} value={cov} />
             ))}
           </datalist>
@@ -1845,7 +1847,7 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
         </div>
       ) : (
         <button onClick={() => setShowAddCoverage(true)} className="text-xs text-purple-600 hover:text-purple-700">
-          + Add Coverage
+          + Add Restriction
         </button>
       )}
     </div>
@@ -2085,7 +2087,11 @@ function RetroPanel({ structure, submissionId }) {
         schedule={structure?.retro_schedule || []}
         position={structure?.position || 'primary'}
         excludedCoverages={excludedCoverages}
-        onSave={(schedule) => updateStructureMutation.mutate({ retro_schedule: schedule })}
+        onSave={(schedule) => {
+          // Filter out excluded coverages before saving to keep data clean
+          const filteredSchedule = schedule.filter(entry => !excludedCoverages.includes(entry.coverage));
+          updateStructureMutation.mutate({ retro_schedule: filteredSchedule });
+        }}
       />
     </div>
   );
@@ -3115,15 +3121,22 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
     return endorsementRulesAll.filter(rule => rule.scope === rulesFilter);
   }, [rulesFilter, endorsementRulesAll]);
 
-  // Helper to normalize retro schedule for comparison (stringify for deep equality)
+  // Helper to normalize retro schedule for comparison (only compare relevant fields)
   const normalizeRetroSchedule = (schedule) => {
     if (!schedule || schedule.length === 0) return '[]';
-    return JSON.stringify(schedule.sort((a, b) => (a.coverage || '').localeCompare(b.coverage || '')));
+    // Extract only relevant fields to avoid mismatches from extra/null fields
+    const normalized = schedule.map(entry => {
+      const obj = { coverage: entry.coverage, retro: entry.retro };
+      if (entry.retro === 'date' && entry.date) obj.date = entry.date;
+      if (entry.retro === 'custom' && entry.custom_text) obj.custom_text = entry.custom_text;
+      return obj;
+    }).sort((a, b) => (a.coverage || '').localeCompare(b.coverage || ''));
+    return JSON.stringify(normalized);
   };
 
   // Helper to format retro schedule for display
   const formatRetroScheduleLabel = (schedule) => {
-    if (!schedule || schedule.length === 0) return 'No retro dates';
+    if (!schedule || schedule.length === 0) return 'Full Prior Acts';
     const entries = schedule.map(entry => {
       const coverage = entry.coverage || 'Unknown';
       let retro = 'Inception';
@@ -3165,13 +3178,28 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       return extra > 0 ? `${firstLabel} +${extra}` : firstLabel;
     };
 
-    // Group structures by their retro schedule (normalized)
+    // Helper to get excluded coverages for a structure
+    const getExcludedCoverages = (struct) => {
+      const aggregateCoverages = struct?.coverages?.aggregate_coverages || {};
+      return Object.entries(aggregateCoverages)
+        .filter(([_, value]) => value === 0)
+        .map(([id]) => {
+          if (id === 'tech_eo') return 'Tech E&O';
+          if (id === 'network_security_privacy') return 'Cyber';
+          return id;
+        });
+    };
+
+    // Group structures by their retro schedule (normalized, after filtering excluded coverages)
     const retroScheduleMap = new Map(); // normalized schedule -> { schedule, linkedIds }
-    
+
     structures.forEach(struct => {
-      const schedule = struct.retro_schedule || [];
+      const rawSchedule = struct.retro_schedule || [];
+      const excludedCoverages = getExcludedCoverages(struct);
+      // Filter out excluded coverages before grouping
+      const schedule = rawSchedule.filter(entry => !excludedCoverages.includes(entry.coverage));
       const normalized = normalizeRetroSchedule(schedule);
-      
+
       if (!retroScheduleMap.has(normalized)) {
         retroScheduleMap.set(normalized, {
           schedule: schedule,
@@ -3601,25 +3629,71 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       const targetSet = new Set(targetIds);
       const toApply = targetIds.filter(id => !currentSet.has(id));
       const toRemove = currentIds.filter(id => !targetSet.has(id));
-      
-      // Apply schedule to new quotes
+
+      // Filter out bound quotes to avoid 403 errors
+      const unboundToApply = toApply.filter(id => {
+        const struct = structures.find(s => String(s.id) === id);
+        return !struct?.is_bound;
+      });
+      const unboundToRemove = toRemove.filter(id => {
+        const struct = structures.find(s => String(s.id) === id);
+        return !struct?.is_bound;
+      });
+
+      // Apply schedule to new quotes (skip bound)
       await Promise.all(
-        toApply.map(id => updateQuoteOption(id, { retro_schedule: schedule }))
+        unboundToApply.map(id => updateQuoteOption(id, { retro_schedule: schedule }))
       );
-      
-      // Remove schedule from quotes (set to empty array)
+
+      // Remove schedule from quotes (set to empty array, skip bound)
       await Promise.all(
-        toRemove.map(id => updateQuoteOption(id, { retro_schedule: [] }))
+        unboundToRemove.map(id => updateQuoteOption(id, { retro_schedule: [] }))
       );
     },
-    onSuccess: (_, variables) => {
-      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
-      refreshAfterManage(ids);
+    onMutate: async ({ schedule, currentIds, targetIds }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      const currentSet = new Set(currentIds);
+      const targetSet = new Set(targetIds);
+
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          const id = String(s.id);
+          // Skip bound quotes in optimistic update
+          if (s.is_bound) return s;
+
+          // If in target set and not in current, apply schedule
+          if (targetSet.has(id) && !currentSet.has(id)) {
+            return { ...s, retro_schedule: schedule };
+          }
+          // If was in current set but not in target, clear schedule
+          if (currentSet.has(id) && !targetSet.has(id)) {
+            return { ...s, retro_schedule: [] };
+          }
+          return s;
+        })
+      );
+      return { previous };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['structures', submissionId], context.previous);
+      }
+      console.error('Failed to apply retro selection:', err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
     },
   });
 
   const toggleRetroLink = useMutation({
     mutationFn: async ({ schedule, quoteId, isLinked }) => {
+      // Check if quote is bound - skip update if so
+      const struct = structures.find(s => String(s.id) === quoteId);
+      if (struct?.is_bound) {
+        throw new Error('Cannot modify retro schedule on bound quote');
+      }
+
       if (isLinked) {
         // Remove retro schedule
         return updateQuoteOption(quoteId, { retro_schedule: [] });
@@ -3629,11 +3703,15 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       }
     },
     onMutate: async ({ schedule, quoteId, isLinked }) => {
+      // Check if quote is bound - don't do optimistic update if so
+      const struct = structures.find(s => String(s.id) === quoteId);
+      if (struct?.is_bound) return { previous: null, skipUpdate: true };
+
       await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
       const previous = queryClient.getQueryData(['structures', submissionId]);
       queryClient.setQueryData(['structures', submissionId], (old) =>
-        (old || []).map(s => 
-          String(s.id) === String(quoteId) 
+        (old || []).map(s =>
+          String(s.id) === String(quoteId)
             ? { ...s, retro_schedule: isLinked ? [] : schedule }
             : s
         )
@@ -3641,7 +3719,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       return { previous };
     },
     onError: (err, variables, context) => {
-      if (context?.previous) {
+      if (context?.previous && !context?.skipUpdate) {
         queryClient.setQueryData(['structures', submissionId], context.previous);
       }
       console.error('Failed to toggle retro schedule:', err);
@@ -4693,12 +4771,14 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                           <div className="space-y-1">
                             <button
                               onClick={() => {
-                                applyRetroSelection.mutate({
-                                  schedule: rule.schedule,
-                                  currentIds: rule.linkedIds,
-                                  targetIds: allOptionIds,
-                                });
                                 setActiveRuleMenu(null);
+                                setTimeout(() => {
+                                  applyRetroSelection.mutate({
+                                    schedule: rule.schedule,
+                                    currentIds: rule.linkedIds,
+                                    targetIds: allOptionIds,
+                                  });
+                                }, 50);
                               }}
                               disabled={applyRetroSelection.isPending}
                               className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
@@ -4707,12 +4787,14 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             </button>
                             <button
                               onClick={() => {
-                                applyRetroSelection.mutate({
-                                  schedule: rule.schedule,
-                                  currentIds: rule.linkedIds,
-                                  targetIds: allPrimaryIds,
-                                });
                                 setActiveRuleMenu(null);
+                                setTimeout(() => {
+                                  applyRetroSelection.mutate({
+                                    schedule: rule.schedule,
+                                    currentIds: rule.linkedIds,
+                                    targetIds: allPrimaryIds,
+                                  });
+                                }, 50);
                               }}
                               disabled={applyRetroSelection.isPending || allPrimaryIds.length === 0}
                               className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
@@ -4721,12 +4803,14 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             </button>
                             <button
                               onClick={() => {
-                                applyRetroSelection.mutate({
-                                  schedule: rule.schedule,
-                                  currentIds: rule.linkedIds,
-                                  targetIds: allExcessIds,
-                                });
                                 setActiveRuleMenu(null);
+                                setTimeout(() => {
+                                  applyRetroSelection.mutate({
+                                    schedule: rule.schedule,
+                                    currentIds: rule.linkedIds,
+                                    targetIds: allExcessIds,
+                                  });
+                                }, 50);
                               }}
                               disabled={applyRetroSelection.isPending || allExcessIds.length === 0}
                               className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
@@ -4737,22 +4821,41 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                           <div className="mt-2 border-t border-gray-100 pt-2 space-y-1 max-h-48 overflow-y-auto">
                             {allOptions.map(opt => {
                               const isLinked = rule.linkedSet.has(opt.id);
+                              const struct = structures.find(s => String(s.id) === opt.id);
+                              const isBound = struct?.is_bound;
                               return (
-                                <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                                <label
+                                  key={opt.id}
+                                  className={`flex items-center gap-2 text-xs ${
+                                    isBound
+                                      ? 'text-gray-400 cursor-not-allowed'
+                                      : 'text-gray-600 cursor-pointer hover:text-gray-800'
+                                  }`}
+                                  title={isBound ? 'Cannot modify bound quote' : undefined}
+                                >
                                   <input
                                     type="checkbox"
                                     checked={isLinked}
+                                    disabled={isBound}
                                     onChange={() => {
+                                      // Close popover first, then delay mutation to allow popover to fully close
                                       setActiveRuleMenu(null);
-                                      toggleRetroLink.mutate({
-                                        schedule: rule.schedule,
-                                        quoteId: opt.id,
-                                        isLinked,
-                                      });
+                                      setTimeout(() => {
+                                        toggleRetroLink.mutate({
+                                          schedule: rule.schedule,
+                                          quoteId: opt.id,
+                                          isLinked,
+                                        });
+                                      }, 50);
                                     }}
-                                    className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                                    className="w-4 h-4 text-purple-600 rounded border-gray-300 disabled:opacity-50"
                                   />
                                   <span className="truncate">{opt.name}</span>
+                                  {isBound && (
+                                    <svg className="w-3 h-3 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                                    </svg>
+                                  )}
                                 </label>
                               );
                             })}
@@ -5995,26 +6098,29 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               <h3 className="text-xs font-bold text-gray-500 uppercase">Retro Dates</h3>
             </div>
             <div className="p-4 space-y-1">
-              {(structure?.retro_schedule?.length > 0 ? structure.retro_schedule : [
-                { coverage: 'Cyber', retro: 'full_prior_acts' },
-                { coverage: 'Tech E&O', retro: 'inception' }
-              ]).map((entry, idx) => (
-                <div key={idx} className="text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600">{entry.coverage}</span>
-                    <span className="font-medium text-gray-800">
-                      {entry.retro === 'full_prior_acts' ? 'Full Prior Acts' :
-                       entry.retro === 'inception' ? 'Inception' :
-                       entry.retro === 'date' && entry.date ? new Date(entry.date).toLocaleDateString() :
-                       entry.retro === 'custom' ? 'Custom' :
-                       entry.retro || '—'}
-                    </span>
-                  </div>
-                  {entry.retro === 'custom' && entry.custom_text && (
-                    <div className="text-xs text-gray-500 mt-0.5 text-right">{entry.custom_text}</div>
-                  )}
+              {(!structure?.retro_schedule || structure.retro_schedule.length === 0) ? (
+                <div className="text-sm text-gray-600">
+                  Full Prior Acts <span className="text-gray-400">(default)</span>
                 </div>
-              ))}
+              ) : (
+                structure.retro_schedule.map((entry, idx) => (
+                  <div key={idx} className="text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600">{entry.coverage}</span>
+                      <span className="font-medium text-gray-800">
+                        {entry.retro === 'full_prior_acts' ? 'Full Prior Acts' :
+                         entry.retro === 'inception' ? 'Inception' :
+                         entry.retro === 'date' && entry.date ? new Date(entry.date).toLocaleDateString() :
+                         entry.retro === 'custom' ? 'Custom' :
+                         entry.retro || '—'}
+                      </span>
+                    </div>
+                    {entry.retro === 'custom' && entry.custom_text && (
+                      <div className="text-xs text-gray-500 mt-0.5 text-right">{entry.custom_text}</div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -8109,32 +8215,13 @@ export default function QuotePageV3() {
     },
   });
 
-  // Preview document handler - read-only, only opens existing docs
+  // Preview document handler - generates on-the-fly without saving
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
-  const handlePreviewDocument = async () => {
+  const handlePreviewDocument = () => {
     if (!activeStructureId) return;
-
-    setIsPreviewLoading(true);
-    try {
-      const response = await getQuoteDocuments(activeStructureId);
-      const documents = response.data || [];
-
-      if (documents.length > 0) {
-        const latestDoc = documents[0];
-        if (latestDoc.pdf_url) {
-          window.open(latestDoc.pdf_url, '_blank');
-        } else {
-          alert('Document URL not available');
-        }
-      } else {
-        alert('No quote document yet. Click Generate to create one.');
-      }
-    } catch (error) {
-      console.error('Failed to preview document:', error);
-      alert('Failed to load document preview');
-    } finally {
-      setIsPreviewLoading(false);
-    }
+    // Open preview URL directly - generates PDF without saving
+    const previewUrl = getQuotePreviewUrl(activeStructureId);
+    window.open(previewUrl, '_blank');
   };
 
   // Generate document picker state

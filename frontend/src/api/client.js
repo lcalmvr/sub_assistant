@@ -112,6 +112,7 @@ export const uploadSubmissionDocument = (submissionId, file, documentType = null
 export const getQuoteOptions = (submissionId) => api.get(`/submissions/${submissionId}/quotes`);
 export const getQuoteOption = (id) => api.get(`/quotes/${id}`);
 export const getQuoteDocuments = (id) => api.get(`/quotes/${id}/documents`);
+export const getQuotePreviewUrl = (id) => `${API_BASE_URL}/quotes/${id}/preview-document`;
 export const getLatestDocument = (submissionId) => api.get(`/submissions/${submissionId}/latest-document`);
 export const getSubmissionDocuments = (submissionId) => api.get(`/submissions/${submissionId}/documents`);
 export const createQuoteOption = (submissionId, data) => api.post(`/submissions/${submissionId}/quotes`, data);

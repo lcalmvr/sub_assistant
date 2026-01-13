@@ -3160,6 +3160,9 @@ def create_quote(submission_id: str, data: QuoteCreate):
                 risk_adjusted_premium = result.get("risk_adjusted_premium")
                 cmai_layer['premium'] = risk_adjusted_premium
 
+    # No retro_schedule = Full Prior Acts (default, no restrictions)
+    # Only add retro entries when user explicitly adds restrictions
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -3441,7 +3444,7 @@ def clone_quote(quote_id: str):
             # Get original quote
             cur.execute("""
                 SELECT submission_id, quote_name, tower_json, primary_retention,
-                       policy_form, coverages, sublimits, position
+                       policy_form, coverages, sublimits, position, retro_schedule
                 FROM insurance_towers WHERE id = %s
             """, (quote_id,))
             original = cur.fetchone()
@@ -3455,12 +3458,14 @@ def clone_quote(quote_id: str):
             tower_json = json.dumps(original['tower_json']) if original['tower_json'] else None
             coverages = json.dumps(original['coverages']) if original['coverages'] else None
             sublimits = json.dumps(original['sublimits']) if original['sublimits'] else None
+            # Copy original's retro_schedule as-is (null = Full Prior Acts)
+            retro_schedule = json.dumps(original['retro_schedule']) if original['retro_schedule'] else None
 
             cur.execute("""
                 INSERT INTO insurance_towers (
                     submission_id, quote_name, tower_json, primary_retention,
-                    policy_form, coverages, sublimits, position
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    policy_form, coverages, sublimits, position, retro_schedule
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id, quote_name, created_at
             """, (
                 original['submission_id'],
@@ -3471,6 +3476,7 @@ def clone_quote(quote_id: str):
                 coverages,
                 sublimits,
                 original['position'],
+                retro_schedule,
             ))
             row = cur.fetchone()
             conn.commit()
@@ -7954,6 +7960,52 @@ def archive_document_library_entry(entry_id: str):
 # ─────────────────────────────────────────────────────────────
 # Document Generation
 # ─────────────────────────────────────────────────────────────
+
+@app.get("/api/quotes/{quote_id}/preview-document")
+def preview_quote_document(quote_id: str):
+    """Preview a quote document (PDF) without saving to database."""
+    from fastapi.responses import Response
+    try:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from core.document_generator import preview_document
+
+        # Get submission_id and position for this quote
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT submission_id, position FROM insurance_towers WHERE id = %s",
+                    (quote_id,)
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="Quote not found")
+                submission_id = row["submission_id"]
+                position = row.get("position", "primary")
+
+        # Determine doc type based on position
+        doc_type = "quote_excess" if position == "excess" else "quote_primary"
+
+        # Generate preview PDF (in memory, not saved)
+        pdf_bytes = preview_document(
+            submission_id=str(submission_id),
+            quote_option_id=quote_id,
+            doc_type=doc_type
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename=quote_preview_{quote_id[:8]}.pdf"
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Preview generation failed: {str(e)}")
+
 
 @app.post("/api/quotes/{quote_id}/generate-document")
 def generate_quote_document(quote_id: str):
