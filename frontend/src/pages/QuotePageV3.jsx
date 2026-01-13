@@ -40,6 +40,14 @@ import {
 import CoverageEditor, { SUBLIMIT_COVERAGES } from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
 import RetroScheduleEditor from '../components/RetroScheduleEditor';
+import RetroSelector, {
+  RETRO_OPTIONS,
+  DEFAULT_COVERAGES,
+  ADDITIONAL_COVERAGES,
+  ALL_COVERAGES,
+  RetroTypeSelect,
+  CoverageSelect,
+} from '../components/RetroSelector';
 
 // ============================================================================
 // UTILITIES
@@ -1702,15 +1710,7 @@ function SubjectivitiesPanel({ structureId, submissionId }) {
 // COMPACT RETRO EDITOR
 // ============================================================================
 
-const RETRO_OPTIONS = [
-  { value: 'full_prior_acts', label: 'Full Prior Acts' },
-  { value: 'inception', label: 'Inception' },
-  { value: 'date', label: 'Date' },
-  { value: 'custom', label: 'Custom' },
-];
-
-const DEFAULT_COVERAGES = ['Cyber', 'Tech E&O'];
-const ADDITIONAL_COVERAGES = ['Media'];
+// RETRO_OPTIONS, DEFAULT_COVERAGES, ADDITIONAL_COVERAGES imported from RetroSelector
 
 function CompactRetroEditor({ schedule = [], position = 'primary', excludedCoverages = [], onSave }) {
   // Use actual schedule data - no fake defaults
@@ -1784,15 +1784,11 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
               </svg>
             </button>
           </div>
-          <select
+          <RetroTypeSelect
             value={entry.retro}
-            onChange={(e) => updateEntry(entry.coverage, { retro: e.target.value, date: undefined, custom_text: undefined })}
-            className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-purple-400 outline-none bg-white"
-          >
-            {RETRO_OPTIONS.map(opt => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
+            onChange={(value) => updateEntry(entry.coverage, { retro: value, date: undefined, custom_text: undefined })}
+            className="w-full text-xs border-gray-200"
+          />
           {entry.retro === 'date' && (
             <input
               type="date"
@@ -1828,7 +1824,7 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
             list="coverage-suggestions"
           />
           <datalist id="coverage-suggestions">
-            {[...DEFAULT_COVERAGES, ...ADDITIONAL_COVERAGES].filter(c => !localSchedule.some(e => e.coverage === c)).map(cov => (
+            {ALL_COVERAGES.filter(c => !localSchedule.some(e => e.coverage === c)).map(cov => (
               <option key={cov} value={cov} />
             ))}
           </datalist>
@@ -2766,6 +2762,17 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   const [sectionVisibility, setSectionVisibility] = useState({ all: false, none: false });
   const [confirmRemoval, setConfirmRemoval] = useState(null);
   const [showAddPanel, setShowAddPanel] = useState(false);
+  // Add new rate/restriction state
+  const [showAddCommission, setShowAddCommission] = useState(false);
+  const [newCommissionValue, setNewCommissionValue] = useState('');
+  const [newCommissionSelectedQuotes, setNewCommissionSelectedQuotes] = useState([]);
+  const [showAddRetro, setShowAddRetro] = useState(false);
+  const [newRetroCoverage, setNewRetroCoverage] = useState('');
+  const [newRetroType, setNewRetroType] = useState('inception');
+  const [newRetroSelectedQuotes, setNewRetroSelectedQuotes] = useState([]);
+  const [showAddPolicyTerm, setShowAddPolicyTerm] = useState(false);
+  const [newPolicyTermMonths, setNewPolicyTermMonths] = useState('');
+  const [newPolicyTermSelectedQuotes, setNewPolicyTermSelectedQuotes] = useState([]);
   const tableRef = useRef(null);
   const inputRefs = useRef({});
 
@@ -4867,9 +4874,83 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                 );
               })}
 
-              {filteredRetroRulesAll.length === 0 && (
+              {filteredRetroRulesAll.length === 0 && !showAddRetro && (
                 <div className="px-6 py-12 text-sm text-gray-400 text-center">
                   <div className="text-gray-300 mb-2">No retro schedules match this filter.</div>
+                </div>
+              )}
+
+              {/* Add New Retro Restriction */}
+              {showAddRetro ? (
+                <div className="px-6 py-4 bg-purple-50/50 border-t border-purple-100">
+                  <div className="flex items-start gap-4">
+                    <RetroSelector
+                      coverage={newRetroCoverage}
+                      retroType={newRetroType}
+                      onCoverageChange={setNewRetroCoverage}
+                      onRetroTypeChange={setNewRetroType}
+                      layout="vertical"
+                    />
+                    <div className="flex-1">
+                      <label className="text-xs font-medium text-gray-600 block mb-2">Assign to:</label>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {structures.filter(s => !s.is_bound).map(opt => (
+                          <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                            <input
+                              type="checkbox"
+                              checked={newRetroSelectedQuotes.includes(String(opt.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewRetroSelectedQuotes(prev => [...prev, String(opt.id)]);
+                                } else {
+                                  setNewRetroSelectedQuotes(prev => prev.filter(id => id !== String(opt.id)));
+                                }
+                              }}
+                              className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                            />
+                            <span className="truncate">{allOptionLabelMap.get(String(opt.id)) || opt.quote_name || 'Option'}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => {
+                          if (newRetroCoverage && newRetroSelectedQuotes.length > 0) {
+                            const newSchedule = [{ coverage: newRetroCoverage, retro: newRetroType }];
+                            applyRetroSelection.mutate({
+                              schedule: newSchedule,
+                              currentIds: [],
+                              targetIds: newRetroSelectedQuotes,
+                            });
+                            setShowAddRetro(false);
+                            setNewRetroCoverage('');
+                            setNewRetroType('inception');
+                            setNewRetroSelectedQuotes([]);
+                          }
+                        }}
+                        disabled={!newRetroCoverage || newRetroSelectedQuotes.length === 0 || applyRetroSelection.isPending}
+                        className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50"
+                      >
+                        Create
+                      </button>
+                      <button
+                        onClick={() => { setShowAddRetro(false); setNewRetroCoverage(''); setNewRetroType('inception'); setNewRetroSelectedQuotes([]); }}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="px-6 py-3 border-t border-gray-100">
+                  <button
+                    onClick={() => setShowAddRetro(true)}
+                    className="text-xs font-medium text-purple-600 hover:text-purple-700"
+                  >
+                    + Add Restriction
+                  </button>
                 </div>
               )}
             </div>
@@ -5018,9 +5099,100 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                 );
               })}
 
-              {filteredPolicyTermRulesAll.length === 0 && (
+              {filteredPolicyTermRulesAll.length === 0 && !showAddPolicyTerm && (
                 <div className="px-6 py-12 text-sm text-gray-400 text-center">
                   <div className="text-gray-300 mb-2">No policy terms match this filter.</div>
+                </div>
+              )}
+
+              {/* Add New Policy Term */}
+              {showAddPolicyTerm ? (
+                <div className="px-6 py-4 bg-purple-50/50 border-t border-purple-100">
+                  <div className="flex items-start gap-4">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-gray-600">Term:</label>
+                      <select
+                        value={newPolicyTermMonths}
+                        onChange={(e) => setNewPolicyTermMonths(e.target.value)}
+                        className="text-sm border border-gray-300 rounded px-2 py-1.5 focus:border-purple-400 outline-none"
+                        autoFocus
+                      >
+                        <option value="">Select...</option>
+                        <option value="12">12 Months</option>
+                        <option value="18">18 Months</option>
+                        <option value="24">24 Months</option>
+                        <option value="36">36 Months</option>
+                        <option value="tbd">Dates TBD</option>
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs font-medium text-gray-600 block mb-2">Assign to:</label>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {structures.filter(s => !s.is_bound).map(opt => (
+                          <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                            <input
+                              type="checkbox"
+                              checked={newPolicyTermSelectedQuotes.includes(String(opt.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewPolicyTermSelectedQuotes(prev => [...prev, String(opt.id)]);
+                                } else {
+                                  setNewPolicyTermSelectedQuotes(prev => prev.filter(id => id !== String(opt.id)));
+                                }
+                              }}
+                              className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                            />
+                            <span className="truncate">{allOptionLabelMap.get(String(opt.id)) || opt.quote_name || 'Option'}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => {
+                          if (newPolicyTermMonths && newPolicyTermSelectedQuotes.length > 0) {
+                            if (newPolicyTermMonths === 'tbd') {
+                              applyPolicyTermSelection.mutate({
+                                isTbd: true,
+                                months: null,
+                                currentIds: [],
+                                targetIds: newPolicyTermSelectedQuotes,
+                              });
+                            } else {
+                              applyPolicyTermSelection.mutate({
+                                isTbd: false,
+                                months: parseInt(newPolicyTermMonths),
+                                currentIds: [],
+                                targetIds: newPolicyTermSelectedQuotes,
+                              });
+                            }
+                            setShowAddPolicyTerm(false);
+                            setNewPolicyTermMonths('');
+                            setNewPolicyTermSelectedQuotes([]);
+                          }
+                        }}
+                        disabled={!newPolicyTermMonths || newPolicyTermSelectedQuotes.length === 0 || applyPolicyTermSelection.isPending}
+                        className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50"
+                      >
+                        Create
+                      </button>
+                      <button
+                        onClick={() => { setShowAddPolicyTerm(false); setNewPolicyTermMonths(''); setNewPolicyTermSelectedQuotes([]); }}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="px-6 py-3 border-t border-gray-100">
+                  <button
+                    onClick={() => setShowAddPolicyTerm(true)}
+                    className="text-xs font-medium text-purple-600 hover:text-purple-700"
+                  >
+                    + Add Term
+                  </button>
                 </div>
               )}
             </div>
@@ -5155,13 +5327,15 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                     type="checkbox"
                                     checked={isLinked}
                                     onChange={() => {
-                                      // Close popover - prevents position jump during re-render
+                                      // Close popover first, then delay mutation to prevent position jump
                                       setActiveRuleMenu(null);
-                                      toggleCommissionLink.mutate({
-                                        commission: rule.commission,
-                                        quoteId: opt.id,
-                                        isLinked,
-                                      });
+                                      setTimeout(() => {
+                                        toggleCommissionLink.mutate({
+                                          commission: rule.commission,
+                                          quoteId: opt.id,
+                                          isLinked,
+                                        });
+                                      }, 50);
                                     }}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
                                   />
@@ -5177,9 +5351,99 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                 );
               })}
 
-              {filteredCommissionRulesAll.length === 0 && (
+              {filteredCommissionRulesAll.length === 0 && !showAddCommission && (
                 <div className="px-6 py-12 text-sm text-gray-400 text-center">
                   <div className="text-gray-300 mb-2">No commissions match this filter.</div>
+                </div>
+              )}
+
+              {/* Add New Commission Rate */}
+              {showAddCommission ? (
+                <div className="px-6 py-4 bg-purple-50/50 border-t border-purple-100">
+                  <div className="flex items-start gap-4">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-medium text-gray-600">Rate:</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={newCommissionValue}
+                          onChange={(e) => setNewCommissionValue(e.target.value)}
+                          placeholder="15"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          className="w-20 text-sm border border-gray-300 rounded px-2 py-1.5 pr-6 focus:border-purple-400 outline-none"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              setShowAddCommission(false);
+                              setNewCommissionValue('');
+                              setNewCommissionSelectedQuotes([]);
+                            }
+                          }}
+                        />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs font-medium text-gray-600 block mb-2">Assign to:</label>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {structures.filter(s => !s.is_bound).map(opt => (
+                          <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                            <input
+                              type="checkbox"
+                              checked={newCommissionSelectedQuotes.includes(String(opt.id))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setNewCommissionSelectedQuotes(prev => [...prev, String(opt.id)]);
+                                } else {
+                                  setNewCommissionSelectedQuotes(prev => prev.filter(id => id !== String(opt.id)));
+                                }
+                              }}
+                              className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                            />
+                            <span className="truncate">{allOptionLabelMap.get(String(opt.id)) || opt.quote_name || 'Option'}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => {
+                          const rate = parseFloat(newCommissionValue);
+                          if (!isNaN(rate) && rate >= 0 && rate <= 100 && newCommissionSelectedQuotes.length > 0) {
+                            applyCommissionSelection.mutate({
+                              commission: rate,
+                              currentIds: [],
+                              targetIds: newCommissionSelectedQuotes,
+                            });
+                            setShowAddCommission(false);
+                            setNewCommissionValue('');
+                            setNewCommissionSelectedQuotes([]);
+                          }
+                        }}
+                        disabled={!newCommissionValue || newCommissionSelectedQuotes.length === 0 || applyCommissionSelection.isPending}
+                        className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50"
+                      >
+                        Create
+                      </button>
+                      <button
+                        onClick={() => { setShowAddCommission(false); setNewCommissionValue(''); setNewCommissionSelectedQuotes([]); }}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="px-6 py-3 border-t border-gray-100">
+                  <button
+                    onClick={() => setShowAddCommission(true)}
+                    className="text-xs font-medium text-purple-600 hover:text-purple-700"
+                  >
+                    + Add Rate
+                  </button>
                 </div>
               )}
             </div>
