@@ -968,9 +968,21 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
 // ============================================================================
 
 function VariationCard({ variation, isActive, onClick, onDelete, canDelete }) {
-  const period = variation.period_months || 12;
   const premium = variation.sold_premium || variation.technical_premium || 0;
   const commission = variation.commission_override || 15;
+
+  // Determine policy term display based on dates_tbd and actual dates
+  const datesTbd = variation?.dates_tbd || false;
+  let termDisplay = 'TBD';
+  if (!datesTbd && variation.effective_date_override && variation.expiration_date_override) {
+    const start = new Date(variation.effective_date_override);
+    const end = new Date(variation.expiration_date_override);
+    const months = Math.round((end - start) / (1000 * 60 * 60 * 24 * 30.44));
+    termDisplay = `${months} Months`;
+  } else if (!datesTbd) {
+    // Has dates from parent (structure/submission), show default 12 months
+    termDisplay = '12 Months';
+  }
 
   return (
     <div
@@ -1025,12 +1037,14 @@ function VariationCard({ variation, isActive, onClick, onDelete, canDelete }) {
 
       {/* Term Period */}
       <div className={`flex items-center justify-center gap-2 py-2 rounded-lg text-sm ${
-        isActive ? 'bg-purple-100 text-purple-700' : 'bg-gray-50 text-gray-600'
+        datesTbd
+          ? 'bg-amber-100 text-amber-700'
+          : isActive ? 'bg-purple-100 text-purple-700' : 'bg-gray-50 text-gray-600'
       }`}>
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
-        {period} Months
+        {termDisplay}
       </div>
     </div>
   );
@@ -2730,7 +2744,7 @@ function TriStateCheckbox({ state, onChange, disabled, title }) {
 // TAB CONTENT COMPONENTS (Main Card)
 // ============================================================================
 
-function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submissionId }) {
+function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submissionId, submission }) {
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState({});
@@ -3188,10 +3202,37 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
     return retroRulesAll.filter(rule => rule.scope === rulesFilter);
   }, [rulesFilter, retroRulesAll]);
 
-  // Helper to get policy term from structure (from first variation or structure level)
-  const getPolicyTerm = (struct) => {
+  // Helper to get policy term info from structure
+  // Returns { isTbd: boolean, months: number|null, label: string }
+  const getPolicyTermInfo = (struct, submission) => {
     const firstVariation = struct.variations?.[0];
-    return firstVariation?.period_months || struct.period_months || 12;
+    const datesTbd = firstVariation?.dates_tbd || struct.dates_tbd || false;
+
+    if (datesTbd) {
+      return { isTbd: true, months: null, label: 'TBD' };
+    }
+
+    // Get effective dates (cascade: variation → structure → submission)
+    const effectiveDate = firstVariation?.effective_date_override || struct.effective_date || submission?.effective_date;
+    const expirationDate = firstVariation?.expiration_date_override || struct.expiration_date || submission?.expiration_date;
+
+    if (!effectiveDate || !expirationDate) {
+      return { isTbd: true, months: null, label: 'TBD' };
+    }
+
+    // Calculate months between dates
+    const start = new Date(effectiveDate);
+    const end = new Date(expirationDate);
+    const months = Math.round((end - start) / (1000 * 60 * 60 * 24 * 30.44)); // ~30.44 days per month
+
+    // Format label
+    let label;
+    if (months === 12) label = '12 Months';
+    else if (months === 18) label = '18 Months';
+    else if (months === 24) label = '24 Months';
+    else label = `${months} Months`;
+
+    return { isTbd: false, months, label };
   };
 
   // Helper to get commission from structure (from first variation)
@@ -3200,12 +3241,9 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
     return firstVariation?.commission_override ?? null;
   };
 
-  // Helper to format policy term
-  const formatPolicyTerm = (months) => {
-    if (months === 12) return '12 Months';
-    if (months === 18) return '18 Months';
-    if (months === 24) return '24 Months';
-    return `${months} Months`;
+  // Helper to format policy term (for display)
+  const formatPolicyTerm = (termInfo) => {
+    return termInfo?.label || 'TBD';
   };
 
   // Helper to format commission
@@ -3243,36 +3281,46 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       return extra > 0 ? `${firstLabel} +${extra}` : firstLabel;
     };
 
-    // Group structures by their policy term
-    const policyTermMap = new Map(); // term value -> { term, linkedIds }
-    
+    // Group structures by their policy term label (based on dates_tbd and calculated months)
+    const policyTermMap = new Map(); // label -> { isTbd, months, label, linkedIds }
+
     structures.forEach(struct => {
-      const term = getPolicyTerm(struct);
-      
-      if (!policyTermMap.has(term)) {
-        policyTermMap.set(term, {
-          term: term,
+      const termInfo = getPolicyTermInfo(struct, submission);
+      const key = termInfo.label; // "TBD", "12 Months", "13 Months", etc.
+
+      if (!policyTermMap.has(key)) {
+        policyTermMap.set(key, {
+          isTbd: termInfo.isTbd,
+          months: termInfo.months,
+          label: termInfo.label,
           linkedIds: [],
         });
       }
-      policyTermMap.get(term).linkedIds.push(String(struct.id));
+      policyTermMap.get(key).linkedIds.push(String(struct.id));
     });
 
     // Convert to rules array
-    return Array.from(policyTermMap.entries()).map(([term, data]) => {
+    return Array.from(policyTermMap.entries()).map(([key, data]) => {
       const linkedIds = data.linkedIds;
       const scope = getScope(linkedIds);
       return {
-        id: `term-${term}`,
-        term: data.term,
+        id: `term-${key}`,
+        isTbd: data.isTbd,
+        months: data.months,
         linkedIds,
         linkedSet: new Set(linkedIds),
         scope,
         appliesLabel: getAppliesLabel(linkedIds, scope),
-        label: formatPolicyTerm(data.term),
+        label: data.label,
       };
-    }).sort((a, b) => a.term - b.term);
-  }, [structures, allOptionIds, allPrimaryIds, allExcessIds, allOptions, allOptionLabelMap]);
+    }).sort((a, b) => {
+      // Sort: by months ascending, TBD at end
+      if (a.isTbd && !b.isTbd) return 1;
+      if (!a.isTbd && b.isTbd) return -1;
+      if (a.isTbd && b.isTbd) return 0;
+      return (a.months || 0) - (b.months || 0);
+    });
+  }, [structures, submission, allOptionIds, allPrimaryIds, allExcessIds, allOptions, allOptionLabelMap]);
 
   const filteredPolicyTermRulesAll = useMemo(() => {
     if (rulesFilter === 'any') return policyTermRulesAll;
@@ -3604,63 +3652,111 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   });
 
   const applyPolicyTermSelection = useMutation({
-    mutationFn: async ({ term, currentIds, targetIds }) => {
+    mutationFn: async ({ isTbd, currentIds, targetIds }) => {
       const currentSet = new Set(currentIds);
       const targetSet = new Set(targetIds);
       const toApply = targetIds.filter(id => !currentSet.has(id));
       const toRemove = currentIds.filter(id => !targetSet.has(id));
-      
+
+      // toApply: Options being added to this row
+      // - If TBD row: set dates_tbd=true
+      // - If dated row: set dates_tbd=false
       await Promise.all(
         toApply.map(id => {
           const struct = structures.find(s => String(s.id) === id);
           const firstVariation = struct?.variations?.[0];
           if (firstVariation) {
-            return updateVariation(firstVariation.id, { period_months: term });
+            return updateVariation(firstVariation.id, { dates_tbd: isTbd });
           } else if (struct) {
-            return updateQuoteOption(id, { period_months: term });
+            return updateQuoteOption(id, { dates_tbd: isTbd });
           }
         }).filter(Boolean)
       );
-      
+
+      // toRemove: Options being removed from this row
+      // - If TBD row: set dates_tbd=false (move to dated)
+      // - If dated row: set dates_tbd=true (move to TBD)
       await Promise.all(
         toRemove.map(id => {
           const struct = structures.find(s => String(s.id) === id);
           const firstVariation = struct?.variations?.[0];
           if (firstVariation) {
-            return updateVariation(firstVariation.id, { period_months: 12 });
+            return updateVariation(firstVariation.id, { dates_tbd: !isTbd });
           } else if (struct) {
-            return updateQuoteOption(id, { period_months: 12 });
+            return updateQuoteOption(id, { dates_tbd: !isTbd });
           }
         }).filter(Boolean)
       );
     },
-    onSuccess: (_, variables) => {
-      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
-      refreshAfterManage(ids);
+    onMutate: async ({ isTbd, currentIds, targetIds }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      const currentSet = new Set(currentIds);
+      const targetSet = new Set(targetIds);
+
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          const id = String(s.id);
+          const firstVariation = s.variations?.[0];
+          if (!firstVariation) return s;
+
+          // If in target set, apply the dates_tbd value
+          if (targetSet.has(id) && !currentSet.has(id)) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) =>
+                idx === 0 ? { ...v, dates_tbd: isTbd } : v
+              ),
+            };
+          }
+          // If was in current set but not in target, flip dates_tbd
+          if (currentSet.has(id) && !targetSet.has(id)) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) =>
+                idx === 0 ? { ...v, dates_tbd: !isTbd } : v
+              ),
+            };
+          }
+          return s;
+        })
+      );
+      return { previous };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['structures', submissionId], context.previous);
+      }
+      console.error('Failed to apply policy term selection:', err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
     },
   });
 
   const togglePolicyTermLink = useMutation({
-    mutationFn: async ({ term, quoteId, isLinked }) => {
+    mutationFn: async ({ quoteId, isLinked, isTbd }) => {
       const struct = structures.find(s => String(s.id) === quoteId);
       const firstVariation = struct?.variations?.[0];
-      if (isLinked) {
-        if (firstVariation) {
-          return updateVariation(firstVariation.id, { period_months: 12 });
-        } else if (struct) {
-          return updateQuoteOption(quoteId, { period_months: 12 });
-        }
-      } else {
-        if (firstVariation) {
-          return updateVariation(firstVariation.id, { period_months: term });
-        } else if (struct) {
-          return updateQuoteOption(quoteId, { period_months: term });
-        }
+      // Logic:
+      // - Unchecking from TBD row (isTbd=true, isLinked=true) → set dates_tbd=false
+      // - Unchecking from dated row (isTbd=false, isLinked=true) → set dates_tbd=true
+      // - Checking into TBD row (isTbd=true, isLinked=false) → set dates_tbd=true
+      // - Checking into dated row (isTbd=false, isLinked=false) → set dates_tbd=false
+      // Formula: newDatesTbd = isTbd ? !isLinked : isLinked
+      const newDatesTbd = isTbd ? !isLinked : isLinked;
+
+      if (firstVariation) {
+        return updateVariation(firstVariation.id, { dates_tbd: newDatesTbd });
+      } else if (struct) {
+        return updateQuoteOption(quoteId, { dates_tbd: newDatesTbd });
       }
     },
-    onMutate: async ({ term, quoteId, isLinked }) => {
+    onMutate: async ({ quoteId, isLinked, isTbd }) => {
       await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
       const previous = queryClient.getQueryData(['structures', submissionId]);
+      const newDatesTbd = isTbd ? !isLinked : isLinked;
+
       queryClient.setQueryData(['structures', submissionId], (old) =>
         (old || []).map(s => {
           if (String(s.id) !== String(quoteId)) return s;
@@ -3668,12 +3764,12 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
           if (firstVariation) {
             return {
               ...s,
-              variations: s.variations.map((v, idx) => 
-                idx === 0 ? { ...v, period_months: isLinked ? 12 : term } : v
+              variations: s.variations.map((v, idx) =>
+                idx === 0 ? { ...v, dates_tbd: newDatesTbd } : v
               ),
             };
           }
-          return { ...s, period_months: isLinked ? 12 : term };
+          return { ...s, dates_tbd: newDatesTbd };
         })
       );
       return { previous };
@@ -3695,7 +3791,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       const targetSet = new Set(targetIds);
       const toApply = targetIds.filter(id => !currentSet.has(id));
       const toRemove = currentIds.filter(id => !targetSet.has(id));
-      
+
       await Promise.all(
         toApply.map(id => {
           const struct = structures.find(s => String(s.id) === id);
@@ -3705,7 +3801,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
           }
         }).filter(Boolean)
       );
-      
+
       await Promise.all(
         toRemove.map(id => {
           const struct = structures.find(s => String(s.id) === id);
@@ -3716,9 +3812,49 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
         }).filter(Boolean)
       );
     },
-    onSuccess: (_, variables) => {
-      const ids = Array.from(new Set([...(variables.currentIds || []), ...(variables.targetIds || [])]));
-      refreshAfterManage(ids);
+    onMutate: async ({ commission, currentIds, targetIds }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      const targetSet = new Set(targetIds);
+      const currentSet = new Set(currentIds);
+
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          const id = String(s.id);
+          const firstVariation = s.variations?.[0];
+          if (!firstVariation) return s;
+
+          // If in target set, apply commission
+          if (targetSet.has(id)) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) =>
+                idx === 0 ? { ...v, commission_override: commission } : v
+              ),
+            };
+          }
+          // If was in current set but not in target, remove commission
+          if (currentSet.has(id) && !targetSet.has(id)) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) =>
+                idx === 0 ? { ...v, commission_override: null } : v
+              ),
+            };
+          }
+          return s;
+        })
+      );
+      return { previous };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['structures', submissionId], context.previous);
+      }
+      console.error('Failed to apply commission selection:', err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
     },
   });
 
@@ -4303,11 +4439,14 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                   <input
                                     type="checkbox"
                                     checked={isLinked}
-                                    onChange={() => toggleSubjectivityLink.mutate({
-                                      subjectivityId: rule.id,
-                                      quoteId: opt.id,
-                                      isLinked,
-                                    })}
+                                    onChange={() => {
+                                      setActiveRuleMenu(null);
+                                      toggleSubjectivityLink.mutate({
+                                        subjectivityId: rule.id,
+                                        quoteId: opt.id,
+                                        isLinked,
+                                      });
+                                    }}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
                                   />
                                   <span className="truncate">{opt.name}</span>
@@ -4453,11 +4592,14 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                   <input
                                     type="checkbox"
                                     checked={isLinked}
-                                    onChange={() => toggleEndorsementLink.mutate({
-                                      endorsementId: rule.id,
-                                      quoteId: opt.id,
-                                      isLinked,
-                                    })}
+                                    onChange={() => {
+                                      setActiveRuleMenu(null);
+                                      toggleEndorsementLink.mutate({
+                                        endorsementId: rule.id,
+                                        quoteId: opt.id,
+                                        isLinked,
+                                      });
+                                    }}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
                                   />
                                   <span className="truncate">{opt.name}</span>
@@ -4600,11 +4742,14 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                   <input
                                     type="checkbox"
                                     checked={isLinked}
-                                    onChange={() => toggleRetroLink.mutate({
-                                      schedule: rule.schedule,
-                                      quoteId: opt.id,
-                                      isLinked,
-                                    })}
+                                    onChange={() => {
+                                      setActiveRuleMenu(null);
+                                      toggleRetroLink.mutate({
+                                        schedule: rule.schedule,
+                                        quoteId: opt.id,
+                                        isLinked,
+                                      });
+                                    }}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
                                   />
                                   <span className="truncate">{opt.name}</span>
@@ -4699,7 +4844,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             <button
                               onClick={() => {
                                 applyPolicyTermSelection.mutate({
-                                  term: rule.term,
+                                  isTbd: rule.isTbd,
                                   currentIds: rule.linkedIds,
                                   targetIds: allOptionIds,
                                 });
@@ -4713,7 +4858,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             <button
                               onClick={() => {
                                 applyPolicyTermSelection.mutate({
-                                  term: rule.term,
+                                  isTbd: rule.isTbd,
                                   currentIds: rule.linkedIds,
                                   targetIds: allPrimaryIds,
                                 });
@@ -4727,7 +4872,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             <button
                               onClick={() => {
                                 applyPolicyTermSelection.mutate({
-                                  term: rule.term,
+                                  isTbd: rule.isTbd,
                                   currentIds: rule.linkedIds,
                                   targetIds: allExcessIds,
                                 });
@@ -4747,11 +4892,15 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                   <input
                                     type="checkbox"
                                     checked={isLinked}
-                                    onChange={() => togglePolicyTermLink.mutate({
-                                      term: rule.term,
-                                      quoteId: opt.id,
-                                      isLinked,
-                                    })}
+                                    onChange={() => {
+                                      // Close popover - prevents position jump during re-render
+                                      setActiveRuleMenu(null);
+                                      togglePolicyTermLink.mutate({
+                                        quoteId: opt.id,
+                                        isLinked,
+                                        isTbd: rule.isTbd,
+                                      });
+                                    }}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
                                   />
                                   <span className="truncate">{opt.name}</span>
@@ -4839,18 +4988,24 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                       <Popover.Portal>
                         <Popover.Content
                           className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
-                          sideOffset={4}
+                          sideOffset={8}
                           align="end"
+                          side="bottom"
+                          collisionPadding={16}
+                          sticky="partial"
+                          onOpenAutoFocus={(e) => e.preventDefault()}
                         >
                           <div className="space-y-1">
                             <button
                               onClick={() => {
-                                applyCommissionSelection.mutate({
+                                const payload = {
                                   commission: rule.commission,
                                   currentIds: rule.linkedIds,
                                   targetIds: allOptionIds,
-                                });
+                                };
                                 setActiveRuleMenu(null);
+                                // Small delay to let menu close before mutation
+                                setTimeout(() => applyCommissionSelection.mutate(payload), 10);
                               }}
                               disabled={applyCommissionSelection.isPending}
                               className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
@@ -4859,12 +5014,13 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             </button>
                             <button
                               onClick={() => {
-                                applyCommissionSelection.mutate({
+                                const payload = {
                                   commission: rule.commission,
                                   currentIds: rule.linkedIds,
                                   targetIds: allPrimaryIds,
-                                });
+                                };
                                 setActiveRuleMenu(null);
+                                setTimeout(() => applyCommissionSelection.mutate(payload), 10);
                               }}
                               disabled={applyCommissionSelection.isPending || allPrimaryIds.length === 0}
                               className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
@@ -4873,12 +5029,13 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             </button>
                             <button
                               onClick={() => {
-                                applyCommissionSelection.mutate({
+                                const payload = {
                                   commission: rule.commission,
                                   currentIds: rule.linkedIds,
                                   targetIds: allExcessIds,
-                                });
+                                };
                                 setActiveRuleMenu(null);
+                                setTimeout(() => applyCommissionSelection.mutate(payload), 10);
                               }}
                               disabled={applyCommissionSelection.isPending || allExcessIds.length === 0}
                               className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50"
@@ -4894,11 +5051,15 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                   <input
                                     type="checkbox"
                                     checked={isLinked}
-                                    onChange={() => toggleCommissionLink.mutate({
-                                      commission: rule.commission,
-                                      quoteId: opt.id,
-                                      isLinked,
-                                    })}
+                                    onChange={() => {
+                                      // Close popover - prevents position jump during re-render
+                                      setActiveRuleMenu(null);
+                                      toggleCommissionLink.mutate({
+                                        commission: rule.commission,
+                                        quoteId: opt.id,
+                                        isLinked,
+                                      });
+                                    }}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
                                   />
                                   <span className="truncate">{opt.name}</span>
@@ -5385,6 +5546,8 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const [notes, setNotes] = useState(structure?.notes || '');
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [showAllSublimits, setShowAllSublimits] = useState(false);
+  const [showEndorsementSuggestions, setShowEndorsementSuggestions] = useState(true);
+  const [showSubjectivitySuggestions, setShowSubjectivitySuggestions] = useState(true);
   const submissionId = submission?.id;
 
   const quoteType = getStructurePosition(structure) === 'excess' ? 'excess' : 'primary';
@@ -5779,29 +5942,29 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
       {/* KPI Row with Status */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Premium */}
-        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
-          <div className="text-xs text-green-600 uppercase font-semibold mb-1">Premium</div>
-          <div className="text-2xl font-bold text-green-700">{formatCurrency(premium)}</div>
+        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200 overflow-hidden min-w-0">
+          <div className="text-xs text-green-600 uppercase font-semibold mb-1 truncate">Premium</div>
+          <div className="text-2xl font-bold text-green-700 truncate">{formatCurrency(premium)}</div>
         </div>
         {/* Our Limit */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Our Limit</div>
-          <div className="text-2xl font-bold text-gray-800">{formatCompact(ourLimit)}</div>
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
+          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Our Limit</div>
+          <div className="text-2xl font-bold text-gray-800 truncate">{formatCompact(ourLimit)}</div>
         </div>
         {/* Retention */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Retention</div>
-          <div className="text-2xl font-bold text-gray-800">{formatCompact(tower[0]?.retention || 25000)}</div>
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
+          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Retention</div>
+          <div className="text-2xl font-bold text-gray-800 truncate">{formatCompact(tower[0]?.retention || 25000)}</div>
         </div>
         {/* Commission */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Commission</div>
-          <div className="text-2xl font-bold text-gray-800">{commission}%</div>
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
+          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Commission</div>
+          <div className="text-2xl font-bold text-gray-800 truncate">{commission}%</div>
         </div>
         {/* Status Indicator */}
-        <div className={`${status.bg} rounded-lg p-4 border flex flex-col items-center justify-center`}>
+        <div className={`${status.bg} rounded-lg p-4 border flex flex-col items-center justify-center overflow-hidden min-w-0`}>
           <div className={`w-3 h-3 rounded-full ${status.dot} mb-2`}></div>
-          <div className={`text-sm font-bold ${status.text}`}>{status.label}</div>
+          <div className={`text-sm font-bold ${status.text} truncate`}>{status.label}</div>
         </div>
       </div>
 
@@ -5963,9 +6126,26 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
-                <span className={`text-[11px] ${endorsementStatus.tone}`}>
-                  {endorsementStatus.text}
-                </span>
+                {missingEndorsements.length > 0 ? (
+                  <button
+                    onClick={() => setShowEndorsementSuggestions(!showEndorsementSuggestions)}
+                    className={`text-[11px] ${endorsementStatus.tone} hover:underline flex items-center gap-1`}
+                  >
+                    {endorsementStatus.text}
+                    <svg
+                      className={`w-3 h-3 transition-transform ${showEndorsementSuggestions ? '' : '-rotate-90'}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                ) : endorsementStatus.text && (
+                  <span className={`text-[11px] ${endorsementStatus.tone}`}>
+                    {endorsementStatus.text}
+                  </span>
+                )}
               </div>
               {endorsements.length > 0 && (
                 <button
@@ -5981,7 +6161,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 <p className="text-sm text-gray-400">No endorsements attached</p>
               ) : (
                 <div className="space-y-2">
-                  {missingEndorsements.map((item) => (
+                  {showEndorsementSuggestions && missingEndorsements.map((item) => (
                     <div
                       key={item.id}
                       onClick={() => restoreEndorsement.mutate(item.id)}
@@ -6026,9 +6206,26 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
-                <span className={`text-[11px] ${subjectivityStatus.tone}`}>
-                  {subjectivityStatus.text}
-                </span>
+                {missingSubjectivities.length > 0 ? (
+                  <button
+                    onClick={() => setShowSubjectivitySuggestions(!showSubjectivitySuggestions)}
+                    className={`text-[11px] ${subjectivityStatus.tone} hover:underline flex items-center gap-1`}
+                  >
+                    {subjectivityStatus.text}
+                    <svg
+                      className={`w-3 h-3 transition-transform ${showSubjectivitySuggestions ? '' : '-rotate-90'}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                ) : subjectivityStatus.text && (
+                  <span className={`text-[11px] ${subjectivityStatus.tone}`}>
+                    {subjectivityStatus.text}
+                  </span>
+                )}
               </div>
               {subjectivities.length > 0 && (
                 <button
@@ -6044,7 +6241,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 <p className="text-sm text-gray-400">No subjectivities attached</p>
               ) : (
                 <div className="space-y-2">
-                  {missingSubjectivities.map((item) => (
+                  {showSubjectivitySuggestions && missingSubjectivities.map((item) => (
                     <div
                       key={item.id}
                       onClick={() => restoreSubjectivity.mutate(item.id)}
@@ -8144,6 +8341,7 @@ export default function QuotePageV3() {
                 structures={structures}
                 onSelect={(id) => { handleStructureChange(id); setViewMode('single'); }}
                 submissionId={submissionId}
+                submission={submission}
                 onUpdateOption={(quoteId, data) => updateTowerMutation.mutate({ quoteId, data })}
               />
             </div>

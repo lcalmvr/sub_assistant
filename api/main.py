@@ -2459,7 +2459,7 @@ def list_quote_structures(submission_id: str):
                     'variation_parent_id': None,
                     'label': structure.get('variation_label') or 'A',
                     'name': structure.get('variation_name') or 'Standard',
-                    'period_months': structure.get('period_months') or 12,
+                    'period_months': structure.get('period_months'),  # Allow null for TBD
                     'effective_date_override': structure.get('effective_date_override'),
                     'expiration_date_override': structure.get('expiration_date_override'),
                     'commission_override': structure.get('commission_override'),
@@ -3064,6 +3064,7 @@ class QuoteUpdate(BaseModel):
     sublimits: Optional[list] = None  # Excess quote coverage schedule
     endorsements: Optional[list] = None  # Endorsement names/titles
     subjectivities: Optional[list] = None  # Subjectivity strings
+    dates_tbd: Optional[bool] = None  # Whether policy dates are TBD
 
 
 @app.post("/api/submissions/{submission_id}/quotes")
