@@ -5874,6 +5874,20 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const totalProgramLimit = tower.reduce((sum, l) => sum + (l.limit || 0), 0);
   const premium = cmaiLayer?.premium || 0;
   const commission = variation?.commission_override ?? 15;
+  
+  // Check if CMAI is in a quota share layer
+  const cmaiQs = cmaiLayer?.quota_share;
+  const limitDisplay = cmaiQs ? `${formatCompact(ourLimit)} po ${formatCompact(cmaiQs)}` : formatCompact(ourLimit);
+  
+  // For excess quotes: calculate attachment and get SIR
+  const isExcess = quoteType === 'excess';
+  const cmaiIdx = tower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
+  const attachment = isExcess && cmaiIdx >= 0 ? calculateAttachment(tower, cmaiIdx) : 0;
+  const primaryLayer = tower[0];
+  const retention = primaryLayer?.retention || structure?.primary_retention || 25000;
+  const retentionOrAttachment = isExcess ? attachment : retention;
+  const retentionLabel = isExcess ? 'Attachment' : 'Retention';
+  const sirDisplay = isExcess && retention ? ` (SIR ${formatCompact(retention)})` : '';
 
   // Get coverage exceptions (non-standard sublimits)
   const coverages = structure?.coverages || {};
@@ -6086,20 +6100,22 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     <div className="space-y-6">
       {/* KPI Row with Status */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        {/* Our Limit */}
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
+          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Our Limit</div>
+          <div className="text-2xl font-bold text-gray-800 truncate">{limitDisplay}</div>
+        </div>
+        {/* Retention/Attachment */}
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
+          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">{retentionLabel}</div>
+          <div className="text-2xl font-bold text-gray-800 truncate">
+            {formatCompact(retentionOrAttachment)}{sirDisplay}
+          </div>
+        </div>
         {/* Premium */}
         <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200 overflow-hidden min-w-0">
           <div className="text-xs text-green-600 uppercase font-semibold mb-1 truncate">Premium</div>
           <div className="text-2xl font-bold text-green-700 truncate">{formatCurrency(premium)}</div>
-        </div>
-        {/* Our Limit */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Our Limit</div>
-          <div className="text-2xl font-bold text-gray-800 truncate">{formatCompact(ourLimit)}</div>
-        </div>
-        {/* Retention */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Retention</div>
-          <div className="text-2xl font-bold text-gray-800 truncate">{formatCompact(tower[0]?.retention || 25000)}</div>
         </div>
         {/* Commission */}
         <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
