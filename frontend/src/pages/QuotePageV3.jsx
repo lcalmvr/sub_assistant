@@ -48,6 +48,10 @@ import RetroSelector, {
   RetroTypeSelect,
   CoverageSelect,
 } from '../components/RetroSelector';
+import PolicyTermEditor from '../components/PolicyTermEditor';
+import CommissionEditor from '../components/CommissionEditor';
+import NetOutEditor from '../components/NetOutEditor';
+import { calculateNetOutPremium, calculateCommissionAmount, calculateNetToCarrier } from '../utils/commissionUtils';
 
 // ============================================================================
 // UTILITIES
@@ -1778,11 +1782,11 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
         <div key={entry.coverage} className="space-y-1">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-700">{entry.coverage}</span>
-            <button onClick={() => removeCoverage(entry.coverage)} className="text-gray-400 hover:text-red-500">
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+              <button onClick={() => removeCoverage(entry.coverage)} className="text-gray-400 hover:text-red-500">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
           </div>
           <RetroTypeSelect
             value={entry.retro}
@@ -1857,19 +1861,6 @@ function CompactRetroEditor({ schedule = [], position = 'primary', excludedCover
 function TermsPanel({ structure, variation, submission, submissionId }) {
   const queryClient = useQueryClient();
 
-  // Local state for form fields
-  const [effectiveDate, setEffectiveDate] = useState('');
-  const [expirationDate, setExpirationDate] = useState('');
-
-  // Initialize form values when variation changes
-  useEffect(() => {
-    if (variation) {
-      setEffectiveDate(variation.effective_date_override || structure?.effective_date || submission?.effective_date || '');
-      setExpirationDate(variation.expiration_date_override || structure?.expiration_date || submission?.expiration_date || '');
-    }
-  }, [variation?.id, structure?.id, submission]);
-
-
   // Update variation mutation
   const updateMutation = useMutation({
     mutationFn: (data) => updateVariation(variation.id, data),
@@ -1893,113 +1884,38 @@ function TermsPanel({ structure, variation, submission, submissionId }) {
     },
   });
 
-  // Update structure mutation (for structure-level fields like retro_date)
-  const updateStructureMutation = useMutation({
-    mutationFn: (data) => updateQuoteOption(structure.id, data),
-    onMutate: async (data) => {
-      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
-      const previous = queryClient.getQueryData(['structures', submissionId]);
-      queryClient.setQueryData(['structures', submissionId], (old) =>
-        (old || []).map(s => s.id === structure.id ? { ...s, ...data } : s)
-      );
-      return { previous };
-    },
-    onError: (err, vars, ctx) => {
-      queryClient.setQueryData(['structures', submissionId], ctx.previous);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
-    },
-  });
-
-  // Save on blur
-  const handleBlur = (field, value) => {
-    const currentValue = variation[field];
-    if (value !== currentValue) {
-      updateMutation.mutate({ [field]: value || null });
-    }
-  };
-
   if (!variation) {
     return <div className="py-8 text-center text-gray-400 text-sm">No variation selected</div>;
   }
 
+  // Get current values (cascade: variation → structure → submission)
   const datesTbd = variation?.dates_tbd || false;
+  const effectiveDate = variation?.effective_date_override || structure?.effective_date || submission?.effective_date || '';
+  const expirationDate = variation?.expiration_date_override || structure?.expiration_date || submission?.expiration_date || '';
 
-  const handleTbdToggle = () => {
-    const newTbd = !datesTbd;
+  const handleDatesChange = ({ datesTbd: newDatesTbd, effectiveDate: newEffectiveDate, expirationDate: newExpirationDate }) => {
     updateMutation.mutate({
-      dates_tbd: newTbd,
-      // Clear dates if setting to TBD
-      ...(newTbd ? { effective_date_override: null, expiration_date_override: null } : {})
+      dates_tbd: newDatesTbd,
+      effective_date_override: newEffectiveDate || null,
+      expiration_date_override: newExpirationDate || null,
     });
-    if (newTbd) {
-      setEffectiveDate('');
-      setExpirationDate('');
-    }
+  };
+
+  const handleTbdToggle = (newTbd) => {
+                  updateMutation.mutate({
+      dates_tbd: newTbd,
+      ...(newTbd ? { effective_date_override: null, expiration_date_override: null } : {}),
+    });
   };
 
   return (
-    <div className="space-y-4">
-      {/* Policy Period Header with TBD toggle */}
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-semibold text-gray-500 uppercase">Policy Period</label>
-        <button
-          onClick={handleTbdToggle}
-          className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
-            datesTbd
-              ? 'bg-amber-100 text-amber-700'
-              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-          }`}
-        >
-          TBD
-        </button>
-      </div>
-
-      {/* Dates - show inputs or TBD message */}
-      {datesTbd ? (
-        <div className="text-sm text-gray-400 italic py-2">
-          Dates to be determined
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-[10px] text-gray-400 mb-1 block">Effective</label>
-            <input
-              type="date"
-              value={effectiveDate}
-              onChange={(e) => {
-                const newEffective = e.target.value;
-                setEffectiveDate(newEffective);
-                // Auto-set expiration to 1 year later
-                if (newEffective) {
-                  const effDate = new Date(newEffective);
-                  effDate.setFullYear(effDate.getFullYear() + 1);
-                  const newExpiration = effDate.toISOString().split('T')[0];
-                  setExpirationDate(newExpiration);
-                  // Save both dates
-                  updateMutation.mutate({
-                    effective_date_override: newEffective,
-                    expiration_date_override: newExpiration,
-                  });
-                }
-              }}
-              className="w-full text-sm border border-gray-300 rounded px-2 py-1.5 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-gray-400 mb-1 block">Expiration</label>
-            <input
-              type="date"
-              value={expirationDate}
-              onChange={(e) => setExpirationDate(e.target.value)}
-              onBlur={() => handleBlur('expiration_date_override', expirationDate)}
-              className="w-full text-sm border border-gray-300 rounded px-2 py-1.5 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none"
-            />
-          </div>
-        </div>
-      )}
-    </div>
+    <PolicyTermEditor
+      datesTbd={datesTbd}
+      effectiveDate={effectiveDate}
+      expirationDate={expirationDate}
+      onDatesChange={handleDatesChange}
+      onTbdToggle={handleTbdToggle}
+    />
   );
 }
 
@@ -2153,23 +2069,15 @@ function CommissionPanel({ structure, variation, submissionId }) {
     },
   });
 
-  const handleBlur = () => {
-    const value = commission ? parseFloat(commission) : null;
-    if (value !== variation.commission_override) {
-      updateCommissionMutation.mutate({ commission_override: value });
-    }
-  };
 
   const commissionNum = parseFloat(commission) || 0;
-  const brokerAmount = grossPremium * (commissionNum / 100);
-  const netToCarrier = grossPremium - brokerAmount;
+  const brokerAmount = calculateCommissionAmount(grossPremium, commissionNum);
+  const netToCarrier = calculateNetToCarrier(grossPremium, commissionNum);
 
   // Net out calculations
   const netOutNum = parseFloat(netOutTo) || 0;
-  const newGross = netOutNum > 0 && netOutNum < 100
-    ? Math.round(netToCarrier / (1 - netOutNum / 100))
-    : null;
-  const newCommissionAmount = newGross ? newGross * (netOutNum / 100) : 0;
+  const newGross = calculateNetOutPremium(netToCarrier, netOutNum);
+  const newCommissionAmount = newGross ? calculateCommissionAmount(newGross, netOutNum) : 0;
 
   const applyNetOut = async () => {
     if (!newGross) return;
@@ -2223,39 +2131,22 @@ function CommissionPanel({ structure, variation, submissionId }) {
     <div className="space-y-4">
       {/* Commission Inputs - Side by Side */}
       <div className="grid grid-cols-2 gap-3">
-        <div>
-          <div className="text-[10px] text-gray-400 uppercase mb-1">Broker Commission</div>
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
+        <CommissionEditor
               value={commission}
-              onChange={(e) => setCommission(e.target.value)}
-              onBlur={handleBlur}
-              step="0.5"
-              min="0"
-              max="100"
-              className="w-16 text-sm border border-gray-300 rounded px-2 py-1.5 text-right focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none"
-            />
-            <span className="text-gray-500 text-sm">%</span>
-          </div>
-        </div>
+          onChange={setCommission}
+          onBlur={(value) => {
+            if (value !== variation.commission_override) {
+              updateCommissionMutation.mutate({ commission_override: value });
+            }
+          }}
+        />
         {!netOutApplied && (
-          <div>
-            <div className="text-[10px] text-gray-400 uppercase mb-1">Net Out To</div>
-            <div className="flex items-center gap-1">
-              <input
-                type="number"
+          <NetOutEditor
                 value={netOutTo}
-                onChange={(e) => setNetOutTo(e.target.value)}
+            onChange={setNetOutTo}
+            maxCommission={parseFloat(commission) || 100}
                 placeholder={commission}
-                step="0.5"
-                min="0"
-                max={commission}
-                className="w-16 text-sm border border-gray-300 rounded px-2 py-1.5 text-right focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none"
               />
-              <span className="text-gray-500 text-sm">%</span>
-            </div>
-          </div>
         )}
       </div>
 
@@ -2765,13 +2656,16 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   // Add new rate/restriction state
   const [showAddCommission, setShowAddCommission] = useState(false);
   const [newCommissionValue, setNewCommissionValue] = useState('');
+  const [newCommissionNetOut, setNewCommissionNetOut] = useState('');
   const [newCommissionSelectedQuotes, setNewCommissionSelectedQuotes] = useState([]);
   const [showAddRetro, setShowAddRetro] = useState(false);
   const [newRetroCoverage, setNewRetroCoverage] = useState('');
   const [newRetroType, setNewRetroType] = useState('inception');
   const [newRetroSelectedQuotes, setNewRetroSelectedQuotes] = useState([]);
   const [showAddPolicyTerm, setShowAddPolicyTerm] = useState(false);
-  const [newPolicyTermMonths, setNewPolicyTermMonths] = useState('');
+  const [newPolicyTermDatesTbd, setNewPolicyTermDatesTbd] = useState(false);
+  const [newPolicyTermEffectiveDate, setNewPolicyTermEffectiveDate] = useState('');
+  const [newPolicyTermExpirationDate, setNewPolicyTermExpirationDate] = useState('');
   const [newPolicyTermSelectedQuotes, setNewPolicyTermSelectedQuotes] = useState([]);
   const tableRef = useRef(null);
   const inputRefs = useRef({});
@@ -3737,47 +3631,65 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   });
 
   const applyPolicyTermSelection = useMutation({
-    mutationFn: async ({ isTbd, currentIds, targetIds }) => {
+    mutationFn: async ({ isTbd, effectiveDate, expirationDate, currentIds, targetIds }) => {
       const currentSet = new Set(currentIds);
       const targetSet = new Set(targetIds);
       const toApply = targetIds.filter(id => !currentSet.has(id));
       const toRemove = currentIds.filter(id => !targetSet.has(id));
 
+      // If dates are provided, we're creating a new policy term (set specific dates)
+      // Otherwise, we're applying an existing rule (only toggle dates_tbd flag)
+      const hasDates = effectiveDate !== undefined || expirationDate !== undefined;
+
       // toApply: Options being added to this row
-      // - If TBD row: set dates_tbd=true
-      // - If dated row: set dates_tbd=false
+      const updateData = hasDates
+        ? (isTbd
+          ? { dates_tbd: true, effective_date_override: null, expiration_date_override: null }
+          : { dates_tbd: false, effective_date_override: effectiveDate || null, expiration_date_override: expirationDate || null })
+        : { dates_tbd: isTbd }; // Only toggle flag for existing rules
+
       await Promise.all(
         toApply.map(id => {
           const struct = structures.find(s => String(s.id) === id);
           const firstVariation = struct?.variations?.[0];
           if (firstVariation) {
-            return updateVariation(firstVariation.id, { dates_tbd: isTbd });
+            return updateVariation(firstVariation.id, updateData);
           } else if (struct) {
-            return updateQuoteOption(id, { dates_tbd: isTbd });
+            return updateQuoteOption(id, updateData);
           }
         }).filter(Boolean)
       );
 
-      // toRemove: Options being removed from this row
-      // - If TBD row: set dates_tbd=false (move to dated)
-      // - If dated row: set dates_tbd=true (move to TBD)
+      // toRemove: Options being removed from this row - flip to opposite state
       await Promise.all(
         toRemove.map(id => {
           const struct = structures.find(s => String(s.id) === id);
           const firstVariation = struct?.variations?.[0];
+          const removeData = hasDates
+            ? (isTbd
+              ? { dates_tbd: false } // Moving from TBD to dated - keep existing dates
+              : { dates_tbd: true, effective_date_override: null, expiration_date_override: null }) // Moving from dated to TBD
+            : { dates_tbd: !isTbd }; // Only toggle flag for existing rules
           if (firstVariation) {
-            return updateVariation(firstVariation.id, { dates_tbd: !isTbd });
+            return updateVariation(firstVariation.id, removeData);
           } else if (struct) {
-            return updateQuoteOption(id, { dates_tbd: !isTbd });
+            return updateQuoteOption(id, removeData);
           }
         }).filter(Boolean)
       );
     },
-    onMutate: async ({ isTbd, currentIds, targetIds }) => {
+    onMutate: async ({ isTbd, effectiveDate, expirationDate, currentIds, targetIds }) => {
       await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
       const previous = queryClient.getQueryData(['structures', submissionId]);
       const currentSet = new Set(currentIds);
       const targetSet = new Set(targetIds);
+
+      const hasDates = effectiveDate !== undefined || expirationDate !== undefined;
+      const updateData = hasDates
+        ? (isTbd
+          ? { dates_tbd: true, effective_date_override: null, expiration_date_override: null }
+          : { dates_tbd: false, effective_date_override: effectiveDate || null, expiration_date_override: expirationDate || null })
+        : { dates_tbd: isTbd };
 
       queryClient.setQueryData(['structures', submissionId], (old) =>
         (old || []).map(s => {
@@ -3785,21 +3697,26 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
           const firstVariation = s.variations?.[0];
           if (!firstVariation) return s;
 
-          // If in target set, apply the dates_tbd value
+          // If in target set, apply the policy term
           if (targetSet.has(id) && !currentSet.has(id)) {
             return {
               ...s,
               variations: s.variations.map((v, idx) =>
-                idx === 0 ? { ...v, dates_tbd: isTbd } : v
+                idx === 0 ? { ...v, ...updateData } : v
               ),
             };
           }
-          // If was in current set but not in target, flip dates_tbd
+          // If was in current set but not in target, flip to opposite state
           if (currentSet.has(id) && !targetSet.has(id)) {
+            const removeData = hasDates
+              ? (isTbd
+                ? { dates_tbd: false }
+                : { dates_tbd: true, effective_date_override: null, expiration_date_override: null })
+              : { dates_tbd: !isTbd };
             return {
               ...s,
               variations: s.variations.map((v, idx) =>
-                idx === 0 ? { ...v, dates_tbd: !isTbd } : v
+                idx === 0 ? { ...v, ...removeData } : v
               ),
             };
           }
@@ -4410,26 +4327,26 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
         <div className="space-y-6">
           <div>
             <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
-              Assignment Rules
-            </div>
+            Assignment Rules
+          </div>
             <div className="flex items-center gap-3">
-              {[
-                { key: 'all', label: 'Apply to All' },
-                { key: 'primary', label: 'Apply to Primary' },
-                { key: 'excess', label: 'Apply to Excess' },
-              ].map(filter => (
-                <button
-                  key={filter.key}
-                  onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
+            {[
+              { key: 'all', label: 'Apply to All' },
+              { key: 'primary', label: 'Apply to Primary' },
+              { key: 'excess', label: 'Apply to Excess' },
+            ].map(filter => (
+              <button
+                key={filter.key}
+                onClick={() => setRulesFilter(prev => (prev === filter.key ? 'any' : filter.key))}
                   className={`px-4 py-2 rounded-lg text-xs font-semibold border transition-all duration-200 ${
-                    rulesFilter === filter.key
+                  rulesFilter === filter.key
                       ? 'border-purple-300 bg-purple-50 text-purple-700 shadow-sm'
                       : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-800'
-                  }`}
-                >
-                  {filter.label}
-                </button>
-              ))}
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
             </div>
           </div>
 
@@ -4527,9 +4444,9 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                     onChange={() => {
                                       setActiveRuleMenu(null);
                                       toggleSubjectivityLink.mutate({
-                                        subjectivityId: rule.id,
-                                        quoteId: opt.id,
-                                        isLinked,
+                                      subjectivityId: rule.id,
+                                      quoteId: opt.id,
+                                      isLinked,
                                       });
                                     }}
                                     className="w-4 h-4 text-purple-600 rounded border-gray-300"
@@ -5109,27 +5026,31 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
               {showAddPolicyTerm ? (
                 <div className="px-6 py-4 bg-purple-50/50 border-t border-purple-100">
                   <div className="flex items-start gap-4">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-gray-600">Term:</label>
-                      <select
-                        value={newPolicyTermMonths}
-                        onChange={(e) => setNewPolicyTermMonths(e.target.value)}
-                        className="text-sm border border-gray-300 rounded px-2 py-1.5 focus:border-purple-400 outline-none"
-                        autoFocus
-                      >
-                        <option value="">Select...</option>
-                        <option value="12">12 Months</option>
-                        <option value="18">18 Months</option>
-                        <option value="24">24 Months</option>
-                        <option value="36">36 Months</option>
-                        <option value="tbd">Dates TBD</option>
-                      </select>
+                    <div className="w-64">
+                      <PolicyTermEditor
+                        datesTbd={newPolicyTermDatesTbd}
+                        effectiveDate={newPolicyTermEffectiveDate}
+                        expirationDate={newPolicyTermExpirationDate}
+                        onDatesChange={({ datesTbd, effectiveDate, expirationDate }) => {
+                          setNewPolicyTermDatesTbd(datesTbd);
+                          setNewPolicyTermEffectiveDate(effectiveDate || '');
+                          setNewPolicyTermExpirationDate(expirationDate || '');
+                        }}
+                        onTbdToggle={(datesTbd) => {
+                          setNewPolicyTermDatesTbd(datesTbd);
+                          if (datesTbd) {
+                            setNewPolicyTermEffectiveDate('');
+                            setNewPolicyTermExpirationDate('');
+                          }
+                        }}
+                        compact
+                      />
                     </div>
                     <div className="flex-1">
                       <label className="text-xs font-medium text-gray-600 block mb-2">Assign to:</label>
-                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                      <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2 bg-white">
                         {structures.filter(s => !s.is_bound).map(opt => (
-                          <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                          <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800 py-0.5">
                             <input
                               type="checkbox"
                               checked={newPolicyTermSelectedQuotes.includes(String(opt.id))}
@@ -5140,7 +5061,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                   setNewPolicyTermSelectedQuotes(prev => prev.filter(id => id !== String(opt.id)));
                                 }
                               }}
-                              className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                              className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-400"
                             />
                             <span className="truncate">{allOptionLabelMap.get(String(opt.id)) || opt.quote_name || 'Option'}</span>
                           </label>
@@ -5150,35 +5071,35 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                     <div className="flex flex-col gap-2">
                       <button
                         onClick={() => {
-                          if (newPolicyTermMonths && newPolicyTermSelectedQuotes.length > 0) {
-                            if (newPolicyTermMonths === 'tbd') {
-                              applyPolicyTermSelection.mutate({
-                                isTbd: true,
-                                months: null,
-                                currentIds: [],
-                                targetIds: newPolicyTermSelectedQuotes,
-                              });
-                            } else {
-                              applyPolicyTermSelection.mutate({
-                                isTbd: false,
-                                months: parseInt(newPolicyTermMonths),
-                                currentIds: [],
-                                targetIds: newPolicyTermSelectedQuotes,
-                              });
-                            }
+                          if (newPolicyTermSelectedQuotes.length > 0) {
+                            applyPolicyTermSelection.mutate({
+                              isTbd: newPolicyTermDatesTbd,
+                              effectiveDate: newPolicyTermEffectiveDate || null,
+                              expirationDate: newPolicyTermExpirationDate || null,
+                              currentIds: [],
+                              targetIds: newPolicyTermSelectedQuotes,
+                            });
                             setShowAddPolicyTerm(false);
-                            setNewPolicyTermMonths('');
+                            setNewPolicyTermDatesTbd(false);
+                            setNewPolicyTermEffectiveDate('');
+                            setNewPolicyTermExpirationDate('');
                             setNewPolicyTermSelectedQuotes([]);
                           }
                         }}
-                        disabled={!newPolicyTermMonths || newPolicyTermSelectedQuotes.length === 0 || applyPolicyTermSelection.isPending}
-                        className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50"
+                        disabled={newPolicyTermSelectedQuotes.length === 0 || applyPolicyTermSelection.isPending}
+                        className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                       >
                         Create
                       </button>
                       <button
-                        onClick={() => { setShowAddPolicyTerm(false); setNewPolicyTermMonths(''); setNewPolicyTermSelectedQuotes([]); }}
-                        className="text-xs text-gray-500 hover:text-gray-700"
+                        onClick={() => {
+                          setShowAddPolicyTerm(false);
+                          setNewPolicyTermDatesTbd(false);
+                          setNewPolicyTermEffectiveDate('');
+                          setNewPolicyTermExpirationDate('');
+                          setNewPolicyTermSelectedQuotes([]);
+                        }}
+                        className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
                       >
                         Cancel
                       </button>
@@ -5360,36 +5281,36 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
               {/* Add New Commission Rate */}
               {showAddCommission ? (
                 <div className="px-6 py-4 bg-purple-50/50 border-t border-purple-100">
-                  <div className="flex items-start gap-4">
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-medium text-gray-600">Rate:</label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          value={newCommissionValue}
-                          onChange={(e) => setNewCommissionValue(e.target.value)}
-                          placeholder="15"
-                          min="0"
-                          max="100"
-                          step="0.5"
-                          className="w-20 text-sm border border-gray-300 rounded px-2 py-1.5 pr-6 focus:border-purple-400 outline-none"
-                          autoFocus
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') {
-                              setShowAddCommission(false);
-                              setNewCommissionValue('');
-                              setNewCommissionSelectedQuotes([]);
-                            }
-                          }}
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
-                      </div>
+                  <div className="flex items-start gap-6">
+                    <div className="flex flex-col gap-3 min-w-[200px]">
+                      <CommissionEditor
+                        value={newCommissionValue}
+                        onChange={setNewCommissionValue}
+                        label="Rate:"
+                        compact
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            setShowAddCommission(false);
+                            setNewCommissionValue('');
+                            setNewCommissionNetOut('');
+                            setNewCommissionSelectedQuotes([]);
+                          }
+                        }}
+                      />
+                      <NetOutEditor
+                        value={newCommissionNetOut}
+                        onChange={setNewCommissionNetOut}
+                        maxCommission={parseFloat(newCommissionValue) || 100}
+                        placeholder={newCommissionValue || ''}
+                        compact
+                      />
                     </div>
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <label className="text-xs font-medium text-gray-600 block mb-2">Assign to:</label>
-                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                      <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-200 rounded-md p-2 bg-white">
                         {structures.filter(s => !s.is_bound).map(opt => (
-                          <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                          <label key={opt.id} className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer hover:text-gray-800 py-0.5">
                             <input
                               type="checkbox"
                               checked={newCommissionSelectedQuotes.includes(String(opt.id))}
@@ -5400,7 +5321,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                                   setNewCommissionSelectedQuotes(prev => prev.filter(id => id !== String(opt.id)));
                                 }
                               }}
-                              className="w-4 h-4 text-purple-600 rounded border-gray-300"
+                              className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-purple-400"
                             />
                             <span className="truncate">{allOptionLabelMap.get(String(opt.id)) || opt.quote_name || 'Option'}</span>
                           </label>
@@ -5419,17 +5340,18 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             });
                             setShowAddCommission(false);
                             setNewCommissionValue('');
+                            setNewCommissionNetOut('');
                             setNewCommissionSelectedQuotes([]);
                           }
                         }}
                         disabled={!newCommissionValue || newCommissionSelectedQuotes.length === 0 || applyCommissionSelection.isPending}
-                        className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50"
+                        className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
                       >
                         Create
                       </button>
                       <button
-                        onClick={() => { setShowAddCommission(false); setNewCommissionValue(''); setNewCommissionSelectedQuotes([]); }}
-                        className="text-xs text-gray-500 hover:text-gray-700"
+                        onClick={() => { setShowAddCommission(false); setNewCommissionValue(''); setNewCommissionNetOut(''); setNewCommissionSelectedQuotes([]); }}
+                        className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
                       >
                         Cancel
                       </button>
@@ -6368,21 +6290,21 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 </div>
               ) : (
                 structure.retro_schedule.map((entry, idx) => (
-                  <div key={idx} className="text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-600">{entry.coverage}</span>
-                      <span className="font-medium text-gray-800">
-                        {entry.retro === 'full_prior_acts' ? 'Full Prior Acts' :
-                         entry.retro === 'inception' ? 'Inception' :
-                         entry.retro === 'date' && entry.date ? new Date(entry.date).toLocaleDateString() :
-                         entry.retro === 'custom' ? 'Custom' :
-                         entry.retro || '—'}
-                      </span>
-                    </div>
-                    {entry.retro === 'custom' && entry.custom_text && (
-                      <div className="text-xs text-gray-500 mt-0.5 text-right">{entry.custom_text}</div>
-                    )}
+                <div key={idx} className="text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-600">{entry.coverage}</span>
+                    <span className="font-medium text-gray-800">
+                      {entry.retro === 'full_prior_acts' ? 'Full Prior Acts' :
+                       entry.retro === 'inception' ? 'Inception' :
+                       entry.retro === 'date' && entry.date ? new Date(entry.date).toLocaleDateString() :
+                       entry.retro === 'custom' ? 'Custom' :
+                       entry.retro || '—'}
+                    </span>
                   </div>
+                  {entry.retro === 'custom' && entry.custom_text && (
+                    <div className="text-xs text-gray-500 mt-0.5 text-right">{entry.custom_text}</div>
+                  )}
+                </div>
                 ))
               )}
             </div>
@@ -6512,9 +6434,9 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                     </svg>
                   </button>
                 ) : endorsementStatus.text && (
-                  <span className={`text-[11px] ${endorsementStatus.tone}`}>
-                    {endorsementStatus.text}
-                  </span>
+                <span className={`text-[11px] ${endorsementStatus.tone}`}>
+                  {endorsementStatus.text}
+                </span>
                 )}
               </div>
               {endorsements.length > 0 && (
@@ -6592,9 +6514,9 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                     </svg>
                   </button>
                 ) : subjectivityStatus.text && (
-                  <span className={`text-[11px] ${subjectivityStatus.tone}`}>
-                    {subjectivityStatus.text}
-                  </span>
+                <span className={`text-[11px] ${subjectivityStatus.tone}`}>
+                  {subjectivityStatus.text}
+                </span>
                 )}
               </div>
               {subjectivities.length > 0 && (
@@ -8889,12 +8811,12 @@ export default function QuotePageV3() {
                           <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Document Type</div>
                           <div className="flex items-center gap-4 p-2 bg-slate-50 rounded-lg">
                             <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
-                              <input
-                                type="radio"
-                                name="docType"
-                                value="quote"
-                                checked={generateDocType === 'quote'}
-                                onChange={() => setGenerateDocType('quote')}
+                            <input
+                              type="radio"
+                              name="docType"
+                              value="quote"
+                              checked={generateDocType === 'quote'}
+                              onChange={() => setGenerateDocType('quote')}
                                 className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
                               />
                               <span className={`text-sm font-medium transition-colors ${
@@ -8902,14 +8824,14 @@ export default function QuotePageV3() {
                               }`}>
                                 Quote Only
                               </span>
-                            </label>
+                          </label>
                             <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
-                              <input
-                                type="radio"
-                                name="docType"
-                                value="package"
-                                checked={generateDocType === 'package'}
-                                onChange={() => setGenerateDocType('package')}
+                            <input
+                              type="radio"
+                              name="docType"
+                              value="package"
+                              checked={generateDocType === 'package'}
+                              onChange={() => setGenerateDocType('package')}
                                 className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
                               />
                               <span className={`text-sm font-medium transition-colors ${
@@ -8917,8 +8839,8 @@ export default function QuotePageV3() {
                               }`}>
                                 Full Package
                               </span>
-                            </label>
-                          </div>
+                          </label>
+                        </div>
                         </div>
 
                         {/* Document selector for Full Package */}
