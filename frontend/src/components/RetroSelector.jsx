@@ -16,6 +16,8 @@ import * as Popover from '@radix-ui/react-popover';
 export const RETRO_OPTIONS = [
   { value: 'full_prior_acts', label: 'Full Prior Acts' },
   { value: 'inception', label: 'Inception' },
+  { value: 'tbd', label: 'TBD' },
+  { value: 'match_expiring', label: 'To Match Expiring' },
   { value: 'date', label: 'Date' },
   { value: 'custom', label: 'Custom' },
 ];
@@ -31,6 +33,8 @@ export const ALL_COVERAGES = [...DEFAULT_COVERAGES, ...ADDITIONAL_COVERAGES];
 export function formatRetroLabel(retro, date, customText) {
   if (retro === 'full_prior_acts') return 'Full Prior Acts';
   if (retro === 'inception') return 'Inception';
+  if (retro === 'tbd') return 'TBD';
+  if (retro === 'match_expiring') return 'To Match Expiring';
   if (retro === 'date' && date) return new Date(date).toLocaleDateString();
   if (retro === 'custom' && customText) return customText;
   if (retro === 'custom') return 'Custom';
@@ -62,10 +66,14 @@ export default function RetroScheduleEditor({
   const [localSchedule, setLocalSchedule] = useState(schedule);
   const [showAddMenu, setShowAddMenu] = useState(false);
 
-  // Sync with external schedule prop
+  // Sync with external schedule prop - only when content actually changes
   useEffect(() => {
-    setLocalSchedule(schedule);
-  }, [schedule]);
+    const currentJson = JSON.stringify(localSchedule);
+    const newJson = JSON.stringify(schedule);
+    if (currentJson !== newJson) {
+      setLocalSchedule(schedule);
+    }
+  }, [schedule]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filter out excluded coverages from display
   const displaySchedule = localSchedule.filter(

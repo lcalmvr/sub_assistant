@@ -39,14 +39,13 @@ import {
 } from '../api/client';
 import CoverageEditor, { SUBLIMIT_COVERAGES } from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
-import RetroScheduleEditor from '../components/RetroScheduleEditor';
-import RetroSelector, {
+import RetroScheduleEditor, {
   RETRO_OPTIONS,
   DEFAULT_COVERAGES,
   ADDITIONAL_COVERAGES,
   ALL_COVERAGES,
+  formatRetroLabel,
   RetroTypeSelect,
-  CoverageSelect,
 } from '../components/RetroSelector';
 import PolicyTermEditor from '../components/PolicyTermEditor';
 import CommissionEditor from '../components/CommissionEditor';
@@ -1711,150 +1710,6 @@ function SubjectivitiesPanel({ structureId, submissionId }) {
 }
 
 // ============================================================================
-// COMPACT RETRO EDITOR
-// ============================================================================
-
-// RETRO_OPTIONS, DEFAULT_COVERAGES, ADDITIONAL_COVERAGES imported from RetroSelector
-
-function CompactRetroEditor({ schedule = [], position = 'primary', excludedCoverages = [], onSave }) {
-  // Use actual schedule data - no fake defaults
-  const [localSchedule, setLocalSchedule] = useState(schedule);
-
-  // Filter out excluded coverages from display
-  const displaySchedule = localSchedule.filter(
-    entry => !excludedCoverages.includes(entry.coverage)
-  );
-  const [showAddCoverage, setShowAddCoverage] = useState(false);
-  const [customCoverage, setCustomCoverage] = useState('');
-
-  // Ref to track latest schedule for blur handler (avoids stale closure)
-  const scheduleRef = useRef(localSchedule);
-  useEffect(() => {
-    scheduleRef.current = localSchedule;
-  }, [localSchedule]);
-
-  useEffect(() => {
-    setLocalSchedule(schedule);
-  }, [schedule]);
-
-  const updateEntry = (coverage, updates, saveImmediately = true) => {
-    const newSchedule = localSchedule.map(entry =>
-      entry.coverage === coverage ? { ...entry, ...updates } : entry
-    );
-    setLocalSchedule(newSchedule);
-    if (saveImmediately) {
-      onSave(newSchedule);
-    }
-  };
-
-  const saveSchedule = () => {
-    onSave(scheduleRef.current);
-  };
-
-  const addCoverage = (coverageName) => {
-    if (!coverageName || localSchedule.some(e => e.coverage === coverageName)) return;
-    // Default new restrictions to 'inception' (since we're adding a restriction)
-    const newSchedule = [...localSchedule, { coverage: coverageName, retro: 'inception' }];
-    setLocalSchedule(newSchedule);
-    onSave(newSchedule);
-    setShowAddCoverage(false);
-    setCustomCoverage('');
-  };
-
-  const removeCoverage = (coverage) => {
-    const newSchedule = localSchedule.filter(e => e.coverage !== coverage);
-    setLocalSchedule(newSchedule);
-    onSave(newSchedule);
-  };
-
-  return (
-    <div className="space-y-3">
-      <label className="text-xs font-semibold text-gray-500 uppercase">Retro Dates</label>
-
-      {/* Show default state when no restrictions */}
-      {displaySchedule.length === 0 && (
-        <div className="text-sm text-gray-600 py-1">
-          Full Prior Acts <span className="text-gray-400">(default)</span>
-        </div>
-      )}
-
-      {displaySchedule.map((entry) => (
-        <div key={entry.coverage} className="space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-700">{entry.coverage}</span>
-              <button onClick={() => removeCoverage(entry.coverage)} className="text-gray-400 hover:text-red-500">
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-          </div>
-          <RetroTypeSelect
-            value={entry.retro}
-            onChange={(value) => updateEntry(entry.coverage, { retro: value, date: undefined, custom_text: undefined })}
-            className="w-full text-xs border-gray-200"
-          />
-          {entry.retro === 'date' && (
-            <input
-              type="date"
-              value={entry.date || ''}
-              onChange={(e) => updateEntry(entry.coverage, { date: e.target.value })}
-              className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-purple-400 outline-none"
-            />
-          )}
-          {entry.retro === 'custom' && (
-            <input
-              type="text"
-              value={entry.custom_text || ''}
-              onChange={(e) => updateEntry(entry.coverage, { custom_text: e.target.value }, false)}
-              onBlur={saveSchedule}
-              placeholder="e.g., $1M 1/1/2020, $4M xs $1M 1/1/2026"
-              className="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-purple-400 outline-none"
-            />
-          )}
-        </div>
-      ))}
-
-      {/* Add Coverage Restriction */}
-      {showAddCoverage ? (
-        <div className="flex items-center gap-1">
-          <input
-            type="text"
-            value={customCoverage}
-            onChange={(e) => setCustomCoverage(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addCoverage(customCoverage)}
-            placeholder="Coverage name..."
-            className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:border-purple-400 outline-none"
-            autoFocus
-            list="coverage-suggestions"
-          />
-          <datalist id="coverage-suggestions">
-            {ALL_COVERAGES.filter(c => !localSchedule.some(e => e.coverage === c)).map(cov => (
-              <option key={cov} value={cov} />
-            ))}
-          </datalist>
-          <button
-            onClick={() => addCoverage(customCoverage)}
-            disabled={!customCoverage}
-            className="text-xs text-purple-600 hover:text-purple-700 disabled:opacity-50 px-2"
-          >
-            Add
-          </button>
-          <button onClick={() => { setShowAddCoverage(false); setCustomCoverage(''); }} className="text-gray-400 hover:text-gray-600">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      ) : (
-        <button onClick={() => setShowAddCoverage(true)} className="text-xs text-purple-600 hover:text-purple-700">
-          + Add Restriction
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
 // TERMS PANEL
 // ============================================================================
 
@@ -1995,15 +1850,18 @@ function RetroPanel({ structure, submissionId }) {
 
   return (
     <div className="space-y-4">
-      <CompactRetroEditor
+      <RetroScheduleEditor
         schedule={structure?.retro_schedule || []}
-        position={structure?.position || 'primary'}
-        excludedCoverages={excludedCoverages}
-        onSave={(schedule) => {
+        onChange={(schedule) => {
           // Filter out excluded coverages before saving to keep data clean
           const filteredSchedule = schedule.filter(entry => !excludedCoverages.includes(entry.coverage));
           updateStructureMutation.mutate({ retro_schedule: filteredSchedule });
         }}
+        excludedCoverages={excludedCoverages}
+        showHeader={true}
+        showEmptyState={true}
+        addButtonText="+ Add Restriction"
+        compact={false}
       />
     </div>
   );
@@ -2659,8 +2517,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   const [newCommissionNetOut, setNewCommissionNetOut] = useState('');
   const [newCommissionSelectedQuotes, setNewCommissionSelectedQuotes] = useState([]);
   const [showAddRetro, setShowAddRetro] = useState(false);
-  const [newRetroCoverage, setNewRetroCoverage] = useState('');
-  const [newRetroType, setNewRetroType] = useState('inception');
+  const [newRetroSchedule, setNewRetroSchedule] = useState([]);
   const [newRetroSelectedQuotes, setNewRetroSelectedQuotes] = useState([]);
   const [showAddPolicyTerm, setShowAddPolicyTerm] = useState(false);
   const [newPolicyTermDatesTbd, setNewPolicyTermDatesTbd] = useState(false);
@@ -4801,13 +4658,14 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
               {showAddRetro ? (
                 <div className="px-6 py-4 bg-purple-50/50 border-t border-purple-100">
                   <div className="flex items-start gap-4">
-                    <RetroSelector
-                      coverage={newRetroCoverage}
-                      retroType={newRetroType}
-                      onCoverageChange={setNewRetroCoverage}
-                      onRetroTypeChange={setNewRetroType}
-                      layout="vertical"
-                    />
+                    <div className="min-w-[200px]">
+                      <RetroScheduleEditor
+                        schedule={newRetroSchedule}
+                        onChange={setNewRetroSchedule}
+                        showHeader={false}
+                        showEmptyState={false}
+                      />
+                    </div>
                     <div className="flex-1">
                       <label className="text-xs font-medium text-gray-600 block mb-2">Assign to:</label>
                       <div className="space-y-1 max-h-32 overflow-y-auto">
@@ -4833,26 +4691,24 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                     <div className="flex flex-col gap-2">
                       <button
                         onClick={() => {
-                          if (newRetroCoverage && newRetroSelectedQuotes.length > 0) {
-                            const newSchedule = [{ coverage: newRetroCoverage, retro: newRetroType }];
+                          if (newRetroSchedule.length > 0 && newRetroSelectedQuotes.length > 0) {
                             applyRetroSelection.mutate({
-                              schedule: newSchedule,
+                              schedule: newRetroSchedule,
                               currentIds: [],
                               targetIds: newRetroSelectedQuotes,
                             });
                             setShowAddRetro(false);
-                            setNewRetroCoverage('');
-                            setNewRetroType('inception');
+                            setNewRetroSchedule([]);
                             setNewRetroSelectedQuotes([]);
                           }
                         }}
-                        disabled={!newRetroCoverage || newRetroSelectedQuotes.length === 0 || applyRetroSelection.isPending}
+                        disabled={newRetroSchedule.length === 0 || newRetroSelectedQuotes.length === 0 || applyRetroSelection.isPending}
                         className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded hover:bg-purple-700 disabled:opacity-50"
                       >
                         Create
                       </button>
                       <button
-                        onClick={() => { setShowAddRetro(false); setNewRetroCoverage(''); setNewRetroType('inception'); setNewRetroSelectedQuotes([]); }}
+                        onClick={() => { setShowAddRetro(false); setNewRetroSchedule([]); setNewRetroSelectedQuotes([]); }}
                         className="text-xs text-gray-500 hover:text-gray-700"
                       >
                         Cancel
