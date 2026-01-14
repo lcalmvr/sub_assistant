@@ -419,18 +419,74 @@ function SubjectivitiesEditor() {
   );
 }
 
+// Pricing Preview - compact view of key numbers
+function PricingPreview() {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <div className="text-xs text-gray-500 uppercase">Premium</div>
+        <div className="text-lg font-bold text-green-600">$35,000</div>
+      </div>
+      <div>
+        <div className="text-xs text-gray-500 uppercase">Our Limit</div>
+        <div className="text-lg font-bold text-gray-800">$1M</div>
+      </div>
+      <div>
+        <div className="text-xs text-gray-500 uppercase">Retention</div>
+        <div className="text-lg font-bold text-gray-800">$25K</div>
+      </div>
+      <div>
+        <div className="text-xs text-gray-500 uppercase">Commission</div>
+        <div className="text-lg font-bold text-gray-800">20%</div>
+      </div>
+    </div>
+  );
+}
+
+// Pricing Editor
+function PricingEditor() {
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-1">Premium</label>
+        <input type="text" defaultValue="35,000" className="w-full border border-gray-300 rounded px-3 py-2 font-bold" />
+        <div className="text-xs text-gray-400 mt-1">Base: $4,507 · ILF: 100</div>
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-1">Our Limit</label>
+        <select className="w-full border border-gray-300 rounded px-3 py-2 font-bold">
+          <option>$1M</option>
+          <option>$2M</option>
+          <option>$3M</option>
+          <option>$5M</option>
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-1">Retention</label>
+        <select className="w-full border border-gray-300 rounded px-3 py-2 font-bold">
+          <option>$25K</option>
+          <option>$50K</option>
+          <option>$100K</option>
+          <option>$150K</option>
+        </select>
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 uppercase mb-1">Commission</label>
+        <div className="flex items-center gap-2">
+          <input type="number" defaultValue="20" className="w-full border border-gray-300 rounded px-3 py-2 font-bold" />
+          <span className="font-bold">%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AppQuoteAccordion() {
   const [expanded, setExpanded] = useState(null);
-  const [editingKPI, setEditingKPI] = useState(null);
+  const [openPanel, setOpenPanel] = useState(null);
 
   const toggle = (section) => {
     setExpanded(expanded === section ? null : section);
-    setEditingKPI(null);
-  };
-
-  const toggleKPI = (kpi) => {
-    setEditingKPI(editingKPI === kpi ? null : kpi);
-    setExpanded(null);
   };
 
   return (
@@ -441,20 +497,15 @@ export default function AppQuoteAccordion() {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
               <h1 className="font-semibold text-gray-900">Smartly Test</h1>
-              <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">Bound</span>
+              <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-medium">Draft</span>
               <span className="text-sm text-gray-500 hidden sm:inline">Media Buying Agencies</span>
               <span className="text-sm text-green-600 font-medium">$60M</span>
             </div>
-            <div className="flex items-center gap-2 sm:gap-3">
-              <button className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">
-                Preview
-              </button>
-              <button className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600">
-                Generate
-              </button>
-              <button className="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700">
-                Bind
-              </button>
+            <div className="flex items-center gap-3 text-sm text-gray-500">
+              <button className="hover:text-gray-700">Docs</button>
+              <button className="hover:text-gray-700">AI</button>
+              <span className="text-gray-300">|</span>
+              <span>Lauren M.</span>
             </div>
           </div>
         </div>
@@ -473,86 +524,171 @@ export default function AppQuoteAccordion() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
-        {/* KPI Row - Clickable to edit */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-4 sm:mb-6">
-          <KPICard
-            label="Premium"
-            value="$35,000"
-            highlight
-            isEditing={editingKPI === 'premium'}
-            onEdit={() => toggleKPI('premium')}
-            onClose={() => setEditingKPI(null)}
-          >
-            <input type="text" defaultValue="35,000" className="w-full border border-purple-300 rounded px-3 py-2 text-lg font-bold" />
-            <div className="text-xs text-gray-500 mt-1">Base: $4,507 · ILF: 100</div>
-          </KPICard>
+        {/* Three Button Bar */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {/* Button 1: Option Switcher */}
+          <div className="relative">
+            <button
+              onClick={() => setOpenPanel(openPanel === 'options' ? null : 'options')}
+              className={`w-full bg-white rounded-lg border p-3 text-left hover:border-purple-300 transition-all ${
+                openPanel === 'options' ? 'border-purple-400 shadow-md' : 'border-gray-200'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-gray-400 uppercase font-medium">Option</div>
+                  <div className="font-semibold text-gray-900">A - $1M x $25K</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">3 options</span>
+                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${openPanel === 'options' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </div>
+              </div>
+            </button>
+            {openPanel === 'options' && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg border border-gray-200 shadow-lg z-20 p-2">
+                <div className="space-y-1">
+                  <button className="w-full text-left px-3 py-2 rounded bg-purple-50 text-purple-700 font-medium text-sm">Option A - $1M x $25K</button>
+                  <button className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 text-sm">Option B - $2M x $50K</button>
+                  <button className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 text-sm">Option C - $3M x $100K</button>
+                </div>
+                <div className="border-t border-gray-200 mt-2 pt-2">
+                  <button className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 text-sm text-purple-600 font-medium flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+                    Grid View / Sharing
+                  </button>
+                  <button className="w-full text-left px-3 py-2 rounded hover:bg-gray-50 text-sm text-gray-600 flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
+                    New Option
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
-          <KPICard
-            label="Our Limit"
-            value="$1M"
-            isEditing={editingKPI === 'limit'}
-            onEdit={() => toggleKPI('limit')}
-            onClose={() => setEditingKPI(null)}
-          >
-            <select className="w-full border border-purple-300 rounded px-3 py-2 text-lg font-bold">
-              <option>$1M</option>
-              <option>$2M</option>
-              <option>$3M</option>
-              <option>$5M</option>
-            </select>
-          </KPICard>
+          {/* Button 2: Documents */}
+          <div className="relative">
+            <button
+              onClick={() => setOpenPanel(openPanel === 'docs' ? null : 'docs')}
+              className={`w-full bg-white rounded-lg border p-3 text-left hover:border-purple-300 transition-all ${
+                openPanel === 'docs' ? 'border-purple-400 shadow-md' : 'border-gray-200'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-gray-400 uppercase font-medium">Documents</div>
+                  <div className="font-semibold text-gray-900">4 files</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-1.5 py-0.5 bg-green-100 text-green-700 rounded text-xs">2 ready</span>
+                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${openPanel === 'docs' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </div>
+              </div>
+            </button>
+            {openPanel === 'docs' && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg border border-gray-200 shadow-lg z-20 p-3">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-2 bg-gray-50 rounded hover:bg-gray-100 cursor-pointer">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" /></svg>
+                      <div>
+                        <div className="text-sm font-medium">Quote_Package_v2.pdf</div>
+                        <div className="text-xs text-gray-400">Generated Jan 14</div>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">Ready</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-gray-50 rounded hover:bg-gray-100 cursor-pointer">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-5 h-5 text-blue-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" /></svg>
+                      <div>
+                        <div className="text-sm font-medium">Binder_Certificate.pdf</div>
+                        <div className="text-xs text-gray-400">Draft</div>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">Draft</span>
+                  </div>
+                  <div className="flex items-center justify-between p-2 bg-gray-50 rounded hover:bg-gray-100 cursor-pointer">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-5 h-5 text-purple-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" /></svg>
+                      <div>
+                        <div className="text-sm font-medium">Policy_Form.pdf</div>
+                        <div className="text-xs text-gray-400">Standard form</div>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">Ready</span>
+                  </div>
+                </div>
+                <div className="border-t border-gray-200 mt-3 pt-2">
+                  <button className="w-full text-left px-2 py-2 rounded hover:bg-gray-50 text-sm text-purple-600 font-medium">+ Upload Document</button>
+                </div>
+              </div>
+            )}
+          </div>
 
-          <KPICard
-            label="Retention"
-            value="$25K"
-            isEditing={editingKPI === 'retention'}
-            onEdit={() => toggleKPI('retention')}
-            onClose={() => setEditingKPI(null)}
-          >
-            <select className="w-full border border-purple-300 rounded px-3 py-2 text-lg font-bold">
-              <option>$25K</option>
-              <option>$50K</option>
-              <option>$100K</option>
-              <option>$150K</option>
-            </select>
-          </KPICard>
-
-          <KPICard
-            label="Commission"
-            value="20%"
-            isEditing={editingKPI === 'commission'}
-            onEdit={() => toggleKPI('commission')}
-            onClose={() => setEditingKPI(null)}
-          >
-            <div className="flex items-center gap-2">
-              <input type="number" defaultValue="20" className="w-20 border border-purple-300 rounded px-3 py-2 text-lg font-bold" />
-              <span className="text-lg font-bold">%</span>
-            </div>
-          </KPICard>
-
-          <div className="bg-white rounded-lg p-4 border border-gray-200 flex flex-col items-center justify-center col-span-2 sm:col-span-1">
-            <div className="w-3 h-3 rounded-full bg-gray-400 mb-2"></div>
-            <div className="text-sm font-bold text-gray-600">Draft</div>
+          {/* Button 3: Actions */}
+          <div className="relative">
+            <button
+              onClick={() => setOpenPanel(openPanel === 'actions' ? null : 'actions')}
+              className={`w-full bg-white rounded-lg border p-3 text-left hover:border-purple-300 transition-all ${
+                openPanel === 'actions' ? 'border-purple-400 shadow-md' : 'border-gray-200'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-gray-400 uppercase font-medium">Actions</div>
+                  <div className="font-semibold text-gray-900">Ready to generate</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${openPanel === 'actions' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </div>
+              </div>
+            </button>
+            {openPanel === 'actions' && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg border border-gray-200 shadow-lg z-20 p-3">
+                <div className="space-y-2">
+                  <button className="w-full px-4 py-3 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center gap-3">
+                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                    <div className="text-left">
+                      <div>Preview Quote</div>
+                      <div className="text-xs text-gray-400 font-normal">View before generating</div>
+                    </div>
+                  </button>
+                  <button className="w-full px-4 py-3 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 flex items-center gap-3">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    <div className="text-left">
+                      <div>Generate Package</div>
+                      <div className="text-xs text-green-200 font-normal">Create quote PDF</div>
+                    </div>
+                  </button>
+                  <button className="w-full px-4 py-3 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-3">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <div className="text-left">
+                      <div>Bind Policy</div>
+                      <div className="text-xs text-purple-200 font-normal">Finalize and issue</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Tower Section - Full Width */}
-        <div className="mb-4 sm:mb-6">
-          <ExpandableCard
-            title="Tower"
-            action="Edit"
-            isExpanded={expanded === 'tower'}
-            onToggle={() => toggle('tower')}
-            preview={<TowerPreview />}
-          >
-            <TowerEditor />
-          </ExpandableCard>
-        </div>
-
-        {/* Main Grid - Responsive */}
+        {/* Three Column Layout */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* Column 1 */}
+          {/* Left Column: Pricing, Policy Terms, Retro, Policy Form */}
           <div className="space-y-4">
+            <ExpandableCard
+              title="Pricing"
+              action="Edit"
+              isExpanded={expanded === 'pricing'}
+              onToggle={() => toggle('pricing')}
+              preview={<PricingPreview />}
+            >
+              <PricingEditor />
+            </ExpandableCard>
+
             <ExpandableCard
               title="Policy Terms"
               action="Edit"
@@ -597,8 +733,18 @@ export default function AppQuoteAccordion() {
             </ExpandableCard>
           </div>
 
-          {/* Column 2 */}
+          {/* Middle Column: Tower, Coverages, Docs */}
           <div className="space-y-4">
+            <ExpandableCard
+              title="Tower"
+              action="Edit"
+              isExpanded={expanded === 'tower'}
+              onToggle={() => toggle('tower')}
+              preview={<TowerPreview />}
+            >
+              <TowerEditor />
+            </ExpandableCard>
+
             <ExpandableCard
               title="Coverages / Exceptions"
               action="Manage"
@@ -608,7 +754,10 @@ export default function AppQuoteAccordion() {
             >
               <ExceptionsEditor />
             </ExpandableCard>
+          </div>
 
+          {/* Right Column: Endorsements, Subjectivities, Notes, Sharing */}
+          <div className="space-y-4">
             <ExpandableCard
               title="Endorsements"
               action="Manage"
@@ -618,10 +767,7 @@ export default function AppQuoteAccordion() {
             >
               <EndorsementsEditor />
             </ExpandableCard>
-          </div>
 
-          {/* Column 3 */}
-          <div className="space-y-4">
             <ExpandableCard
               title="Subjectivities"
               action="Manage"
