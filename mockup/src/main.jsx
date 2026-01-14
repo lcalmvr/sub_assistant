@@ -24,9 +24,11 @@ import AppQuote14 from './AppQuote14.jsx'
 import AppQuote15 from './AppQuote15.jsx'
 import AppQuote16 from './AppQuote16.jsx'
 import AppQuote17 from './AppQuote17.jsx'
+import AppQuoteAccordion from './AppQuoteAccordion.jsx'
 import './index.css'
 
 const versions = {
+  accordion: { component: AppQuoteAccordion, label: 'Quote Accordion - Summary as Home' },
   quote17: { component: AppQuote17, label: 'Quote v17 - Scoped Variations + Defaults' },
   quote16: { component: AppQuote16, label: 'Quote v16 - A/B Variations + Side Panel' },
   quote15: { component: AppQuote15, label: 'Quote v15 - Unified Side Editor' },
