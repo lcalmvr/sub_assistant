@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Check, Circle, AlertCircle, X, Edit2, ChevronDown } from 'lucide-react';
 
 // Inline expandable card component with smooth animation
-function ExpandableCard({ title, action = 'Manage', isExpanded, onToggle, preview, children, className = '' }) {
+function ExpandableCard({ title, action = 'Manage', isExpanded, onToggle, preview, children, className = '', previewMaxHeight = '200px' }) {
   const contentRef = React.useRef(null);
   const previewRef = React.useRef(null);
   const [height, setHeight] = React.useState('auto');
@@ -34,7 +34,7 @@ function ExpandableCard({ title, action = 'Manage', isExpanded, onToggle, previe
       </div>
       <div
         className="overflow-hidden transition-all duration-300 ease-in-out"
-        style={{ maxHeight: isExpanded ? '800px' : '200px' }}
+        style={{ maxHeight: isExpanded ? '800px' : previewMaxHeight }}
       >
         <div className="p-4">
           <div
@@ -91,17 +91,120 @@ function KPICard({ label, value, highlight, isEditing, onEdit, onClose, children
   );
 }
 
-// Tower Preview
+// Tower Preview - Visual + Table like the real app
 function TowerPreview() {
+  const [showOnlyOurs, setShowOnlyOurs] = useState(false);
+
+  const layers = [
+    { carrier: 'CMAI', limit: '$5M', attach: 'xs $10M', premium: '$4,507', rpm: '$901', ilf: '100%', ours: true },
+    { carrier: 'XL', limit: '$5M', attach: 'xs $5M', premium: '$5,151', rpm: '$1,030', ilf: '114%' },
+    { carrier: 'Beazley', limit: '$5M', attach: '$25K', premium: '$5,795', rpm: '$1,159', ilf: '129%' },
+  ];
+
+  const displayLayers = showOnlyOurs ? layers.filter(l => l.ours) : layers;
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between p-2 bg-purple-50 rounded border border-purple-200">
-        <div className="flex items-center gap-2">
-          <span className="w-6 h-6 bg-purple-600 rounded text-white text-xs flex items-center justify-center font-bold">1</span>
-          <span className="text-sm font-medium text-purple-900">CMAI</span>
-          <span className="text-xs bg-purple-200 text-purple-700 px-1.5 py-0.5 rounded">Ours</span>
+    <div className="grid grid-cols-12 gap-4">
+      {/* Tower Position Visual */}
+      <div className="col-span-3">
+        <div className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+          Tower Position
         </div>
-        <div className="text-sm text-purple-700">$1M x $25K · $35,000</div>
+        <div className="relative">
+          <div className="absolute left-0 top-0 bottom-0 w-4 flex flex-col items-center">
+            <div className="flex-1 border-l-2 border-dashed border-gray-300" />
+          </div>
+          <div className="pl-6 space-y-1 pb-2">
+            {!showOnlyOurs && (
+              <>
+                <div className="bg-purple-600 text-white rounded py-1 px-2 text-center shadow-sm">
+                  <span className="text-xs font-bold">$5M</span>
+                  <span className="text-[10px] opacity-80 ml-1">xs $10M</span>
+                </div>
+                <div className="bg-gray-100 border border-gray-200 rounded py-1 px-2 text-center">
+                  <span className="text-xs font-semibold text-gray-700">$5M</span>
+                  <span className="text-[10px] text-gray-500 ml-1">xs $5M</span>
+                </div>
+                <div className="bg-gray-100 border border-gray-200 rounded py-1 px-2 text-center">
+                  <span className="text-xs font-semibold text-gray-700">$5M</span>
+                  <span className="text-[10px] text-gray-500 ml-1">Primary</span>
+                </div>
+                <div className="bg-gray-50 border border-gray-200 rounded py-0.5 px-2 text-center">
+                  <span className="text-[9px] text-gray-500 uppercase">Retention $25K</span>
+                </div>
+              </>
+            )}
+            {showOnlyOurs && (
+              <div className="bg-purple-600 text-white rounded py-1 px-2 text-center shadow-sm">
+                <span className="text-xs font-bold">$5M</span>
+                <span className="text-[10px] opacity-80 ml-1">xs $10M</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Tower Structure Table */}
+      <div className="col-span-9">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-gray-500 uppercase">Tower Structure</span>
+            {layers.length > 1 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowOnlyOurs(!showOnlyOurs); }}
+                className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                  showOnlyOurs
+                    ? 'bg-purple-100 border-purple-300 text-purple-700'
+                    : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                }`}
+              >
+                {showOnlyOurs ? 'Show All' : 'Ours Only'}
+              </button>
+            )}
+          </div>
+          <div className="text-sm">
+            <span className="text-gray-500">Our Premium: </span>
+            <span className="text-green-600 font-semibold">$4,507</span>
+          </div>
+        </div>
+        <table className="w-full text-sm">
+          <thead className="text-xs text-gray-400 uppercase">
+            <tr>
+              <th className="text-left py-1 font-medium">Carrier</th>
+              <th className="text-center py-1 font-medium">Limit</th>
+              <th className="text-center py-1 font-medium">Attach</th>
+              <th className="text-right py-1 font-medium">Premium</th>
+              <th className="text-right py-1 font-medium">RPM</th>
+              <th className="text-right py-1 font-medium">ILF</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {displayLayers.map((layer) => (
+              <tr key={layer.carrier} className={layer.ours ? 'bg-purple-50' : ''}>
+                <td className="py-2">
+                  <div className="flex items-center gap-2">
+                    <span className={layer.ours ? 'text-purple-700 font-medium' : 'text-gray-700'}>
+                      {layer.carrier}
+                    </span>
+                    {layer.ours && (
+                      <span className="text-[10px] bg-purple-200 text-purple-700 px-1.5 py-0.5 rounded font-medium">
+                        Ours
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="py-2 text-center text-gray-700">{layer.limit}</td>
+                <td className="py-2 text-center text-gray-500">{layer.attach}</td>
+                <td className="py-2 text-right font-medium text-green-600">{layer.premium}</td>
+                <td className="py-2 text-right text-gray-500">{layer.rpm}</td>
+                <td className="py-2 text-right text-gray-500">{layer.ilf}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -482,7 +585,7 @@ function PricingEditor() {
 }
 
 export default function AppQuoteAccordion() {
-  const [expanded, setExpanded] = useState(null);
+  const [expanded, setExpanded] = useState('exceptions');
   const [openPanel, setOpenPanel] = useState(null);
 
   const toggle = (section) => {
@@ -675,10 +778,73 @@ export default function AppQuoteAccordion() {
           </div>
         </div>
 
-        {/* Three Column Layout */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {/* Left Column: Pricing, Policy Terms, Retro, Policy Form */}
-          <div className="space-y-4">
+        {/* Main Layout - Left 2/3 + Right 1/3 */}
+        <div className="flex gap-4">
+          {/* Left 2/3: Tower, then 2-col grid below */}
+          <div className="w-2/3 space-y-4">
+            <ExpandableCard
+              title="Tower"
+              action="Manage"
+              isExpanded={expanded === 'tower'}
+              onToggle={() => toggle('tower')}
+              preview={<TowerPreview />}
+            >
+              <TowerEditor />
+            </ExpandableCard>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* Left sub-column: Coverages */}
+              <ExpandableCard
+                title="Coverages / Exceptions"
+                action="Manage"
+                isExpanded={expanded === 'exceptions'}
+                onToggle={() => toggle('exceptions')}
+                preview={<ExceptionsPreview />}
+              >
+                <ExceptionsEditor />
+              </ExpandableCard>
+
+              {/* Right sub-column: Endorsements, Subjectivities, Notes */}
+              <div className="space-y-4">
+                <ExpandableCard
+                  title="Endorsements"
+                  action="Manage"
+                  isExpanded={expanded === 'endorsements'}
+                  onToggle={() => toggle('endorsements')}
+                  preview={<EndorsementsPreview />}
+                >
+                  <EndorsementsEditor />
+                </ExpandableCard>
+
+                <ExpandableCard
+                  title="Subjectivities"
+                  action="Manage"
+                  isExpanded={expanded === 'subjectivities'}
+                  onToggle={() => toggle('subjectivities')}
+                  preview={<SubjectivitiesPreview />}
+                >
+                  <SubjectivitiesEditor />
+                </ExpandableCard>
+
+                <ExpandableCard
+                  title="Notes"
+                  action="Edit"
+                  isExpanded={expanded === 'notes'}
+                  onToggle={() => toggle('notes')}
+                  preview={<p className="text-sm text-gray-400 italic">No notes added</p>}
+                >
+                  <textarea
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm resize-none"
+                    rows={3}
+                    placeholder="Add notes..."
+                  />
+                </ExpandableCard>
+              </div>
+            </div>
+          </div>
+
+          {/* Right 1/3: Pricing, Policy Terms, Retro, Policy Form, Sharing */}
+          <div className="w-1/3 space-y-4">
             <ExpandableCard
               title="Pricing"
               action="Edit"
@@ -730,66 +896,6 @@ export default function AppQuoteAccordion() {
                   <span className="text-sm">Manuscript</span>
                 </label>
               </div>
-            </ExpandableCard>
-          </div>
-
-          {/* Middle Column: Tower, Coverages, Docs */}
-          <div className="space-y-4">
-            <ExpandableCard
-              title="Tower"
-              action="Edit"
-              isExpanded={expanded === 'tower'}
-              onToggle={() => toggle('tower')}
-              preview={<TowerPreview />}
-            >
-              <TowerEditor />
-            </ExpandableCard>
-
-            <ExpandableCard
-              title="Coverages / Exceptions"
-              action="Manage"
-              isExpanded={expanded === 'exceptions'}
-              onToggle={() => toggle('exceptions')}
-              preview={<ExceptionsPreview />}
-            >
-              <ExceptionsEditor />
-            </ExpandableCard>
-          </div>
-
-          {/* Right Column: Endorsements, Subjectivities, Notes, Sharing */}
-          <div className="space-y-4">
-            <ExpandableCard
-              title="Endorsements"
-              action="Manage"
-              isExpanded={expanded === 'endorsements'}
-              onToggle={() => toggle('endorsements')}
-              preview={<EndorsementsPreview />}
-            >
-              <EndorsementsEditor />
-            </ExpandableCard>
-
-            <ExpandableCard
-              title="Subjectivities"
-              action="Manage"
-              isExpanded={expanded === 'subjectivities'}
-              onToggle={() => toggle('subjectivities')}
-              preview={<SubjectivitiesPreview />}
-            >
-              <SubjectivitiesEditor />
-            </ExpandableCard>
-
-            <ExpandableCard
-              title="Notes"
-              action="Edit"
-              isExpanded={expanded === 'notes'}
-              onToggle={() => toggle('notes')}
-              preview={<p className="text-sm text-gray-400 italic">No notes added</p>}
-            >
-              <textarea
-                className="w-full border border-gray-300 rounded px-3 py-2 text-sm resize-none"
-                rows={3}
-                placeholder="Add notes..."
-              />
             </ExpandableCard>
 
             <ExpandableCard

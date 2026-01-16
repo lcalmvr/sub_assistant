@@ -148,18 +148,24 @@ function TowerVisual({ tower, position }) {
           return (
             <div
               key={idx}
-              className={`rounded flex flex-col items-center justify-center text-xs cursor-pointer transition-all ${
+              className={`rounded flex items-center justify-center text-xs cursor-pointer transition-all ${
                 isCMAI
-                  ? 'bg-purple-600 text-white h-16 shadow-md ring-2 ring-purple-200'
-                  : 'bg-gray-100 border border-gray-300 text-gray-600 h-12 hover:bg-gray-200'
+                  ? 'flex-col bg-purple-600 text-white h-16 shadow-md ring-2 ring-purple-200'
+                  : 'flex-row gap-1 bg-gray-100 border border-gray-300 text-gray-600 h-16 hover:bg-gray-200'
               }`}
             >
               {isCMAI && (
                 <span className="text-[10px] uppercase font-normal opacity-80">Our Layer</span>
               )}
               <span className="font-bold">{formatCompact(layer.limit)}</span>
-              {layer.attachment > 0 && (
-                <span className="text-[10px] opacity-75">xs {formatCompact(layer.attachment)}</span>
+              {isCMAI ? (
+                layer.attachment > 0 && (
+                  <span className="text-[10px] opacity-75">xs {formatCompact(layer.attachment)}</span>
+                )
+              ) : (
+                layer.attachment != null && layer.attachment > 0 && (
+                  <span className="text-[10px] opacity-75">xs {formatCompact(layer.attachment)}</span>
+                )
               )}
             </div>
           );

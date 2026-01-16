@@ -460,18 +460,24 @@ function TowerVisual({ tower, position }) {
           return (
             <div
               key={idx}
-              className={`rounded flex flex-col items-center justify-center text-xs cursor-pointer transition-all ${
+              className={`rounded flex items-center justify-center text-xs cursor-pointer transition-all ${
                 isCMAI
-                  ? 'bg-purple-600 text-white h-16 shadow-md ring-2 ring-purple-200'
-                  : 'bg-gray-100 border border-gray-300 text-gray-600 h-12 hover:bg-gray-200'
+                  ? 'flex-col bg-purple-600 text-white h-16 shadow-md ring-2 ring-purple-200'
+                  : 'flex-row gap-1 bg-gray-100 border border-gray-300 text-gray-600 h-16 hover:bg-gray-200'
               }`}
             >
               {isCMAI && (
                 <span className="text-[10px] uppercase font-normal opacity-80">Our Layer</span>
               )}
               <span className="font-bold">{formatCompact(layer.limit)}</span>
-              {layer.attachment > 0 && (
-                <span className="text-[10px] opacity-75">xs {formatCompact(layer.attachment)}</span>
+              {isCMAI ? (
+                layer.attachment > 0 && (
+                  <span className="text-[10px] opacity-75">xs {formatCompact(layer.attachment)}</span>
+                )
+              ) : (
+                layer.attachment != null && (
+                  <span className="text-[10px] opacity-75">xs {formatCompact(layer.attachment)}</span>
+                )
               )}
             </div>
           );
@@ -6172,26 +6178,46 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 </div>
                 <div className="pl-6 space-y-1">
                   {/* Show layers above ours */}
-                  {!showOnlyOurLayer && showAsExcess && layersAbove.map((layer, idx) => (
-                    <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
-                      <div className="text-sm font-semibold text-gray-700">{formatCompact(layer.limit)}</div>
-                    </div>
-                  ))}
+                  {!showOnlyOurLayer && showAsExcess && layersAbove.map((layer, idx) => {
+                    const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
+                    return (
+                      <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+                        <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
+                          <span>{formatCompact(layer.limit)}</span>
+                          {layerAttachment > 0 && (
+                            <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
 
                   {/* Our Layer */}
-                  <div className="bg-purple-600 text-white rounded py-2 px-3 text-center shadow-md">
-                    <div className="text-sm font-bold">{formatCompact(ourLimit)}</div>
-                    {showAsExcess && cmaiAttachment > 0 && (
-                      <div className="text-xs opacity-80">xs {formatCompact(cmaiAttachment)}</div>
-                    )}
+                  <div className="bg-purple-600 text-white rounded py-2.5 px-4 text-center shadow-md">
+                    <div className="text-sm font-bold flex items-center justify-center gap-1">
+                      <span>{formatCompact(ourLimit)}</span>
+                      {showAsExcess && cmaiAttachment > 0 && (
+                        <span className="text-xs opacity-80">xs {formatCompact(cmaiAttachment)}</span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Show underlying layers for excess */}
-                  {!showOnlyOurLayer && showAsExcess && layersBelow.map((layer, idx) => (
-                    <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
-                      <div className="text-sm font-semibold text-gray-700">{formatCompact(layer.limit)}</div>
-                    </div>
-                  ))}
+                  {!showOnlyOurLayer && showAsExcess && layersBelow.map((layer, idx) => {
+                    const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
+                    return (
+                      <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+                        <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
+                          <span>{formatCompact(layer.limit)}</span>
+                          {layerAttachment > 0 ? (
+                            <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
+                          ) : (
+                            <span className="text-[11px] font-semibold text-gray-600">Primary</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
 
                   {/* Retention bar - always shown unless collapsed */}
                   {!showOnlyOurLayer && retention > 0 && (
