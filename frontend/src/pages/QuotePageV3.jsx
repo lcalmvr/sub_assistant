@@ -5581,10 +5581,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                   : 'border-gray-200 hover:border-gray-300'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div className="text-[10px] text-gray-400 uppercase font-semibold">Policy Term</div>
-                <span className="text-[10px] text-purple-600">{expandedCard === 'terms' ? 'Close' : 'Edit'}</span>
-              </div>
+              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Policy Term</div>
               <div className="text-sm font-bold text-gray-800 truncate">
                 {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
               </div>
@@ -5601,10 +5598,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               : 'border-gray-200 hover:border-gray-300'
           }`}
         >
-          <div className="flex items-center justify-between">
-            <div className="text-[10px] text-gray-400 uppercase font-semibold">Retro</div>
-            <span className="text-[10px] text-purple-600">{expandedCard === 'retro' ? 'Close' : 'Edit'}</span>
-          </div>
+          <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Retro</div>
           <div className="text-sm font-bold text-gray-800">
             {(!structure?.retro_schedule || structure.retro_schedule.length === 0)
               ? 'Full Prior Acts'
@@ -5619,24 +5613,24 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           const hasTechnical = technical > 0 && Math.abs(sold - technical) > 1;
           const diff = technical > 0 ? ((sold - technical) / technical) * 100 : 0;
           return (
-            <div className="bg-white rounded-lg px-3 py-3 border border-gray-200 text-center">
+            <div className="bg-white rounded-lg px-4 py-3 border border-gray-200">
               {hasTechnical ? (
-                <div className="flex items-end justify-center gap-4">
-                  <div>
-                    <div className="text-[10px] text-gray-400 uppercase font-semibold">Technical</div>
+                <div className="flex items-end justify-between">
+                  <div className="text-left">
+                    <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Technical</div>
                     <div className="text-base font-bold text-gray-800">{formatCurrency(technical)}</div>
                   </div>
-                  <div>
-                    <div className="text-[10px] text-gray-400 uppercase font-semibold">Sold</div>
+                  <div className="text-center">
+                    <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Sold</div>
                     <div className="text-base font-bold text-gray-800">{formatCurrency(sold)}</div>
                   </div>
-                  <div className={`text-sm font-semibold ${diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  <div className={`text-sm font-semibold text-right ${diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {diff >= 0 ? '+' : ''}{diff.toFixed(0)}%
                   </div>
                 </div>
               ) : (
-                <div>
-                  <div className="text-[10px] text-gray-400 uppercase font-semibold">Premium</div>
+                <div className="text-center">
+                  <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Premium</div>
                   <div className="text-base font-bold text-gray-800">{formatCurrency(sold)}</div>
                 </div>
               )}
@@ -5653,10 +5647,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               : 'border-gray-200 hover:border-gray-300'
           }`}
         >
-          <div className="flex items-center justify-between">
-            <div className="text-[10px] text-gray-400 uppercase font-semibold">Commission</div>
-            <span className="text-[10px] text-purple-600">{expandedCard === 'commission' ? 'Close' : 'Edit'}</span>
-          </div>
+          <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Commission</div>
           <div className="text-base font-bold text-gray-800">{commission}%</div>
         </div>
       </div>
@@ -5881,8 +5872,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
       {/* Details Grid - 3 column layout */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Coverages */}
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
+        {/* Coverages - expands right (cols 1-2) when editing, stays visible when others expand */}
+        <div className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+          expandedCard === 'coverages'
+            ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
+            : 'border-gray-200'
+        }`}>
           <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
             <div className="flex items-center gap-2">
               <button
@@ -5900,10 +5895,10 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               </button>
             </div>
             <button
-              onClick={() => onMainTabChange?.('coverages')}
-              className="text-xs text-purple-600 hover:text-purple-700"
+              onClick={() => setExpandedCard(expandedCard === 'coverages' ? null : 'coverages')}
+              className="text-xs text-purple-600 hover:text-purple-700 font-medium"
             >
-              Manage
+              {expandedCard === 'coverages' ? 'Done' : 'Edit'}
             </button>
           </div>
           <div className="p-4">
@@ -5938,8 +5933,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             </div>
           </div>
 
-          {/* Endorsements */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
+          {/* Endorsements - expands right (cols 2-3) when editing, hidden when others expand */}
+          <div className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+            expandedCard === 'endorsements'
+              ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
+              : 'border-gray-200'
+          } ${expandedCard === 'coverages' || expandedCard === 'subjectivities' ? 'hidden' : ''}`}>
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
@@ -5951,10 +5950,10 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               </div>
               {endorsements.length > 0 && (
                 <button
-                  onClick={() => onMainTabChange?.('endorsements')}
-                  className="text-xs text-purple-600 hover:text-purple-700"
+                  onClick={() => setExpandedCard(expandedCard === 'endorsements' ? null : 'endorsements')}
+                  className="text-xs text-purple-600 hover:text-purple-700 font-medium"
                 >
-                  Manage
+                  {expandedCard === 'endorsements' ? 'Done' : 'Edit'}
                 </button>
               )}
             </div>
@@ -6008,7 +6007,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           expandedCard === 'subjectivities'
             ? 'md:col-start-2 md:col-span-2 border-purple-300 ring-1 ring-purple-100'
             : 'border-gray-200'
-        }`}>
+        } ${expandedCard === 'endorsements' ? 'hidden' : ''}`}>
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
