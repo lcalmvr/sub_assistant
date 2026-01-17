@@ -1192,530 +1192,6 @@ function EndorsementRow({ endorsement, variations, scopeVariationIds, variationL
 }
 
 // ============================================================================
-// SUBJECTIVITY ROW
-// ============================================================================
-
-function SubjectivityRow({ subjectivity, variations, scopeVariationIds, variationLabelMap, onToggleScope, onSyncAll }) {
-  const assignedIds = subjectivity.variation_ids || [];
-  const { label: scopeLabel, tone: scopeTone } = getScopeLabel(assignedIds, scopeVariationIds, variationLabelMap);
-  const assignedInScope = assignedIds.filter(id => scopeVariationIds.includes(id));
-  const hasDiff = assignedInScope.length !== scopeVariationIds.length;
-
-  const statusStyle = subjectivity.status === 'received'
-    ? 'bg-green-100 text-green-700'
-    : subjectivity.status === 'waived'
-    ? 'bg-gray-100 text-gray-500'
-    : 'bg-amber-100 text-amber-700';
-
-  return (
-    <div className={`p-2 rounded-lg border border-gray-100 ${hasDiff ? 'bg-amber-50/40' : 'bg-white'}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className={`text-[9px] px-1 py-0.5 rounded flex-shrink-0 ${statusStyle}`}>
-            {(subjectivity.status || 'pending').slice(0, 3).toUpperCase()}
-          </span>
-          <span className="text-[11px] text-gray-700 truncate" title={subjectivity.subjectivity_text}>
-            {subjectivity.subjectivity_text}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          {hasDiff && (
-            <button
-              onClick={() => onSyncAll(subjectivity.subjectivity_id)}
-              className="text-[10px] text-purple-600 hover:text-purple-800 font-medium"
-            >
-              Sync all
-            </button>
-          )}
-          <span className={`text-[10px] px-2 py-0.5 rounded font-semibold ${scopeTone}`}>
-            {scopeLabel}
-          </span>
-        </div>
-      </div>
-      <div className="flex items-center gap-1.5 mt-2">
-        {variations.map(v => (
-          <VariationScopeToggle
-            key={v.id}
-            label={v.label}
-            checked={assignedIds.includes(v.id)}
-            onClick={() => onToggleScope(subjectivity.subjectivity_id, v.id, !assignedIds.includes(v.id))}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================================
-// ENDORSEMENTS PANEL (simplified - no variations)
-// ============================================================================
-
-function EndorsementsPanel({ structureId, submissionId }) {
-  const queryClient = useQueryClient();
-  const [isAddingOpen, setIsAddingOpen] = useState(false);
-  const [addSearchTerm, setAddSearchTerm] = useState('');
-
-  // Fetch endorsements linked to this quote
-  const { data: endorsementsData, isLoading } = useQuery({
-    queryKey: ['quote-endorsements', structureId],
-    queryFn: () => getQuoteEndorsements(structureId).then(r => r.data),
-    enabled: !!structureId,
-  });
-  // Sort endorsements: required first, automatic next, manual last
-  const endorsements = [...(endorsementsData?.endorsements || [])].sort((a, b) => {
-    const aRequired = a.category === 'required' || a.is_required ? 2 : 0;
-    const bRequired = b.category === 'required' || b.is_required ? 2 : 0;
-    const aAuto = a.is_auto || a.auto_attach_rules || a.attachment_type === 'auto' ? 1 : 0;
-    const bAuto = b.is_auto || b.auto_attach_rules || b.attachment_type === 'auto' ? 1 : 0;
-    return (bRequired + bAuto) - (aRequired + aAuto);
-  });
-
-  // Fetch endorsement library (for the add picker)
-  const { data: libraryEndorsementsData } = useQuery({
-    queryKey: ['endorsement-library'],
-    queryFn: () => getDocumentLibraryEntries({ document_type: 'endorsement', status: 'active' }).then(r => r.data),
-    enabled: isAddingOpen,
-  });
-  const libraryEndorsements = libraryEndorsementsData || [];
-
-  // Get available endorsements (not already linked)
-  const linkedIds = new Set(endorsements.map(e => e.endorsement_id || e.document_library_id));
-  const availableEndorsements = libraryEndorsements.filter(e => !linkedIds.has(e.id));
-  const filteredAvailable = availableEndorsements.filter(e =>
-    !addSearchTerm || e.title?.toLowerCase().includes(addSearchTerm.toLowerCase()) ||
-    e.name?.toLowerCase().includes(addSearchTerm.toLowerCase())
-  );
-
-  // Link endorsement mutation
-  const linkMutation = useMutation({
-    mutationFn: (endorsementId) => linkEndorsementToQuote(structureId, endorsementId),
-    onMutate: async (endorsementId) => {
-      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
-      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
-      const endorsementToAdd = libraryEndorsements.find(e => e.id === endorsementId);
-      if (endorsementToAdd) {
-        queryClient.setQueryData(['quote-endorsements', structureId], old => ({
-          ...old,
-          endorsements: [...(old?.endorsements || []), { ...endorsementToAdd, endorsement_id: endorsementId, document_library_id: endorsementId }],
-        }));
-      }
-      return { previous };
-    },
-    onError: (err, vars, ctx) => queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
-      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
-    },
-  });
-
-  // Unlink endorsement mutation
-  const unlinkMutation = useMutation({
-    mutationFn: (endorsementId) => unlinkEndorsementFromQuote(structureId, endorsementId),
-    onMutate: async (endorsementId) => {
-      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
-      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
-      queryClient.setQueryData(['quote-endorsements', structureId], old => ({
-        ...old,
-        endorsements: (old?.endorsements || []).filter(e => e.endorsement_id !== endorsementId),
-      }));
-      return { previous };
-    },
-    onError: (err, vars, ctx) => queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous),
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
-      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
-    },
-  });
-
-  const handleAddEndorsement = (endorsementId) => {
-    linkMutation.mutate(endorsementId);
-    setAddSearchTerm('');
-  };
-
-  if (isLoading) {
-    return <div className="py-8 text-center text-gray-400 text-sm">Loading endorsements...</div>;
-  }
-
-  // Determine type icon for endorsement
-  const getTypeIcon = (endt) => {
-    // Check if auto-attached (has auto_attach_rules or is_auto flag)
-    const isAuto = endt.is_auto || endt.auto_attach_rules || endt.attachment_type === 'auto';
-    const isRequired = endt.category === 'required' || endt.is_required;
-
-    if (isRequired) {
-      // Filled lock - amber
-      return (
-        <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24" title="Required">
-          <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" />
-        </svg>
-      );
-    }
-    if (isAuto) {
-      // Filled lightning - purple
-      return (
-        <svg className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24" title="Auto-attached">
-          <path d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-      );
-    }
-    // Manual - plus
-    return (
-      <svg className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" title="Manually added">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-      </svg>
-    );
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="space-y-2 max-h-72 overflow-y-auto">
-        {endorsements.map(endt => (
-          <div key={endt.id} className="p-2 rounded-lg border border-gray-100 bg-white flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              {getTypeIcon(endt)}
-              <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                endt.category === 'exclusion' ? 'bg-red-100 text-red-700' :
-                endt.category === 'required' ? 'bg-gray-100 text-gray-600' :
-                'bg-blue-100 text-blue-700'
-              }`}>
-                {endt.category?.slice(0, 3).toUpperCase() || 'END'}
-              </span>
-              <span className="text-[11px] text-gray-700 truncate" title={endt.title}>
-                {endt.title || endt.code}
-              </span>
-            </div>
-            <button
-              onClick={() => unlinkMutation.mutate(endt.endorsement_id)}
-              className="text-gray-400 hover:text-red-500 p-1"
-              title="Remove endorsement"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        ))}
-        {endorsements.length === 0 && !isAddingOpen && (
-          <div className="py-6 text-center text-gray-400 text-xs border border-dashed border-gray-200 rounded-lg">
-            No endorsements
-          </div>
-        )}
-      </div>
-
-      {/* Add Endorsement Section */}
-      {isAddingOpen ? (
-        <div className="border border-purple-200 rounded-lg bg-purple-50/50 p-2 space-y-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Search available endorsements..."
-              value={addSearchTerm}
-              onChange={(e) => setAddSearchTerm(e.target.value)}
-              className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-purple-300"
-              autoFocus
-            />
-            <button
-              onClick={() => { setIsAddingOpen(false); setAddSearchTerm(''); }}
-              className="text-gray-400 hover:text-gray-600 p-1"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <div className="max-h-40 overflow-y-auto space-y-1">
-            {filteredAvailable.length === 0 ? (
-              <div className="py-3 text-center text-gray-400 text-xs">
-                {availableEndorsements.length === 0 ? 'All endorsements already added' : 'No matching endorsements'}
-              </div>
-            ) : (
-              filteredAvailable.slice(0, 10).map(endt => (
-                <button
-                  key={endt.id}
-                  onClick={() => handleAddEndorsement(endt.id)}
-                  className="w-full p-2 rounded border border-gray-100 bg-white hover:bg-purple-50 hover:border-purple-200 flex items-center gap-2 text-left transition-colors"
-                >
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                    endt.category === 'exclusion' ? 'bg-red-100 text-red-700' :
-                    endt.category === 'required' ? 'bg-gray-100 text-gray-600' :
-                    'bg-blue-100 text-blue-700'
-                  }`}>
-                    {endt.category?.slice(0, 3).toUpperCase() || 'END'}
-                  </span>
-                  <span className="text-[11px] text-gray-700 truncate">
-                    {endt.title || endt.code}
-                  </span>
-                </button>
-              ))
-            )}
-            {filteredAvailable.length > 10 && (
-              <div className="text-[10px] text-gray-400 text-center py-1">
-                +{filteredAvailable.length - 10} more (refine search)
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setIsAddingOpen(true)}
-          className="w-full py-2 text-xs text-purple-600 hover:bg-purple-50 rounded border border-dashed border-purple-200 font-medium"
-        >
-          + Add Endorsement
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
-// SUBJECTIVITIES PANEL (simplified - no variations)
-// ============================================================================
-
-function SubjectivitiesPanel({ structureId, submissionId }) {
-  const queryClient = useQueryClient();
-  const [isAddingOpen, setIsAddingOpen] = useState(false);
-  const [addSearchTerm, setAddSearchTerm] = useState('');
-
-  // Fetch subjectivities linked to this quote
-  const { data: subjectivitiesData, isLoading } = useQuery({
-    queryKey: ['quote-subjectivities', structureId],
-    queryFn: () => getQuoteSubjectivities(structureId).then(r => r.data),
-    enabled: !!structureId,
-  });
-  // Sort required subjectivities to top
-  const subjectivities = [...(subjectivitiesData || [])].sort((a, b) => {
-    const aRequired = a.is_required || a.category === 'required' ? 1 : 0;
-    const bRequired = b.is_required || b.category === 'required' ? 1 : 0;
-    return bRequired - aRequired;
-  });
-
-  // Fetch subjectivity templates library (for the add picker)
-  const { data: librarySubjectivitiesData } = useQuery({
-    queryKey: ['subjectivity-templates'],
-    queryFn: () => getSubjectivityTemplates().then(r => r.data),
-    enabled: isAddingOpen,
-  });
-  const librarySubjectivities = librarySubjectivitiesData || [];
-
-  // Get available subjectivities (not already linked)
-  const linkedIds = new Set(subjectivities.map(s => s.subjectivity_id || s.template_id));
-  const availableSubjectivities = librarySubjectivities.filter(s => !linkedIds.has(s.id));
-  const filteredAvailable = availableSubjectivities.filter(s =>
-    !addSearchTerm || s.subjectivity_text?.toLowerCase().includes(addSearchTerm.toLowerCase()) ||
-    s.name?.toLowerCase().includes(addSearchTerm.toLowerCase())
-  );
-
-  // Link subjectivity mutation
-  const linkMutation = useMutation({
-    mutationFn: (subjectivityId) => linkSubjectivityToQuote(structureId, subjectivityId),
-    onMutate: async (subjectivityId) => {
-      await queryClient.cancelQueries({ queryKey: ['quote-subjectivities', structureId] });
-      const previous = queryClient.getQueryData(['quote-subjectivities', structureId]);
-      const subjectivityToAdd = librarySubjectivities.find(s => s.id === subjectivityId);
-      if (subjectivityToAdd) {
-        queryClient.setQueryData(['quote-subjectivities', structureId], old => [
-          ...(old || []),
-          { ...subjectivityToAdd, subjectivity_id: subjectivityId, template_id: subjectivityId },
-        ]);
-      }
-      return { previous };
-    },
-    onError: (err, vars, ctx) => queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
-  });
-
-  // Unlink subjectivity mutation
-  const unlinkMutation = useMutation({
-    mutationFn: (subjectivityId) => unlinkSubjectivityFromQuote(structureId, subjectivityId),
-    onMutate: async (subjectivityId) => {
-      await queryClient.cancelQueries({ queryKey: ['quote-subjectivities', structureId] });
-      const previous = queryClient.getQueryData(['quote-subjectivities', structureId]);
-      queryClient.setQueryData(['quote-subjectivities', structureId], old =>
-        (old || []).filter(s => s.subjectivity_id !== subjectivityId)
-      );
-      return { previous };
-    },
-    onError: (err, vars, ctx) => queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
-  });
-
-  // Update subjectivity status mutation
-  const updateStatusMutation = useMutation({
-    mutationFn: ({ subjectivityId, status }) => updateSubjectivity(subjectivityId, { status }),
-    onMutate: async ({ subjectivityId, status }) => {
-      await queryClient.cancelQueries({ queryKey: ['quote-subjectivities', structureId] });
-      const previous = queryClient.getQueryData(['quote-subjectivities', structureId]);
-      queryClient.setQueryData(['quote-subjectivities', structureId], old =>
-        (old || []).map(s => s.id === subjectivityId ? { ...s, status } : s)
-      );
-      return { previous };
-    },
-    onError: (err, vars, ctx) => queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
-  });
-
-  const handleAddSubjectivity = (subjectivityId) => {
-    linkMutation.mutate(subjectivityId);
-    setAddSearchTerm('');
-  };
-
-  const cycleStatus = (subjectivityId, currentStatus) => {
-    // Cycle: pending -> received -> waived -> pending
-    const nextStatus = currentStatus === 'pending' ? 'received'
-      : currentStatus === 'received' ? 'waived'
-      : 'pending';
-    updateStatusMutation.mutate({ subjectivityId, status: nextStatus });
-  };
-
-  const pendingCount = subjectivities.filter(s => s.status === 'pending' || !s.status).length;
-
-  if (isLoading) {
-    return <div className="py-8 text-center text-gray-400 text-sm">Loading subjectivities...</div>;
-  }
-
-  // Status icon for subjectivity
-  const getStatusIcon = (status) => {
-    if (status === 'received') {
-      return (
-        <svg className="w-3.5 h-3.5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      );
-    }
-    if (status === 'waived') {
-      return (
-        <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-        </svg>
-      );
-    }
-    // Pending - clock icon
-    return (
-      <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    );
-  };
-
-  return (
-    <div className="space-y-3">
-      {pendingCount > 0 && (
-        <div className="text-[10px] text-amber-700 bg-amber-50 px-2 py-1 rounded flex items-center gap-1.5">
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          {pendingCount} pending subjectivit{pendingCount === 1 ? 'y' : 'ies'}
-        </div>
-      )}
-
-      <div className="space-y-2 max-h-72 overflow-y-auto">
-        {subjectivities.map(subj => (
-          <div key={subj.id} className="p-2 rounded-lg border border-gray-100 bg-white flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <button
-                onClick={() => cycleStatus(subj.id, subj.status || 'pending')}
-                className="p-0.5 rounded hover:bg-gray-100 transition-colors"
-                title={`Status: ${subj.status || 'pending'} (click to change)`}
-              >
-                {getStatusIcon(subj.status)}
-              </button>
-              <span className="text-[11px] text-gray-700 truncate" title={subj.text || subj.subjectivity_text}>
-                {subj.text || subj.subjectivity_text}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                subj.status === 'received' ? 'bg-green-100 text-green-700' :
-                subj.status === 'waived' ? 'bg-gray-100 text-gray-500 line-through' :
-                'bg-amber-100 text-amber-700'
-              }`}>
-                {(subj.status || 'pending').charAt(0).toUpperCase() + (subj.status || 'pending').slice(1)}
-              </span>
-              <button
-                onClick={() => unlinkMutation.mutate(subj.subjectivity_id)}
-                className="text-gray-400 hover:text-red-500 p-1"
-                title="Remove subjectivity"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        ))}
-        {subjectivities.length === 0 && !isAddingOpen && (
-          <div className="py-6 text-center text-gray-400 text-xs border border-dashed border-gray-200 rounded-lg">
-            No subjectivities
-          </div>
-        )}
-      </div>
-
-      {/* Add Subjectivity Section */}
-      {isAddingOpen ? (
-        <div className="border border-purple-200 rounded-lg bg-purple-50/50 p-2 space-y-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Search available subjectivities..."
-              value={addSearchTerm}
-              onChange={(e) => setAddSearchTerm(e.target.value)}
-              className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-purple-300"
-              autoFocus
-            />
-            <button
-              onClick={() => { setIsAddingOpen(false); setAddSearchTerm(''); }}
-              className="text-gray-400 hover:text-gray-600 p-1"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-          <div className="max-h-40 overflow-y-auto space-y-1">
-            {filteredAvailable.length === 0 ? (
-              <div className="py-3 text-center text-gray-400 text-xs">
-                {availableSubjectivities.length === 0 ? 'All subjectivities already added' : 'No matching subjectivities'}
-              </div>
-            ) : (
-              filteredAvailable.slice(0, 10).map(subj => (
-                <button
-                  key={subj.id}
-                  onClick={() => handleAddSubjectivity(subj.id)}
-                  className="w-full p-2 rounded border border-gray-100 bg-white hover:bg-purple-50 hover:border-purple-200 flex items-center gap-2 text-left transition-colors cursor-pointer"
-                >
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                    subj.status === 'received' ? 'bg-green-100 text-green-700' :
-                    subj.status === 'waived' ? 'bg-gray-100 text-gray-500' :
-                    'bg-amber-100 text-amber-700'
-                  }`}>
-                    {(subj.status || 'pending').slice(0, 3).toUpperCase()}
-                  </span>
-                  <span className="text-[11px] text-gray-700 truncate">
-                    {subj.subjectivity_text}
-                  </span>
-                </button>
-              ))
-            )}
-            {filteredAvailable.length > 10 && (
-              <div className="text-[10px] text-gray-400 text-center py-1">
-                +{filteredAvailable.length - 10} more (refine search)
-              </div>
-            )}
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setIsAddingOpen(true)}
-          className="w-full py-2 text-xs text-purple-600 hover:bg-purple-50 rounded border border-dashed border-purple-200 font-medium"
-        >
-          + Add Subjectivity
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ============================================================================
 // TERMS PANEL
 // ============================================================================
 
@@ -2318,164 +1794,6 @@ function EndorsementsTablePanel({ structureId }) {
   );
 }
 
-// ============================================================================
-// SUBJECTIVITIES TABLE PANEL (Main content area)
-// ============================================================================
-
-function SubjectivitiesTablePanel({ structureId }) {
-  const queryClient = useQueryClient();
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [isAddingOpen, setIsAddingOpen] = useState(false);
-  const [addSearchTerm, setAddSearchTerm] = useState('');
-
-  // Fetch subjectivities linked to this quote
-  const { data: subjectivitiesData, isLoading } = useQuery({
-    queryKey: ['quote-subjectivities', structureId],
-    queryFn: () => getQuoteSubjectivities(structureId).then(r => r.data),
-    enabled: !!structureId,
-  });
-  // Sort required subjectivities to top
-  const subjectivities = [...(subjectivitiesData || [])].sort((a, b) => {
-    const aRequired = a.is_required || a.category === 'required' ? 1 : 0;
-    const bRequired = b.is_required || b.category === 'required' ? 1 : 0;
-    return bRequired - aRequired;
-  });
-
-  // Fetch subjectivity templates
-  const { data: librarySubjectivitiesData } = useQuery({
-    queryKey: ['subjectivity-templates'],
-    queryFn: () => getSubjectivityTemplates().then(r => r.data),
-    enabled: isAddingOpen,
-  });
-  const librarySubjectivities = librarySubjectivitiesData || [];
-
-  // Get available subjectivities
-  const linkedIds = new Set(subjectivities.map(s => s.subjectivity_id || s.template_id));
-  const availableSubjectivities = librarySubjectivities.filter(s => !linkedIds.has(s.id));
-  const filteredAvailable = availableSubjectivities.filter(s =>
-    !addSearchTerm || s.subjectivity_text?.toLowerCase().includes(addSearchTerm.toLowerCase())
-  );
-
-  // Link subjectivity mutation
-  const linkMutation = useMutation({
-    mutationFn: (subjectivityId) => linkSubjectivityToQuote(structureId, subjectivityId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
-  });
-
-  // Unlink subjectivity mutation
-  const unlinkMutation = useMutation({
-    mutationFn: (subjectivityId) => unlinkSubjectivityFromQuote(structureId, subjectivityId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] }),
-  });
-
-  // Status icon helper
-  const getStatusIcon = (status) => {
-    if (status === 'received') return <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
-    if (status === 'waived') return <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>;
-    return <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
-  };
-
-  const pendingCount = subjectivities.filter(s => s.status === 'pending' || !s.status).length;
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
-      >
-        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-2">
-          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          Subjectivities
-          <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium ml-1">
-            {subjectivities.length}
-          </span>
-          {pendingCount > 0 && (
-            <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
-              {pendingCount} pending
-            </span>
-          )}
-        </h3>
-        <svg className={`w-5 h-5 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
-      </button>
-
-      {isExpanded && (
-        <div className="border-t border-gray-100">
-          {isLoading ? (
-            <div className="p-4 text-center text-gray-400 text-sm">Loading...</div>
-          ) : subjectivities.length === 0 ? (
-            <div className="p-4 text-center text-gray-400 text-sm">No subjectivities attached</div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
-                <tr>
-                  <th className="px-4 py-2 text-left font-semibold w-10">Status</th>
-                  <th className="px-4 py-2 text-left font-semibold">Subjectivity</th>
-                  <th className="px-4 py-2 w-10"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {subjectivities.map(subj => (
-                  <tr key={subj.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2">{getStatusIcon(subj.status)}</td>
-                    <td className="px-4 py-2 text-gray-700">{subj.subjectivity_text || '—'}</td>
-                    <td className="px-4 py-2">
-                      <button onClick={() => unlinkMutation.mutate(subj.subjectivity_id)} className="text-gray-400 hover:text-red-500">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          {/* Add button */}
-          <div className="p-3 border-t border-gray-100">
-            {isAddingOpen ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="Search subjectivities..."
-                    value={addSearchTerm}
-                    onChange={(e) => setAddSearchTerm(e.target.value)}
-                    className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 outline-none focus:border-purple-300"
-                    autoFocus
-                  />
-                  <button onClick={() => { setIsAddingOpen(false); setAddSearchTerm(''); }} className="text-gray-400 hover:text-gray-600 p-1">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                </div>
-                <div className="max-h-32 overflow-y-auto space-y-1">
-                  {filteredAvailable.slice(0, 8).map(subj => (
-                    <button
-                      key={subj.id}
-                      onClick={() => { linkMutation.mutate(subj.id); setAddSearchTerm(''); setIsAddingOpen(false); }}
-                      className="w-full p-2 rounded border border-gray-100 bg-white hover:bg-purple-50 hover:border-purple-200 text-left text-xs cursor-pointer transition-colors"
-                    >
-                      <span className="text-gray-700">{subj.subjectivity_text}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <button onClick={() => setIsAddingOpen(true)} className="text-xs text-purple-600 hover:text-purple-700 font-medium">
-                + Add Subjectivity
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TriStateCheckbox({ state, onChange, disabled, title }) {
   const checkboxRef = useRef(null);
 
@@ -2517,6 +1835,10 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   const [sectionVisibility, setSectionVisibility] = useState({ all: false, none: false });
   const [confirmRemoval, setConfirmRemoval] = useState(null);
   const [showAddPanel, setShowAddPanel] = useState(false);
+  // Subjectivity inline editing state
+  const [editingSubjectivityId, setEditingSubjectivityId] = useState(null);
+  const [editingSubjectivityText, setEditingSubjectivityText] = useState('');
+  const [editingSubjectivityStatus, setEditingSubjectivityStatus] = useState('pending');
   // Add new rate/restriction state
   const [showAddCommission, setShowAddCommission] = useState(false);
   const [newCommissionValue, setNewCommissionValue] = useState('');
@@ -2822,6 +2144,7 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       return {
         id: subj.id,
         label: subj.text || subj.subjectivity_text || subj.title || 'Subjectivity',
+        status: subj.status || 'pending',
         linkedIds,
         linkedSet: new Set(linkedIds),
         scope,
@@ -3318,6 +2641,57 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
       refreshAfterManage(ids);
     },
   });
+
+  const updateSubjectivityTextMutation = useMutation({
+    mutationFn: async ({ subjectivityId, text, status }) => {
+      return updateSubjectivity(subjectivityId, { text, status });
+    },
+    onMutate: async ({ subjectivityId, text, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submissionId]);
+      queryClient.setQueryData(['submissionSubjectivities', submissionId], (old) => {
+        if (!old) return old;
+        return old.map(subj => {
+          if (String(subj.id) !== String(subjectivityId)) return subj;
+          return { ...subj, text, status };
+        });
+      });
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submissionId], context.previousData);
+      }
+      console.error('Failed to update subjectivity:', err);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    },
+  });
+
+  const handleStartEditSubjectivity = (rule) => {
+    setEditingSubjectivityId(rule.id);
+    setEditingSubjectivityText(rule.label);
+    setEditingSubjectivityStatus(rule.status || 'pending');
+  };
+
+  const handleSaveSubjectivity = () => {
+    if (!editingSubjectivityId) return;
+    updateSubjectivityTextMutation.mutate({
+      subjectivityId: editingSubjectivityId,
+      text: editingSubjectivityText,
+      status: editingSubjectivityStatus,
+    });
+    setEditingSubjectivityId(null);
+    setEditingSubjectivityText('');
+    setEditingSubjectivityStatus('pending');
+  };
+
+  const handleCancelEditSubjectivity = () => {
+    setEditingSubjectivityId(null);
+    setEditingSubjectivityText('');
+    setEditingSubjectivityStatus('pending');
+  };
 
   const toggleEndorsementLink = useMutation({
     mutationFn: async ({ endorsementId, quoteId, isLinked }) => {
@@ -4214,21 +3588,86 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="grid grid-cols-[1fr_240px] gap-6 px-6 py-3.5 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+            <div className="grid grid-cols-[80px_1fr_200px] gap-4 px-6 py-3.5 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Status</span>
               <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Subjectivity Name</span>
               <span className="text-xs font-bold text-slate-600 uppercase tracking-wider text-right">Applies To</span>
             </div>
             <div className="divide-y divide-gray-100">
-              {filteredSubjectivityRulesAll.map((rule, index) => {
+              {filteredSubjectivityRulesAll.map((rule) => {
                 const isMenuOpen = activeRuleMenu === rule.id;
+                const isEditing = editingSubjectivityId === rule.id;
+                const statusIcon = rule.status === 'received'
+                  ? <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  : rule.status === 'waived'
+                  ? <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                  : <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
                 return (
-                  <div 
-                    key={rule.id} 
-                    className="grid grid-cols-[1fr_240px] gap-6 px-6 py-4 items-center group hover:bg-purple-50/30 transition-colors duration-150"
+                  <div
+                    key={rule.id}
+                    className={`grid grid-cols-[80px_1fr_200px] gap-4 px-6 py-4 items-center group transition-colors duration-150 ${isEditing ? 'bg-blue-50/50' : 'hover:bg-purple-50/30'}`}
                   >
-                    <div className="text-sm font-medium text-slate-800 leading-relaxed">
-                      {rule.label}
+                    {/* Status Column */}
+                    <div className="flex items-center">
+                      {isEditing ? (
+                        <select
+                          value={editingSubjectivityStatus}
+                          onChange={(e) => setEditingSubjectivityStatus(e.target.value)}
+                          className="text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="received">Received</option>
+                          <option value="waived">Waived</option>
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => handleStartEditSubjectivity(rule)}
+                          className="p-1 rounded hover:bg-gray-100 transition-colors"
+                          title={`Status: ${rule.status || 'pending'}`}
+                        >
+                          {statusIcon}
+                        </button>
+                      )}
                     </div>
+                    {/* Name Column */}
+                    <div className="min-w-0">
+                      {isEditing ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editingSubjectivityText}
+                            onChange={(e) => setEditingSubjectivityText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveSubjectivity();
+                              if (e.key === 'Escape') handleCancelEditSubjectivity();
+                            }}
+                            className="flex-1 text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                            autoFocus
+                          />
+                          <button
+                            onClick={handleSaveSubjectivity}
+                            disabled={updateSubjectivityTextMutation.isPending}
+                            className="px-3 py-1.5 text-xs font-medium text-white bg-purple-600 rounded hover:bg-purple-700 transition-colors disabled:opacity-50"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={handleCancelEditSubjectivity}
+                            className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleStartEditSubjectivity(rule)}
+                          className="text-sm font-medium text-slate-800 leading-relaxed text-left hover:text-purple-700 transition-colors w-full truncate"
+                        >
+                          {rule.label}
+                        </button>
+                      )}
+                    </div>
+                    {/* Applies To Column */}
                     <Popover.Root open={isMenuOpen} onOpenChange={(open) => setActiveRuleMenu(open ? rule.id : null)}>
                       <div className="flex flex-col items-end gap-2">
                         <Popover.Trigger asChild>
@@ -5692,14 +5131,15 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   );
 }
 
-function SummaryTabContent({ structure, variation, submission, structureId, structures, onMainTabChange }) {
+function SummaryTabContent({ structure, variation, submission, structureId, structures, onMainTabChange, documentHistory = [] }) {
   const queryClient = useQueryClient();
   const [notes, setNotes] = useState(structure?.notes || '');
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [showAllSublimits, setShowAllSublimits] = useState(false);
-  const [showEndorsementSuggestions, setShowEndorsementSuggestions] = useState(true);
-  const [showSubjectivitySuggestions, setShowSubjectivitySuggestions] = useState(true);
+  const [showMissingSuggestions, setShowMissingSuggestions] = useState(false); // Single toggle for all missing suggestions
   const [showOnlyOurLayer, setShowOnlyOurLayer] = useState(false);
+  // Expandable card state for C1/C2 pattern
+  const [expandedCard, setExpandedCard] = useState(null); // 'subjectivities' | 'endorsements' | 'terms' | 'premium' | 'retro' | 'commission' | null
   const submissionId = submission?.id;
 
   const quoteType = getStructurePosition(structure) === 'excess' ? 'excess' : 'primary';
@@ -5871,6 +5311,26 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
       queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
+  });
+
+  // Update subjectivity status mutation (for inline editing in expanded card)
+  const updateSubjectivityStatusMutation = useMutation({
+    mutationFn: ({ subjectivityId, status }) => updateSubjectivity(subjectivityId, { status }),
+    onMutate: async ({ subjectivityId, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-subjectivities', structureId] });
+      const previous = queryClient.getQueryData(['quote-subjectivities', structureId]);
+      queryClient.setQueryData(['quote-subjectivities', structureId], (old) =>
+        (old || []).map(s => s.id === subjectivityId ? { ...s, status } : s)
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
     },
   });
 
@@ -6105,36 +5565,116 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
   return (
     <div className="space-y-6">
-      {/* KPI Row with Status */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-        {/* Our Limit */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Our Limit</div>
-          <div className="text-2xl font-bold text-gray-800 truncate">{limitDisplay}</div>
-        </div>
-        {/* Retention/Attachment */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">{retentionLabel}</div>
-          <div className="text-2xl font-bold text-gray-800 truncate">
-            {formatCompact(retentionOrAttachment)}{sirDisplay}
+      {/* KPI Row - Policy Terms, Retro, Premium, Commission */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Policy Terms */}
+        {(() => {
+          const datesTbd = variation?.dates_tbd || false;
+          const effDate = variation?.effective_date_override || structure?.effective_date || submission?.effective_date;
+          const expDate = variation?.expiration_date_override || structure?.expiration_date || submission?.expiration_date;
+          return (
+            <div
+              onClick={() => setExpandedCard(expandedCard === 'terms' ? null : 'terms')}
+              className={`bg-white rounded-lg px-3 py-3 border cursor-pointer transition-all text-center ${
+                expandedCard === 'terms'
+                  ? 'border-purple-300 ring-1 ring-purple-100'
+                  : 'border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] text-gray-400 uppercase font-semibold">Policy Term</div>
+                <span className="text-[10px] text-purple-600">{expandedCard === 'terms' ? 'Close' : 'Edit'}</span>
+              </div>
+              <div className="text-sm font-bold text-gray-800 truncate">
+                {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Retro Dates */}
+        <div
+          onClick={() => setExpandedCard(expandedCard === 'retro' ? null : 'retro')}
+          className={`bg-white rounded-lg px-3 py-3 border cursor-pointer transition-all text-center ${
+            expandedCard === 'retro'
+              ? 'border-purple-300 ring-1 ring-purple-100'
+              : 'border-gray-200 hover:border-gray-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] text-gray-400 uppercase font-semibold">Retro</div>
+            <span className="text-[10px] text-purple-600">{expandedCard === 'retro' ? 'Close' : 'Edit'}</span>
+          </div>
+          <div className="text-sm font-bold text-gray-800">
+            {(!structure?.retro_schedule || structure.retro_schedule.length === 0)
+              ? 'Full Prior Acts'
+              : `${structure.retro_schedule.length} coverage${structure.retro_schedule.length !== 1 ? 's' : ''}`}
           </div>
         </div>
-        {/* Premium */}
-        <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200 overflow-hidden min-w-0">
-          <div className="text-xs text-green-600 uppercase font-semibold mb-1 truncate">Premium</div>
-          <div className="text-2xl font-bold text-green-700 truncate">{formatCurrency(premium)}</div>
-        </div>
+
+        {/* Premium - View only, shows sold (tower) + technical (rater) if different */}
+        {(() => {
+          const sold = premium; // Tower CMAI premium = what we're charging
+          const technical = variation?.technical_premium || 0; // From rater
+          const hasTechnical = technical > 0 && Math.abs(sold - technical) > 1;
+          const diff = technical > 0 ? ((sold - technical) / technical) * 100 : 0;
+          return (
+            <div className="bg-white rounded-lg px-3 py-3 border border-gray-200 text-center">
+              {hasTechnical ? (
+                <div className="flex items-end justify-center gap-4">
+                  <div>
+                    <div className="text-[10px] text-gray-400 uppercase font-semibold">Technical</div>
+                    <div className="text-base font-bold text-gray-800">{formatCurrency(technical)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-gray-400 uppercase font-semibold">Sold</div>
+                    <div className="text-base font-bold text-gray-800">{formatCurrency(sold)}</div>
+                  </div>
+                  <div className={`text-sm font-semibold ${diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {diff >= 0 ? '+' : ''}{diff.toFixed(0)}%
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="text-[10px] text-gray-400 uppercase font-semibold">Premium</div>
+                  <div className="text-base font-bold text-gray-800">{formatCurrency(sold)}</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Commission */}
-        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200 overflow-hidden min-w-0">
-          <div className="text-xs text-gray-500 uppercase font-semibold mb-1 truncate">Commission</div>
-          <div className="text-2xl font-bold text-gray-800 truncate">{commission}%</div>
-        </div>
-        {/* Status Indicator */}
-        <div className={`${status.bg} rounded-lg p-4 border flex flex-col items-center justify-center overflow-hidden min-w-0`}>
-          <div className={`w-3 h-3 rounded-full ${status.dot} mb-2`}></div>
-          <div className={`text-sm font-bold ${status.text} truncate`}>{status.label}</div>
+        <div
+          onClick={() => setExpandedCard(expandedCard === 'commission' ? null : 'commission')}
+          className={`bg-white rounded-lg px-3 py-3 border cursor-pointer transition-all text-center ${
+            expandedCard === 'commission'
+              ? 'border-purple-300 ring-1 ring-purple-100'
+              : 'border-gray-200 hover:border-gray-300'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] text-gray-400 uppercase font-semibold">Commission</div>
+            <span className="text-[10px] text-purple-600">{expandedCard === 'commission' ? 'Close' : 'Edit'}</span>
+          </div>
+          <div className="text-base font-bold text-gray-800">{commission}%</div>
         </div>
       </div>
+
+      {/* Expanded Panel - shows below KPI row when a card is selected, constrained width */}
+      {expandedCard && ['terms', 'retro', 'commission'].includes(expandedCard) && (
+        <div className="border border-purple-200 rounded-lg bg-white p-4 shadow-sm max-w-lg">
+          {expandedCard === 'terms' && (
+            <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} />
+          )}
+          {expandedCard === 'retro' && (
+            <RetroPanel structure={structure} submissionId={submission?.id} />
+          )}
+          {expandedCard === 'commission' && (
+            <CommissionPanel structure={structure} variation={variation} submissionId={submission?.id} />
+          )}
+        </div>
+      )}
 
       {/* Tower Position & Structure Preview */}
       {(() => {
@@ -6322,137 +5862,57 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
         );
       })()}
 
-      {/* Details Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Left Column */}
-        <div className="space-y-4">
-          {/* Policy Terms */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-              <h3 className="text-xs font-bold text-gray-500 uppercase">Policy Terms</h3>
-            </div>
-            <div className="p-4 space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Effective Date</span>
-                <span className="text-gray-900 font-medium">{formatDate(structure?.effective_date || submission?.effective_date)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Expiration Date</span>
-                <span className="text-gray-900 font-medium">{formatDate(structure?.expiration_date || submission?.expiration_date)}</span>
-              </div>
-            </div>
-          </div>
+      {/* Grid Header with toggle */}
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide">Quote Details</h3>
+        {(missingEndorsements.length > 0 || missingSubjectivities.length > 0) && (
+          <button
+            onClick={() => setShowMissingSuggestions(!showMissingSuggestions)}
+            className={`text-xs px-2 py-1 rounded border transition-colors ${
+              showMissingSuggestions
+                ? 'bg-amber-50 border-amber-200 text-amber-700'
+                : 'bg-gray-50 border-gray-200 text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {showMissingSuggestions ? 'Hide Missing' : `Show Missing (${missingEndorsements.length + missingSubjectivities.length})`}
+          </button>
+        )}
+      </div>
 
-          {/* Retro Schedule */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-              <h3 className="text-xs font-bold text-gray-500 uppercase">Retro Dates</h3>
-            </div>
-            <div className="p-4 space-y-1">
-              {(!structure?.retro_schedule || structure.retro_schedule.length === 0) ? (
-                <div className="text-sm text-gray-600">
-                  Full Prior Acts <span className="text-gray-400">(default)</span>
-                </div>
-              ) : (
-                structure.retro_schedule.map((entry, idx) => (
-                <div key={idx} className="text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600">{entry.coverage}</span>
-                    <span className="font-medium text-gray-800">
-                      {entry.retro === 'full_prior_acts' ? 'Full Prior Acts' :
-                       entry.retro === 'inception' ? 'Inception' :
-                       entry.retro === 'date' && entry.date ? new Date(entry.date).toLocaleDateString() :
-                       entry.retro === 'custom' ? 'Custom' :
-                       entry.retro || '—'}
-                    </span>
-                  </div>
-                  {entry.retro === 'custom' && entry.custom_text && (
-                    <div className="text-xs text-gray-500 mt-0.5 text-right">{entry.custom_text}</div>
-                  )}
-                </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Policy Form */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-              <h3 className="text-xs font-bold text-gray-500 uppercase">Policy Form</h3>
-            </div>
-            <div className="p-4">
-              <div className="flex items-center gap-2 text-sm text-green-600">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span>Standard {structure?.position === 'excess' ? 'Excess' : 'Primary'} Form</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Notes Card */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-xs font-bold text-gray-500 uppercase">Notes</h3>
+      {/* Details Grid - 3 column layout */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Coverages */}
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+            <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsEditingNotes(!isEditingNotes)}
-                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                onClick={() => setShowAllSublimits(false)}
+                className={`text-xs font-bold uppercase ${!showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
               >
-                {isEditingNotes ? 'Done' : 'Edit'}
+                Exceptions
+              </button>
+              <span className="text-gray-300">|</span>
+              <button
+                onClick={() => setShowAllSublimits(true)}
+                className={`text-xs font-bold uppercase ${showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+              >
+                All
               </button>
             </div>
-            <div className="p-4">
-              {isEditingNotes ? (
-                <textarea
-                  className="w-full text-sm border border-gray-200 rounded-lg p-2 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none resize-none"
-                  rows={3}
-                  placeholder="Add notes about this quote (pricing rationale, broker communications, etc.)"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                />
-              ) : notes ? (
-                <p className="text-sm text-gray-600">{notes}</p>
-              ) : (
-                <p className="text-sm text-gray-400 italic">No notes added</p>
-              )}
-            </div>
+            <button
+              onClick={() => onMainTabChange?.('coverages')}
+              className="text-xs text-purple-600 hover:text-purple-700"
+            >
+              Manage
+            </button>
           </div>
-        </div>
-
-        {/* Right Column - Alerts & Exceptions */}
-        <div className="space-y-4">
-          {/* Coverages */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowAllSublimits(false)}
-                  className={`text-xs font-bold uppercase ${!showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
-                >
-                  Exceptions
-                </button>
-                <span className="text-gray-300">|</span>
-                <button
-                  onClick={() => setShowAllSublimits(true)}
-                  className={`text-xs font-bold uppercase ${showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
-                >
-                  All
-                </button>
-              </div>
-              <button
-                onClick={() => onMainTabChange?.('coverages')}
-                className="text-xs text-purple-600 hover:text-purple-700"
-              >
-                Manage
-              </button>
-            </div>
-            <div className="p-4">
-              {showAllSublimits ? (
-                <div className="space-y-1">
-                  {allSublimits.map(sub => (
-                    <div key={sub.id} className="flex justify-between text-sm">
-                      <span className="text-gray-600">{sub.label}</span>
-                      <span className={`font-medium ${sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
+          <div className="p-4">
+            {showAllSublimits ? (
+              <div className="space-y-1">
+                {allSublimits.map(sub => (
+                  <div key={sub.id} className="flex justify-between text-sm">
+                    <span className="text-gray-600">{sub.label}</span>
+                    <span className={`font-medium ${sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
                         {formatCompact(sub.value)}
                       </span>
                     </div>
@@ -6483,25 +5943,10 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
-                {missingEndorsements.length > 0 ? (
-                  <button
-                    onClick={() => setShowEndorsementSuggestions(!showEndorsementSuggestions)}
-                    className={`text-[11px] ${endorsementStatus.tone} hover:underline flex items-center gap-1`}
-                  >
+                {endorsementStatus.text && (
+                  <span className={`text-[11px] ${endorsementStatus.tone}`}>
                     {endorsementStatus.text}
-                    <svg
-                      className={`w-3 h-3 transition-transform ${showEndorsementSuggestions ? '' : '-rotate-90'}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                ) : endorsementStatus.text && (
-                <span className={`text-[11px] ${endorsementStatus.tone}`}>
-                  {endorsementStatus.text}
-                </span>
+                  </span>
                 )}
               </div>
               {endorsements.length > 0 && (
@@ -6518,7 +5963,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 <p className="text-sm text-gray-400">No endorsements attached</p>
               ) : (
                 <div className="space-y-2">
-                  {showEndorsementSuggestions && missingEndorsements.map((item) => (
+                  {showMissingSuggestions && missingEndorsements.map((item) => (
                     <div
                       key={item.id}
                       onClick={() => restoreEndorsement.mutate(item.id)}
@@ -6558,47 +6003,91 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             </div>
           </div>
 
-          {/* Subjectivities */}
-          <div className="border border-gray-200 rounded-lg overflow-hidden">
+        {/* Subjectivities - expands left (cols 2-3) when editing */}
+        <div className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+          expandedCard === 'subjectivities'
+            ? 'md:col-start-2 md:col-span-2 border-purple-300 ring-1 ring-purple-100'
+            : 'border-gray-200'
+        }`}>
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
-                {missingSubjectivities.length > 0 ? (
-                  <button
-                    onClick={() => setShowSubjectivitySuggestions(!showSubjectivitySuggestions)}
-                    className={`text-[11px] ${subjectivityStatus.tone} hover:underline flex items-center gap-1`}
-                  >
+                {subjectivityStatus.text && (
+                  <span className={`text-[11px] ${subjectivityStatus.tone}`}>
                     {subjectivityStatus.text}
-                    <svg
-                      className={`w-3 h-3 transition-transform ${showSubjectivitySuggestions ? '' : '-rotate-90'}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                ) : subjectivityStatus.text && (
-                <span className={`text-[11px] ${subjectivityStatus.tone}`}>
-                  {subjectivityStatus.text}
-                </span>
+                  </span>
                 )}
               </div>
               {subjectivities.length > 0 && (
                 <button
-                  onClick={() => onMainTabChange?.('subjectivities')}
-                  className="text-xs text-purple-600 hover:text-purple-700"
+                  onClick={() => setExpandedCard(expandedCard === 'subjectivities' ? null : 'subjectivities')}
+                  className="text-xs text-purple-600 hover:text-purple-700 font-medium"
                 >
-                  Manage
+                  {expandedCard === 'subjectivities' ? 'Done' : 'Edit'}
                 </button>
               )}
             </div>
             <div className="p-4">
               {subjectivitiesEmpty ? (
                 <p className="text-sm text-gray-400">No subjectivities attached</p>
+              ) : expandedCard === 'subjectivities' ? (
+                /* Expanded Edit Mode */
+                <div className="space-y-3">
+                  {showMissingSuggestions && missingSubjectivities.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-3 py-2 bg-amber-50/50"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-gray-700 truncate">{item.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600">
+                          On peers
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => restoreSubjectivity.mutate(item.id)}
+                        className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:text-gray-900 flex-shrink-0"
+                      >
+                        + Add
+                      </button>
+                    </div>
+                  ))}
+                  {[...uniqueSubjectivities, ...alignedSubjectivities].map((item) => (
+                    <div key={item.id} className="flex items-center gap-3 text-sm bg-gray-50/50 rounded-lg px-3 py-2">
+                      {/* Status Dropdown */}
+                      <select
+                        value={item.status || 'pending'}
+                        onChange={(e) => updateSubjectivityStatusMutation.mutate({
+                          subjectivityId: item.id,
+                          status: e.target.value
+                        })}
+                        className={`text-xs px-2 py-1 rounded border cursor-pointer focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                          item.status === 'received'
+                            ? 'bg-green-50 border-green-200 text-green-700'
+                            : item.status === 'waived'
+                            ? 'bg-gray-50 border-gray-200 text-gray-500'
+                            : 'bg-amber-50 border-amber-200 text-amber-700'
+                        }`}
+                      >
+                        <option value="pending">Pending</option>
+                        <option value="received">Received</option>
+                        <option value="waived">Waived</option>
+                      </select>
+                      {/* Subjectivity Text */}
+                      <span className="text-gray-700 flex-1">{item.label}</span>
+                      {/* Unique Badge */}
+                      {uniqueSubjectivities.some(u => u.id === item.id) && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 flex-shrink-0">
+                          Only here
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
               ) : (
+                /* Collapsed Preview Mode */
                 <div className="space-y-2">
-                  {showSubjectivitySuggestions && missingSubjectivities.map((item) => (
+                  {showMissingSuggestions && missingSubjectivities.map((item) => (
                     <div
                       key={item.id}
                       onClick={() => restoreSubjectivity.mutate(item.id)}
@@ -6624,6 +6113,10 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                         <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
+                      ) : item.status === 'waived' ? (
+                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
                       ) : (
                         <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -6641,6 +6134,10 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                         <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
+                      ) : item.status === 'waived' ? (
+                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
                       ) : (
                         <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -6653,6 +6150,34 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               )}
             </div>
           </div>
+
+      </div>
+
+      {/* Notes - Full width below the grid */}
+      <div className="border border-gray-200 rounded-lg overflow-hidden">
+        <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+          <h3 className="text-xs font-bold text-gray-500 uppercase">Notes</h3>
+          <button
+            onClick={() => setIsEditingNotes(!isEditingNotes)}
+            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+          >
+            {isEditingNotes ? 'Done' : 'Edit'}
+          </button>
+        </div>
+        <div className="p-4">
+          {isEditingNotes ? (
+            <textarea
+              className="w-full text-sm border border-gray-200 rounded-lg p-2 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none resize-none"
+              rows={3}
+              placeholder="Add notes about this quote (pricing rationale, broker communications, etc.)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          ) : notes ? (
+            <p className="text-sm text-gray-600">{notes}</p>
+          ) : (
+            <p className="text-sm text-gray-400 italic">No notes added</p>
+          )}
         </div>
       </div>
 
@@ -6787,6 +6312,45 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           )}
         </div>
       </div>
+
+      {/* Document History */}
+      {documentHistory.length > 0 && (
+        <div className="mt-6 border border-gray-200 rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+            <h3 className="text-xs font-bold text-gray-500 uppercase">Document History</h3>
+            <span className="text-xs text-gray-400">{documentHistory.length} doc{documentHistory.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="p-4">
+            <div className="space-y-2">
+              {documentHistory.map((doc) => (
+                <div key={doc.id} className="flex items-center justify-between text-sm group">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-xs font-mono text-gray-400 flex-shrink-0">{doc.document_number}</span>
+                    <span className="text-gray-600 truncate">
+                      {doc.quote_name || (doc.document_type === 'quote_excess' ? 'Excess' : 'Primary')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-400">
+                      {new Date(doc.created_at).toLocaleDateString()}
+                    </span>
+                    {doc.pdf_url && (
+                      <a
+                        href={doc.pdf_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-purple-600 hover:text-purple-800 text-xs font-medium"
+                      >
+                        View
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -8685,10 +8249,205 @@ export default function QuotePageV3() {
             </div>
           </div>
         ) : (
-        <div className="flex flex-col lg:flex-row gap-4 items-start">
+        <div className="space-y-4">
+          {/* Header Bar - Quote Selector + Action Buttons */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-white border border-gray-200 rounded-lg p-3">
+            {/* Left: Quote Selector */}
+            <button
+              ref={optionSelectorButtonRef}
+              onClick={() => setIsStructurePickerExpanded(true)}
+              className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg hover:border-purple-300 transition-colors text-sm min-w-[200px]"
+            >
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                </svg>
+                <span className="font-semibold text-gray-800">{activeStructure?.quote_name || 'Select Structure'}</span>
+                {activeStructure?.position === 'excess' && (
+                  <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">XS</span>
+                )}
+                {/* Quote Status Badge */}
+                {(() => {
+                  const statusConfig = {
+                    draft: { label: 'Draft', bg: 'bg-gray-100', text: 'text-gray-600' },
+                    indication: { label: 'Indication', bg: 'bg-amber-100', text: 'text-amber-700' },
+                    quoted: { label: 'Quoted', bg: 'bg-purple-100', text: 'text-purple-700' },
+                    bound: { label: 'Bound', bg: 'bg-green-100', text: 'text-green-700' },
+                  };
+                  const status = statusConfig[activeStructure?.status] || statusConfig.draft;
+                  return (
+                    <span className={`text-[10px] ${status.bg} ${status.text} px-1.5 py-0.5 rounded font-medium`}>
+                      {status.label}
+                    </span>
+                  );
+                })()}
+              </div>
+              <span className="text-xs text-gray-400">{structures.length} options</span>
+            </button>
 
-          {/* LEFT - Main Content Card with Tabs */}
-          <div className="flex-1 min-w-0 w-full lg:w-auto">
+            {/* Right: Action Buttons */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handlePreviewDocument}
+                disabled={isPreviewLoading || !activeStructureId}
+                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                Preview
+              </button>
+              <Popover.Root open={showGeneratePicker} onOpenChange={setShowGeneratePicker}>
+                <Popover.Trigger asChild>
+                  <button
+                    disabled={generateDocumentMutation.isPending || generatePackageMutation.isPending || !activeStructureId}
+                    className="px-4 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Generate
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content className={`z-[9999] rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden ${generateDocType === 'package' ? 'w-[420px]' : 'w-80'}`} sideOffset={8} align="end">
+                    {/* Header with gradient */}
+                    <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-4">
+                      <div className="flex items-center gap-2">
+                        <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <h3 className="font-semibold text-white text-sm">Generate Document</h3>
+                      </div>
+                    </div>
+                    <div className="p-5 space-y-5">
+                      {/* Document Type Selection */}
+                      <div className="space-y-2">
+                        <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Document Type</div>
+                        <div className="flex items-center gap-4 p-2 bg-slate-50 rounded-lg">
+                          <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
+                            <input
+                              type="radio"
+                              name="docTypeHeader"
+                              value="quote"
+                              checked={generateDocType === 'quote'}
+                              onChange={() => setGenerateDocType('quote')}
+                              className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                            />
+                            <span className={`text-sm font-medium transition-colors ${generateDocType === 'quote' ? 'text-purple-700' : 'text-gray-600 group-hover:text-gray-800'}`}>
+                              Quote Only
+                            </span>
+                          </label>
+                          <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
+                            <input
+                              type="radio"
+                              name="docTypeHeader"
+                              value="package"
+                              checked={generateDocType === 'package'}
+                              onChange={() => setGenerateDocType('package')}
+                              className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
+                            />
+                            <span className={`text-sm font-medium transition-colors ${generateDocType === 'package' ? 'text-purple-700' : 'text-gray-600 group-hover:text-gray-800'}`}>
+                              Full Package
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                      {/* Document selector for Full Package */}
+                      {generateDocType === 'package' && (
+                        <div className="border border-gray-200 rounded-lg bg-slate-50/50 overflow-hidden">
+                          <div className="max-h-[360px] overflow-y-auto p-4 space-y-4">
+                            {/* Quote Specimens section */}
+                            <div className="space-y-3 pb-3 border-b border-gray-200">
+                              <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Quote Specimens</div>
+                              <div className="space-y-2.5">
+                                <label className="flex items-center gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
+                                  <input type="checkbox" checked={includeEndorsements} onChange={(e) => setIncludeEndorsements(e.target.checked)} className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0" />
+                                  <div className="flex-1">
+                                    <span className="text-sm font-medium text-gray-800 block">Endorsement Package</span>
+                                    {endorsementCount > 0 && <span className="text-xs text-gray-500 mt-0.5 block">{endorsementCount} {endorsementCount === 1 ? 'endorsement' : 'endorsements'} included</span>}
+                                  </div>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
+                                  <input type="checkbox" checked={includeSpecimen} onChange={(e) => setIncludeSpecimen(e.target.checked)} className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0" />
+                                  <span className="text-sm font-medium text-gray-800">Policy Specimen</span>
+                                </label>
+                              </div>
+                            </div>
+                            {/* Documents grouped by type */}
+                            {Object.entries(packageDocsByType).length > 0 ? (
+                              Object.entries(packageDocsByType).map(([docType, docs], idx) => (
+                                <div key={docType} className={idx > 0 ? 'pt-3 border-t border-gray-200' : ''}>
+                                  <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2.5">{docTypeLabels[docType] || docType.replace(/_/g, ' ')}</div>
+                                  <div className="space-y-1.5">
+                                    {docs.map((doc) => (
+                                      <label key={doc.id} className="flex items-start gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
+                                        <input type="checkbox" checked={selectedPackageDocs.includes(doc.id)} onChange={(e) => { if (e.target.checked) { setSelectedPackageDocs([...selectedPackageDocs, doc.id]); } else { setSelectedPackageDocs(selectedPackageDocs.filter(id => id !== doc.id)); } }} className="w-4 h-4 text-purple-600 rounded border-gray-300 mt-0.5 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0" />
+                                        <div className="flex-1 min-w-0">
+                                          {doc.code && <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded mr-1.5">{doc.code}</span>}
+                                          <span className="text-sm text-gray-700 group-hover:text-gray-900">{doc.title}</span>
+                                        </div>
+                                      </label>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="text-sm text-gray-400 text-center py-4">No additional documents available</div>
+                            )}
+                            {/* Summary line */}
+                            {packageSummary && (
+                              <div className="pt-3 mt-3 border-t-2 border-purple-200 bg-purple-50/50 rounded-md p-3 -mx-1">
+                                <div className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-1">Package Summary</div>
+                                <div className="text-sm text-gray-700 font-medium">{packageSummary.text}</div>
+                                <div className="text-xs text-gray-500 mt-1">Total: {packageSummary.count} {packageSummary.count === 1 ? 'document' : 'documents'}</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {/* Status messages */}
+                      {(generateSuccess || generateError) && (
+                        <div className={`p-3 rounded-lg text-sm text-center ${generateSuccess ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                          {generateSuccess && <div className="flex items-center justify-center gap-2"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>Quote generated successfully!</div>}
+                          {generateError && generateError}
+                        </div>
+                      )}
+                    </div>
+                    {/* Button at bottom */}
+                    <div className="px-5 pb-5">
+                      <button
+                        onClick={() => { setGenerateError(null); handleGenerateDocument(); }}
+                        disabled={generateDocumentMutation.isPending || generatePackageMutation.isPending}
+                        className="w-full py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white text-sm font-semibold hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
+                      >
+                        {(generateDocumentMutation.isPending || generatePackageMutation.isPending) ? (
+                          <><svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>Generating...</>
+                        ) : generateDocType === 'package' ? (
+                          <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>Generate Package ({packageSummary?.count || 1} docs)</>
+                        ) : 'Generate Quote'}
+                      </button>
+                    </div>
+                    <Popover.Arrow className="fill-white" />
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+              <button
+                onClick={handleBindQuote}
+                disabled={isBindLoading || !activeStructureId}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Bind
+              </button>
+            </div>
+          </div>
+
+          {/* Main Content Card with Tabs - Full Width */}
+          <div className="w-full">
             <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
               {/* Tab Navigation */}
               <div className="flex items-center border-b border-gray-200">
@@ -8761,6 +8520,7 @@ export default function QuotePageV3() {
                     structureId={activeStructureId}
                     structures={structures}
                     onMainTabChange={setMainTab}
+                    documentHistory={documentHistory}
                   />
                 )}
 
@@ -8813,375 +8573,6 @@ export default function QuotePageV3() {
               </div>
             </div>
           </div>
-
-          {/* RIGHT - Side Panel */}
-          <div className="w-full lg:w-80 lg:flex-shrink-0 space-y-2">
-            {/* Option Selector + Action Buttons */}
-            <div className="space-y-2">
-              <button
-                ref={optionSelectorButtonRef}
-                onClick={() => setIsStructurePickerExpanded(true)}
-                className="w-full flex items-center justify-between px-3 py-2 bg-white border border-gray-200 rounded-lg hover:border-purple-300 transition-colors text-sm"
-              >
-                <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
-                  </svg>
-                  <span className="font-semibold text-gray-800">{activeStructure?.quote_name || 'Select Structure'}</span>
-                  {activeStructure?.position === 'excess' && (
-                    <span className="text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-medium">XS</span>
-                  )}
-                </div>
-                <span className="text-xs text-gray-400">{structures.length} options</span>
-              </button>
-              <div className="flex gap-2">
-                <button
-                  onClick={handlePreviewDocument}
-                  disabled={isPreviewLoading || !activeStructureId}
-                  className="flex-1 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                  </svg>
-                  Preview
-                </button>
-                <Popover.Root open={showGeneratePicker} onOpenChange={setShowGeneratePicker}>
-                  <Popover.Trigger asChild>
-                    <button
-                      disabled={generateDocumentMutation.isPending || generatePackageMutation.isPending || !activeStructureId}
-                      className="flex-1 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 flex items-center justify-center gap-1.5 disabled:opacity-50"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      Generate
-                    </button>
-                  </Popover.Trigger>
-                  <Popover.Portal>
-                    <Popover.Content className={`z-[9999] rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden ${generateDocType === 'package' ? 'w-[420px]' : 'w-80'}`} sideOffset={8} align="center">
-                      {/* Header with gradient */}
-                      <div className="bg-gradient-to-r from-purple-600 to-purple-700 px-5 py-4">
-                        <div className="flex items-center gap-2">
-                          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                          <h3 className="font-semibold text-white text-sm">Generate Document</h3>
-                        </div>
-                      </div>
-
-                      <div className="p-5 space-y-5">
-                        {/* Document Type Selection */}
-                        <div className="space-y-2">
-                          <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Document Type</div>
-                          <div className="flex items-center gap-4 p-2 bg-slate-50 rounded-lg">
-                            <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
-                            <input
-                              type="radio"
-                              name="docType"
-                              value="quote"
-                              checked={generateDocType === 'quote'}
-                              onChange={() => setGenerateDocType('quote')}
-                                className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-                              />
-                              <span className={`text-sm font-medium transition-colors ${
-                                generateDocType === 'quote' ? 'text-purple-700' : 'text-gray-600 group-hover:text-gray-800'
-                              }`}>
-                                Quote Only
-                              </span>
-                          </label>
-                            <label className="flex-1 flex items-center gap-2.5 cursor-pointer group">
-                            <input
-                              type="radio"
-                              name="docType"
-                              value="package"
-                              checked={generateDocType === 'package'}
-                              onChange={() => setGenerateDocType('package')}
-                                className="w-4 h-4 text-purple-600 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
-                              />
-                              <span className={`text-sm font-medium transition-colors ${
-                                generateDocType === 'package' ? 'text-purple-700' : 'text-gray-600 group-hover:text-gray-800'
-                              }`}>
-                                Full Package
-                              </span>
-                          </label>
-                        </div>
-                        </div>
-
-                        {/* Document selector for Full Package */}
-                        {generateDocType === 'package' && (
-                          <div className="border border-gray-200 rounded-lg bg-slate-50/50 overflow-hidden">
-                            <div className="max-h-[360px] overflow-y-auto p-4 space-y-4">
-                              {/* Quote Specimens section */}
-                              <div className="space-y-3 pb-3 border-b border-gray-200">
-                                <div className="text-xs font-bold text-slate-600 uppercase tracking-wider">Quote Specimens</div>
-                                <div className="space-y-2.5">
-                                  <label className="flex items-center gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
-                                    <input
-                                      type="checkbox"
-                                      checked={includeEndorsements}
-                                      onChange={(e) => setIncludeEndorsements(e.target.checked)}
-                                      className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0"
-                                    />
-                                    <div className="flex-1">
-                                      <span className="text-sm font-medium text-gray-800 block">
-                                        Endorsement Package
-                                      </span>
-                                      {endorsementCount > 0 && (
-                                        <span className="text-xs text-gray-500 mt-0.5 block">
-                                          {endorsementCount} {endorsementCount === 1 ? 'endorsement' : 'endorsements'} included
-                                        </span>
-                                      )}
-                                    </div>
-                                  </label>
-                                  <label className="flex items-center gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
-                                    <input
-                                      type="checkbox"
-                                      checked={includeSpecimen}
-                                      onChange={(e) => setIncludeSpecimen(e.target.checked)}
-                                      className="w-4 h-4 text-purple-600 rounded border-gray-300 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0"
-                                    />
-                                    <span className="text-sm font-medium text-gray-800">Policy Specimen</span>
-                                  </label>
-                                </div>
-                              </div>
-
-                              {/* Documents grouped by type */}
-                              {Object.entries(packageDocsByType).length > 0 ? (
-                                Object.entries(packageDocsByType).map(([docType, docs], idx) => (
-                                  <div key={docType} className={idx > 0 ? 'pt-3 border-t border-gray-200' : ''}>
-                                    <div className="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2.5">
-                                      {docTypeLabels[docType] || docType.replace(/_/g, ' ')}
-                                    </div>
-                                    <div className="space-y-1.5">
-                                      {docs.map((doc) => (
-                                        <label key={doc.id} className="flex items-start gap-3 cursor-pointer group p-2 rounded-md hover:bg-white transition-colors">
-                                          <input
-                                            type="checkbox"
-                                            checked={selectedPackageDocs.includes(doc.id)}
-                                            onChange={(e) => {
-                                              if (e.target.checked) {
-                                                setSelectedPackageDocs([...selectedPackageDocs, doc.id]);
-                                              } else {
-                                                setSelectedPackageDocs(selectedPackageDocs.filter(id => id !== doc.id));
-                                              }
-                                            }}
-                                            className="w-4 h-4 text-purple-600 rounded border-gray-300 mt-0.5 focus:ring-2 focus:ring-purple-500 focus:ring-offset-0"
-                                          />
-                                          <div className="flex-1 min-w-0">
-                                            {doc.code && (
-                                              <span className="text-xs font-mono text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded mr-1.5">
-                                                {doc.code}
-                                              </span>
-                                            )}
-                                            <span className="text-sm text-gray-700 group-hover:text-gray-900">
-                                              {doc.title}
-                                            </span>
-                                          </div>
-                                        </label>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ))
-                              ) : (
-                                <div className="text-sm text-gray-400 text-center py-4">
-                                  No additional documents available
-                                </div>
-                              )}
-
-                              {/* Summary line */}
-                              {packageSummary && (
-                                <div className="pt-3 mt-3 border-t-2 border-purple-200 bg-purple-50/50 rounded-md p-3 -mx-1">
-                                  <div className="text-xs font-semibold text-purple-700 uppercase tracking-wide mb-1">
-                                    Package Summary
-                                  </div>
-                                  <div className="text-sm text-gray-700 font-medium">
-                                    {packageSummary.text}
-                                  </div>
-                                  <div className="text-xs text-gray-500 mt-1">
-                                    Total: {packageSummary.count} {packageSummary.count === 1 ? 'document' : 'documents'}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Status messages */}
-                        {(generateSuccess || generateError) && (
-                          <div className={`p-3 rounded-lg text-sm text-center ${
-                            generateSuccess ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
-                          }`}>
-                            {generateSuccess && (
-                              <div className="flex items-center justify-center gap-2">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                                Quote generated successfully!
-                              </div>
-                            )}
-                            {generateError && generateError}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Button at bottom, full width */}
-                      <div className="px-5 pb-5">
-                        <button
-                          onClick={() => {
-                            setGenerateError(null);
-                            handleGenerateDocument();
-                          }}
-                          disabled={generateDocumentMutation.isPending || generatePackageMutation.isPending}
-                          className="w-full py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white text-sm font-semibold hover:from-purple-700 hover:to-purple-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2"
-                        >
-                          {(generateDocumentMutation.isPending || generatePackageMutation.isPending) ? (
-                            <>
-                              <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                              </svg>
-                              Generating...
-                            </>
-                          ) : generateDocType === 'package' ? (
-                            <>
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
-                              </svg>
-                              Generate Package ({packageSummary?.count || 1} docs)
-                            </>
-                          ) : (
-                            'Generate Quote'
-                          )}
-                        </button>
-                      </div>
-                      <Popover.Arrow className="fill-white" />
-                    </Popover.Content>
-                  </Popover.Portal>
-                </Popover.Root>
-                <button
-                  onClick={handleBindQuote}
-                  disabled={isBindLoading || !activeStructureId}
-                  className="flex-1 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  Bind
-                </button>
-              </div>
-            </div>
-
-            <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-
-              {/* Tab Navigation - Variation-specific only (Terms + Premium) */}
-              <div className="px-2 py-2 border-b border-gray-100 flex items-center justify-between">
-                <div className="flex gap-1">
-                  <SidePanelTab
-                    icon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>}
-                    label="Dates"
-                    isActive={sidePanelTab === 'terms'}
-                    onClick={() => setSidePanelTab('terms')}
-                  />
-                  <SidePanelTab
-                    icon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
-                    label="Premium"
-                    isActive={sidePanelTab === 'premium'}
-                    onClick={() => setSidePanelTab('premium')}
-                  />
-                  <SidePanelTab
-                    icon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
-                    label="Retro"
-                    isActive={sidePanelTab === 'retro'}
-                    onClick={() => setSidePanelTab('retro')}
-                  />
-                  <SidePanelTab
-                    icon={<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2z" /></svg>}
-                    label="Comm"
-                    isActive={sidePanelTab === 'commission'}
-                    onClick={() => setSidePanelTab('commission')}
-                  />
-                </div>
-              </div>
-
-
-              {/* Tab Content */}
-              <div className="p-4 max-h-[500px] overflow-y-auto">
-
-                {/* TERMS TAB */}
-                {sidePanelTab === 'terms' && activeStructure && activeVariation && (
-                  <TermsPanel
-                    structure={activeStructure}
-                    variation={activeVariation}
-                    submission={submission}
-                    submissionId={submissionId}
-                  />
-                )}
-
-                {/* PREMIUM TAB */}
-                {sidePanelTab === 'premium' && activeStructure && (
-                  <PremiumPanel structure={activeStructure} variation={activeVariation} />
-                )}
-
-                {/* RETRO TAB */}
-                {sidePanelTab === 'retro' && activeStructure && (
-                  <RetroPanel
-                    structure={activeStructure}
-                    submissionId={submissionId}
-                  />
-                )}
-
-                {/* COMMISSION TAB */}
-                {sidePanelTab === 'commission' && activeStructure && activeVariation && (
-                  <CommissionPanel
-                    structure={activeStructure}
-                    variation={activeVariation}
-                    submissionId={submissionId}
-                  />
-                )}
-
-              </div>
-
-            </div>
-
-            {/* Document History - persists across options */}
-            {documentHistory.length > 0 && (
-              <div className="bg-white border border-gray-200 rounded-lg shadow-sm p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Document History</h4>
-                  <span className="text-xs text-gray-400">{documentHistory.length} doc{documentHistory.length !== 1 ? 's' : ''}</span>
-                </div>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {documentHistory.map((doc) => (
-                    <div key={doc.id} className="flex items-center justify-between text-sm group">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-xs font-mono text-gray-400 flex-shrink-0">{doc.document_number}</span>
-                        <span className="text-gray-600 truncate text-xs">
-                          {doc.quote_name || (doc.document_type === 'quote_excess' ? 'Excess' : 'Primary')}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400">
-                          {new Date(doc.created_at).toLocaleDateString()}
-                        </span>
-                        {doc.pdf_url && (
-                          <a
-                            href={doc.pdf_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-purple-600 hover:text-purple-800 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            View
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
         </div>
         )}
       </main>
