@@ -5567,43 +5567,82 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     <div className="space-y-6">
       {/* KPI Row - Policy Terms, Retro, Premium, Commission */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* Policy Terms */}
+        {/* Policy Terms - expands right (cols 1-2) when editing */}
         {(() => {
           const datesTbd = variation?.dates_tbd || false;
           const effDate = variation?.effective_date_override || structure?.effective_date || submission?.effective_date;
           const expDate = variation?.expiration_date_override || structure?.expiration_date || submission?.expiration_date;
+          const isExpanded = expandedCard === 'terms';
           return (
             <div
-              onClick={() => setExpandedCard(expandedCard === 'terms' ? null : 'terms')}
-              className={`bg-white rounded-lg px-3 py-3 border cursor-pointer transition-all text-center ${
-                expandedCard === 'terms'
-                  ? 'border-purple-300 ring-1 ring-purple-100'
-                  : 'border-gray-200 hover:border-gray-300'
-              }`}
+              className={`bg-white rounded-lg border transition-all ${
+                isExpanded
+                  ? 'lg:col-span-2 border-purple-300 ring-1 ring-purple-100'
+                  : 'border-gray-200 hover:border-gray-300 cursor-pointer'
+              } ${expandedCard === 'retro' ? 'hidden lg:hidden' : ''}`}
+              onClick={() => !isExpanded && setExpandedCard('terms')}
             >
-              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Policy Term</div>
-              <div className="text-sm font-bold text-gray-800 truncate">
-                {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
+              <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
+                <div className={isExpanded ? '' : 'w-full text-center'}>
+                  <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Policy Term</div>
+                  {!isExpanded && (
+                    <div className="text-sm font-bold text-gray-800 truncate">
+                      {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
+                    </div>
+                  )}
+                </div>
+                {isExpanded && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+                    className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                  >
+                    Done
+                  </button>
+                )}
               </div>
+              {isExpanded && (
+                <div className="p-4">
+                  <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} />
+                </div>
+              )}
             </div>
           );
         })()}
 
-        {/* Retro Dates */}
+        {/* Retro Dates - expands left (cols 1-2) when editing */}
         <div
-          onClick={() => setExpandedCard(expandedCard === 'retro' ? null : 'retro')}
-          className={`bg-white rounded-lg px-3 py-3 border cursor-pointer transition-all text-center ${
+          className={`bg-white rounded-lg border transition-all ${
             expandedCard === 'retro'
-              ? 'border-purple-300 ring-1 ring-purple-100'
-              : 'border-gray-200 hover:border-gray-300'
-          }`}
+              ? 'lg:col-span-2 border-purple-300 ring-1 ring-purple-100'
+              : 'border-gray-200 hover:border-gray-300 cursor-pointer'
+          } ${expandedCard === 'terms' ? 'hidden lg:hidden' : ''}`}
+          onClick={() => expandedCard !== 'retro' && setExpandedCard('retro')}
         >
-          <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Retro</div>
-          <div className="text-sm font-bold text-gray-800">
-            {(!structure?.retro_schedule || structure.retro_schedule.length === 0)
-              ? 'Full Prior Acts'
-              : `${structure.retro_schedule.length} coverage${structure.retro_schedule.length !== 1 ? 's' : ''}`}
+          <div className={`flex items-center justify-between ${expandedCard === 'retro' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
+            <div className={expandedCard === 'retro' ? '' : 'w-full text-center'}>
+              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Retro</div>
+              {expandedCard !== 'retro' && (
+                <div className="text-sm font-bold text-gray-800">
+                  {(!structure?.retro_schedule || structure.retro_schedule.length === 0)
+                    ? 'Full Prior Acts'
+                    : `${structure.retro_schedule.length} coverage${structure.retro_schedule.length !== 1 ? 's' : ''}`}
+                </div>
+              )}
+            </div>
+            {expandedCard === 'retro' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+              >
+                Done
+              </button>
+            )}
           </div>
+          {expandedCard === 'retro' && (
+            <div className="p-4">
+              <RetroPanel structure={structure} submissionId={submission?.id} />
+            </div>
+          )}
         </div>
 
         {/* Premium - View only, shows sold (tower) + technical (rater) if different */}
@@ -5613,7 +5652,9 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           const hasTechnical = technical > 0 && Math.abs(sold - technical) > 1;
           const diff = technical > 0 ? ((sold - technical) / technical) * 100 : 0;
           return (
-            <div className="bg-white rounded-lg px-4 py-3 border border-gray-200">
+            <div className={`bg-gray-50 rounded-lg px-4 py-3 border border-gray-200 ${
+              expandedCard === 'commission' ? 'hidden lg:hidden' : ''
+            }`}>
               {hasTechnical ? (
                 <div className="flex items-end justify-between">
                   <div className="text-left">
@@ -5638,34 +5679,38 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           );
         })()}
 
-        {/* Commission */}
+        {/* Commission - expands left (cols 3-4) when editing */}
         <div
-          onClick={() => setExpandedCard(expandedCard === 'commission' ? null : 'commission')}
-          className={`bg-white rounded-lg px-3 py-3 border cursor-pointer transition-all text-center ${
+          className={`bg-white rounded-lg border transition-all ${
             expandedCard === 'commission'
-              ? 'border-purple-300 ring-1 ring-purple-100'
-              : 'border-gray-200 hover:border-gray-300'
+              ? 'lg:col-span-2 border-purple-300 ring-1 ring-purple-100'
+              : 'border-gray-200 hover:border-gray-300 cursor-pointer'
           }`}
+          onClick={() => expandedCard !== 'commission' && setExpandedCard('commission')}
         >
-          <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Commission</div>
-          <div className="text-base font-bold text-gray-800">{commission}%</div>
+          <div className={`flex items-center justify-between ${expandedCard === 'commission' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
+            <div className={expandedCard === 'commission' ? '' : 'w-full text-center'}>
+              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Commission</div>
+              {expandedCard !== 'commission' && (
+                <div className="text-base font-bold text-gray-800">{commission}%</div>
+              )}
+            </div>
+            {expandedCard === 'commission' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+              >
+                Done
+              </button>
+            )}
+          </div>
+          {expandedCard === 'commission' && (
+            <div className="p-4">
+              <CommissionPanel structure={structure} variation={variation} submissionId={submission?.id} />
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Expanded Panel - shows below KPI row when a card is selected, constrained width */}
-      {expandedCard && ['terms', 'retro', 'commission'].includes(expandedCard) && (
-        <div className="border border-purple-200 rounded-lg bg-white p-4 shadow-sm max-w-lg">
-          {expandedCard === 'terms' && (
-            <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} />
-          )}
-          {expandedCard === 'retro' && (
-            <RetroPanel structure={structure} submissionId={submission?.id} />
-          )}
-          {expandedCard === 'commission' && (
-            <CommissionPanel structure={structure} variation={variation} submissionId={submission?.id} />
-          )}
-        </div>
-      )}
 
       {/* Tower Position & Structure Preview */}
       {(() => {
@@ -6180,77 +6225,9 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
         </div>
       </div>
 
-      {/* Compact Status Footer */}
+      {/* Compact Status Footer - Cross-Option Drift only (Bind Readiness moved to header) */}
       <div className="border-t border-gray-200 pt-4 mt-2">
         <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
-          {/* Bind Readiness - inline */}
-          <div className="flex items-center gap-3">
-            <span className="text-gray-400 uppercase tracking-wide font-medium">Bind:</span>
-            {bindReadinessChecks.filter(c => !c.passed).length === 0 ? (
-              <span className="text-green-600 flex items-center gap-1">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Ready
-              </span>
-            ) : (
-              <HoverCard.Root openDelay={100} closeDelay={100}>
-                <HoverCard.Trigger asChild>
-                  <button className="flex items-center gap-2">
-                    {bindReadinessChecks.filter(c => !c.passed && c.severity === 'error').length > 0 && (
-                      <span className="text-red-600 flex items-center gap-1">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                        {bindReadinessChecks.filter(c => !c.passed && c.severity === 'error').length} blocker{bindReadinessChecks.filter(c => !c.passed && c.severity === 'error').length > 1 ? 's' : ''}
-                      </span>
-                    )}
-                    {bindReadinessChecks.filter(c => !c.passed && c.severity === 'warning').length > 0 && (
-                      <span className="text-amber-600 flex items-center gap-1">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                        {bindReadinessChecks.filter(c => !c.passed && c.severity === 'warning').length} warning{bindReadinessChecks.filter(c => !c.passed && c.severity === 'warning').length > 1 ? 's' : ''}
-                      </span>
-                    )}
-                  </button>
-                </HoverCard.Trigger>
-                <HoverCard.Portal>
-                  <HoverCard.Content className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3" sideOffset={4}>
-                    <div className="space-y-2">
-                      {bindReadinessChecks.filter(c => !c.passed).map(check => (
-                        <div
-                          key={check.id}
-                          className="flex items-center justify-between gap-2 text-xs"
-                        >
-                          <div className="flex items-center gap-2">
-                            {check.severity === 'error' ? (
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                            ) : (
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                            )}
-                            <span className={check.severity === 'error' ? 'text-red-700' : 'text-amber-700'}>
-                              {check.label}
-                            </span>
-                          </div>
-                          {check.action && (
-                            <button
-                              onClick={check.action}
-                              className="text-gray-400 hover:text-gray-600"
-                            >
-                              →
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <HoverCard.Arrow className="fill-white" />
-                  </HoverCard.Content>
-                </HoverCard.Portal>
-              </HoverCard.Root>
-            )}
-          </div>
-
           {/* Cross-Option Drift - inline */}
           {crossOptionDrift.length > 0 && (
             <div className="flex items-center gap-3">
@@ -7858,6 +7835,29 @@ export default function QuotePageV3() {
   const subjectivityCount = subjectivitiesData?.length || 0;
   const pendingSubjectivityCount = subjectivitiesData?.filter(s => s.status === 'pending' || !s.status).length || 0;
 
+  // Bind readiness check (simplified for header display)
+  const bindReadiness = useMemo(() => {
+    const tower = activeStructure?.tower_json || [];
+    const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+    const premium = cmaiLayer?.premium || 0;
+    const effectiveDate = activeStructure?.effective_date || submission?.effective_date;
+
+    const blockers = [];
+    const warnings = [];
+
+    if (premium <= 0) blockers.push('Premium not set');
+    if (!effectiveDate) blockers.push('Effective date missing');
+    if (pendingSubjectivityCount > 0) warnings.push(`${pendingSubjectivityCount} pending subjectivit${pendingSubjectivityCount === 1 ? 'y' : 'ies'}`);
+
+    return {
+      isReady: blockers.length === 0 && warnings.length === 0,
+      hasBlockers: blockers.length > 0,
+      hasWarnings: warnings.length > 0,
+      blockers,
+      warnings,
+    };
+  }, [activeStructure, submission, pendingSubjectivityCount]);
+
   // Fetch document history for the entire submission (persists across options)
   const { data: documentHistory = [] } = useQuery({
     queryKey: ['submission-documents', submissionId],
@@ -8283,6 +8283,63 @@ export default function QuotePageV3() {
               </div>
               <span className="text-xs text-gray-400">{structures.length} options</span>
             </button>
+
+            {/* Center: Bind Readiness Indicator */}
+            <HoverCard.Root openDelay={100} closeDelay={100}>
+              <HoverCard.Trigger asChild>
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-default ${
+                  bindReadiness.isReady
+                    ? 'bg-green-50 text-green-700 border border-green-200'
+                    : bindReadiness.hasBlockers
+                    ? 'bg-red-50 text-red-700 border border-red-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}>
+                  {bindReadiness.isReady ? (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Bind Ready
+                    </>
+                  ) : bindReadiness.hasBlockers ? (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                      {bindReadiness.blockers.length} Blocker{bindReadiness.blockers.length > 1 ? 's' : ''}
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      {bindReadiness.warnings.length} Warning{bindReadiness.warnings.length > 1 ? 's' : ''}
+                    </>
+                  )}
+                </div>
+              </HoverCard.Trigger>
+              {!bindReadiness.isReady && (
+                <HoverCard.Portal>
+                  <HoverCard.Content className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3" sideOffset={4}>
+                    <div className="space-y-2">
+                      {bindReadiness.blockers.map((item, idx) => (
+                        <div key={`b-${idx}`} className="flex items-center gap-2 text-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+                          <span className="text-red-700">{item}</span>
+                        </div>
+                      ))}
+                      {bindReadiness.warnings.map((item, idx) => (
+                        <div key={`w-${idx}`} className="flex items-center gap-2 text-xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 flex-shrink-0" />
+                          <span className="text-amber-700">{item}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <HoverCard.Arrow className="fill-white" />
+                  </HoverCard.Content>
+                </HoverCard.Portal>
+              )}
+            </HoverCard.Root>
 
             {/* Right: Action Buttons */}
             <div className="flex items-center gap-2">
