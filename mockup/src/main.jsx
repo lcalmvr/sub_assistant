@@ -25,9 +25,11 @@ import AppQuote15 from './AppQuote15.jsx'
 import AppQuote16 from './AppQuote16.jsx'
 import AppQuote17 from './AppQuote17.jsx'
 import AppQuoteAccordion from './AppQuoteAccordion.jsx'
+import AppLayoutComparison from './AppLayoutComparison.jsx'
 import './index.css'
 
 const versions = {
+  layouts: { component: AppLayoutComparison, label: 'Layout Comparison - C1/C2/C3' },
   accordion: { component: AppQuoteAccordion, label: 'Quote Accordion - Summary as Home' },
   quote17: { component: AppQuote17, label: 'Quote v17 - Scoped Variations + Defaults' },
   quote16: { component: AppQuote16, label: 'Quote v16 - A/B Variations + Side Panel' },
@@ -55,7 +57,7 @@ const versions = {
   mobile: { component: AppMobile, label: 'Mobile - Drawer' },
 };
 
-const DEFAULT_VERSION = 'quote17';
+const DEFAULT_VERSION = 'layouts';
 
 function MockupSwitcher() {
   const [version, setVersion] = useState(() => {

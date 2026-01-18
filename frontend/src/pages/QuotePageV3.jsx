@@ -22,12 +22,14 @@ import {
   getSubjectivityTemplates,
   linkEndorsementToQuote,
   unlinkEndorsementFromQuote,
+  deleteEndorsement,
   linkSubjectivityToQuote,
   unlinkSubjectivityFromQuote,
   createSubjectivity,
   updateSubjectivity,
   deleteSubjectivity,
   createDocumentLibraryEntry,
+  updateDocumentLibraryEntry,
   generateQuoteDocument,
   generateQuotePackage,
   getQuoteDocuments,
@@ -114,7 +116,19 @@ function parseQuoteIds(quoteIds) {
 }
 
 function getStructurePosition(structure) {
-  return structure?.position === 'excess' ? 'excess' : 'primary';
+  // Derive position from tower structure - if CMAI has attachment > 0, it's excess
+  const tower = structure?.tower_json || [];
+  if (tower.length === 0) {
+    // Fallback to stored position if no tower data
+    return structure?.position === 'excess' ? 'excess' : 'primary';
+  }
+  const cmaiIdx = tower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
+  if (cmaiIdx < 0) {
+    return structure?.position === 'excess' ? 'excess' : 'primary';
+  }
+  // Calculate attachment - sum of limits below CMAI layer
+  const attachment = calculateAttachment(tower, cmaiIdx);
+  return attachment > 0 ? 'excess' : 'primary';
 }
 
 function getScopeTargetIds(structures, scope, currentId) {
@@ -497,7 +511,7 @@ function TowerVisual({ tower, position }) {
 // ============================================================================
 
 function TowerEditor({ quote, onSave, isPending, embedded = false, setEditControls }) {
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(embedded); // Start in edit mode if embedded
   const [layers, setLayers] = useState(quote.tower_json || []);
   const hasQs = layers.some(l => l.quota_share);
   const [showQsColumn, setShowQsColumn] = useState(hasQs);
@@ -515,15 +529,10 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
   useEffect(() => {
     setLayers(quote.tower_json || []);
     setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
-    setIsEditing(false);
-    carrierInputRefs.current = {};
-    limitInputRefs.current = {};
-    qsInputRefs.current = {};
-    retentionInputRefs.current = {};
-    premiumInputRefs.current = {};
-    rpmInputRefs.current = {};
-    ilfInputRefs.current = {};
-  }, [quote.id]);
+    setIsEditing(embedded); // Keep edit mode if embedded, otherwise reset
+    // Note: Don't clear refs here - they're populated by render via ref callbacks
+    // Clearing after render breaks arrow navigation on fresh mounts
+  }, [quote.id, embedded]);
 
   // Click outside to save, Escape to cancel
   useEffect(() => {
@@ -540,6 +549,11 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         setLayers(quote.tower_json || []);
+        setIsEditing(false);
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        // Save on Enter (unless Shift+Enter for potential future multi-line)
+        const recalculated = recalculateAttachments(layers);
+        onSave({ tower_json: recalculated, quote_name: generateOptionName({ ...quote, tower_json: recalculated }) });
         setIsEditing(false);
       }
     };
@@ -661,6 +675,23 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
     return () => embedded && setEditControls?.(null);
   }, [isEditing, embedded, isPending]);
 
+  // Auto-focus first premium input when entering edit mode
+  useEffect(() => {
+    if (!isEditing) return;
+    // Small delay to ensure inputs are rendered
+    const timer = setTimeout(() => {
+      // Find CMAI layer's displayIdx (it's displayed in reverse order)
+      const cmaiIdx = [...layers].reverse().findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
+      if (cmaiIdx >= 0 && premiumInputRefs.current[cmaiIdx]) {
+        premiumInputRefs.current[cmaiIdx].focus();
+      } else if (premiumInputRefs.current[0]) {
+        // Fallback to first premium input
+        premiumInputRefs.current[0].focus();
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [isEditing, layers]);
+
   const cmaiLayer = layers.find(l => l.carrier?.toUpperCase().includes('CMAI'));
   const cmaiPremium = cmaiLayer?.premium;
 
@@ -736,7 +767,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                   }}
                 >
                   {/* Carrier */}
-                  <td className="px-4 py-3">
+                  <td className={`px-4 ${isEditing ? 'py-1.5' : 'py-3'}`}>
                     {isEditing && !isCMAI ? (
                       <input
                         ref={(el) => { carrierInputRefs.current[displayIdx] = el; }}
@@ -749,6 +780,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                           setLayers(newLayers);
                         }}
                         onKeyDown={(e) => handleArrowNav(e, displayIdx, carrierInputRefs)}
+                        onFocus={(e) => e.target.select()}
                         placeholder="Carrier name"
                       />
                     ) : (
@@ -762,7 +794,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                   </td>
 
                   {/* Limit */}
-                  <td className="px-4 py-3">
+                  <td className={`px-4 ${isEditing ? 'py-1.5' : 'py-3'}`}>
                     {isEditing ? (
                       <select
                         ref={(el) => { limitInputRefs.current[displayIdx] = el; }}
@@ -786,7 +818,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
 
                   {/* Part Of (QS) */}
                   {showQsColumn && (
-                    <td className="px-4 py-3">
+                    <td className={`px-4 ${isEditing ? 'py-1.5' : 'py-3'}`}>
                       {isEditing ? (
                         <select
                           ref={(el) => { qsInputRefs.current[displayIdx] = el; }}
@@ -817,7 +849,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                   )}
 
                   {/* Retention/Attachment */}
-                  <td className="px-4 py-3">
+                  <td className={`px-4 ${isEditing ? 'py-1.5' : 'py-3'}`}>
                     {isEditing && quote.position === 'primary' && isPrimary ? (
                       <select
                         ref={(el) => { retentionInputRefs.current[displayIdx] = el; }}
@@ -842,7 +874,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                   </td>
 
                   {/* Premium */}
-                  <td className="px-4 py-3 text-right">
+                  <td className={`px-4 text-right ${isEditing ? 'py-1.5' : 'py-3'}`}>
                     {isEditing ? (
                       <input
                         ref={(el) => { premiumInputRefs.current[displayIdx] = el; }}
@@ -858,6 +890,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                           setLayers(newLayers);
                         }}
                         onKeyDown={(e) => handleArrowNav(e, displayIdx, premiumInputRefs)}
+                        onFocus={(e) => e.target.select()}
                       />
                     ) : (
                       <span className="font-medium text-green-700">
@@ -867,7 +900,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                   </td>
 
                   {/* RPM */}
-                  <td className="px-4 py-3 text-right">
+                  <td className={`px-4 text-right ${isEditing ? 'py-1.5' : 'py-3'}`}>
                     {isEditing && isCMAI ? (
                       <input
                         ref={(el) => { rpmInputRefs.current[displayIdx] = el; }}
@@ -885,6 +918,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                           setLayers(newLayers);
                         }}
                         onKeyDown={(e) => handleArrowNav(e, displayIdx, rpmInputRefs)}
+                        onFocus={(e) => e.target.select()}
                       />
                     ) : (
                       <span className="text-gray-500">{rpm ? `$${rpm.toLocaleString()}` : '—'}</span>
@@ -892,7 +926,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                   </td>
 
                   {/* ILF */}
-                  <td className="px-4 py-3 text-right">
+                  <td className={`px-4 text-right ${isEditing ? 'py-1.5' : 'py-3'}`}>
                     {isEditing && isCMAI ? (
                       <input
                         ref={(el) => { ilfInputRefs.current[displayIdx] = el; }}
@@ -911,6 +945,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
                           setLayers(newLayers);
                         }}
                         onKeyDown={(e) => handleArrowNav(e, displayIdx, ilfInputRefs)}
+                        onFocus={(e) => e.target.select()}
                       />
                     ) : (
                       <span className="text-gray-500">{ilfPercent ? `${ilfPercent}%` : '—'}</span>
@@ -919,7 +954,7 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
 
                   {/* Delete */}
                   {isEditing && (
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-1.5 text-center">
                       {!isCMAI && (
                         <button
                           onClick={() => setLayers(layers.filter((_, i) => i !== actualIdx))}
@@ -5131,15 +5166,164 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
   );
 }
 
-function SummaryTabContent({ structure, variation, submission, structureId, structures, onMainTabChange, documentHistory = [] }) {
+function SummaryTabContent({ structure, variation, submission, structureId, structures, onMainTabChange, documentHistory = [], summaryScope = 'quote', selectedQuoteId, onSelect, onUpdateOption }) {
   const queryClient = useQueryClient();
   const [notes, setNotes] = useState(structure?.notes || '');
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [showAllSublimits, setShowAllSublimits] = useState(false);
   const [showMissingSuggestions, setShowMissingSuggestions] = useState(false); // Single toggle for all missing suggestions
   const [showOnlyOurLayer, setShowOnlyOurLayer] = useState(false);
+  const [showQuoteOptions, setShowQuoteOptions] = useState(true); // Collapsible quote options in submission mode
   // Expandable card state for C1/C2 pattern
   const [expandedCard, setExpandedCard] = useState(null); // 'subjectivities' | 'endorsements' | 'terms' | 'premium' | 'retro' | 'commission' | null
+
+  // Premium editing state for Quote Options table (submission mode)
+  const [isEditingPremiums, setIsEditingPremiums] = useState(false);
+  const [premiumDraft, setPremiumDraft] = useState({});
+  const quoteOptionsRef = useRef(null);
+  const premiumInputRefs = useRef({});
+
+  // Subjectivity editing state
+  const [editingSubjId, setEditingSubjId] = useState(null);
+  const [editingSubjText, setEditingSubjText] = useState('');
+  const [isAddingSubjectivity, setIsAddingSubjectivity] = useState(false);
+  const [newSubjectivityText, setNewSubjectivityText] = useState('');
+  const [showLibraryPicker, setShowLibraryPicker] = useState(false);
+  const [librarySearchTerm, setLibrarySearchTerm] = useState('');
+  const [appliesToPopoverId, setAppliesToPopoverId] = useState(null); // Track which "applies to" popover is open
+  const subjectivitiesCardRef = useRef(null);
+
+  // Endorsement editing state
+  const [selectedEndorsementId, setSelectedEndorsementId] = useState(null); // Currently selected endorsement for keyboard nav
+  const [editingEndorsementId, setEditingEndorsementId] = useState(null); // Currently editing endorsement (manuscript only)
+  const [editingEndorsementText, setEditingEndorsementText] = useState('');
+  const [endorsementAppliesToPopoverId, setEndorsementAppliesToPopoverId] = useState(null);
+  const [subjectivityAppliesToPopoverId, setSubjectivityAppliesToPopoverId] = useState(null);
+  const [isAddingEndorsement, setIsAddingEndorsement] = useState(false);
+  const [newEndorsementText, setNewEndorsementText] = useState('');
+  const [showEndorsementLibraryPicker, setShowEndorsementLibraryPicker] = useState(false);
+  const [endorsementLibrarySearchTerm, setEndorsementLibrarySearchTerm] = useState('');
+  const endorsementsCardRef = useRef(null);
+
+  // Retro card ref
+  const retroCardRef = useRef(null);
+
+  // Tower card ref
+  const towerCardRef = useRef(null);
+
+  // Click outside to close expanded subjectivities card
+  useEffect(() => {
+    if (expandedCard !== 'subjectivities') return;
+
+    const handleClickOutside = (e) => {
+      if (subjectivitiesCardRef.current && !subjectivitiesCardRef.current.contains(e.target)) {
+        // Check if click is inside a popover (they render in portal outside the card)
+        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
+        if (isPopoverClick) return;
+
+        // Trigger blur on active element to save any pending edit (blur handler saves)
+        if (document.activeElement && subjectivitiesCardRef.current.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+
+        setExpandedCard(null);
+        setIsAddingSubjectivity(false);
+        setShowLibraryPicker(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [expandedCard]);
+
+  // Click outside to close expanded endorsements card
+  useEffect(() => {
+    if (expandedCard !== 'endorsements') return;
+
+    const handleClickOutside = (e) => {
+      if (endorsementsCardRef.current && !endorsementsCardRef.current.contains(e.target)) {
+        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
+        if (isPopoverClick) return;
+
+        // Trigger blur on active element to save any pending edit (blur handler saves)
+        if (document.activeElement && endorsementsCardRef.current.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+
+        setExpandedCard(null);
+        setSelectedEndorsementId(null);
+        setEditingEndorsementId(null);
+        setIsAddingEndorsement(false);
+        setShowEndorsementLibraryPicker(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [expandedCard]);
+
+  // Click outside to close expanded retro card
+  useEffect(() => {
+    if (expandedCard !== 'retro') return;
+
+    const handleClickOutside = (e) => {
+      if (retroCardRef.current && !retroCardRef.current.contains(e.target)) {
+        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
+        if (isPopoverClick) return;
+
+        // Trigger blur on active element to save any pending edit
+        if (document.activeElement && retroCardRef.current.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+
+        setExpandedCard(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [expandedCard]);
+
+  // Click outside to close expanded tower card
+  useEffect(() => {
+    if (expandedCard !== 'tower') return;
+
+    const handleClickOutside = (e) => {
+      if (towerCardRef.current && !towerCardRef.current.contains(e.target)) {
+        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
+        if (isPopoverClick) return;
+
+        // Trigger blur on active element to save any pending edit
+        if (document.activeElement && towerCardRef.current.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+
+        setExpandedCard(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [expandedCard]);
+
+  // Escape key to close expanded retro card
+  useEffect(() => {
+    if (expandedCard !== 'retro') return;
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        // Trigger blur on active element to save any pending edit
+        if (document.activeElement && retroCardRef.current?.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+        setExpandedCard(null);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [expandedCard]);
+
   const submissionId = submission?.id;
 
   const quoteType = getStructurePosition(structure) === 'excess' ? 'excess' : 'primary';
@@ -5149,6 +5333,306 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
       .filter(struct => getStructurePosition(struct) === quoteType && String(struct.id) !== String(structureId))
       .map(struct => String(struct.id))
   ), [structures, quoteType, structureId]);
+
+  // All options for "Applies To" popover
+  const allOptions = useMemo(() => (
+    (structures || []).map(s => ({
+      id: String(s.id),
+      name: s.quote_name || generateOptionName(s),
+      position: getStructurePosition(s),
+    }))
+  ), [structures]);
+  const allOptionIds = useMemo(() => allOptions.map(o => o.id), [allOptions]);
+  const allPrimaryIds = useMemo(() => allOptions.filter(o => o.position !== 'excess').map(o => o.id), [allOptions]);
+  const allExcessIds = useMemo(() => allOptions.filter(o => o.position === 'excess').map(o => o.id), [allOptions]);
+
+  // Helper to normalize retro schedule for comparison
+  const normalizeRetroSchedule = (schedule) => {
+    if (!schedule || schedule.length === 0) return '[]';
+    const normalized = schedule.map(entry => {
+      const obj = { coverage: entry.coverage, retro: entry.retro };
+      if (entry.retro === 'date' && entry.date) obj.date = entry.date;
+      if (entry.retro === 'custom' && entry.custom_text) obj.custom_text = entry.custom_text;
+      return obj;
+    }).sort((a, b) => (a.coverage || '').localeCompare(b.coverage || ''));
+    return JSON.stringify(normalized);
+  };
+
+  // Helper to format retro schedule summary (shows coverage: retro pairs)
+  const formatRetroSummary = (schedule) => {
+    if (!schedule || schedule.length === 0) return 'Full Prior Acts';
+
+    // Coverage abbreviations
+    const covAbbrev = {
+      cyber: 'Cyber',
+      tech_eo: 'Tech',
+      do: 'D&O',
+      epl: 'EPL',
+      fiduciary: 'Fid',
+    };
+
+    // Retro abbreviations
+    const retroAbbrev = (entry) => {
+      if (entry.retro === 'full_prior_acts') return 'FPA';
+      if (entry.retro === 'follow_form') return 'FF';
+      if (entry.retro === 'inception') return 'Inc';
+      if (entry.retro === 'date') return entry.date || 'Date';
+      if (entry.retro === 'custom') return entry.custom_text || 'Custom';
+      return entry.retro || '—';
+    };
+
+    // Check if all coverages have the same retro
+    const uniqueRetros = new Set(schedule.map(e => e.retro));
+    if (uniqueRetros.size === 1) {
+      const retro = schedule[0].retro;
+      if (retro === 'full_prior_acts') return 'Full Prior Acts';
+      if (retro === 'follow_form') return 'Follow Form';
+      if (retro === 'inception') return 'Inception';
+      return retroAbbrev(schedule[0]);
+    }
+
+    // Mixed - show each coverage with its retro
+    return schedule
+      .map(entry => `${covAbbrev[entry.coverage] || entry.coverage}: ${retroAbbrev(entry)}`)
+      .join(', ');
+  };
+
+  // Premium editing helpers for Quote Options table
+  const formatWithCommas = (num) => {
+    if (num === null || num === undefined || num === '') return '';
+    return Math.round(Number(num)).toLocaleString();
+  };
+
+  const parseNumber = (str) => {
+    const cleaned = String(str).replace(/[^0-9.-]/g, '');
+    return cleaned === '' ? 0 : Number(cleaned);
+  };
+
+  const enterPremiumEditMode = (focusId = null) => {
+    const initialDraft = {};
+    (structures || []).forEach(struct => {
+      const tower = struct.tower_json || [];
+      const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+      initialDraft[struct.id] = cmaiLayer?.premium || 0;
+    });
+    setPremiumDraft(initialDraft);
+    setIsEditingPremiums(true);
+    // Focus specified input after state update
+    if (focusId) {
+      setTimeout(() => {
+        const input = premiumInputRefs.current[focusId];
+        if (input) {
+          input.focus();
+          input.select();
+        }
+      }, 0);
+    }
+  };
+
+  const savePremiumsAndExit = () => {
+    (structures || []).forEach(struct => {
+      const newPremium = premiumDraft[struct.id];
+      if (newPremium === undefined) return;
+
+      const tower = struct.tower_json || [];
+      const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+      const currentPremium = cmaiLayer?.premium || 0;
+
+      if (newPremium !== currentPremium) {
+        const newTower = [...tower];
+        const cmaiIdx = newTower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
+        if (cmaiIdx >= 0) {
+          newTower[cmaiIdx] = { ...newTower[cmaiIdx], premium: newPremium };
+          if (onUpdateOption) {
+            onUpdateOption(struct.id, { tower_json: newTower });
+          }
+        }
+      }
+    });
+
+    setIsEditingPremiums(false);
+    setPremiumDraft({});
+  };
+
+  const handlePremiumKeyDown = (e, currentId) => {
+    const optionIds = allOptions.map(o => o.id);
+    const currentIdx = optionIds.indexOf(currentId);
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prevId = optionIds[currentIdx - 1];
+      if (prevId && premiumInputRefs.current[prevId]) {
+        premiumInputRefs.current[prevId].focus();
+        premiumInputRefs.current[prevId].select();
+      }
+    } else if (e.key === 'ArrowDown' || e.key === 'Enter') {
+      e.preventDefault();
+      const nextId = optionIds[currentIdx + 1];
+      if (nextId && premiumInputRefs.current[nextId]) {
+        premiumInputRefs.current[nextId].focus();
+        premiumInputRefs.current[nextId].select();
+      } else if (e.key === 'Enter') {
+        savePremiumsAndExit();
+      }
+    } else if (e.key === 'Escape') {
+      setIsEditingPremiums(false);
+      setPremiumDraft({});
+    }
+  };
+
+  const updatePremiumDraft = (structId, value) => {
+    setPremiumDraft(prev => ({ ...prev, [structId]: value }));
+  };
+
+  // Click outside to save premium edits
+  useEffect(() => {
+    if (!isEditingPremiums) return;
+
+    const handleClickOutside = (e) => {
+      if (quoteOptionsRef.current && !quoteOptionsRef.current.contains(e.target)) {
+        savePremiumsAndExit();
+      }
+    };
+
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setIsEditingPremiums(false);
+        setPremiumDraft({});
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [isEditingPremiums, premiumDraft, structures, onUpdateOption]);
+
+  // Calculate which peers have matching retro config
+  const currentRetroNormalized = normalizeRetroSchedule(structure?.retro_schedule);
+  const retroMatchingPeerIds = useMemo(() => {
+    return (structures || [])
+      .filter(s => String(s.id) !== String(structureId))
+      .filter(s => normalizeRetroSchedule(s.retro_schedule) === currentRetroNormalized)
+      .map(s => String(s.id));
+  }, [structures, structureId, currentRetroNormalized]);
+
+  // Submission mode: compute variations across all quotes
+  const allQuoteTerms = useMemo(() => {
+    if (!structures || !allOptions) return [];
+    return allOptions.map(opt => {
+      const s = structures.find(st => String(st.id) === String(opt.id));
+      const v = s?.variations?.[0];
+      const datesTbd = v?.dates_tbd || false;
+      const effDate = v?.effective_date_override || s?.effective_date || submission?.effective_date;
+      const expDate = v?.expiration_date_override || s?.expiration_date || submission?.expiration_date;
+      return {
+        quoteId: opt.id,
+        quoteName: opt.name,
+        datesTbd,
+        effDate,
+        expDate,
+        key: datesTbd ? 'TBD' : `${effDate || ''}-${expDate || ''}`,
+      };
+    });
+  }, [structures, allOptions, submission]);
+
+  const termVariationCount = useMemo(() => {
+    const uniqueKeys = new Set(allQuoteTerms.map(t => t.key));
+    return uniqueKeys.size;
+  }, [allQuoteTerms]);
+
+  const allQuoteRetros = useMemo(() => {
+    if (!structures || !allOptions) return [];
+    return allOptions.map(opt => {
+      const s = structures.find(st => String(st.id) === String(opt.id));
+      return {
+        quoteId: opt.id,
+        quoteName: opt.name,
+        retroSchedule: s?.retro_schedule || [],
+        retroNotes: s?.retro_notes || '',
+        key: normalizeRetroSchedule(s?.retro_schedule),
+      };
+    });
+  }, [structures, allOptions]);
+
+  const retroVariationCount = useMemo(() => {
+    const uniqueKeys = new Set(allQuoteRetros.map(r => r.key));
+    return uniqueKeys.size;
+  }, [allQuoteRetros]);
+
+  const allQuoteCommissions = useMemo(() => {
+    if (!structures || !allOptions) return [];
+    return allOptions.map(opt => {
+      const s = structures.find(st => String(st.id) === String(opt.id));
+      const v = s?.variations?.[0];
+      // Match quote mode: variation.commission_override ?? 15
+      const rate = v?.commission_override ?? 15;
+      return {
+        quoteId: opt.id,
+        quoteName: opt.name,
+        commissionRate: rate,
+        key: String(rate),
+      };
+    });
+  }, [structures, allOptions]);
+
+  const commissionVariationCount = useMemo(() => {
+    const uniqueKeys = new Set(allQuoteCommissions.map(c => c.key));
+    return uniqueKeys.size;
+  }, [allQuoteCommissions]);
+
+  // Grouped variations for KPI cards (for showing "value (X/Y)" badges)
+  const termVariationGroups = useMemo(() => {
+    const groups = {};
+    allQuoteTerms.forEach(t => {
+      if (!groups[t.key]) {
+        groups[t.key] = {
+          key: t.key,
+          label: t.datesTbd ? 'TBD' : `${formatDate(t.effDate)} - ${formatDate(t.expDate)}`,
+          count: 0,
+        };
+      }
+      groups[t.key].count++;
+    });
+    // Sort by count descending (most common first)
+    return Object.values(groups).sort((a, b) => b.count - a.count);
+  }, [allQuoteTerms]);
+
+  const retroVariationGroups = useMemo(() => {
+    const groups = {};
+    allQuoteRetros.forEach(r => {
+      if (!groups[r.key]) {
+        groups[r.key] = {
+          key: r.key,
+          label: formatRetroSummary(r.retroSchedule),
+          schedule: r.retroSchedule, // Keep raw schedule for detailed rendering
+          count: 0,
+        };
+      }
+      groups[r.key].count++;
+    });
+    return Object.values(groups).sort((a, b) => b.count - a.count);
+  }, [allQuoteRetros]);
+
+  const commissionVariationGroups = useMemo(() => {
+    const groups = {};
+    allQuoteCommissions.forEach(c => {
+      if (!groups[c.key]) {
+        groups[c.key] = {
+          key: c.key,
+          label: `${c.commissionRate}%`,
+          count: 0,
+        };
+      }
+      groups[c.key].count++;
+    });
+    return Object.values(groups).sort((a, b) => b.count - a.count);
+  }, [allQuoteCommissions]);
+
+  // State for retro "Apply to" popover
+  const [showRetroApplyPopover, setShowRetroApplyPopover] = useState(false);
 
   // Fetch endorsements
   const { data: endorsementsData } = useQuery({
@@ -5192,23 +5676,97 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const pendingSubjectivities = subjectivities.filter(s => s.status === 'pending' || !s.status).length;
   const receivedSubjectivities = subjectivities.filter(s => s.status === 'received').length;
 
+  // Create lookup map for quote_ids from submission-level data
+  // Filter to only include quote IDs that still exist (exclude deleted quotes)
+  const existingQuoteIdSet = useMemo(() => new Set(allOptionIds), [allOptionIds]);
+  const subjectivityQuoteIdsMap = useMemo(() => {
+    const map = new Map();
+    (submissionSubjectivitiesData || []).forEach(subj => {
+      const id = String(subj.id || '');
+      if (id) {
+        const allIds = parseQuoteIds(subj.quote_ids);
+        // Filter to only include IDs that exist in current structures
+        const existingIds = allIds.filter(qid => existingQuoteIdSet.has(String(qid)));
+        map.set(id, existingIds);
+      }
+    });
+    return map;
+  }, [submissionSubjectivitiesData, existingQuoteIdSet]);
+
   const currentSubjectivityItems = useMemo(() => (
-    subjectivities.map(subj => ({
-      id: String(subj.subjectivity_id || subj.template_id || subj.id || ''),
-      label: subj.subjectivity_text || subj.text || subj.title || 'Subjectivity',
-      status: subj.status,
-    })).filter(item => item.id)
-  ), [subjectivities]);
+    subjectivities.map(subj => {
+      const id = String(subj.subjectivity_id || subj.template_id || subj.id || '');
+      const rawId = subj.id;
+      // Look up quote_ids from submission-level data using the raw id
+      const quoteIds = subjectivityQuoteIdsMap.get(String(rawId)) || [];
+      return {
+        id,
+        rawId,
+        label: subj.subjectivity_text || subj.text || subj.title || 'Subjectivity',
+        status: subj.status,
+        quoteIds,
+      };
+    }).filter(item => item.id)
+  ), [subjectivities, subjectivityQuoteIdsMap]);
+
+  const endorsementQuoteIdsMap = useMemo(() => {
+    const map = new Map();
+    const submissionEndorsements = submissionEndorsementsData?.endorsements || [];
+    submissionEndorsements.forEach(endt => {
+      const id = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+      if (id) {
+        const allIds = parseQuoteIds(endt.quote_ids);
+        const existingIds = allIds.filter(qid => existingQuoteIdSet.has(String(qid)));
+        map.set(id, existingIds);
+      }
+    });
+    return map;
+  }, [submissionEndorsementsData, existingQuoteIdSet]);
+
+  // Maps for Quote Options summary table (submission mode)
+  const subjectivitiesByQuote = useMemo(() => {
+    const map = new Map();
+    (submissionSubjectivitiesData || []).forEach(subj => {
+      const label = subj.text || subj.subjectivity_text || subj.title || 'Subjectivity';
+      const quoteIds = parseQuoteIds(subj.quote_ids);
+      quoteIds.forEach(id => {
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push({ id: subj.id, label, status: subj.status });
+      });
+    });
+    return map;
+  }, [submissionSubjectivitiesData]);
+
+  const endorsementsByQuote = useMemo(() => {
+    const map = new Map();
+    const endorsementList = submissionEndorsementsData?.endorsements || [];
+    endorsementList.forEach(endt => {
+      const label = endt.title || endt.code || 'Endorsement';
+      const quoteIds = parseQuoteIds(endt.quote_ids);
+      quoteIds.forEach(id => {
+        if (!map.has(id)) map.set(id, []);
+        map.get(id).push({ id: endt.endorsement_id, label, code: endt.code });
+      });
+    });
+    return map;
+  }, [submissionEndorsementsData]);
 
   const currentEndorsementItems = useMemo(() => (
-    endorsements.map(endt => ({
-      id: String(endt.endorsement_id || endt.document_library_id || endt.id || ''),
-      label: endt.title || endt.name || endt.code || 'Endorsement',
-      category: endt.category,
-      isRequired: endt.category === 'required' || endt.is_required,
-      isAuto: endt.is_auto || endt.auto_attach_rules || endt.attachment_type === 'auto',
-    })).filter(item => item.id)
-  ), [endorsements]);
+    endorsements.map(endt => {
+      const id = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+      const quoteIds = endorsementQuoteIdsMap.get(id) || [];
+      return {
+        id,
+        rawId: endt.endorsement_id || endt.document_library_id || endt.id,
+        label: endt.title || endt.name || endt.code || 'Endorsement',
+        category: endt.category,
+        isRequired: endt.category === 'required' || endt.is_required,
+        isAuto: endt.is_auto || endt.auto_attach_rules || endt.attachment_type === 'auto',
+        isManuscript: endt.category === 'manuscript',
+        quoteIds,
+      };
+    }).filter(item => item.id)
+  ), [endorsements, endorsementQuoteIdsMap]);
 
   // Type icon helper for endorsements
   const getEndorsementIcon = (item) => {
@@ -5298,6 +5856,46 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     currentEndorsementItems.filter(item => peerEndorsementUnion.has(item.id))
   ), [currentEndorsementItems, peerEndorsementUnion]);
 
+  // All submission endorsements for submission scope view
+  // Filter out orphaned items (no quotes linked) since they serve no purpose
+  const allSubmissionEndorsements = useMemo(() => {
+    const endorsements = submissionEndorsementsData?.endorsements || [];
+    return endorsements.map(endt => {
+      const id = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+      const allIds = parseQuoteIds(endt.quote_ids);
+      const existingIds = allIds.filter(qid => existingQuoteIdSet.has(String(qid)));
+      return {
+        id,
+        rawId: endt.endorsement_id || endt.document_library_id || endt.id,
+        label: endt.title || endt.name || endt.code || 'Endorsement',
+        category: endt.category,
+        isRequired: endt.category === 'required' || endt.is_required,
+        isAuto: endt.is_auto || endt.auto_attach_rules || endt.attachment_type === 'auto',
+        isManuscript: endt.category === 'manuscript',
+        quoteIds: existingIds,
+      };
+    }).filter(item => item.id && item.quoteIds.length > 0);
+  }, [submissionEndorsementsData, existingQuoteIdSet]);
+
+  // All submission subjectivities for submission scope view
+  // Filter out orphaned items (no quotes linked) since they serve no purpose
+  const allSubmissionSubjectivities = useMemo(() => {
+    const subjectivities = submissionSubjectivitiesData || [];
+    return subjectivities.map(subj => {
+      const id = String(subj.id || '');
+      const allIds = parseQuoteIds(subj.quote_ids);
+      const existingIds = allIds.filter(qid => existingQuoteIdSet.has(String(qid)));
+      return {
+        id,
+        rawId: subj.id,
+        label: subj.text || subj.subjectivity_text || subj.title || 'Subjectivity',
+        status: subj.status || 'pending',
+        isRequired: subj.is_required || subj.category === 'required',
+        quoteIds: existingIds,
+      };
+    }).filter(item => item.id && item.quoteIds.length > 0);
+  }, [submissionSubjectivitiesData, existingQuoteIdSet]);
+
   const restoreSubjectivity = useMutation({
     mutationFn: (subjectivityId) => linkSubjectivityToQuote(structureId, subjectivityId),
     onSuccess: () => {
@@ -5309,6 +5907,32 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const restoreEndorsement = useMutation({
     mutationFn: (endorsementId) => linkEndorsementToQuote(structureId, endorsementId),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
+  });
+
+  const unlinkEndorsementMutation = useMutation({
+    mutationFn: (endorsementId) => unlinkEndorsementFromQuote(structureId, endorsementId),
+    onMutate: async (endorsementId) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
+      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
+      queryClient.setQueryData(['quote-endorsements', structureId], (old) => {
+        if (!old?.endorsements) return old;
+        return {
+          ...old,
+          endorsements: old.endorsements.filter(e => {
+            const id = String(e.endorsement_id || e.document_library_id || e.id || '');
+            return id !== String(endorsementId);
+          }),
+        };
+      });
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
       queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
     },
@@ -5334,6 +5958,443 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     },
   });
 
+  // Subjectivity templates (library) - only fetch when picker is open
+  const { data: subjectivityTemplatesData } = useQuery({
+    queryKey: ['subjectivity-templates'],
+    queryFn: () => getSubjectivityTemplates().then(r => r.data),
+    enabled: showLibraryPicker,
+  });
+  const subjectivityTemplates = subjectivityTemplatesData || [];
+
+  // Filter out already-linked templates
+  const linkedTemplateIds = new Set(subjectivities.map(s => s.subjectivity_id || s.template_id));
+  const availableTemplates = subjectivityTemplates.filter(t => !linkedTemplateIds.has(t.id));
+  const filteredTemplates = availableTemplates.filter(t =>
+    !librarySearchTerm || (t.text || t.subjectivity_text || '')?.toLowerCase().includes(librarySearchTerm.toLowerCase())
+  );
+
+  // Endorsement library - only fetch when picker is open
+  const { data: endorsementLibraryData } = useQuery({
+    queryKey: ['endorsement-library'],
+    queryFn: () => getDocumentLibraryEntries({ document_type: 'endorsement', status: 'active' }).then(r => r.data),
+    enabled: showEndorsementLibraryPicker,
+  });
+  const endorsementLibrary = endorsementLibraryData || [];
+
+  // Filter out already-linked endorsements
+  const linkedEndorsementIds = new Set(endorsements.map(e => e.endorsement_id || e.document_library_id));
+  const availableLibraryEndorsements = endorsementLibrary.filter(e => !linkedEndorsementIds.has(e.id));
+  const filteredLibraryEndorsements = availableLibraryEndorsements.filter(e =>
+    !endorsementLibrarySearchTerm || (e.title || e.code || '')?.toLowerCase().includes(endorsementLibrarySearchTerm.toLowerCase())
+  );
+
+  // Count how many OTHER quotes share this subjectivity (excludes current quote)
+  const getSharedQuoteCount = (item) => {
+    if (!item?.quoteIds || !Array.isArray(item.quoteIds)) return 0;
+    return item.quoteIds.filter(id => String(id) !== String(structureId)).length;
+  };
+
+  // Update subjectivity text mutation
+  const updateSubjectivityTextMutation = useMutation({
+    mutationFn: ({ subjectivityId, text }) => updateSubjectivity(subjectivityId, { text }),
+    onMutate: async ({ subjectivityId, text }) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-subjectivities', structureId] });
+      const previous = queryClient.getQueryData(['quote-subjectivities', structureId]);
+      queryClient.setQueryData(['quote-subjectivities', structureId], (old) =>
+        (old || []).map(s => s.id === subjectivityId ? { ...s, text, subjectivity_text: text } : s)
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    },
+  });
+
+  // Create new custom subjectivity
+  const createSubjectivityMutation = useMutation({
+    mutationFn: (text) => createSubjectivity(submissionId, { text, quote_ids: [structureId] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      setNewSubjectivityText('');
+      setIsAddingSubjectivity(false);
+    },
+  });
+
+  // Link template from library
+  const linkTemplateSubjectivity = useMutation({
+    mutationFn: (templateId) => linkSubjectivityToQuote(structureId, templateId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      setShowLibraryPicker(false);
+      setLibrarySearchTerm('');
+    },
+  });
+
+  // Unlink subjectivity from this quote
+  const unlinkSubjectivityMutation = useMutation({
+    mutationFn: (subjectivityId) => unlinkSubjectivityFromQuote(structureId, subjectivityId),
+    onMutate: async (subjectivityId) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-subjectivities', structureId] });
+      const previous = queryClient.getQueryData(['quote-subjectivities', structureId]);
+      queryClient.setQueryData(['quote-subjectivities', structureId], (old) =>
+        (old || []).filter(s => s.id !== subjectivityId)
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['quote-subjectivities', structureId], ctx.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+    },
+  });
+
+  // Toggle subjectivity link to any quote (for "Applies To" popover)
+  const toggleSubjectivityLinkMutation = useMutation({
+    mutationFn: async ({ subjectivityId, quoteId, isLinked }) => {
+      if (isLinked) {
+        return unlinkSubjectivityFromQuote(quoteId, subjectivityId);
+      } else {
+        return linkSubjectivityToQuote(quoteId, subjectivityId);
+      }
+    },
+    onMutate: async ({ subjectivityId, quoteId, isLinked }) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submissionId]);
+      queryClient.setQueryData(['submissionSubjectivities', submissionId], (old) => {
+        if (!old) return old;
+        return old.map(subj => {
+          if (String(subj.id) !== String(subjectivityId)) return subj;
+          const currentIds = parseQuoteIds(subj.quote_ids);
+          let newIds;
+          if (isLinked) {
+            newIds = currentIds.filter(id => String(id) !== String(quoteId));
+          } else {
+            newIds = [...currentIds, String(quoteId)];
+          }
+          return { ...subj, quote_ids: newIds };
+        });
+      });
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submissionId], context.previousData);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', structureId] });
+      // Invalidate all quote-subjectivities queries for immediate refresh
+      allOptionIds.forEach(id => {
+        queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', id] });
+      });
+    },
+  });
+
+  // Bulk apply subjectivity to a set of quotes
+  // Auto-deletes when unlinking from all quotes (no orphaned data)
+  const applySubjectivitySelectionMutation = useMutation({
+    mutationFn: async ({ subjectivityId, currentIds, targetIds }) => {
+      // If targetIds is empty, delete the subjectivity entirely
+      if (targetIds.length === 0) {
+        return deleteSubjectivity(subjectivityId);
+      }
+      const currentSet = new Set(currentIds.map(String));
+      const targetSet = new Set(targetIds.map(String));
+      const toLink = targetIds.filter(id => !currentSet.has(String(id)));
+      const toUnlink = currentIds.filter(id => !targetSet.has(String(id)));
+      await Promise.all([
+        ...toLink.map(id => linkSubjectivityToQuote(id, subjectivityId)),
+        ...toUnlink.map(id => unlinkSubjectivityFromQuote(id, subjectivityId)),
+      ]);
+    },
+    onMutate: async ({ subjectivityId, targetIds }) => {
+      // Optimistic update for instant UI feedback
+      await queryClient.cancelQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      const previousData = queryClient.getQueryData(['submissionSubjectivities', submissionId]);
+      queryClient.setQueryData(['submissionSubjectivities', submissionId], (old) => {
+        if (!old) return old;
+        // If deleting (targetIds empty), remove from list
+        if (targetIds.length === 0) {
+          return old.filter(subj => String(subj.id) !== String(subjectivityId));
+        }
+        return old.map(subj => {
+          if (String(subj.id) !== String(subjectivityId)) return subj;
+          return { ...subj, quote_ids: targetIds };
+        });
+      });
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionSubjectivities', submissionId], context.previousData);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['submissionSubjectivities', submissionId] });
+      allOptionIds.forEach(id => {
+        queryClient.invalidateQueries({ queryKey: ['quote-subjectivities', id] });
+      });
+    },
+  });
+
+  // Helper: cycle status
+  const cycleStatus = (current) => {
+    const order = ['pending', 'received', 'waived'];
+    const idx = order.indexOf(current || 'pending');
+    return order[(idx + 1) % order.length];
+  };
+
+  // Toggle endorsement link to any quote (for "Applies To" popover)
+  const toggleEndorsementLinkMutation = useMutation({
+    mutationFn: async ({ endorsementId, quoteId, isLinked }) => {
+      if (isLinked) {
+        return unlinkEndorsementFromQuote(quoteId, endorsementId);
+      } else {
+        return linkEndorsementToQuote(quoteId, endorsementId);
+      }
+    },
+    onMutate: async ({ endorsementId, quoteId, isLinked }) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionEndorsements', submissionId] });
+      const previousData = queryClient.getQueryData(['submissionEndorsements', submissionId]);
+      queryClient.setQueryData(['submissionEndorsements', submissionId], (old) => {
+        if (!old?.endorsements) return old;
+        return {
+          ...old,
+          endorsements: old.endorsements.map(endt => {
+            const endtId = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+            if (endtId !== String(endorsementId)) return endt;
+            const currentIds = parseQuoteIds(endt.quote_ids);
+            let newIds;
+            if (isLinked) {
+              newIds = currentIds.filter(id => String(id) !== String(quoteId));
+            } else {
+              newIds = [...currentIds, String(quoteId)];
+            }
+            return { ...endt, quote_ids: newIds };
+          }),
+        };
+      });
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionEndorsements', submissionId], context.previousData);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      allOptionIds.forEach(id => {
+        queryClient.invalidateQueries({ queryKey: ['quote-endorsements', id] });
+      });
+    },
+  });
+
+  // Bulk apply endorsement to a set of quotes
+  // Auto-deletes when unlinking from all quotes (no orphaned data)
+  const applyEndorsementSelectionMutation = useMutation({
+    mutationFn: async ({ endorsementId, currentIds, targetIds }) => {
+      // If targetIds is empty, delete the endorsement entirely
+      if (targetIds.length === 0) {
+        return deleteEndorsement(endorsementId);
+      }
+      const currentSet = new Set(currentIds.map(String));
+      const targetSet = new Set(targetIds.map(String));
+      const toLink = targetIds.filter(id => !currentSet.has(String(id)));
+      const toUnlink = currentIds.filter(id => !targetSet.has(String(id)));
+      await Promise.all([
+        ...toLink.map(id => linkEndorsementToQuote(id, endorsementId)),
+        ...toUnlink.map(id => unlinkEndorsementFromQuote(id, endorsementId)),
+      ]);
+    },
+    onMutate: async ({ endorsementId, targetIds }) => {
+      await queryClient.cancelQueries({ queryKey: ['submissionEndorsements', submissionId] });
+      const previousData = queryClient.getQueryData(['submissionEndorsements', submissionId]);
+      queryClient.setQueryData(['submissionEndorsements', submissionId], (old) => {
+        if (!old?.endorsements) return old;
+        // If deleting (targetIds empty), remove from list
+        if (targetIds.length === 0) {
+          return {
+            ...old,
+            endorsements: old.endorsements.filter(endt => {
+              const endtId = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+              return endtId !== String(endorsementId);
+            }),
+          };
+        }
+        return {
+          ...old,
+          endorsements: old.endorsements.map(endt => {
+            const endtId = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+            if (endtId !== String(endorsementId)) return endt;
+            return { ...endt, quote_ids: targetIds };
+          }),
+        };
+      });
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['submissionEndorsements', submissionId], context.previousData);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+      allOptionIds.forEach(id => {
+        queryClient.invalidateQueries({ queryKey: ['quote-endorsements', id] });
+      });
+    },
+  });
+
+  // Mutation: Update manuscript endorsement text
+  const updateManuscriptEndorsementMutation = useMutation({
+    mutationFn: ({ endorsementId, text }) => updateDocumentLibraryEntry(endorsementId, { title: text }),
+    onMutate: async ({ endorsementId, text }) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
+      const previousData = queryClient.getQueryData(['quote-endorsements', structureId]);
+      queryClient.setQueryData(['quote-endorsements', structureId], (old) => {
+        if (!old?.endorsements) return old;
+        return {
+          ...old,
+          endorsements: old.endorsements.map(endt => {
+            const endtId = String(endt.endorsement_id || endt.document_library_id || endt.id || '');
+            if (endtId !== String(endorsementId)) return endt;
+            return { ...endt, title: text };
+          }),
+        };
+      });
+      return { previousData };
+    },
+    onError: (err, variables, context) => {
+      if (context?.previousData) {
+        queryClient.setQueryData(['quote-endorsements', structureId], context.previousData);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['endorsement-library'] });
+    },
+  });
+
+  // Mutation: Apply current retro schedule to other quotes
+  const applyRetroToQuotesMutation = useMutation({
+    mutationFn: async (targetQuoteIds) => {
+      const schedule = structure?.retro_schedule || [];
+      await Promise.all(
+        targetQuoteIds.map(id => updateQuoteOption(id, { retro_schedule: schedule }))
+      );
+    },
+    onMutate: async (targetQuoteIds) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      const schedule = structure?.retro_schedule || [];
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          if (targetQuoteIds.includes(String(s.id))) {
+            return { ...s, retro_schedule: schedule };
+          }
+          return s;
+        })
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['structures', submissionId], ctx.previous);
+    },
+    onSuccess: () => {
+      setShowRetroApplyPopover(false);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  // Mutation: Create new manuscript endorsement and link to current quote
+  const createManuscriptEndorsementMutation = useMutation({
+    mutationFn: async (title) => {
+      const code = `MS-${Date.now().toString(36).toUpperCase()}`;
+      const result = await createDocumentLibraryEntry({
+        code,
+        document_type: 'endorsement',
+        title,
+        category: 'manuscript',
+        status: 'active',
+      });
+      if (result.data?.id) {
+        await linkEndorsementToQuote(structureId, result.data.id);
+      }
+      return result;
+    },
+    onMutate: async (title) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
+      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
+      const tempId = `temp-ms-${Date.now()}`;
+      const optimisticEntry = {
+        id: tempId,
+        endorsement_id: tempId,
+        title,
+        code: 'MS-...',
+        category: 'manuscript',
+      };
+      queryClient.setQueryData(['quote-endorsements', structureId], (old) => ({
+        ...old,
+        endorsements: [...(old?.endorsements || []), optimisticEntry],
+      }));
+      setNewEndorsementText('');
+      setIsAddingEndorsement(false);
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) {
+        queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['endorsement-library'] });
+    },
+  });
+
+  // Mutation: Link endorsement from library to current quote
+  const linkEndorsementFromLibraryMutation = useMutation({
+    mutationFn: (endorsementId) => linkEndorsementToQuote(structureId, endorsementId),
+    onMutate: async (endorsementId) => {
+      await queryClient.cancelQueries({ queryKey: ['quote-endorsements', structureId] });
+      const previous = queryClient.getQueryData(['quote-endorsements', structureId]);
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) {
+        queryClient.setQueryData(['quote-endorsements', structureId], ctx.previous);
+      }
+    },
+    onSuccess: () => {
+      setShowEndorsementLibraryPicker(false);
+      setEndorsementLibrarySearchTerm('');
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['quote-endorsements', structureId] });
+      queryClient.invalidateQueries({ queryKey: ['submissionEndorsements', submissionId] });
+    },
+  });
+
+  // Helper: count OTHER quotes sharing this endorsement (excludes current quote)
+  const getEndorsementSharedQuoteCount = (item) => {
+    if (!item?.quoteIds || !Array.isArray(item.quoteIds)) return 0;
+    return item.quoteIds.filter(id => String(id) !== String(structureId)).length;
+  };
+
   // Calculate tower info
   const tower = structure?.tower_json || [];
   const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
@@ -5356,12 +6417,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const retentionLabel = isExcess ? 'Attachment' : 'Retention';
   const sirDisplay = isExcess && retention ? ` (SIR ${formatCompact(retention)})` : '';
 
-  // Get coverage exceptions (non-standard sublimits)
+  // Get coverage exceptions (non-standard sublimits - values that differ from defaults)
   const coverages = structure?.coverages || {};
   const sublimits = coverages.sublimit_coverages || {};
-  const coverageExceptions = Object.entries(sublimits)
-    .filter(([_, val]) => val !== undefined && val !== null)
-    .map(([key, val]) => ({ id: key, value: val }))
+  const coverageExceptions = SUBLIMIT_COVERAGES
+    .filter(cov => sublimits[cov.id] !== undefined && sublimits[cov.id] !== cov.default)
+    .map(cov => ({ id: cov.id, label: cov.label, value: sublimits[cov.id] }))
     .slice(0, 3);
 
   // Get all sublimits with their current values (or defaults)
@@ -5386,7 +6447,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     const extraCount = extra.length;
 
     if (peerCount === 0) {
-      return { text: 'No peers to compare', tone: 'text-gray-400' };
+      return { text: '', tone: '' }; // Don't show "No peers to compare"
     }
     if (missingCount === 0 && extraCount === 0) {
       return { text: `Aligned with ${peerLabel} peers`, tone: 'text-green-600' };
@@ -5565,14 +6626,15 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
   return (
     <div className="space-y-6">
-      {/* KPI Row - Policy Terms, Retro, Premium, Commission */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* KPI Row - Policy Terms, Retro, Premium (quote mode only), Commission */}
+      <div className={`grid gap-3 ${summaryScope === 'submission' ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-2 lg:grid-cols-4'}`}>
         {/* Policy Terms - expands right (cols 1-2) when editing */}
         {(() => {
           const datesTbd = variation?.dates_tbd || false;
           const effDate = variation?.effective_date_override || structure?.effective_date || submission?.effective_date;
           const expDate = variation?.expiration_date_override || structure?.expiration_date || submission?.expiration_date;
           const isExpanded = expandedCard === 'terms';
+          const allSameTerm = termVariationCount === 1;
           return (
             <div
               className={`bg-white rounded-lg border transition-all ${
@@ -5582,15 +6644,43 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               } ${expandedCard === 'retro' ? 'hidden lg:hidden' : ''}`}
               onClick={() => !isExpanded && setExpandedCard('terms')}
             >
-              <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
-                <div className={isExpanded ? '' : 'w-full text-center'}>
-                  <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Policy Term</div>
-                  {!isExpanded && (
-                    <div className="text-sm font-bold text-gray-800 truncate">
-                      {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
-                    </div>
-                  )}
-                </div>
+              {/* Header - bold with border when in submission mode with variations */}
+              {summaryScope === 'submission' && !isExpanded && termVariationGroups.length > 1 ? (
+                <>
+                  <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
+                    <h3 className="text-xs font-bold text-gray-500 uppercase">Policy Term</h3>
+                  </div>
+                  <div className="px-4 py-3 space-y-1.5">
+                    {termVariationGroups.map((group) => (
+                      <div key={group.key} className="flex items-center justify-between gap-2">
+                        <span className="text-sm text-gray-700">{group.label}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+                          {group.count}/{allQuoteTerms.length}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
+                  <div className={isExpanded ? '' : 'w-full text-center'}>
+                    <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Policy Term</div>
+                    {!isExpanded && (
+                      summaryScope === 'submission' ? (
+                        /* Single value - centered with All badge */
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="text-sm font-semibold text-gray-800">{termVariationGroups[0]?.label}</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200">
+                            All
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="text-sm font-bold text-gray-800 truncate">
+                          {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
+                        </div>
+                      )
+                    )}
+                  </div>
                 {isExpanded && (
                   <button
                     onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
@@ -5600,9 +6690,24 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                   </button>
                 )}
               </div>
+              )}
               {isExpanded && (
                 <div className="p-4">
-                  <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} />
+                  {summaryScope === 'submission' ? (
+                    /* Submission mode - show per-quote terms */
+                    <div className="space-y-2">
+                      {allQuoteTerms.map(qt => (
+                        <div key={qt.quoteId} className="flex items-center justify-between text-sm py-1 border-b border-gray-100 last:border-0">
+                          <span className="text-gray-600 truncate">{qt.quoteName}</span>
+                          <span className="text-gray-800 font-medium">
+                            {qt.datesTbd ? 'TBD' : `${formatDate(qt.effDate)} - ${formatDate(qt.expDate)}`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} />
+                  )}
                 </div>
               )}
             </div>
@@ -5611,6 +6716,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
         {/* Retro Dates - expands left (cols 1-2) when editing */}
         <div
+          ref={retroCardRef}
           className={`bg-white rounded-lg border transition-all ${
             expandedCard === 'retro'
               ? 'lg:col-span-2 border-purple-300 ring-1 ring-purple-100'
@@ -5618,35 +6724,232 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           } ${expandedCard === 'terms' ? 'hidden lg:hidden' : ''}`}
           onClick={() => expandedCard !== 'retro' && setExpandedCard('retro')}
         >
+          {/* Header - bold with border when in submission mode with multiple variations */}
+          {summaryScope === 'submission' && expandedCard !== 'retro' && retroVariationGroups.length > 1 ? (
+            <>
+              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
+                <h3 className="text-xs font-bold text-gray-500 uppercase">Retro</h3>
+              </div>
+              <div className="px-4 py-3 divide-y divide-gray-100">
+                {retroVariationGroups.map((group) => {
+                  const schedule = group.schedule || [];
+                  const uniqueRetros = new Set(schedule.map(e => e.retro));
+                  const isSimple = schedule.length === 0 || uniqueRetros.size === 1;
+
+                  return (
+                    <div key={group.key} className="flex items-start justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
+                      {isSimple ? (
+                        <span className="text-sm text-gray-700">{group.label}</span>
+                      ) : (
+                        <div className="text-xs text-gray-700 space-y-0.5">
+                          {schedule.map(entry => {
+                            const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary' }[entry.coverage] || entry.coverage;
+                            const retroLabel = entry.retro === 'full_prior_acts' ? 'FPA' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'FF' : entry.retro;
+                            return <div key={entry.coverage}><span className="text-gray-400">{covLabel}:</span> {retroLabel}</div>;
+                          })}
+                        </div>
+                      )}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 shrink-0">
+                        {group.count}/{allQuoteRetros.length}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
           <div className={`flex items-center justify-between ${expandedCard === 'retro' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
             <div className={expandedCard === 'retro' ? '' : 'w-full text-center'}>
               <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Retro</div>
               {expandedCard !== 'retro' && (
-                <div className="text-sm font-bold text-gray-800">
-                  {(!structure?.retro_schedule || structure.retro_schedule.length === 0)
-                    ? 'Full Prior Acts'
-                    : `${structure.retro_schedule.length} coverage${structure.retro_schedule.length !== 1 ? 's' : ''}`}
-                </div>
+                summaryScope === 'submission' ? (
+                  /* Single retro config - centered */
+                  <div className="flex flex-col items-center gap-1">
+                    {(() => {
+                      const group = retroVariationGroups[0];
+                      const schedule = group?.schedule || [];
+                      const uniqueRetros = new Set(schedule.map(e => e.retro));
+                      const isSimple = schedule.length === 0 || uniqueRetros.size === 1;
+
+                      if (isSimple) {
+                        return <span className="text-sm font-semibold text-gray-800">{group?.label}</span>;
+                      }
+                      // Complex - show each coverage on its own line
+                      return (
+                        <div className="text-xs text-gray-700 space-y-0.5">
+                          {schedule.map(entry => {
+                            const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary' }[entry.coverage] || entry.coverage;
+                            const retroLabel = entry.retro === 'full_prior_acts' ? 'FPA' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'FF' : entry.retro;
+                            return <div key={entry.coverage}><span className="text-gray-500">{covLabel}:</span> {retroLabel}</div>;
+                          })}
+                        </div>
+                      );
+                    })()}
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200">
+                      All
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-sm font-bold text-gray-800">
+                    {formatRetroSummary(structure?.retro_schedule)}
+                  </div>
+                )
               )}
             </div>
             {expandedCard === 'retro' && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
-                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
-              >
-                Done
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Applies To popover - only in quote mode (not submission mode) */}
+                {summaryScope !== 'submission' && (
+                <Popover.Root open={showRetroApplyPopover} onOpenChange={setShowRetroApplyPopover}>
+                  <Popover.Trigger asChild>
+                    <button
+                      onClick={(e) => e.stopPropagation()}
+                      className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                        retroMatchingPeerIds.length > 0
+                          ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                          : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100'
+                      }`}
+                    >
+                      {retroMatchingPeerIds.length > 0 ? `On ${retroMatchingPeerIds.length + 1} quotes` : 'Only here'}
+                    </button>
+                  </Popover.Trigger>
+                  <Popover.Portal>
+                    <Popover.Content
+                      className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                      sideOffset={4}
+                      align="end"
+                    >
+                      <div className="text-xs font-medium text-gray-500 mb-2 px-1">Apply to</div>
+                      {/* Quick select options */}
+                      {(() => {
+                        const otherIds = allOptionIds.filter(id => id !== String(structureId));
+                        const otherPrimaryIds = allPrimaryIds.filter(id => id !== String(structureId));
+                        const otherExcessIds = allExcessIds.filter(id => id !== String(structureId));
+                        const isAllSelected = otherIds.every(id => retroMatchingPeerIds.includes(id));
+                        const isAllPrimarySelected = otherPrimaryIds.length > 0 && otherPrimaryIds.every(id => retroMatchingPeerIds.includes(id));
+                        const isAllExcessSelected = otherExcessIds.length > 0 && otherExcessIds.every(id => retroMatchingPeerIds.includes(id));
+                        return (
+                          <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                            <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                              <input
+                                type="checkbox"
+                                checked={isAllSelected}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  if (!isAllSelected) {
+                                    applyRetroToQuotesMutation.mutate(otherIds);
+                                  }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                disabled={isAllSelected}
+                              />
+                              <span>All Options</span>
+                            </label>
+                            {otherPrimaryIds.length > 0 && (
+                              <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                <input
+                                  type="checkbox"
+                                  checked={isAllPrimarySelected}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    if (!isAllPrimarySelected) {
+                                      applyRetroToQuotesMutation.mutate(otherPrimaryIds);
+                                    }
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                  disabled={isAllPrimarySelected}
+                                />
+                                <span>All Primary</span>
+                              </label>
+                            )}
+                            {otherExcessIds.length > 0 && (
+                              <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                <input
+                                  type="checkbox"
+                                  checked={isAllExcessSelected}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    if (!isAllExcessSelected) {
+                                      applyRetroToQuotesMutation.mutate(otherExcessIds);
+                                    }
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                  disabled={isAllExcessSelected}
+                                />
+                                <span>All Excess</span>
+                              </label>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {/* Individual quotes */}
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {allOptions.filter(opt => opt.id !== String(structureId)).map(opt => {
+                          const isMatching = retroMatchingPeerIds.includes(opt.id);
+                          return (
+                            <label
+                              key={opt.id}
+                              className={`flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isMatching}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  if (!isMatching) {
+                                    applyRetroToQuotesMutation.mutate([opt.id]);
+                                  }
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                disabled={isMatching}
+                              />
+                              <span className="truncate">{opt.name}</span>
+                              {isMatching && <span className="text-[9px] text-green-500 ml-auto">Matching</span>}
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <Popover.Arrow className="fill-white" />
+                    </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+                  className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                >
+                  Done
+                </button>
+              </div>
             )}
           </div>
+          )}
           {expandedCard === 'retro' && (
             <div className="p-4">
-              <RetroPanel structure={structure} submissionId={submission?.id} />
+              {summaryScope === 'submission' ? (
+                /* Submission mode - show per-quote retros */
+                <div className="space-y-2">
+                  {allQuoteRetros.map(qr => (
+                    <div key={qr.quoteId} className="flex items-center justify-between text-sm py-1 border-b border-gray-100 last:border-0">
+                      <span className="text-gray-600 truncate">{qr.quoteName}</span>
+                      <span className="text-gray-800 font-medium">{formatRetroSummary(qr.retroSchedule)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <RetroPanel structure={structure} submissionId={submission?.id} />
+              )}
             </div>
           )}
         </div>
 
         {/* Premium - View only, shows sold (tower) + technical (rater) if different */}
-        {(() => {
+        {/* Hidden in submission mode - premiums are shown in Quote Options table */}
+        {summaryScope !== 'submission' && (() => {
           const sold = premium; // Tower CMAI premium = what we're charging
           const technical = variation?.technical_premium || 0; // From rater
           const hasTechnical = technical > 0 && Math.abs(sold - technical) > 1;
@@ -5688,11 +6991,39 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           }`}
           onClick={() => expandedCard !== 'commission' && setExpandedCard('commission')}
         >
+          {/* Header - styled like endorsements when in submission mode with variations */}
+          {summaryScope === 'submission' && expandedCard !== 'commission' && commissionVariationGroups.length > 1 ? (
+            <>
+              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
+                <h3 className="text-xs font-bold text-gray-500 uppercase">Commission</h3>
+              </div>
+              <div className="px-4 py-3 space-y-1.5">
+                {commissionVariationGroups.map((group) => (
+                  <div key={group.key} className="flex items-center justify-between gap-2">
+                    <span className="text-base text-gray-700">{group.label}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+                      {group.count}/{allQuoteCommissions.length}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
           <div className={`flex items-center justify-between ${expandedCard === 'commission' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
             <div className={expandedCard === 'commission' ? '' : 'w-full text-center'}>
               <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Commission</div>
               {expandedCard !== 'commission' && (
-                <div className="text-base font-bold text-gray-800">{commission}%</div>
+                summaryScope === 'submission' ? (
+                  /* Single commission value - centered with All badge */
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-base font-semibold text-gray-800">{commissionVariationGroups[0]?.label}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200">
+                      All
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-base font-bold text-gray-800">{commission}%</div>
+                )
               )}
             </div>
             {expandedCard === 'commission' && (
@@ -5704,16 +7035,137 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               </button>
             )}
           </div>
+          )}
           {expandedCard === 'commission' && (
             <div className="p-4">
-              <CommissionPanel structure={structure} variation={variation} submissionId={submission?.id} />
+              {summaryScope === 'submission' ? (
+                /* Submission mode - show per-quote commissions */
+                <div className="space-y-2">
+                  {allQuoteCommissions.map(qc => (
+                    <div key={qc.quoteId} className="flex items-center justify-between text-sm py-1 border-b border-gray-100 last:border-0">
+                      <span className="text-gray-600 truncate">{qc.quoteName}</span>
+                      <span className="text-gray-800 font-medium">
+                        {qc.commissionRate}%{qc.isNetOfCommission ? ' (Net)' : ''}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <CommissionPanel structure={structure} variation={variation} submissionId={submission?.id} />
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Tower Position & Structure Preview */}
-      {(() => {
+      {/* Quote Options Summary (Submission Mode) - Collapsible with editable premiums */}
+      {summaryScope === 'submission' && (
+        <div ref={quoteOptionsRef} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+          {/* Header row with column labels */}
+          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center">
+            <button
+              onClick={() => setShowQuoteOptions(!showQuoteOptions)}
+              className="flex items-center flex-1 text-left hover:opacity-80"
+            >
+              <svg
+                className={`w-4 h-4 text-gray-400 mr-2 transition-transform ${showQuoteOptions ? 'rotate-90' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-xs font-bold text-gray-500 uppercase">Quote Options</span>
+            </button>
+            <span className="text-[10px] text-gray-400 uppercase w-24 text-right mr-4">Premium</span>
+            <span className="text-[10px] text-gray-400 uppercase w-12 text-center">Subjs</span>
+            <span className="text-[10px] text-gray-400 uppercase w-12 text-center">Endts</span>
+            <span className="text-[10px] text-gray-400 uppercase w-16 text-center">Status</span>
+          </div>
+          {showQuoteOptions && (
+            <div className="divide-y divide-gray-100">
+              {allOptions.map((opt) => {
+                const struct = structures?.find(s => String(s.id) === String(opt.id));
+                const optTower = struct?.tower_json || [];
+                const cmaiLayer = optTower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+                const optPremium = cmaiLayer?.premium || 0;
+                const draftPremium = premiumDraft[opt.id] ?? optPremium;
+                const optStatus = struct?.status || 'draft';
+                const isExcess = getStructurePosition(struct) === 'excess';
+                const subjList = subjectivitiesByQuote.get(String(opt.id)) || [];
+                const endtList = endorsementsByQuote.get(String(opt.id)) || [];
+                return (
+                  <div
+                    key={opt.id}
+                    className="flex items-center px-4 py-2 transition-colors hover:bg-gray-50"
+                  >
+                    <div
+                      className="flex items-center gap-2 flex-1 pl-6 cursor-pointer"
+                      onClick={() => onSelect(opt.id)}
+                    >
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                        isExcess
+                          ? 'bg-blue-100 text-blue-600'
+                          : 'bg-emerald-100 text-emerald-700'
+                      }`}>
+                        {isExcess ? 'XS' : 'PRI'}
+                      </span>
+                      <span className="text-sm font-medium text-gray-900">
+                        {opt.name}
+                      </span>
+                    </div>
+                    {/* Premium - editable */}
+                    <div className="w-24 text-right mr-4">
+                      {isEditingPremiums ? (
+                        <input
+                          ref={el => premiumInputRefs.current[opt.id] = el}
+                          type="text"
+                          value={formatWithCommas(draftPremium)}
+                          onChange={(e) => {
+                            const val = parseNumber(e.target.value);
+                            updatePremiumDraft(opt.id, val);
+                          }}
+                          onKeyDown={(e) => handlePremiumKeyDown(e, opt.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="w-full px-2 py-1 text-right border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-300 text-sm"
+                        />
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); enterPremiumEditMode(opt.id); }}
+                          className="text-sm font-semibold text-green-600 hover:text-green-700 hover:underline"
+                        >
+                          {formatCurrency(optPremium)}
+                        </button>
+                      )}
+                    </div>
+                    <span className={`text-xs px-2 py-0.5 rounded-full w-12 text-center ${
+                      subjList.length > 0 ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-400'
+                    }`}>
+                      {subjList.length}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full w-12 text-center ${
+                      endtList.length > 0 ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-400'
+                    }`}>
+                      {endtList.length}
+                    </span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium w-16 text-center ${
+                      optStatus === 'issued' ? 'bg-green-100 text-green-700' :
+                      optStatus === 'approved' ? 'bg-blue-100 text-blue-700' :
+                      optStatus === 'pending' ? 'bg-amber-100 text-amber-700' :
+                      'bg-gray-100 text-gray-500'
+                    }`}>
+                      {optStatus.charAt(0).toUpperCase() + optStatus.slice(1)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tower Position & Structure Preview (Quote Mode only) */}
+      {summaryScope !== 'submission' && (() => {
         // Determine if excess by checking structure.position OR if any layer has attachment > 0
         const structureIsExcess = structure?.position === 'excess';
         const hasStoredAttachments = tower.some(l => (l.attachment || 0) > 0);
@@ -5737,82 +7189,93 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
         const layersAbove = cmaiIdx > 0 ? sortedTower.slice(0, cmaiIdx) : [];
         const layersBelow = cmaiIdx >= 0 ? sortedTower.slice(cmaiIdx + 1) : [];
 
+        const isEditingTower = expandedCard === 'tower';
+
         return (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* Tower Position Card */}
-            <div className="lg:col-span-3 border border-gray-200 rounded-lg bg-white p-4">
-              <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
-                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-                Tower Position
-              </h3>
-              <div className="relative">
-                {/* Dashed vertical line on left */}
-                <div className="absolute left-0 top-0 bottom-0 w-4 flex flex-col items-center">
-                  <div className="flex-1 border-l-2 border-dashed border-gray-300" />
-                </div>
-                <div className="pl-6 space-y-1">
-                  {/* Show layers above ours */}
-                  {!showOnlyOurLayer && showAsExcess && layersAbove.map((layer, idx) => {
-                    const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
-                    return (
-                      <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
-                        <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
-                          <span>{formatCompact(layer.limit)}</span>
-                          {layerAttachment > 0 && (
-                            <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* Our Layer */}
-                  <div className="bg-purple-600 text-white rounded py-2.5 px-4 text-center shadow-md">
-                    <div className="text-sm font-bold flex items-center justify-center gap-1">
-                      <span>{formatCompact(ourLimit)}</span>
-                      {showAsExcess && cmaiAttachment > 0 && (
-                        <span className="text-xs opacity-80">xs {formatCompact(cmaiAttachment)}</span>
-                      )}
-                    </div>
+            {/* Tower Position Card - hidden when editing */}
+            {!isEditingTower && (
+              <div className="lg:col-span-3 border border-gray-200 rounded-lg bg-white p-4">
+                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                  Tower Position
+                </h3>
+                <div className="relative">
+                  {/* Dashed vertical line on left */}
+                  <div className="absolute left-0 top-0 bottom-0 w-4 flex flex-col items-center">
+                    <div className="flex-1 border-l-2 border-dashed border-gray-300" />
                   </div>
-
-                  {/* Show underlying layers for excess */}
-                  {!showOnlyOurLayer && showAsExcess && layersBelow.map((layer, idx) => {
-                    const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
-                    return (
-                      <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
-                        <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
-                          <span>{formatCompact(layer.limit)}</span>
-                          {layerAttachment > 0 ? (
-                            <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
-                          ) : (
-                            <span className="text-[11px] font-semibold text-gray-600">Primary</span>
-                          )}
+                  <div className="pl-6 space-y-1">
+                    {/* Show layers above ours */}
+                    {!showOnlyOurLayer && showAsExcess && layersAbove.map((layer, idx) => {
+                      const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
+                      return (
+                        <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+                          <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
+                            <span>{formatCompact(layer.limit)}</span>
+                            {layerAttachment > 0 && (
+                              <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
 
-                  {/* Retention bar - always shown unless collapsed */}
-                  {!showOnlyOurLayer && retention > 0 && (
-                    <div className="bg-gray-50 border border-gray-200 rounded py-1 px-3 text-center">
-                      <div className="text-[10px] text-gray-500 uppercase">Retention {formatCompact(retention)}</div>
+                    {/* Our Layer */}
+                    <div className="bg-purple-600 text-white rounded py-2.5 px-4 text-center shadow-md">
+                      <div className="text-sm font-bold flex items-center justify-center gap-1">
+                        <span>{formatCompact(ourLimit)}</span>
+                        {showAsExcess && cmaiAttachment > 0 && (
+                          <span className="text-xs opacity-80">xs {formatCompact(cmaiAttachment)}</span>
+                        )}
+                      </div>
                     </div>
-                  )}
+
+                    {/* Show underlying layers for excess */}
+                    {!showOnlyOurLayer && showAsExcess && layersBelow.map((layer, idx) => {
+                      const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
+                      return (
+                        <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+                          <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
+                            <span>{formatCompact(layer.limit)}</span>
+                            {layerAttachment > 0 ? (
+                              <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
+                            ) : (
+                              <span className="text-[11px] font-semibold text-gray-600">Primary</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {/* Retention bar - always shown unless collapsed */}
+                    {!showOnlyOurLayer && retention > 0 && (
+                      <div className="bg-gray-50 border border-gray-200 rounded py-1 px-3 text-center">
+                        <div className="text-[10px] text-gray-500 uppercase">Retention {formatCompact(retention)}</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Tower Structure Table */}
-            <div className="lg:col-span-9 border border-gray-200 rounded-lg bg-white overflow-hidden">
+            {/* Tower Structure Table - expands to full width when editing */}
+            <div
+              ref={towerCardRef}
+              onClick={() => !isEditingTower && setExpandedCard('tower')}
+              className={`border rounded-lg bg-white overflow-hidden transition-all ${
+              isEditingTower
+                ? 'lg:col-span-12 ring-1 ring-purple-100 border-purple-300'
+                : 'lg:col-span-9 border-gray-200 hover:border-gray-300 cursor-pointer'
+            }`}>
               <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Tower Structure</h3>
-                  {sortedTower.length > 1 && (
+                  {!isEditingTower && sortedTower.length > 1 && (
                     <button
-                      onClick={() => setShowOnlyOurLayer(!showOnlyOurLayer)}
+                      onClick={(e) => { e.stopPropagation(); setShowOnlyOurLayer(!showOnlyOurLayer); }}
                       className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
                         showOnlyOurLayer
                           ? 'bg-purple-100 border-purple-300 text-purple-700'
@@ -5828,71 +7291,97 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                     <span className="text-gray-500">Our Premium: </span>
                     <span className="text-green-600 font-semibold">{formatCurrency(premium)}</span>
                   </div>
-                  <button
-                    onClick={() => onMainTabChange?.('tower')}
-                    className="text-xs text-purple-600 hover:text-purple-800 font-medium"
-                  >
-                    Manage
-                  </button>
+                  {isEditingTower ? (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+                      className="text-xs text-purple-600 hover:text-purple-800 font-medium"
+                    >
+                      Done
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExpandedCard('tower'); }}
+                      className="text-xs text-purple-600 hover:text-purple-800 font-medium"
+                    >
+                      Edit
+                    </button>
+                  )}
                 </div>
               </div>
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-semibold">Carrier</th>
-                    <th className="px-4 py-2 text-center font-semibold">Limit</th>
-                    <th className="px-4 py-2 text-center font-semibold">{showAsExcess ? 'Attach' : 'Retention'}</th>
-                    <th className="px-4 py-2 text-right font-semibold">Premium</th>
-                    <th className="px-4 py-2 text-right font-semibold">RPM</th>
-                    <th className="px-4 py-2 text-right font-semibold">ILF</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {sortedTower
-                    .filter(layer => !showOnlyOurLayer || layer.carrier?.toUpperCase().includes('CMAI'))
-                    .map((layer, idx) => {
-                    const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
-                    const layerPremium = layer.premium || 0;
-                    const layerRpm = layer.limit ? Math.round(layerPremium / (layer.limit / 1_000_000)) : null;
-                    // For ILF, use CMAI premium as base
-                    const basePremium = cmaiLayer?.premium || tower[0]?.premium || 1;
-                    const ilf = basePremium > 0 ? Math.round((layerPremium / basePremium) * 100) : null;
 
-                    return (
-                      <tr key={idx} className={isCMAI ? 'bg-purple-50' : ''}>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <span className={isCMAI ? 'text-purple-700 font-medium' : 'text-gray-700'}>
-                              {layer.carrier || 'TBD'}
-                            </span>
-                            {isCMAI && (
-                              <span className="text-[10px] bg-purple-200 text-purple-700 px-1.5 py-0.5 rounded font-medium">
-                                Ours
+              {isEditingTower ? (
+                /* Full TowerEditor when editing */
+                <div className="p-4">
+                  <TowerEditor
+                    quote={structure}
+                    onSave={(data) => {
+                      onUpdateOption?.(structureId, data);
+                      setExpandedCard(null);
+                    }}
+                    isPending={false}
+                    embedded={true}
+                  />
+                </div>
+              ) : (
+                /* Preview table */
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-semibold">Carrier</th>
+                      <th className="px-4 py-2 text-center font-semibold">Limit</th>
+                      <th className="px-4 py-2 text-center font-semibold">{showAsExcess ? 'Attach' : 'Retention'}</th>
+                      <th className="px-4 py-2 text-right font-semibold">Premium</th>
+                      <th className="px-4 py-2 text-right font-semibold">RPM</th>
+                      <th className="px-4 py-2 text-right font-semibold">ILF</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {sortedTower
+                      .filter(layer => !showOnlyOurLayer || layer.carrier?.toUpperCase().includes('CMAI'))
+                      .map((layer, idx) => {
+                      const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
+                      const layerPremium = layer.premium || 0;
+                      const layerRpm = layer.limit ? Math.round(layerPremium / (layer.limit / 1_000_000)) : null;
+                      // For ILF, use CMAI premium as base
+                      const basePremium = cmaiLayer?.premium || tower[0]?.premium || 1;
+                      const ilf = basePremium > 0 ? Math.round((layerPremium / basePremium) * 100) : null;
+
+                      return (
+                        <tr key={idx} className={isCMAI ? 'bg-purple-50' : ''}>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className={isCMAI ? 'text-purple-700 font-medium' : 'text-gray-700'}>
+                                {layer.carrier || 'TBD'}
                               </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center text-gray-700">{formatCompact(layer.limit)}</td>
-                        <td className="px-4 py-3 text-center text-gray-500">
-                          {/* Primary layer (attachment=0) shows retention, others show attachment */}
-                          {layer.calculatedAttachment === 0
-                            ? formatCompact(layer.retention || retention)
-                            : `xs ${formatCompact(layer.calculatedAttachment)}`}
-                        </td>
-                        <td className="px-4 py-3 text-right font-medium text-green-600">
-                          {layerPremium ? formatCurrency(layerPremium) : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right text-gray-500">
-                          {layerRpm ? `$${layerRpm.toLocaleString()}` : '—'}
-                        </td>
-                        <td className="px-4 py-3 text-right text-gray-500">
-                          {isCMAI ? '100%' : (ilf !== null ? `${ilf}%` : '—')}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                              {isCMAI && (
+                                <span className="text-[10px] bg-purple-200 text-purple-700 px-1.5 py-0.5 rounded font-medium">
+                                  Ours
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-center text-gray-700">{formatCompact(layer.limit)}</td>
+                          <td className="px-4 py-3 text-center text-gray-500">
+                            {/* Primary layer (attachment=0) shows retention, others show attachment */}
+                            {layer.calculatedAttachment === 0
+                              ? formatCompact(layer.retention || retention)
+                              : `xs ${formatCompact(layer.calculatedAttachment)}`}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-green-600">
+                            {layerPremium ? formatCurrency(layerPremium) : '—'}
+                          </td>
+                          <td className="px-4 py-3 text-right text-gray-500">
+                            {layerRpm ? `$${layerRpm.toLocaleString()}` : '—'}
+                          </td>
+                          <td className="px-4 py-3 text-right text-gray-500">
+                            {isCMAI ? '100%' : (ilf !== null ? `${ilf}%` : '—')}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         );
@@ -5900,8 +7389,11 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
       {/* Grid Header with toggle */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide">Quote Details</h3>
-        {(missingEndorsements.length > 0 || missingSubjectivities.length > 0) && (
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+          {summaryScope === 'submission' ? 'Submission Details' : 'Quote Details'}
+        </h3>
+        {/* Show Missing toggle - only in quote mode (peer comparison doesn't make sense for submission) */}
+        {summaryScope !== 'submission' && (missingEndorsements.length > 0 || missingSubjectivities.length > 0) && (
           <button
             onClick={() => setShowMissingSuggestions(!showMissingSuggestions)}
             className={`text-xs px-2 py-1 rounded border transition-colors ${
@@ -5969,7 +7461,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 <div className="space-y-1">
                   {coverageExceptions.map(exc => (
                     <div key={exc.id} className="flex justify-between text-sm">
-                      <span className="text-gray-600 capitalize">{exc.id.replace(/_/g, ' ')}</span>
+                      <span className="text-gray-600">{exc.label}</span>
                       <span className="font-medium text-amber-600">{formatCompact(exc.value)}</span>
                     </div>
                   ))}
@@ -5979,23 +7471,53 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           </div>
 
           {/* Endorsements - expands right (cols 2-3) when editing, hidden when others expand */}
-          <div className={`border rounded-lg overflow-hidden transition-all duration-200 ${
-            expandedCard === 'endorsements'
-              ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
-              : 'border-gray-200'
-          } ${expandedCard === 'coverages' || expandedCard === 'subjectivities' ? 'hidden' : ''}`}>
+          <div
+            ref={endorsementsCardRef}
+            className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+              expandedCard === 'endorsements'
+                ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
+                : 'border-gray-200'
+            } ${expandedCard && expandedCard !== 'endorsements' ? 'hidden' : ''}`}
+          >
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
-                {endorsementStatus.text && (
-                  <span className={`text-[11px] ${endorsementStatus.tone}`}>
-                    {endorsementStatus.text}
-                  </span>
+                {summaryScope === 'submission' ? (
+                  expandedCard === 'endorsements' ? (
+                    <span className="text-[11px] text-gray-400">
+                      {allSubmissionEndorsements.length} across submission
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-purple-600 font-medium">
+                      {allSubmissionEndorsements.length} across submission
+                    </span>
+                  )
+                ) : (
+                  <>
+                    {!expandedCard && endorsementStatus.text && summaryScope !== 'submission' && (
+                      <span className={`text-[11px] ${endorsementStatus.tone}`}>
+                        {endorsementStatus.text}
+                      </span>
+                    )}
+                    {expandedCard === 'endorsements' && (
+                      <span className="text-[11px] text-gray-400">
+                        {endorsements.length} item{endorsements.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
-              {endorsements.length > 0 && (
+              {((summaryScope === 'quote' && endorsements.length > 0) || (summaryScope === 'submission' && allSubmissionEndorsements.length > 0)) && (
                 <button
-                  onClick={() => setExpandedCard(expandedCard === 'endorsements' ? null : 'endorsements')}
+                  onClick={() => {
+                    if (expandedCard === 'endorsements') {
+                      setSelectedEndorsementId(null);
+                      setEditingEndorsementId(null);
+                      setIsAddingEndorsement(false);
+                      setShowEndorsementLibraryPicker(false);
+                    }
+                    setExpandedCard(expandedCard === 'endorsements' ? null : 'endorsements');
+                  }}
                   className="text-xs text-purple-600 hover:text-purple-700 font-medium"
                 >
                   {expandedCard === 'endorsements' ? 'Done' : 'Edit'}
@@ -6003,15 +7525,769 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               )}
             </div>
             <div className="p-4">
-              {endorsementsEmpty ? (
+              {summaryScope === 'submission' ? (
+                /* Submission Mode */
+                allSubmissionEndorsements.length === 0 ? (
+                  <p className="text-sm text-gray-400">No endorsements in this submission</p>
+                ) : expandedCard === 'endorsements' ? (
+                  /* Submission Mode - Expanded Edit View */
+                  <div className="space-y-1">
+                    {allSubmissionEndorsements.map((item) => {
+                      const isEditing = editingEndorsementId === item.id;
+                      const mutationId = item.rawId || item.id;
+                      const linkedQuoteIds = item.quoteIds?.map(String) || [];
+                      const linkedCount = linkedQuoteIds.length;
+                      const totalCount = allOptions.length;
+                      const isAllLinked = linkedCount === totalCount && totalCount > 0;
+
+                      // Find first linked quote name for badge
+                      const firstLinkedQuote = allOptions.find(opt => linkedQuoteIds.includes(String(opt.id)));
+                      const otherCount = linkedCount - 1;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`group flex items-center gap-2 text-sm rounded px-2 py-1.5 ${isEditing ? 'bg-purple-50' : 'hover:bg-gray-50'}`}
+                        >
+                          {/* Type icon */}
+                          {getEndorsementIcon(item)}
+
+                          {/* Endorsement name - editable for manuscripts */}
+                          {isEditing && item.isManuscript ? (
+                            <input
+                              type="text"
+                              value={editingEndorsementText}
+                              onChange={(e) => setEditingEndorsementText(e.target.value)}
+                              onBlur={() => {
+                                if (editingEndorsementText.trim() && editingEndorsementText !== item.label) {
+                                  updateManuscriptEndorsementMutation.mutate({ endorsementId: mutationId, text: editingEndorsementText });
+                                }
+                                setEditingEndorsementId(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === 'Escape') {
+                                  e.preventDefault();
+                                  if (editingEndorsementText.trim() && editingEndorsementText !== item.label) {
+                                    updateManuscriptEndorsementMutation.mutate({ endorsementId: mutationId, text: editingEndorsementText });
+                                  }
+                                  setEditingEndorsementId(null);
+                                }
+                              }}
+                              className="flex-1 min-w-0 text-sm border-0 border-b border-purple-400 bg-transparent px-0 py-0 focus:outline-none focus:border-purple-600"
+                              autoFocus
+                            />
+                          ) : (
+                            <button
+                              onClick={() => {
+                                if (item.isManuscript) {
+                                  setEditingEndorsementId(item.id);
+                                  setEditingEndorsementText(item.label);
+                                }
+                              }}
+                              className={`flex-1 min-w-0 text-left ${
+                                item.isManuscript ? 'text-gray-700 hover:text-purple-700 cursor-pointer' : 'text-gray-700 cursor-default'
+                              }`}
+                            >
+                              {item.label}
+                            </button>
+                          )}
+
+                          {/* Coverage badge with popover */}
+                          <Popover.Root
+                            open={endorsementAppliesToPopoverId === item.id}
+                            onOpenChange={(open) => setEndorsementAppliesToPopoverId(open ? item.id : null)}
+                            modal={false}
+                          >
+                            <Popover.Trigger asChild>
+                              <button
+                                className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+                                  isAllLinked
+                                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                    : linkedCount > 0
+                                    ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                    : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                }`}
+                              >
+                                {isAllLinked ? (
+                                  `All ${totalCount} Options`
+                                ) : linkedCount === 0 ? (
+                                  'No quotes'
+                                ) : (
+                                  <>
+                                    {firstLinkedQuote?.name}
+                                    {otherCount > 0 && <span className="ml-1 text-[10px] opacity-75">+{otherCount}</span>}
+                                  </>
+                                )}
+                              </button>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content
+                                className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                sideOffset={4}
+                                align="end"
+                              >
+                                <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                {/* Quick select shortcuts */}
+                                {(() => {
+                                  const linkedSet = new Set(linkedQuoteIds);
+                                  const isAllSelected = allOptionIds.every(id => linkedSet.has(id));
+                                  const isAllPrimarySelected = allPrimaryIds.length > 0 && allPrimaryIds.every(id => linkedSet.has(id));
+                                  const isAllExcessSelected = allExcessIds.length > 0 && allExcessIds.every(id => linkedSet.has(id));
+                                  return (
+                                    <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                      <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                        <input
+                                          type="checkbox"
+                                          checked={isAllSelected}
+                                          onChange={() => {
+                                            applyEndorsementSelectionMutation.mutate({
+                                              endorsementId: mutationId,
+                                              currentIds: linkedQuoteIds,
+                                              targetIds: isAllSelected ? [] : allOptionIds,
+                                            });
+                                          }}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span>All Options</span>
+                                      </label>
+                                      {allPrimaryIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllPrimarySelected}
+                                            onChange={() => {
+                                              let newIds = isAllPrimarySelected
+                                                ? linkedQuoteIds.filter(id => !allPrimaryIds.includes(id))
+                                                : [...new Set([...linkedQuoteIds, ...allPrimaryIds])];
+                                              applyEndorsementSelectionMutation.mutate({
+                                                endorsementId: mutationId,
+                                                currentIds: linkedQuoteIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Primary</span>
+                                        </label>
+                                      )}
+                                      {allExcessIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllExcessSelected}
+                                            onChange={() => {
+                                              let newIds = isAllExcessSelected
+                                                ? linkedQuoteIds.filter(id => !allExcessIds.includes(id))
+                                                : [...new Set([...linkedQuoteIds, ...allExcessIds])];
+                                              applyEndorsementSelectionMutation.mutate({
+                                                endorsementId: mutationId,
+                                                currentIds: linkedQuoteIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Excess</span>
+                                        </label>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                  {allOptions.map(opt => {
+                                    const isLinked = linkedQuoteIds.includes(String(opt.id));
+                                    return (
+                                      <label
+                                        key={opt.id}
+                                        className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isLinked}
+                                          onChange={() => {
+                                            toggleEndorsementLinkMutation.mutate({
+                                              endorsementId: mutationId,
+                                              quoteId: opt.id,
+                                              isLinked,
+                                            });
+                                          }}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span className="truncate">{opt.name}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
+
+                          {/* Remove button */}
+                          <button
+                            onClick={() => {
+                              if (linkedQuoteIds.length > 0) {
+                                applyEndorsementSelectionMutation.mutate({
+                                  endorsementId: mutationId,
+                                  currentIds: linkedQuoteIds,
+                                  targetIds: [],
+                                });
+                              }
+                            }}
+                            className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                            title="Remove from all quotes"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+
+                  {/* Add actions */}
+                  {isAddingEndorsement ? (
+                    <div className="flex items-center gap-2 text-sm bg-green-50/50 rounded px-2 py-1 ring-1 ring-green-200 mt-2">
+                      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <input
+                        type="text"
+                        value={newEndorsementText}
+                        onChange={(e) => setNewEndorsementText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newEndorsementText.trim()) {
+                            createManuscriptEndorsementMutation.mutate(newEndorsementText.trim());
+                          }
+                          if (e.key === 'Escape') {
+                            setIsAddingEndorsement(false);
+                            setNewEndorsementText('');
+                          }
+                        }}
+                        placeholder="Type new manuscript endorsement..."
+                        className="flex-1 text-sm border-0 border-b border-green-400 bg-transparent px-0 py-0 focus:outline-none focus:border-green-600"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => {
+                          if (newEndorsementText.trim()) {
+                            createManuscriptEndorsementMutation.mutate(newEndorsementText.trim());
+                          }
+                        }}
+                        disabled={!newEndorsementText.trim() || createManuscriptEndorsementMutation.isPending}
+                        className="text-[11px] px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        Add
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsAddingEndorsement(false);
+                          setNewEndorsementText('');
+                        }}
+                        className="text-[11px] px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 pt-2 border-t border-gray-100 mt-2">
+                      <button
+                        onClick={() => setIsAddingEndorsement(true)}
+                        className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add Custom
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <Popover.Root open={showEndorsementLibraryPicker} onOpenChange={setShowEndorsementLibraryPicker}>
+                        <Popover.Trigger asChild>
+                          <button className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                            From Library
+                          </button>
+                        </Popover.Trigger>
+                        <Popover.Portal>
+                          <Popover.Content className="z-[9999] w-80 rounded-lg border border-gray-200 bg-white shadow-xl" sideOffset={4} align="start">
+                            <div className="p-3 border-b border-gray-100">
+                              <input
+                                type="text"
+                                placeholder="Search endorsements..."
+                                value={endorsementLibrarySearchTerm}
+                                onChange={(e) => setEndorsementLibrarySearchTerm(e.target.value)}
+                                className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                              />
+                            </div>
+                            <div className="max-h-64 overflow-y-auto p-2">
+                              {filteredLibraryEndorsements.length === 0 ? (
+                                <p className="text-xs text-gray-400 text-center py-4">
+                                  {endorsementLibrarySearchTerm ? 'No matching endorsements' : 'No endorsements available'}
+                                </p>
+                              ) : (
+                                <div className="space-y-1">
+                                  {filteredLibraryEndorsements.slice(0, 10).map(endt => (
+                                    <button
+                                      key={endt.id}
+                                      onClick={() => linkEndorsementFromLibraryMutation.mutate(endt.id)}
+                                      className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-purple-50 text-gray-700 hover:text-purple-700 truncate"
+                                    >
+                                      {endt.title || endt.code}
+                                    </button>
+                                  ))}
+                                  {filteredLibraryEndorsements.length > 10 && (
+                                    <p className="text-[11px] text-gray-400 text-center py-1">
+                                      +{filteredLibraryEndorsements.length - 10} more...
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <Popover.Arrow className="fill-white" />
+                          </Popover.Content>
+                        </Popover.Portal>
+                      </Popover.Root>
+                    </div>
+                  )}
+                </div>
+                ) : (
+                  /* Submission Mode - Collapsed Summary View */
+                  <div className="space-y-2">
+                    {allSubmissionEndorsements.slice(0, 5).map((item) => {
+                      const linkedQuoteIds = item.quoteIds?.map(String) || [];
+                      const linkedCount = linkedQuoteIds.length;
+                      const totalCount = allOptions.length;
+                      const isAllLinked = linkedCount === totalCount && totalCount > 0;
+                      const firstLinkedQuote = allOptions.find(opt => linkedQuoteIds.includes(String(opt.id)));
+                      const otherCount = linkedCount - 1;
+
+                      return (
+                        <div key={item.id} className="flex items-center gap-2 text-sm">
+                          {getEndorsementIcon(item)}
+                          <span className="flex-1 text-gray-700 truncate">{item.label}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
+                            isAllLinked
+                              ? 'bg-green-50 text-green-700 border-green-200'
+                              : linkedCount > 0
+                              ? 'bg-blue-50 text-blue-600 border-blue-200'
+                              : 'bg-gray-50 text-gray-500 border-gray-200'
+                          }`}>
+                            {isAllLinked ? 'All' : linkedCount === 0 ? 'None' : `${linkedCount}/${totalCount}`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {allSubmissionEndorsements.length > 5 && (
+                      <button
+                        onClick={() => setExpandedCard('endorsements')}
+                        className="text-xs text-purple-600 hover:text-purple-700"
+                      >
+                        +{allSubmissionEndorsements.length - 5} more...
+                      </button>
+                    )}
+                  </div>
+                )
+              ) : endorsementsEmpty ? (
                 <p className="text-sm text-gray-400">No endorsements attached</p>
+              ) : expandedCard === 'endorsements' ? (
+                /* Expanded Edit Mode */
+                <div className="space-y-1">
+                  {showMissingSuggestions && missingEndorsements.length > 0 && (
+                    <div className="mb-3 pb-3 border-b border-dashed border-amber-200">
+                      <div className="text-[10px] text-amber-600 font-semibold uppercase tracking-wide mb-2">
+                        Missing from {peerLabel} peers ({missingEndorsements.length})
+                      </div>
+                      {missingEndorsements.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-2 py-1 bg-amber-50/30"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <svg className="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            <span className="text-gray-700 truncate">{item.label}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600 flex-shrink-0">
+                              On peers
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => restoreEndorsement.mutate(item.id)}
+                            className="text-[11px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-700 hover:bg-amber-50 flex-shrink-0"
+                          >
+                            + Add
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Existing endorsements - editable */}
+                  {(() => {
+                    const allEndorsements = [...uniqueEndorsements, ...alignedEndorsements];
+                    return allEndorsements.map((item, index) => {
+                      const isEditing = editingEndorsementId === item.id;
+                      const sharedCount = getEndorsementSharedQuoteCount(item);
+                      const mutationId = item.rawId || item.id;
+
+                      const navigateToEndorsement = (targetIndex) => {
+                        // Save current if changed (for manuscripts only)
+                        if (item.isManuscript && editingEndorsementText.trim() && editingEndorsementText !== item.label) {
+                          updateManuscriptEndorsementMutation.mutate({ endorsementId: mutationId, text: editingEndorsementText });
+                        }
+                        // Move to target item
+                        const targetItem = allEndorsements[targetIndex];
+                        if (targetItem) {
+                          if (targetItem.isManuscript) {
+                            setEditingEndorsementId(targetItem.id);
+                            setEditingEndorsementText(targetItem.label);
+                          } else {
+                            setEditingEndorsementId(null);
+                            setSelectedEndorsementId(targetItem.id);
+                          }
+                        }
+                      };
+
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-2 text-sm rounded px-2 py-1 group hover:bg-gray-50"
+                        >
+                          {getEndorsementIcon(item)}
+
+                          {/* Text - manuscripts can be edited */}
+                          {isEditing && item.isManuscript ? (
+                            <input
+                              type="text"
+                              value={editingEndorsementText}
+                              onChange={(e) => setEditingEndorsementText(e.target.value)}
+                              onBlur={() => {
+                                if (editingEndorsementText.trim() && editingEndorsementText !== item.label) {
+                                  updateManuscriptEndorsementMutation.mutate({ endorsementId: mutationId, text: editingEndorsementText });
+                                }
+                                setEditingEndorsementId(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  // Save and move to next (wrap to top)
+                                  const nextIndex = index < allEndorsements.length - 1 ? index + 1 : 0;
+                                  navigateToEndorsement(nextIndex);
+                                }
+                                if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  // Save and exit edit mode
+                                  if (editingEndorsementText.trim() && editingEndorsementText !== item.label) {
+                                    updateManuscriptEndorsementMutation.mutate({ endorsementId: mutationId, text: editingEndorsementText });
+                                  }
+                                  setEditingEndorsementId(null);
+                                  setExpandedCard(null);
+                                  setIsAddingEndorsement(false);
+                                  setShowEndorsementLibraryPicker(false);
+                                }
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  const nextIndex = index < allEndorsements.length - 1 ? index + 1 : 0;
+                                  navigateToEndorsement(nextIndex);
+                                }
+                                if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  const prevIndex = index > 0 ? index - 1 : allEndorsements.length - 1;
+                                  navigateToEndorsement(prevIndex);
+                                }
+                              }}
+                              className="flex-1 text-sm border-0 border-b border-purple-400 bg-transparent px-0 py-0 focus:outline-none focus:border-purple-600"
+                              autoFocus
+                            />
+                          ) : (
+                            <button
+                              onClick={() => {
+                                if (item.isManuscript) {
+                                  setEditingEndorsementId(item.id);
+                                  setEditingEndorsementText(item.label);
+                                }
+                              }}
+                              className={`flex-1 text-left truncate ${
+                                item.isManuscript
+                                  ? 'text-gray-700 hover:text-purple-700 cursor-pointer'
+                                  : 'text-gray-700 cursor-default'
+                              }`}
+                              disabled={!item.isManuscript}
+                            >
+                              {item.label}
+                            </button>
+                          )}
+
+                          {/* Applies To Popover */}
+                          <Popover.Root
+                            open={endorsementAppliesToPopoverId === item.id}
+                            onOpenChange={(open) => setEndorsementAppliesToPopoverId(open ? item.id : null)}
+                            modal={false}
+                          >
+                            <Popover.Trigger asChild>
+                              <button
+                                className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                                  sharedCount > 0
+                                    ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                    : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100'
+                                }`}
+                                title="Click to manage which quotes this applies to"
+                              >
+                                {sharedCount > 0 ? `On ${sharedCount + 1} quotes` : 'Only here'}
+                              </button>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content
+                                className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                sideOffset={4}
+                                align="end"
+                              >
+                                <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                {/* Quick select checkboxes */}
+                                {(() => {
+                                  const linkedIds = item.quoteIds?.map(String) || [];
+                                  const linkedSet = new Set(linkedIds);
+                                  const isAllSelected = allOptionIds.every(id => linkedSet.has(id));
+                                  const isAllPrimarySelected = allPrimaryIds.length > 0 && allPrimaryIds.every(id => linkedSet.has(id));
+                                  const isAllExcessSelected = allExcessIds.length > 0 && allExcessIds.every(id => linkedSet.has(id));
+                                  return (
+                                    <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                      <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                        <input
+                                          type="checkbox"
+                                          checked={isAllSelected}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            const currentId = String(structureId);
+                                            applyEndorsementSelectionMutation.mutate({
+                                              endorsementId: mutationId,
+                                              currentIds: linkedIds,
+                                              targetIds: isAllSelected ? [currentId] : allOptionIds,
+                                            });
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span>All Options</span>
+                                      </label>
+                                      {allPrimaryIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllPrimarySelected}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              const currentId = String(structureId);
+                                              let newIds = isAllPrimarySelected
+                                                ? linkedIds.filter(id => !allPrimaryIds.includes(id))
+                                                : [...new Set([...linkedIds, ...allPrimaryIds])];
+                                              if (!newIds.includes(currentId)) newIds.push(currentId);
+                                              applyEndorsementSelectionMutation.mutate({
+                                                endorsementId: mutationId,
+                                                currentIds: linkedIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Primary</span>
+                                        </label>
+                                      )}
+                                      {allExcessIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllExcessSelected}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              const currentId = String(structureId);
+                                              let newIds = isAllExcessSelected
+                                                ? linkedIds.filter(id => !allExcessIds.includes(id))
+                                                : [...new Set([...linkedIds, ...allExcessIds])];
+                                              if (!newIds.includes(currentId)) newIds.push(currentId);
+                                              applyEndorsementSelectionMutation.mutate({
+                                                endorsementId: mutationId,
+                                                currentIds: linkedIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Excess</span>
+                                        </label>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                  {allOptions.map(opt => {
+                                    const isLinked = item.quoteIds?.map(String).includes(String(opt.id));
+                                    const isCurrent = String(opt.id) === String(structureId);
+                                    return (
+                                      <label
+                                        key={opt.id}
+                                        className={`flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded ${
+                                          isCurrent ? 'text-purple-700 font-medium' : 'text-gray-600'
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isLinked}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            toggleEndorsementLinkMutation.mutate({
+                                              endorsementId: mutationId,
+                                              quoteId: opt.id,
+                                              isLinked,
+                                            });
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span className="truncate">{opt.name}</span>
+                                        {isCurrent && <span className="text-[9px] text-purple-500">(current)</span>}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
+
+                          {/* Remove button */}
+                          <button
+                            onClick={() => unlinkEndorsementMutation.mutate(item.id)}
+                            className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0"
+                            title="Remove from this quote"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                    });
+                  })()}
+
+                  {/* Add new endorsement row */}
+                  {isAddingEndorsement ? (
+                    <div className="flex items-center gap-2 text-sm bg-green-50/50 rounded px-2 py-1 ring-1 ring-green-200">
+                      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <input
+                        type="text"
+                        value={newEndorsementText}
+                        onChange={(e) => setNewEndorsementText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newEndorsementText.trim()) {
+                            createManuscriptEndorsementMutation.mutate(newEndorsementText.trim());
+                          }
+                          if (e.key === 'Escape') {
+                            setIsAddingEndorsement(false);
+                            setNewEndorsementText('');
+                          }
+                        }}
+                        placeholder="Type new manuscript endorsement..."
+                        className="flex-1 text-sm border-0 border-b border-green-400 bg-transparent px-0 py-0 focus:outline-none focus:border-green-600"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => {
+                          if (newEndorsementText.trim()) {
+                            createManuscriptEndorsementMutation.mutate(newEndorsementText.trim());
+                          }
+                        }}
+                        disabled={!newEndorsementText.trim() || createManuscriptEndorsementMutation.isPending}
+                        className="text-[11px] px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        Add
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsAddingEndorsement(false);
+                          setNewEndorsementText('');
+                        }}
+                        className="text-[11px] px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    /* Action buttons */
+                    <div className="flex items-center gap-2 pt-2 border-t border-gray-100 mt-2">
+                      <button
+                        onClick={() => setIsAddingEndorsement(true)}
+                        className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add Custom
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <Popover.Root open={showEndorsementLibraryPicker} onOpenChange={setShowEndorsementLibraryPicker}>
+                        <Popover.Trigger asChild>
+                          <button className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                            From Library
+                          </button>
+                        </Popover.Trigger>
+                        <Popover.Portal>
+                          <Popover.Content className="z-[9999] w-80 rounded-lg border border-gray-200 bg-white shadow-xl" sideOffset={4} align="start">
+                            <div className="p-3 border-b border-gray-100">
+                              <input
+                                type="text"
+                                placeholder="Search endorsements..."
+                                value={endorsementLibrarySearchTerm}
+                                onChange={(e) => setEndorsementLibrarySearchTerm(e.target.value)}
+                                className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                              />
+                            </div>
+                            <div className="max-h-64 overflow-y-auto p-2">
+                              {filteredLibraryEndorsements.length === 0 ? (
+                                <p className="text-xs text-gray-400 text-center py-4">
+                                  {endorsementLibrarySearchTerm ? 'No matching endorsements' : 'No endorsements available'}
+                                </p>
+                              ) : (
+                                <div className="space-y-1">
+                                  {filteredLibraryEndorsements.slice(0, 10).map(endt => (
+                                    <button
+                                      key={endt.id}
+                                      onClick={() => linkEndorsementFromLibraryMutation.mutate(endt.id)}
+                                      className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-purple-50 text-gray-700 hover:text-purple-700 truncate"
+                                    >
+                                      {endt.title || endt.code}
+                                    </button>
+                                  ))}
+                                  {filteredLibraryEndorsements.length > 10 && (
+                                    <p className="text-[11px] text-gray-400 text-center py-1">
+                                      +{filteredLibraryEndorsements.length - 10} more...
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <Popover.Arrow className="fill-white" />
+                          </Popover.Content>
+                        </Popover.Portal>
+                      </Popover.Root>
+                    </div>
+                  )}
+                </div>
               ) : (
+                /* Collapsed Summary Mode */
                 <div className="space-y-2">
                   {showMissingSuggestions && missingEndorsements.map((item) => (
                     <div
                       key={item.id}
                       onClick={() => restoreEndorsement.mutate(item.id)}
-                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-2 py-1.5 bg-amber-50/50"
+                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-2 py-1.5 bg-amber-50/50 cursor-pointer"
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-gray-700 truncate">{item.label}</span>
@@ -6028,19 +8304,35 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                     </div>
                   ))}
                   {uniqueEndorsements.map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 text-sm">
-                      {getEndorsementIcon(item)}
-                      <span className="text-gray-700">{item.label}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">
-                        Only here
-                      </span>
-                    </div>
+                      <div key={item.id} className="flex items-center gap-2 text-sm">
+                        {getEndorsementIcon(item)}
+                        <button
+                          onClick={() => {
+                            setExpandedCard('endorsements');
+                            setSelectedEndorsementId(item.id);
+                          }}
+                          className="flex-1 text-gray-700 hover:text-purple-700 text-left truncate"
+                        >
+                          {item.label}
+                        </button>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 flex-shrink-0">
+                          Only here
+                        </span>
+                      </div>
                   ))}
                   {alignedEndorsements.map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 text-sm">
-                      {getEndorsementIcon(item)}
-                      <span className="text-gray-700">{item.label}</span>
-                    </div>
+                      <div key={item.id} className="flex items-center gap-2 text-sm">
+                        {getEndorsementIcon(item)}
+                        <button
+                          onClick={() => {
+                            setExpandedCard('endorsements');
+                            setSelectedEndorsementId(item.id);
+                          }}
+                          className="flex-1 text-gray-700 hover:text-purple-700 text-left truncate"
+                        >
+                          {item.label}
+                        </button>
+                      </div>
                   ))}
                 </div>
               )}
@@ -6048,23 +8340,52 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           </div>
 
         {/* Subjectivities - expands left (cols 2-3) when editing */}
-        <div className={`border rounded-lg overflow-hidden transition-all duration-200 ${
-          expandedCard === 'subjectivities'
-            ? 'md:col-start-2 md:col-span-2 border-purple-300 ring-1 ring-purple-100'
-            : 'border-gray-200'
-        } ${expandedCard === 'endorsements' ? 'hidden' : ''}`}>
+        <div
+          ref={subjectivitiesCardRef}
+          className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+            expandedCard === 'subjectivities'
+              ? 'md:col-start-2 md:col-span-2 border-purple-300 ring-1 ring-purple-100'
+              : 'border-gray-200'
+          } ${expandedCard && expandedCard !== 'subjectivities' ? 'hidden' : ''}`}
+        >
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
-                {subjectivityStatus.text && (
-                  <span className={`text-[11px] ${subjectivityStatus.tone}`}>
-                    {subjectivityStatus.text}
-                  </span>
+                {summaryScope === 'submission' ? (
+                  expandedCard === 'subjectivities' ? (
+                    <span className="text-[11px] text-gray-400">
+                      {allSubmissionSubjectivities.length} across submission
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-purple-600 font-medium">
+                      {allSubmissionSubjectivities.length} across submission
+                    </span>
+                  )
+                ) : (
+                  <>
+                    {!expandedCard && subjectivityStatus.text && summaryScope !== 'submission' && (
+                      <span className={`text-[11px] ${subjectivityStatus.tone}`}>
+                        {subjectivityStatus.text}
+                      </span>
+                    )}
+                    {expandedCard === 'subjectivities' && (
+                      <span className="text-[11px] text-gray-400">
+                        {subjectivities.length} item{subjectivities.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
-              {subjectivities.length > 0 && (
+              {((summaryScope === 'quote' && subjectivities.length > 0) || (summaryScope === 'submission' && allSubmissionSubjectivities.length > 0) || subjectivities.length === 0) && (
                 <button
-                  onClick={() => setExpandedCard(expandedCard === 'subjectivities' ? null : 'subjectivities')}
+                  onClick={() => {
+                    if (expandedCard === 'subjectivities') {
+                      setEditingSubjId(null);
+                      setIsAddingSubjectivity(false);
+                      setShowLibraryPicker(false);
+                    }
+                    setExpandedCard(expandedCard === 'subjectivities' ? null : 'subjectivities');
+                  }}
                   className="text-xs text-purple-600 hover:text-purple-700 font-medium"
                 >
                   {expandedCard === 'subjectivities' ? 'Done' : 'Edit'}
@@ -6072,62 +8393,810 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               )}
             </div>
             <div className="p-4">
-              {subjectivitiesEmpty ? (
-                <p className="text-sm text-gray-400">No subjectivities attached</p>
+              {summaryScope === 'submission' ? (
+                /* Submission Mode */
+                allSubmissionSubjectivities.length === 0 ? (
+                  <p className="text-sm text-gray-400">No subjectivities in this submission</p>
+                ) : expandedCard === 'subjectivities' ? (
+                  /* Submission Mode - Expanded Edit View */
+                  <div className="space-y-1">
+                    {allSubmissionSubjectivities.map((item) => {
+                      const isEditing = editingSubjId === item.id;
+                      const mutationId = item.rawId || item.id;
+                      const linkedQuoteIds = item.quoteIds?.map(String) || [];
+                      const linkedCount = linkedQuoteIds.length;
+                      const totalCount = allOptions.length;
+                      const isAllLinked = linkedCount === totalCount && totalCount > 0;
+                      const firstLinkedQuote = allOptions.find(opt => linkedQuoteIds.includes(String(opt.id)));
+                      const otherCount = linkedCount - 1;
+
+                      return (
+                        <div
+                          key={item.id}
+                          className={`group flex items-center gap-2 text-sm rounded px-2 py-1.5 ${isEditing ? 'bg-purple-50' : 'hover:bg-gray-50'}`}
+                        >
+                          {/* Status icon */}
+                          <button
+                            onClick={() => updateSubjectivityStatusMutation.mutate({
+                              subjectivityId: mutationId,
+                              status: cycleStatus(item.status)
+                            })}
+                            className="p-0.5 rounded hover:bg-gray-100 transition-colors flex-shrink-0"
+                            title={`Status: ${item.status || 'pending'} (click to change)`}
+                          >
+                            {item.status === 'received' ? (
+                              <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : item.status === 'waived' ? (
+                              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            )}
+                          </button>
+
+                          {/* Subjectivity text - editable */}
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingSubjText}
+                              onChange={(e) => setEditingSubjText(e.target.value)}
+                              onBlur={() => {
+                                if (editingSubjText.trim() && editingSubjText !== item.label) {
+                                  updateSubjectivityTextMutation.mutate({ subjectivityId: mutationId, text: editingSubjText });
+                                }
+                                setEditingSubjId(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === 'Escape') {
+                                  e.preventDefault();
+                                  if (editingSubjText.trim() && editingSubjText !== item.label) {
+                                    updateSubjectivityTextMutation.mutate({ subjectivityId: mutationId, text: editingSubjText });
+                                  }
+                                  setEditingSubjId(null);
+                                }
+                              }}
+                              className="flex-1 min-w-0 text-sm border-0 border-b border-purple-400 bg-transparent px-0 py-0 focus:outline-none focus:border-purple-600"
+                              autoFocus
+                            />
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditingSubjId(item.id);
+                                setEditingSubjText(item.label);
+                              }}
+                              className="flex-1 min-w-0 text-left text-gray-700 hover:text-purple-700 cursor-pointer"
+                            >
+                              {item.label}
+                            </button>
+                          )}
+
+                          {/* Coverage badge with popover */}
+                          <Popover.Root
+                            open={subjectivityAppliesToPopoverId === item.id}
+                            onOpenChange={(open) => setSubjectivityAppliesToPopoverId(open ? item.id : null)}
+                            modal={false}
+                          >
+                            <Popover.Trigger asChild>
+                              <button
+                                className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+                                  isAllLinked
+                                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                    : linkedCount > 0
+                                    ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                    : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                }`}
+                              >
+                                {isAllLinked ? (
+                                  `All ${totalCount} Options`
+                                ) : linkedCount === 0 ? (
+                                  'No quotes'
+                                ) : (
+                                  <>
+                                    {firstLinkedQuote?.name}
+                                    {otherCount > 0 && <span className="ml-1 text-[10px] opacity-75">+{otherCount}</span>}
+                                  </>
+                                )}
+                              </button>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content
+                                className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                sideOffset={4}
+                                align="end"
+                              >
+                                <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                {/* Quick select shortcuts */}
+                                {(() => {
+                                  const linkedSet = new Set(linkedQuoteIds);
+                                  const isAllSelected = allOptionIds.every(id => linkedSet.has(id));
+                                  const isAllPrimarySelected = allPrimaryIds.length > 0 && allPrimaryIds.every(id => linkedSet.has(id));
+                                  const isAllExcessSelected = allExcessIds.length > 0 && allExcessIds.every(id => linkedSet.has(id));
+                                  return (
+                                    <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                      <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                        <input
+                                          type="checkbox"
+                                          checked={isAllSelected}
+                                          onChange={() => {
+                                            applySubjectivitySelectionMutation.mutate({
+                                              subjectivityId: mutationId,
+                                              currentIds: linkedQuoteIds,
+                                              targetIds: isAllSelected ? [] : allOptionIds,
+                                            });
+                                          }}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span>All Options</span>
+                                      </label>
+                                      {allPrimaryIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllPrimarySelected}
+                                            onChange={() => {
+                                              let newIds = isAllPrimarySelected
+                                                ? linkedQuoteIds.filter(id => !allPrimaryIds.includes(id))
+                                                : [...new Set([...linkedQuoteIds, ...allPrimaryIds])];
+                                              applySubjectivitySelectionMutation.mutate({
+                                                subjectivityId: mutationId,
+                                                currentIds: linkedQuoteIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Primary</span>
+                                        </label>
+                                      )}
+                                      {allExcessIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllExcessSelected}
+                                            onChange={() => {
+                                              let newIds = isAllExcessSelected
+                                                ? linkedQuoteIds.filter(id => !allExcessIds.includes(id))
+                                                : [...new Set([...linkedQuoteIds, ...allExcessIds])];
+                                              applySubjectivitySelectionMutation.mutate({
+                                                subjectivityId: mutationId,
+                                                currentIds: linkedQuoteIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Excess</span>
+                                        </label>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                  {allOptions.map(opt => {
+                                    const isLinked = linkedQuoteIds.includes(String(opt.id));
+                                    return (
+                                      <label
+                                        key={opt.id}
+                                        className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isLinked}
+                                          onChange={() => {
+                                            toggleSubjectivityLinkMutation.mutate({
+                                              subjectivityId: mutationId,
+                                              quoteId: opt.id,
+                                              isLinked,
+                                            });
+                                          }}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span className="truncate">{opt.name}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
+
+                          {/* Remove button */}
+                          <button
+                            onClick={() => {
+                              if (linkedQuoteIds.length > 0) {
+                                applySubjectivitySelectionMutation.mutate({
+                                  subjectivityId: mutationId,
+                                  currentIds: linkedQuoteIds,
+                                  targetIds: [],
+                                });
+                              }
+                            }}
+                            className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                            title="Remove from all quotes"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+
+                    {/* Add actions */}
+                    {isAddingSubjectivity ? (
+                      <div className="flex items-center gap-2 text-sm bg-green-50/50 rounded px-2 py-1 ring-1 ring-green-200 mt-2">
+                        <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        <input
+                          type="text"
+                          value={newSubjectivityText}
+                          onChange={(e) => setNewSubjectivityText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && newSubjectivityText.trim()) {
+                              createSubjectivityMutation.mutate(newSubjectivityText.trim());
+                            }
+                            if (e.key === 'Escape') {
+                              setIsAddingSubjectivity(false);
+                              setNewSubjectivityText('');
+                            }
+                          }}
+                          placeholder="Type new subjectivity text..."
+                          className="flex-1 text-sm border-0 border-b border-green-400 bg-transparent px-0 py-0 focus:outline-none focus:border-green-600"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => {
+                            if (newSubjectivityText.trim()) {
+                              createSubjectivityMutation.mutate(newSubjectivityText.trim());
+                            }
+                          }}
+                          disabled={!newSubjectivityText.trim() || createSubjectivityMutation.isPending}
+                          className="text-[11px] px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                        <button
+                          onClick={() => {
+                            setIsAddingSubjectivity(false);
+                            setNewSubjectivityText('');
+                          }}
+                          className="text-[11px] px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 pt-2 border-t border-gray-100 mt-2">
+                        <button
+                          onClick={() => setIsAddingSubjectivity(true)}
+                          className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                          Add Custom
+                        </button>
+                        <span className="text-gray-300">|</span>
+                        <Popover.Root open={showLibraryPicker} onOpenChange={setShowLibraryPicker}>
+                          <Popover.Trigger asChild>
+                            <button className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                              </svg>
+                              From Library
+                            </button>
+                          </Popover.Trigger>
+                          <Popover.Portal>
+                            <Popover.Content className="z-[9999] w-80 rounded-lg border border-gray-200 bg-white shadow-xl" sideOffset={4} align="start">
+                              <div className="p-3 border-b border-gray-100">
+                                <input
+                                  type="text"
+                                  placeholder="Search templates..."
+                                  value={librarySearchTerm}
+                                  onChange={(e) => setLibrarySearchTerm(e.target.value)}
+                                  className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                                />
+                              </div>
+                              <div className="max-h-64 overflow-y-auto p-2">
+                                {filteredTemplates.length === 0 ? (
+                                  <p className="text-xs text-gray-400 text-center py-4">
+                                    {librarySearchTerm ? 'No matching templates' : 'No templates available'}
+                                  </p>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {filteredTemplates.slice(0, 10).map(template => (
+                                      <button
+                                        key={template.id}
+                                        onClick={() => linkTemplateSubjectivity.mutate(template.id)}
+                                        className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-purple-50 text-gray-700 hover:text-purple-700 truncate"
+                                      >
+                                        {template.text || template.subjectivity_text}
+                                      </button>
+                                    ))}
+                                    {filteredTemplates.length > 10 && (
+                                      <p className="text-[11px] text-gray-400 text-center py-1">
+                                        +{filteredTemplates.length - 10} more...
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <Popover.Arrow className="fill-white" />
+                            </Popover.Content>
+                          </Popover.Portal>
+                        </Popover.Root>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Submission Mode - Collapsed Summary View */
+                  <div className="space-y-2">
+                    {allSubmissionSubjectivities.slice(0, 5).map((item) => {
+                      const linkedQuoteIds = item.quoteIds?.map(String) || [];
+                      const linkedCount = linkedQuoteIds.length;
+                      const totalCount = allOptions.length;
+                      const isAllLinked = linkedCount === totalCount && totalCount > 0;
+                      const mutationId = item.rawId || item.id;
+
+                      return (
+                        <div key={item.id} className="flex items-center gap-2 text-sm">
+                          <button
+                            onClick={() => updateSubjectivityStatusMutation.mutate({
+                              subjectivityId: mutationId,
+                              status: cycleStatus(item.status)
+                            })}
+                            className="p-0.5 rounded hover:bg-gray-100 transition-colors flex-shrink-0"
+                            title={`Status: ${item.status || 'pending'} (click to change)`}
+                          >
+                            {item.status === 'received' ? (
+                              <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : item.status === 'waived' ? (
+                              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            )}
+                          </button>
+                          <span className="flex-1 text-gray-700 truncate">{item.label}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
+                            isAllLinked
+                              ? 'bg-green-50 text-green-700 border-green-200'
+                              : linkedCount > 0
+                              ? 'bg-blue-50 text-blue-600 border-blue-200'
+                              : 'bg-gray-50 text-gray-500 border-gray-200'
+                          }`}>
+                            {isAllLinked ? 'All' : linkedCount === 0 ? 'None' : `${linkedCount}/${totalCount}`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {allSubmissionSubjectivities.length > 5 && (
+                      <button
+                        onClick={() => setExpandedCard('subjectivities')}
+                        className="text-xs text-purple-600 hover:text-purple-700"
+                      >
+                        +{allSubmissionSubjectivities.length - 5} more...
+                      </button>
+                    )}
+                  </div>
+                )
               ) : expandedCard === 'subjectivities' ? (
-                /* Expanded Edit Mode */
-                <div className="space-y-3">
-                  {showMissingSuggestions && missingSubjectivities.map((item) => (
+                /* Expanded Edit Mode - Full editing capabilities */
+                <div className="space-y-1">
+                  {/* Missing from peers - controlled by Show Missing toggle */}
+                  {showMissingSuggestions && missingSubjectivities.length > 0 && (
+                    <div className="mb-3 pb-3 border-b border-dashed border-amber-200">
+                      <div className="text-[10px] text-amber-600 font-semibold uppercase tracking-wide mb-2">
+                        Missing from {peerLabel} peers ({missingSubjectivities.length})
+                      </div>
+                      {missingSubjectivities.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-3 py-2 bg-amber-50/50"
+                      className="flex items-center justify-between gap-2 text-sm border border-dashed border-amber-300 rounded px-2 py-1 bg-amber-50/30"
                     >
                       <div className="flex items-center gap-2 min-w-0">
+                        <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
                         <span className="text-gray-700 truncate">{item.label}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-600 flex-shrink-0">
                           On peers
                         </span>
                       </div>
                       <button
                         onClick={() => restoreSubjectivity.mutate(item.id)}
-                        className="text-[11px] px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:text-gray-900 flex-shrink-0"
+                        className="text-[11px] px-2 py-1 rounded border border-amber-300 bg-white text-amber-700 hover:bg-amber-50 flex-shrink-0"
                       >
                         + Add
                       </button>
                     </div>
-                  ))}
-                  {[...uniqueSubjectivities, ...alignedSubjectivities].map((item) => (
-                    <div key={item.id} className="flex items-center gap-3 text-sm bg-gray-50/50 rounded-lg px-3 py-2">
-                      {/* Status Dropdown */}
-                      <select
-                        value={item.status || 'pending'}
-                        onChange={(e) => updateSubjectivityStatusMutation.mutate({
-                          subjectivityId: item.id,
-                          status: e.target.value
-                        })}
-                        className={`text-xs px-2 py-1 rounded border cursor-pointer focus:outline-none focus:ring-1 focus:ring-purple-500 ${
-                          item.status === 'received'
-                            ? 'bg-green-50 border-green-200 text-green-700'
-                            : item.status === 'waived'
-                            ? 'bg-gray-50 border-gray-200 text-gray-500'
-                            : 'bg-amber-50 border-amber-200 text-amber-700'
-                        }`}
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="received">Received</option>
-                        <option value="waived">Waived</option>
-                      </select>
-                      {/* Subjectivity Text */}
-                      <span className="text-gray-700 flex-1">{item.label}</span>
-                      {/* Unique Badge */}
-                      {uniqueSubjectivities.some(u => u.id === item.id) && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 flex-shrink-0">
-                          Only here
-                        </span>
-                      )}
+                      ))}
                     </div>
-                  ))}
+                  )}
+
+                  {/* Existing subjectivities - editable */}
+                  {(() => {
+                    const allSubjectivities = [...uniqueSubjectivities, ...alignedSubjectivities];
+                    return allSubjectivities.map((item, index) => {
+                      const isEditing = editingSubjId === item.id;
+                      const sharedCount = getSharedQuoteCount(item);
+                      const mutationId = item.rawId || item.id; // Use rawId for API calls
+
+                      const navigateToItem = (targetIndex) => {
+                        // Save current if changed
+                        if (editingSubjText.trim() && editingSubjText !== item.label) {
+                          updateSubjectivityTextMutation.mutate({ subjectivityId: mutationId, text: editingSubjText });
+                        }
+                        // Move to target item
+                        const targetItem = allSubjectivities[targetIndex];
+                        if (targetItem) {
+                          setEditingSubjId(targetItem.id);
+                          setEditingSubjText(targetItem.label);
+                        }
+                      };
+
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-2 text-sm rounded px-2 py-1 group hover:bg-gray-50"
+                        >
+                          {/* Status Icon - Click to cycle */}
+                          <button
+                            onClick={() => updateSubjectivityStatusMutation.mutate({
+                              subjectivityId: mutationId,
+                              status: cycleStatus(item.status)
+                            })}
+                            className="p-1 rounded hover:bg-white transition-colors flex-shrink-0"
+                            title={`Status: ${item.status || 'pending'} (click to change)`}
+                          >
+                            {item.status === 'received' ? (
+                              <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : item.status === 'waived' ? (
+                              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                              </svg>
+                            ) : (
+                              <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            )}
+                          </button>
+
+                          {/* Text - Click to edit, blur to save */}
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingSubjText}
+                              onChange={(e) => setEditingSubjText(e.target.value)}
+                              onBlur={() => {
+                                if (editingSubjText.trim() && editingSubjText !== item.label) {
+                                  updateSubjectivityTextMutation.mutate({ subjectivityId: mutationId, text: editingSubjText });
+                                }
+                                setEditingSubjId(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  // Save and move to next (wrap to top)
+                                  const nextIndex = index < allSubjectivities.length - 1 ? index + 1 : 0;
+                                  navigateToItem(nextIndex);
+                                }
+                                if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  // Save and exit edit mode
+                                  if (editingSubjText.trim() && editingSubjText !== item.label) {
+                                    updateSubjectivityTextMutation.mutate({ subjectivityId: mutationId, text: editingSubjText });
+                                  }
+                                  setEditingSubjId(null);
+                                  setExpandedCard(null);
+                                  setIsAddingSubjectivity(false);
+                                  setShowLibraryPicker(false);
+                                }
+                                if (e.key === 'ArrowDown') {
+                                  e.preventDefault();
+                                  const nextIndex = index < allSubjectivities.length - 1 ? index + 1 : 0;
+                                  navigateToItem(nextIndex);
+                                }
+                                if (e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  const prevIndex = index > 0 ? index - 1 : allSubjectivities.length - 1;
+                                  navigateToItem(prevIndex);
+                                }
+                              }}
+                              className="flex-1 text-sm border-0 border-b border-purple-400 bg-transparent px-0 py-0 focus:outline-none focus:border-purple-600"
+                              autoFocus
+                            />
+                          ) : (
+                          <button
+                            onClick={() => {
+                              setEditingSubjId(item.id);
+                              setEditingSubjText(item.label);
+                            }}
+                            className="flex-1 text-left text-gray-700 hover:text-purple-700 truncate"
+                          >
+                            {item.label}
+                          </button>
+                        )}
+
+                        {/* Applies To Popover */}
+                        <Popover.Root
+                            open={appliesToPopoverId === item.id}
+                            onOpenChange={(open) => setAppliesToPopoverId(open ? item.id : null)}
+                            modal={false}
+                          >
+                            <Popover.Trigger asChild>
+                              <button
+                                className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                                  sharedCount > 0
+                                    ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                    : 'bg-purple-50 text-purple-600 border-purple-200 hover:bg-purple-100'
+                                }`}
+                                title="Click to manage which quotes this applies to"
+                              >
+                                {sharedCount > 0 ? `On ${sharedCount + 1} quotes` : 'Only here'}
+                              </button>
+                            </Popover.Trigger>
+                            <Popover.Portal>
+                              <Popover.Content
+                                className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                sideOffset={4}
+                                align="end"
+                              >
+                                <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                {/* Quick select checkboxes */}
+                                {(() => {
+                                  const linkedIds = item.quoteIds?.map(String) || [];
+                                  const linkedSet = new Set(linkedIds);
+                                  const isAllSelected = allOptionIds.every(id => linkedSet.has(id));
+                                  const isAllPrimarySelected = allPrimaryIds.length > 0 && allPrimaryIds.every(id => linkedSet.has(id));
+                                  const isAllExcessSelected = allExcessIds.length > 0 && allExcessIds.every(id => linkedSet.has(id));
+                                  return (
+                                    <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                      <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                        <input
+                                          type="checkbox"
+                                          checked={isAllSelected}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            // Always keep current quote linked to prevent item from disappearing
+                                            const currentId = String(structureId);
+                                            applySubjectivitySelectionMutation.mutate({
+                                              subjectivityId: mutationId,
+                                              currentIds: linkedIds,
+                                              targetIds: isAllSelected ? [currentId] : allOptionIds,
+                                            });
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span>All Options</span>
+                                      </label>
+                                      {allPrimaryIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllPrimarySelected}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              const currentId = String(structureId);
+                                              let newIds = isAllPrimarySelected
+                                                ? linkedIds.filter(id => !allPrimaryIds.includes(id))
+                                                : [...new Set([...linkedIds, ...allPrimaryIds])];
+                                              // Always keep current quote linked
+                                              if (!newIds.includes(currentId)) newIds = [...newIds, currentId];
+                                              applySubjectivitySelectionMutation.mutate({
+                                                subjectivityId: mutationId,
+                                                currentIds: linkedIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Primary</span>
+                                        </label>
+                                      )}
+                                      {allExcessIds.length > 0 && (
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAllExcessSelected}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              const currentId = String(structureId);
+                                              let newIds = isAllExcessSelected
+                                                ? linkedIds.filter(id => !allExcessIds.includes(id))
+                                                : [...new Set([...linkedIds, ...allExcessIds])];
+                                              // Always keep current quote linked
+                                              if (!newIds.includes(currentId)) newIds = [...newIds, currentId];
+                                              applySubjectivitySelectionMutation.mutate({
+                                                subjectivityId: mutationId,
+                                                currentIds: linkedIds,
+                                                targetIds: newIds,
+                                              });
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Excess</span>
+                                        </label>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                  {allOptions.map(opt => {
+                                    const isLinked = item.quoteIds?.map(String).includes(String(opt.id));
+                                    const isCurrent = String(opt.id) === String(structureId);
+                                    return (
+                                      <label
+                                        key={opt.id}
+                                        className={`flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded ${
+                                          isCurrent ? 'text-purple-700 font-medium' : 'text-gray-600'
+                                        }`}
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isLinked}
+                                          onChange={(e) => {
+                                            e.stopPropagation();
+                                            toggleSubjectivityLinkMutation.mutate({
+                                              subjectivityId: mutationId,
+                                              quoteId: opt.id,
+                                              isLinked,
+                                            });
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span className="truncate">{opt.name}</span>
+                                        {isCurrent && <span className="text-[9px] text-purple-500">(current)</span>}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </Popover.Content>
+                            </Popover.Portal>
+                          </Popover.Root>
+
+                        {/* Remove button - always visible */}
+                        <button
+                          onClick={() => unlinkSubjectivityMutation.mutate(mutationId)}
+                          className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors flex-shrink-0"
+                          title="Remove from this quote"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      );
+                    });
+                  })()}
+
+                  {/* Add new subjectivity row */}
+                  {isAddingSubjectivity ? (
+                    <div className="flex items-center gap-2 text-sm bg-green-50/50 rounded px-2 py-1 ring-1 ring-green-200">
+                      <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <input
+                        type="text"
+                        value={newSubjectivityText}
+                        onChange={(e) => setNewSubjectivityText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && newSubjectivityText.trim()) {
+                            createSubjectivityMutation.mutate(newSubjectivityText.trim());
+                          }
+                          if (e.key === 'Escape') {
+                            setIsAddingSubjectivity(false);
+                            setNewSubjectivityText('');
+                          }
+                        }}
+                        placeholder="Type new subjectivity text..."
+                        className="flex-1 text-sm border-0 border-b border-green-400 bg-transparent px-0 py-0 focus:outline-none focus:border-green-600"
+                        autoFocus
+                      />
+                      <button
+                        onClick={() => {
+                          if (newSubjectivityText.trim()) {
+                            createSubjectivityMutation.mutate(newSubjectivityText.trim());
+                          }
+                        }}
+                        disabled={!newSubjectivityText.trim() || createSubjectivityMutation.isPending}
+                        className="text-[11px] px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        Add
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsAddingSubjectivity(false);
+                          setNewSubjectivityText('');
+                        }}
+                        className="text-[11px] px-2 py-1 rounded bg-gray-200 text-gray-700 hover:bg-gray-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    /* Action buttons */
+                    <div className="flex items-center gap-2 pt-2 border-t border-gray-100 mt-2">
+                      <button
+                        onClick={() => setIsAddingSubjectivity(true)}
+                        className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add Custom
+                      </button>
+                      <span className="text-gray-300">|</span>
+                      <Popover.Root open={showLibraryPicker} onOpenChange={setShowLibraryPicker}>
+                        <Popover.Trigger asChild>
+                          <button className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                            From Library
+                          </button>
+                        </Popover.Trigger>
+                        <Popover.Portal>
+                          <Popover.Content className="z-[9999] w-80 rounded-lg border border-gray-200 bg-white shadow-xl" sideOffset={4} align="start">
+                            <div className="p-3 border-b border-gray-100">
+                              <input
+                                type="text"
+                                placeholder="Search templates..."
+                                value={librarySearchTerm}
+                                onChange={(e) => setLibrarySearchTerm(e.target.value)}
+                                className="w-full text-sm border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                              />
+                            </div>
+                            <div className="max-h-64 overflow-y-auto p-2">
+                              {filteredTemplates.length === 0 ? (
+                                <p className="text-xs text-gray-400 text-center py-4">
+                                  {librarySearchTerm ? 'No matching templates' : 'No templates available'}
+                                </p>
+                              ) : (
+                                <div className="space-y-1">
+                                  {filteredTemplates.slice(0, 10).map(template => (
+                                    <button
+                                      key={template.id}
+                                      onClick={() => linkTemplateSubjectivity.mutate(template.id)}
+                                      className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-purple-50 text-gray-700 hover:text-purple-700 truncate"
+                                    >
+                                      {template.text || template.subjectivity_text}
+                                    </button>
+                                  ))}
+                                  {filteredTemplates.length > 10 && (
+                                    <p className="text-[11px] text-gray-400 text-center py-1">
+                                      +{filteredTemplates.length - 10} more...
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                            <Popover.Arrow className="fill-white" />
+                          </Popover.Content>
+                        </Popover.Portal>
+                      </Popover.Root>
+                    </div>
+                  )}
                 </div>
+              ) : subjectivitiesEmpty ? (
+                <p className="text-sm text-gray-400">No subjectivities attached</p>
               ) : (
                 /* Collapsed Preview Mode */
                 <div className="space-y-2">
@@ -6151,45 +9220,87 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                       </button>
                     </div>
                   ))}
-                  {uniqueSubjectivities.map((item) => (
+                  {uniqueSubjectivities.map((item) => {
+                    const mutationId = item.rawId || item.id;
+                    return (
                     <div key={item.id} className="flex items-center gap-2 text-sm">
-                      {item.status === 'received' ? (
-                        <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : item.status === 'waived' ? (
-                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      )}
-                      <span className="text-gray-700">{item.label}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600">
+                      <button
+                        onClick={() => updateSubjectivityStatusMutation.mutate({
+                          subjectivityId: mutationId,
+                          status: cycleStatus(item.status)
+                        })}
+                        className="p-0.5 rounded hover:bg-gray-100 transition-colors flex-shrink-0"
+                        title={`Status: ${item.status || 'pending'} (click to change)`}
+                      >
+                        {item.status === 'received' ? (
+                          <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : item.status === 'waived' ? (
+                          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setExpandedCard('subjectivities');
+                          setEditingSubjId(item.id);
+                          setEditingSubjText(item.label);
+                        }}
+                        className="text-gray-700 hover:text-purple-700 text-left truncate flex-1"
+                      >
+                        {item.label}
+                      </button>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 flex-shrink-0">
                         Only here
                       </span>
                     </div>
-                  ))}
-                  {alignedSubjectivities.map((item) => (
+                    );
+                  })}
+                  {alignedSubjectivities.map((item) => {
+                    const mutationId = item.rawId || item.id;
+                    return (
                     <div key={item.id} className="flex items-center gap-2 text-sm">
-                      {item.status === 'received' ? (
-                        <svg className="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : item.status === 'waived' ? (
-                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      )}
-                      <span className="text-gray-700">{item.label}</span>
+                      <button
+                        onClick={() => updateSubjectivityStatusMutation.mutate({
+                          subjectivityId: mutationId,
+                          status: cycleStatus(item.status)
+                        })}
+                        className="p-0.5 rounded hover:bg-gray-100 transition-colors flex-shrink-0"
+                        title={`Status: ${item.status || 'pending'} (click to change)`}
+                      >
+                        {item.status === 'received' ? (
+                          <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : item.status === 'waived' ? (
+                          <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setExpandedCard('subjectivities');
+                          setEditingSubjId(item.id);
+                          setEditingSubjText(item.label);
+                        }}
+                        className="text-gray-700 hover:text-purple-700 text-left truncate flex-1"
+                      >
+                        {item.label}
+                      </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -7737,6 +10848,7 @@ export default function QuotePageV3() {
   const [sidePanelTab, setSidePanelTab] = useState('terms');
   const [mainTab, setMainTab] = useState('summary');
   const [viewMode, setViewMode] = useState('single'); // 'single' or 'grid'
+  const [summaryScope, setSummaryScope] = useState('quote'); // 'quote' or 'submission' - for single view mode
   const [showStructureDropdown, setShowStructureDropdown] = useState(false);
   const [isStructurePickerExpanded, setIsStructurePickerExpanded] = useState(false);
   const [editControls, setEditControls] = useState(null); // For Cancel/Save buttons from child components
@@ -8284,6 +11396,30 @@ export default function QuotePageV3() {
               <span className="text-xs text-gray-400">{structures.length} options</span>
             </button>
 
+            {/* Scope Toggle: Quote vs Submission */}
+            <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+              <button
+                onClick={() => setSummaryScope('quote')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  summaryScope === 'quote'
+                    ? 'bg-white text-purple-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Quote
+              </button>
+              <button
+                onClick={() => setSummaryScope('submission')}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  summaryScope === 'submission'
+                    ? 'bg-white text-purple-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                Submission
+              </button>
+            </div>
+
             {/* Center: Bind Readiness Indicator */}
             <HoverCard.Root openDelay={100} closeDelay={100}>
               <HoverCard.Trigger asChild>
@@ -8577,6 +11713,10 @@ export default function QuotePageV3() {
                     structures={structures}
                     onMainTabChange={setMainTab}
                     documentHistory={documentHistory}
+                    summaryScope={summaryScope}
+                    selectedQuoteId={activeStructureId}
+                    onSelect={setActiveStructureId}
+                    onUpdateOption={(quoteId, data) => updateTowerMutation.mutate({ quoteId, data })}
                   />
                 )}
 

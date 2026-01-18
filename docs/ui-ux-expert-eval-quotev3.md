@@ -119,3 +119,5 @@ The Quote Details grid uses CSS Grid with conditional classes:
 | 2026-01-17 | Initial evaluation |
 | 2026-01-17 | Fixed: KPI expanded panel disconnect |
 | 2026-01-17 | Fixed: Moved bind readiness to header |
+| 2026-01-17 | Consolidated subjectivity workflow in Summary card |
+| 2026-01-17 | Fixed: Shared quote indicator now shows "+X quotes" badge |

@@ -159,6 +159,17 @@ export default function RetroScheduleEditor({
     setLocalNotes(notes || '');
   }, [notes]);
 
+  // Helper to clean and auto-save schedule
+  const saveSchedule = (newSchedule, newNotes = localNotes) => {
+    const cleanSchedule = newSchedule.map(entry => {
+      const clean = { coverage: entry.coverage, retro: entry.retro };
+      if (entry.retro === 'date' && entry.date) clean.date = entry.date;
+      if (entry.retro === 'custom' && entry.custom_text) clean.custom_text = entry.custom_text;
+      return clean;
+    });
+    onChange(cleanSchedule, newNotes || null);
+  };
+
   const handleRetroChange = (coverage, retroType) => {
     const newSchedule = localSchedule.map(entry => {
       if (entry.coverage === coverage) {
@@ -182,6 +193,7 @@ export default function RetroScheduleEditor({
     }
 
     setLocalSchedule(newSchedule);
+    saveSchedule(newSchedule);
   };
 
   const handleDateChange = (coverage, date) => {
@@ -193,6 +205,7 @@ export default function RetroScheduleEditor({
       return entry;
     });
     setLocalSchedule(newSchedule);
+    saveSchedule(newSchedule);
   };
 
   const handleCustomTextChange = (coverage, text) => {
@@ -204,23 +217,19 @@ export default function RetroScheduleEditor({
       return entry;
     });
     setLocalSchedule(newSchedule);
+    // Don't auto-save on every keystroke for custom text - will save on blur
+  };
+
+  const handleCustomTextBlur = (coverage) => {
+    // Save when user finishes typing custom text
+    saveSchedule(localSchedule);
   };
 
   const handleResetDefaults = () => {
     setLocalSchedule(smartDefaults);
     setCustomDate({});
     setCustomText({});
-  };
-
-  const handleSave = () => {
-    // Clean up schedule - remove empty custom fields
-    const cleanSchedule = localSchedule.map(entry => {
-      const clean = { coverage: entry.coverage, retro: entry.retro };
-      if (entry.retro === 'date' && entry.date) clean.date = entry.date;
-      if (entry.retro === 'custom' && entry.custom_text) clean.custom_text = entry.custom_text;
-      return clean;
-    });
-    onChange(cleanSchedule, localNotes || null);
+    saveSchedule(smartDefaults);
   };
 
   const getEntryForCoverage = (cov) => {
@@ -340,6 +349,7 @@ export default function RetroScheduleEditor({
                     type="text"
                     value={customText[cov] || entry.custom_text || ''}
                     onChange={(e) => handleCustomTextChange(cov, e.target.value)}
+                    onBlur={() => handleCustomTextBlur(cov)}
                     placeholder="e.g., to match expiring"
                     style={{
                       padding: '4px 8px',
@@ -364,6 +374,7 @@ export default function RetroScheduleEditor({
         <textarea
           value={localNotes}
           onChange={(e) => setLocalNotes(e.target.value)}
+          onBlur={() => saveSchedule(localSchedule, localNotes)}
           placeholder="Additional context..."
           rows={2}
           style={{
@@ -377,13 +388,8 @@ export default function RetroScheduleEditor({
         />
       </div>
 
-      {/* Actions */}
-      <div style={{
-        marginTop: 16,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-      }}>
+      {/* Actions - just Reset, auto-saves on change */}
+      <div style={{ marginTop: 16 }}>
         <button
           type="button"
           onClick={handleResetDefaults}
@@ -398,22 +404,6 @@ export default function RetroScheduleEditor({
           }}
         >
           Reset to Defaults
-        </button>
-
-        <button
-          type="button"
-          onClick={handleSave}
-          style={{
-            padding: '6px 16px',
-            background: '#7c3aed',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 6,
-            fontSize: 13,
-            cursor: 'pointer',
-          }}
-        >
-          Save
         </button>
       </div>
     </div>
