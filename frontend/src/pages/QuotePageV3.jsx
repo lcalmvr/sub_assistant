@@ -38,6 +38,7 @@ import {
   getDocumentUrl,
   getBindValidation,
   bindQuoteOption,
+  getPolicyData,
 } from '../api/client';
 import CoverageEditor, { SUBLIMIT_COVERAGES } from '../components/CoverageEditor';
 import ExcessCoverageEditor from '../components/ExcessCoverageEditor';
@@ -369,7 +370,7 @@ function StructurePicker({ structures, activeStructureId, onSelect, onCreate, on
           const isActive = activeStructureId === structure.id;
           const tower = structure.tower_json || [];
           const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-          const premium = cmaiLayer?.premium || 0;
+          const premium = structure?.sold_premium || cmaiLayer?.premium || 0;
 
           return (
             <button
@@ -705,7 +706,8 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
   }, [isEditing, layers]);
 
   const cmaiLayer = layers.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-  const cmaiPremium = cmaiLayer?.premium;
+  // For bound quotes, use sold_premium; otherwise use tower premium
+  const cmaiPremium = quote?.sold_premium || cmaiLayer?.premium;
 
   if (!layers?.length) {
     return (
@@ -3388,8 +3390,8 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
               {filteredStructures.map((struct, idx) => {
                 const tower = struct.tower_json || [];
                 const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-                const currentPremium = cmaiLayer?.premium || 0;
-                const currentStatus = struct.status || 'draft';
+                const currentPremium = struct?.sold_premium || cmaiLayer?.premium || 0;
+                const currentStatus = struct.is_bound ? 'bound' : (struct.status || 'draft');
                 const isSelected = selectedIdSet.has(String(struct.id));
                 const subjectivityList = subjectivitiesByQuote.get(String(struct.id)) || [];
                 const endorsementList = endorsementsByQuote.get(String(struct.id)) || [];
@@ -6475,7 +6477,8 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
   const ourLimit = cmaiLayer?.limit || tower[0]?.limit || 0;
   const totalProgramLimit = tower.reduce((sum, l) => sum + (l.limit || 0), 0);
-  const premium = cmaiLayer?.premium || 0;
+  // For bound quotes, use sold_premium; otherwise use tower premium
+  const premium = structure?.sold_premium || cmaiLayer?.premium || 0;
   const commission = variation?.commission_override ?? 15;
   
   // Check if CMAI is in a quota share layer
@@ -6492,20 +6495,59 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const retentionLabel = isExcess ? 'Attachment' : 'Retention';
   const sirDisplay = isExcess && retention ? ` (SIR ${formatCompact(retention)})` : '';
 
-  // Get coverage exceptions (non-standard sublimits - values that differ from defaults)
-  const coverages = structure?.coverages || {};
-  const sublimits = coverages.sublimit_coverages || {};
-  const coverageExceptions = SUBLIMIT_COVERAGES
-    .filter(cov => sublimits[cov.id] !== undefined && sublimits[cov.id] !== cov.default)
-    .map(cov => ({ id: cov.id, label: cov.label, value: sublimits[cov.id] }))
-    .slice(0, 3);
+  // Get coverage exceptions - different logic for primary vs excess
+  const coverageExceptions = (() => {
+    if (isExcess) {
+      // Excess quotes use structure.sublimits array
+      const excessSublimits = structure?.sublimits || [];
+      return excessSublimits
+        .filter(cov => cov.treatment === 'no_coverage' || cov.treatment === 'exclude' || cov.our_limit != null)
+        .map(cov => ({
+          id: cov.coverage,
+          label: cov.coverage,
+          value: cov.treatment === 'no_coverage' || cov.treatment === 'exclude' ? 'Excluded' : cov.our_limit,
+          isExcluded: cov.treatment === 'no_coverage' || cov.treatment === 'exclude'
+        }))
+        .slice(0, 3);
+    } else {
+      // Primary quotes use structure.coverages.sublimit_coverages
+      const coverages = structure?.coverages || {};
+      const sublimits = coverages.sublimit_coverages || {};
+      return SUBLIMIT_COVERAGES
+        .filter(cov => sublimits[cov.id] !== undefined && sublimits[cov.id] !== cov.default)
+        .map(cov => ({ id: cov.id, label: cov.label, value: sublimits[cov.id] }))
+        .slice(0, 3);
+    }
+  })();
 
   // Get all sublimits with their current values (or defaults)
-  const allSublimits = SUBLIMIT_COVERAGES.map(cov => {
-    const value = sublimits[cov.id] !== undefined ? sublimits[cov.id] : cov.default;
-    const isException = sublimits[cov.id] !== undefined && sublimits[cov.id] !== cov.default;
-    return { id: cov.id, label: cov.label, value, defaultValue: cov.default, isException };
-  });
+  const allSublimits = (() => {
+    if (isExcess) {
+      // Excess quotes - show from structure.sublimits
+      const excessSublimits = structure?.sublimits || [];
+      return excessSublimits.map(cov => {
+        const isExcluded = cov.treatment === 'no_coverage' || cov.treatment === 'exclude';
+        const hasCustom = cov.our_limit != null;
+        return {
+          id: cov.coverage,
+          label: cov.coverage,
+          value: isExcluded ? 'Excluded' : (cov.our_limit ?? cov.primary_limit),
+          defaultValue: cov.primary_limit,
+          isException: isExcluded || hasCustom,
+          isExcluded
+        };
+      });
+    } else {
+      // Primary quotes - use SUBLIMIT_COVERAGES with defaults
+      const coverages = structure?.coverages || {};
+      const sublimits = coverages.sublimit_coverages || {};
+      return SUBLIMIT_COVERAGES.map(cov => {
+        const value = sublimits[cov.id] !== undefined ? sublimits[cov.id] : cov.default;
+        const isException = sublimits[cov.id] !== undefined && sublimits[cov.id] !== cov.default;
+        return { id: cov.id, label: cov.label, value, defaultValue: cov.default, isException };
+      });
+    }
+  })();
 
   // Status config
   const statusConfig = {
@@ -6514,7 +6556,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     quoted: { label: 'Quoted', bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
     bound: { label: 'Bound', bg: 'bg-green-100', text: 'text-green-700', dot: 'bg-green-500' },
   };
-  const status = statusConfig[structure?.status] || statusConfig.draft;
+  const status = structure?.is_bound ? statusConfig.bound : (statusConfig[structure?.status] || statusConfig.draft);
 
   // Format status text using same logic as grid
   const formatStatusText = (missing, extra, peerCount) => {
@@ -7163,9 +7205,10 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 const struct = structures?.find(s => String(s.id) === String(opt.id));
                 const optTower = struct?.tower_json || [];
                 const cmaiLayer = optTower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-                const optPremium = cmaiLayer?.premium || 0;
+                // For bound quotes, use sold_premium
+                const optPremium = struct?.sold_premium || cmaiLayer?.premium || 0;
                 const draftPremium = premiumDraft[opt.id] ?? optPremium;
-                const optStatus = struct?.status || 'draft';
+                const optStatus = struct?.is_bound ? 'bound' : (struct?.status || 'draft');
                 const isExcess = getStructurePosition(struct) === 'excess';
                 const subjList = subjectivitiesByQuote.get(String(opt.id)) || [];
                 const endtList = endorsementsByQuote.get(String(opt.id)) || [];
@@ -7415,7 +7458,8 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                       .filter(layer => !showOnlyOurLayer || layer.carrier?.toUpperCase().includes('CMAI'))
                       .map((layer, idx) => {
                       const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
-                      const layerPremium = layer.premium || 0;
+                      // For CMAI, fall back to structure.sold_premium for bound quotes
+                      const layerPremium = isCMAI ? (layer.premium || structure?.sold_premium || 0) : (layer.premium || 0);
                       const layerRpm = layer.limit ? Math.round(layerPremium / (layer.limit / 1_000_000)) : null;
                       // For ILF, use CMAI premium as base
                       const basePremium = cmaiLayer?.premium || tower[0]?.premium || 1;
@@ -7487,7 +7531,8 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
         {/* Coverages - expands right (cols 1-2) when editing, stays visible when others expand */}
         {(() => {
           const isEditingCoverages = expandedCard === 'coverages';
-          const isExcessQuote = structure?.position === 'excess';
+          // Use getStructurePosition to properly detect excess from tower structure
+          const isExcessQuote = getStructurePosition(structure) === 'excess';
           const aggregateLimit = (() => {
             if (!structure?.tower_json?.length) return 1000000;
             const cmaiLayer = structure.tower_json.find(l => l.carrier?.toUpperCase().includes('CMAI')) || structure.tower_json[0];
@@ -7551,6 +7596,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                         onUpdateOption?.(structureId, { coverages: updatedCoverages });
                       }}
                       mode="quote"
+                      quote={structure}
                       allQuotes={structures}
                       submissionId={submission?.id}
                       embedded={true}
@@ -7562,11 +7608,13 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 <div className="p-4">
                   {showAllSublimits ? (
                     <div className="space-y-1">
-                      {allSublimits.map(sub => (
+                      {allSublimits.length === 0 ? (
+                        <div className="text-sm text-gray-400 italic">No coverages defined</div>
+                      ) : allSublimits.map(sub => (
                         <div key={sub.id} className="flex justify-between text-sm">
-                          <span className="text-gray-600">{sub.label}</span>
-                          <span className={`font-medium ${sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
-                            {formatCompact(sub.value)}
+                          <span className={`text-gray-600 ${sub.isExcluded ? 'line-through' : ''}`}>{sub.label}</span>
+                          <span className={`font-medium ${sub.isExcluded ? 'text-red-500' : sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
+                            {sub.value === 'Excluded' ? 'Excluded' : formatCompact(sub.value)}
                           </span>
                         </div>
                       ))}
@@ -7576,14 +7624,16 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      <span>All standard limits</span>
+                      <span>{isExcessQuote ? 'All follow form' : 'All standard limits'}</span>
                     </div>
                   ) : (
                     <div className="space-y-1">
                       {coverageExceptions.map(exc => (
                         <div key={exc.id} className="flex justify-between text-sm">
-                          <span className="text-gray-600">{exc.label}</span>
-                          <span className="font-medium text-amber-600">{formatCompact(exc.value)}</span>
+                          <span className={`text-gray-600 ${exc.isExcluded ? 'line-through' : ''}`}>{exc.label}</span>
+                          <span className={`font-medium ${exc.isExcluded ? 'text-red-500' : 'text-amber-600'}`}>
+                            {exc.value === 'Excluded' ? 'Excluded' : formatCompact(exc.value)}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -9661,6 +9711,8 @@ function TowerTabContent({ quote, onSave, isPending }) {
           {[...layers].reverse().map((layer, displayIdx) => {
             const realIdx = layers.length - 1 - displayIdx;
             const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
+            // For CMAI, use layer.premium or fall back to quote.sold_premium for bound quotes
+            const cmaiPremium = isCMAI ? (layer.premium || quote?.sold_premium || 0) : layer.premium;
             return (
               <tr key={realIdx} className={isCMAI ? 'bg-purple-50' : 'hover:bg-gray-50'}>
                 <td className="px-4 py-2.5">
@@ -9674,7 +9726,7 @@ function TowerTabContent({ quote, onSave, isPending }) {
                 <td className="px-4 py-2.5 text-right">
                   {isCMAI ? (
                     <PremiumInput
-                      value={layer.premium}
+                      value={cmaiPremium}
                       onChange={(val) => updateLayer(realIdx, 'premium', val)}
                       onStartEdit={() => setIsEditing(true)}
                     />
@@ -9718,7 +9770,8 @@ function CoveragesTabContent({ structure, onSave, allQuotes, submissionId, setEd
   };
 
   // For excess quotes - show compact inline editor
-  if (structure?.position === 'excess') {
+  // Use getStructurePosition to properly detect excess from tower structure
+  if (getStructurePosition(structure) === 'excess') {
     return (
       <ExcessCoverageCompact
         sublimits={structure.sublimits || []}
@@ -9737,6 +9790,7 @@ function CoveragesTabContent({ structure, onSave, allQuotes, submissionId, setEd
         aggregateLimit={aggregateLimit}
         onSave={handlePrimaryCoveragesSave}
         mode="quote"
+        quote={structure}
         allQuotes={allQuotes}
         submissionId={submissionId}
         embedded={true}
@@ -10967,7 +11021,31 @@ export default function QuotePageV3() {
   const { submissionId } = useParams();
   const queryClient = useQueryClient();
 
-  const [activeStructureId, setActiveStructureId] = useState(null);
+  // Persist selected option in sessionStorage (keyed by submission)
+  // This survives tab navigation better than URL params
+  const [activeStructureId, setActiveStructureIdInternal] = useState(() => {
+    // Read directly in initializer to avoid closure issues
+    if (!submissionId) return null;
+    const stored = sessionStorage.getItem(`quote-option-${submissionId}`);
+    return stored || null; // IDs are UUIDs (strings), not numbers
+  });
+
+  // Sync from sessionStorage when component re-mounts (e.g., navigating back)
+  useEffect(() => {
+    if (!submissionId) return;
+    const storedId = sessionStorage.getItem(`quote-option-${submissionId}`);
+    if (storedId && storedId !== activeStructureId) {
+      setActiveStructureIdInternal(storedId);
+    }
+  }, [submissionId]); // Only on mount / submissionId change
+
+  // Wrapper to update both state and sessionStorage
+  const setActiveStructureId = useCallback((id) => {
+    setActiveStructureIdInternal(id);
+    if (id && submissionId) {
+      sessionStorage.setItem(`quote-option-${submissionId}`, String(id));
+    }
+  }, [submissionId]);
   const [activeVariationId, setActiveVariationId] = useState(null);
   const [sidePanelTab, setSidePanelTab] = useState('terms');
   const [mainTab, setMainTab] = useState('summary');
@@ -11033,21 +11111,56 @@ export default function QuotePageV3() {
   });
 
   // Fetch structures with variations
-  const { data: structures = [], isLoading: structuresLoading } = useQuery({
+  const { data: rawStructures = [], isLoading: structuresLoading } = useQuery({
     queryKey: ['structures', submissionId],
     queryFn: () => getQuoteStructures(submissionId).then(r => r.data),
     enabled: !!submissionId,
   });
 
+  // Fetch policy data to get sold_premium for bound quotes
+  const { data: policyData } = useQuery({
+    queryKey: ['policy-data', submissionId],
+    queryFn: () => getPolicyData(submissionId).then(r => r.data),
+    enabled: !!submissionId,
+  });
+
+  // Augment structures with sold_premium from policy data for bound quotes
+  const structures = useMemo(() => {
+    const boundOption = policyData?.bound_option;
+    if (!boundOption) return rawStructures;
+
+    return rawStructures.map(s => {
+      if (s.id === boundOption.id || s.is_bound) {
+        return {
+          ...s,
+          sold_premium: boundOption.sold_premium || s.sold_premium,
+          is_bound: true, // Ensure is_bound is set
+        };
+      }
+      return s;
+    });
+  }, [rawStructures, policyData]);
+
   // Set initial active structure/variation when data loads
   useEffect(() => {
     if (structures.length && !activeStructureId) {
-      setActiveStructureId(structures[0].id);
-      if (structures[0].variations?.length) {
-        setActiveVariationId(structures[0].variations[0].id);
+      // Check if sessionStorage has a valid option ID (IDs are UUID strings)
+      const storedId = submissionId ? sessionStorage.getItem(`quote-option-${submissionId}`) : null;
+      const storedStructure = storedId ? structures.find(s => s.id === storedId) : null;
+
+      if (storedStructure) {
+        setActiveStructureId(storedStructure.id);
+        if (storedStructure.variations?.length) {
+          setActiveVariationId(storedStructure.variations[0].id);
+        }
+      } else {
+        setActiveStructureId(structures[0].id);
+        if (structures[0].variations?.length) {
+          setActiveVariationId(structures[0].variations[0].id);
+        }
       }
     }
-  }, [structures, activeStructureId]);
+  }, [structures, activeStructureId, submissionId, setActiveStructureId]);
 
   // Get current active structure/variation
   const activeStructure = structures.find(s => s.id === activeStructureId) || structures[0];
@@ -11075,13 +11188,14 @@ export default function QuotePageV3() {
   const bindReadiness = useMemo(() => {
     const tower = activeStructure?.tower_json || [];
     const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-    const premium = cmaiLayer?.premium || 0;
+    // For bound quotes, use sold_premium
+    const premium = activeStructure?.sold_premium || cmaiLayer?.premium || 0;
     const effectiveDate = activeStructure?.effective_date || submission?.effective_date;
 
     const blockers = [];
     const warnings = [];
 
-    if (premium <= 0) blockers.push('Premium not set');
+    if (premium <= 0 && !activeStructure?.is_bound) blockers.push('Premium not set');
     if (!effectiveDate) blockers.push('Effective date missing');
     if (pendingSubjectivityCount > 0) warnings.push(`${pendingSubjectivityCount} pending subjectivit${pendingSubjectivityCount === 1 ? 'y' : 'ies'}`);
 
@@ -11509,7 +11623,7 @@ export default function QuotePageV3() {
                     quoted: { label: 'Quoted', bg: 'bg-purple-100', text: 'text-purple-700' },
                     bound: { label: 'Bound', bg: 'bg-green-100', text: 'text-green-700' },
                   };
-                  const status = statusConfig[activeStructure?.status] || statusConfig.draft;
+                  const status = activeStructure?.is_bound ? statusConfig.bound : (statusConfig[activeStructure?.status] || statusConfig.draft);
                   return (
                     <span className={`text-[10px] ${status.bg} ${status.text} px-1.5 py-0.5 rounded font-medium`}>
                       {status.label}

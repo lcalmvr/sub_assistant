@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import * as Popover from '@radix-ui/react-popover';
 import { updateQuoteOption } from '../api/client';
 
 // Format currency
@@ -41,6 +42,24 @@ function getTowerLimit(quote) {
   if (!quote?.tower_json || !quote.tower_json.length) return null;
   const cmaiLayer = quote.tower_json.find(l => l.carrier === 'CMAI') || quote.tower_json[0];
   return cmaiLayer?.limit;
+}
+
+// Detect position from tower structure - if CMAI has attachment > 0, it's excess
+function getQuotePosition(quote) {
+  const tower = quote?.tower_json || [];
+  if (tower.length === 0) {
+    return quote?.position === 'excess' ? 'excess' : 'primary';
+  }
+  const cmaiIdx = tower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
+  if (cmaiIdx < 0) {
+    return quote?.position === 'excess' ? 'excess' : 'primary';
+  }
+  // Calculate attachment - sum of limits below CMAI layer
+  let attachment = 0;
+  for (let i = 0; i < cmaiIdx; i++) {
+    attachment += tower[i]?.limit || 0;
+  }
+  return attachment > 0 ? 'excess' : 'primary';
 }
 
 // Coverage definitions matching Streamlit coverage_defaults.yml
@@ -90,15 +109,25 @@ export default function CoverageEditor({
   embedded = false,
   setEditControls,
 }) {
+  // Detect if this quote is bound - bound quotes should be fully read-only
+  const isBound = quote?.is_bound === true;
+  const effectiveReadOnly = readOnly || isBound;
+
   const [activeTab, setActiveTab] = useState('variable');
-  const [isEditing, setIsEditing] = useState(embedded); // Start in edit mode if embedded
+  const [isEditing, setIsEditing] = useState(embedded && !effectiveReadOnly); // Don't start in edit mode if read-only
   const [draft, setDraft] = useState({});
   const [showBatchEdit, setShowBatchEdit] = useState(false);
   const [batchCoverages, setBatchCoverages] = useState([{ id: '', value: 0 }]);
   const [selectedQuotes, setSelectedQuotes] = useState({});
+  const [activeCoveragePopover, setActiveCoveragePopover] = useState(null);
+  const [applyError, setApplyError] = useState(null);
   const tableRef = useRef(null);
   const treatmentRefs = useRef({});
   const limitInputRefs = useRef({});
+
+  // Keep a ref to draft for event handlers that need latest value
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const queryClient = useQueryClient();
 
   // Support both direct coverages prop and legacy quote prop
@@ -224,10 +253,10 @@ export default function CoverageEditor({
 
   // Reset editing state when coverages change externally
   useEffect(() => {
-    setIsEditing(embedded); // Respect embedded mode
+    setIsEditing(embedded && !effectiveReadOnly); // Respect embedded mode but not if read-only
     setDraft({});
     // Note: Don't clear refs here - they're populated by render
-  }, [quote?.id, embedded]);
+  }, [quote?.id, embedded, effectiveReadOnly]);
 
   // Initialize draft when starting in embedded edit mode
   useEffect(() => {
@@ -365,6 +394,10 @@ export default function CoverageEditor({
     if (!isEditing) return;
 
     const handleClickOutside = (e) => {
+      // Don't save if clicking inside a popover (portaled outside table)
+      if (e.target.closest('[data-radix-popover-content]')) {
+        return;
+      }
       if (tableRef.current && !tableRef.current.contains(e.target)) {
         handleSave();
       }
@@ -388,11 +421,13 @@ export default function CoverageEditor({
   }, [isEditing, draft, activeTab]);
 
   const handleSave = () => {
+    // Use draftRef to ensure we always get the latest draft value
+    const currentDraft = draftRef.current;
     const updated = { ...coverages };
     if (activeTab === 'variable') {
-      updated.sublimit_coverages = { ...coverages.sublimit_coverages, ...draft };
+      updated.sublimit_coverages = { ...coverages.sublimit_coverages, ...currentDraft };
     } else {
-      updated.aggregate_coverages = { ...coverages.aggregate_coverages, ...draft };
+      updated.aggregate_coverages = { ...coverages.aggregate_coverages, ...currentDraft };
     }
     onSave(updated);
     setIsEditing(false);
@@ -462,6 +497,108 @@ export default function CoverageEditor({
         return 'border-purple-300 bg-purple-50 text-purple-700';
     }
   };
+
+  // Get current quote's position (derive from tower structure)
+  const currentQuoteId = quote?.id;
+  const currentPosition = getQuotePosition(quote);
+
+  // Get coverage values across same-position quotes only (primary <-> primary)
+  // Excess quotes use different data structure (sublimits), so comparison is meaningless
+  const getCoverageAcrossQuotes = useMemo(() => {
+    if (!allQuotes || allQuotes.length <= 1) return () => ({ quotes: [], boundQuotes: [], allSame: true });
+
+    return (covId, type) => {
+      // Get all OTHER quotes with SAME POSITION (not current, only primary since this is CoverageEditor)
+      // Excess quotes use structure.sublimits, not structure.coverages - incompatible data models
+      const otherQuotes = allQuotes.filter(q => {
+        if (q.id === currentQuoteId) return false;
+        const qPosition = getQuotePosition(q);
+        return qPosition === currentPosition; // Only same-position quotes
+      });
+
+      const mapQuote = (q) => {
+        const qCoverages = q.coverages || {};
+        let value;
+        if (type === 'variable') {
+          const cov = SUBLIMIT_COVERAGES.find(c => c.id === covId);
+          value = qCoverages.sublimit_coverages?.[covId];
+          if (value === undefined) value = cov?.default || 0;
+        } else {
+          value = qCoverages.aggregate_coverages?.[covId];
+          // For aggregate, default to that quote's tower limit
+          if (value === undefined) {
+            const qLimit = getTowerLimit(q) || effectiveAggregateLimit;
+            value = qLimit;
+          }
+        }
+        return {
+          id: q.id,
+          name: q.quote_name || 'Unnamed',
+          value,
+          isBound: q.is_bound === true,
+          position: getQuotePosition(q),
+        };
+      };
+
+      const allResults = otherQuotes.map(mapQuote);
+
+      // Separate bound and non-bound quotes
+      const boundQuotes = allResults.filter(q => q.isBound);
+      const quotes = allResults.filter(q => !q.isBound);
+
+      // Check if all non-bound values are the same as current quote's value
+      const currentValue = type === 'variable'
+        ? getSublimitValue(covId, SUBLIMIT_COVERAGES.find(c => c.id === covId)?.default)
+        : getAggregateValue(covId);
+      const allSame = quotes.length === 0 || quotes.every(r => r.value === currentValue);
+
+      return { quotes, boundQuotes, allSame, currentValue };
+    };
+  }, [allQuotes, currentQuoteId, currentPosition, effectiveAggregateLimit, coverages, draft, isEditing]);
+
+  // Mutation to apply coverage value to other quotes
+  const applyCoverageMutation = useMutation({
+    mutationFn: async ({ covId, type, value, targetQuoteIds }) => {
+      const results = [];
+      for (const qId of targetQuoteIds) {
+        // Handle both string and number IDs
+        const targetQuote = allQuotes.find(q => String(q.id) === String(qId));
+        if (!targetQuote) continue;
+
+        const existingCoverages = targetQuote.coverages || {};
+        const updatedCoverages = {
+          ...existingCoverages,
+          aggregate_coverages: { ...(existingCoverages.aggregate_coverages || {}) },
+          sublimit_coverages: { ...(existingCoverages.sublimit_coverages || {}) },
+        };
+
+        if (type === 'variable') {
+          updatedCoverages.sublimit_coverages[covId] = value;
+        } else {
+          updatedCoverages.aggregate_coverages[covId] = value;
+        }
+
+        const result = await updateQuoteOption(qId, { coverages: updatedCoverages });
+        results.push(result);
+      }
+      return results;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['quotes', submissionId] });
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+      // Don't close popover - allow user to apply to multiple quotes
+      setApplyError(null);
+    },
+    onError: (error) => {
+      // Extract user-friendly error message from response
+      const detail = error.response?.data?.detail;
+      if (detail?.message) {
+        setApplyError(detail.message + (detail.hint ? ` ${detail.hint}` : ''));
+      } else {
+        setApplyError('Failed to apply coverage. Please try again.');
+      }
+    },
+  });
 
   const currentCoverages = activeTab === 'variable' ? SUBLIMIT_COVERAGES : AGGREGATE_COVERAGES;
 
@@ -721,8 +858,20 @@ export default function CoverageEditor({
         >
           Standard Limits
         </button>
+        {/* Bound indicator - shows when quote is bound (read-only) */}
+        {isBound && (
+          <>
+            <div className="flex-1" />
+            <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-red-600 bg-red-50 rounded border border-red-200">
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+              </svg>
+              <span className="font-medium">Bound - View Only</span>
+            </div>
+          </>
+        )}
         {/* Spacer + Batch Edit button */}
-        {mode === 'quote' && showBatchEditProp && primaryQuotes.length > 1 && (
+        {mode === 'quote' && showBatchEditProp && primaryQuotes.length > 1 && !isBound && (
           <>
             <div className="flex-1" />
             <button
@@ -746,6 +895,9 @@ export default function CoverageEditor({
               </th>
               <th className="px-4 py-2.5 text-center font-semibold">Treatment</th>
               <th className="px-4 py-2.5 text-right font-semibold">Limit</th>
+              {allQuotes && allQuotes.length > 1 && (
+                <th className="px-4 py-2.5 text-right font-semibold">Options</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -762,7 +914,7 @@ export default function CoverageEditor({
                   key={cov.id}
                   className={`${isEditing ? 'bg-blue-50/30' : 'hover:bg-gray-50 cursor-pointer'}`}
                   onClick={() => {
-                    if (!isEditing && !readOnly) {
+                    if (!isEditing && !effectiveReadOnly) {
                       enterEditMode(idx);
                     }
                   }}
@@ -779,7 +931,7 @@ export default function CoverageEditor({
 
                   {/* Treatment */}
                   <td className="px-4 py-3 text-center">
-                    {isEditing && !readOnly ? (
+                    {isEditing && !effectiveReadOnly ? (
                       <select
                         ref={(el) => { treatmentRefs.current[idx] = el; }}
                         className="text-xs border border-gray-200 rounded px-2 py-1 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 outline-none bg-white"
@@ -810,7 +962,7 @@ export default function CoverageEditor({
 
                   {/* Limit Value */}
                   <td className="px-4 py-3 text-right">
-                    {isEditing && !readOnly ? (
+                    {isEditing && !effectiveReadOnly ? (
                       <input
                         ref={(el) => { limitInputRefs.current[idx] = el; }}
                         type="text"
@@ -829,6 +981,184 @@ export default function CoverageEditor({
                       </span>
                     )}
                   </td>
+
+                  {/* Options/Sharing Column */}
+                  {allQuotes && allQuotes.length > 1 && (() => {
+                    const coverageInfo = getCoverageAcrossQuotes(cov.id, activeTab);
+                    const { quotes: otherQuotes, boundQuotes, allSame, currentValue } = coverageInfo;
+                    const totalCount = otherQuotes.length + boundQuotes.length + 1; // +1 for current quote
+
+                    if (otherQuotes.length === 0 && boundQuotes.length === 0) return <td className="px-4 py-3" />;
+
+                    // Group other quotes by value for display
+                    const valueGroups = {};
+                    otherQuotes.forEach(q => {
+                      const key = q.value;
+                      if (!valueGroups[key]) valueGroups[key] = [];
+                      valueGroups[key].push(q);
+                    });
+
+                    const hasVariation = !allSame || Object.keys(valueGroups).length > 1;
+
+                    return (
+                      <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                        <Popover.Root
+                          open={activeCoveragePopover === cov.id}
+                          onOpenChange={(open) => {
+                            setActiveCoveragePopover(open ? cov.id : null);
+                            if (open) setApplyError(null); // Clear error when opening
+                          }}
+                        >
+                          <Popover.Trigger asChild>
+                            <button
+                              className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                                hasVariation
+                                  ? 'bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100'
+                                  : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                              }`}
+                              title="Click to see values across options"
+                            >
+                              {hasVariation ? 'Varies' : `${totalCount} options`}
+                            </button>
+                          </Popover.Trigger>
+                          <Popover.Portal>
+                            <Popover.Content
+                              className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                              sideOffset={4}
+                              align="end"
+                              onPointerDownOutside={(e) => {
+                                // Prevent closing when clicking buttons inside - let the click complete first
+                                const target = e.target;
+                                if (target?.closest?.('button')) {
+                                  e.preventDefault();
+                                }
+                              }}
+                            >
+                              <div className="text-xs font-medium text-gray-500 mb-2">
+                                {cov.label} across options
+                              </div>
+
+                              {/* Bound quotes (above the line, red with lock) */}
+                              {boundQuotes.length > 0 && (
+                                <div className="mb-2 pb-2 border-b border-red-200">
+                                  {boundQuotes.map(q => (
+                                    <div key={q.id} className="flex items-center justify-between py-1">
+                                      <span className="text-xs text-red-600 truncate mr-2 flex items-center gap-1">
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                        </svg>
+                                        {q.name}
+                                      </span>
+                                      <span className="text-xs font-medium text-red-600">
+                                        {formatCompact(q.value)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Current quote */}
+                              <div className="flex items-center justify-between py-1.5 border-b border-gray-100 mb-1">
+                                <span className="text-xs text-gray-700 font-medium">
+                                  {quote?.quote_name || 'Current'} (this)
+                                </span>
+                                <span className="text-xs font-semibold text-green-600">
+                                  {formatCompact(currentValue)}
+                                </span>
+                              </div>
+
+                              {/* Other (non-bound) quotes */}
+                              {otherQuotes.length > 0 && (
+                                <div className="space-y-1 max-h-40 overflow-y-auto mb-3">
+                                  {otherQuotes.map(q => (
+                                    <div key={q.id} className="flex items-center justify-between py-1">
+                                      <span className="text-xs text-gray-600 truncate mr-2">
+                                        {q.name}
+                                        {q.position !== currentPosition && (
+                                          <span className="ml-1 text-[9px] text-gray-400">({q.position})</span>
+                                        )}
+                                      </span>
+                                      <span className={`text-xs font-medium ${
+                                        q.value === currentValue ? 'text-green-600' : 'text-amber-600'
+                                      }`}>
+                                        {formatCompact(q.value)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Apply actions - only for same-position, non-bound quotes */}
+                              {!effectiveReadOnly && (() => {
+                                // Filter to same-position quotes with different values
+                                const applicableQuotes = otherQuotes.filter(q =>
+                                  q.position === currentPosition && q.value !== currentValue
+                                );
+                                const hasApplicable = applicableQuotes.length > 0;
+
+                                if (!hasApplicable) return null;
+
+                                return (
+                                <div className="border-t border-gray-100 pt-2">
+                                  <div className="text-[10px] text-gray-400 mb-1.5">
+                                    Apply {formatCompact(currentValue)} to:
+                                  </div>
+                                  <div className="flex flex-wrap gap-1">
+                                    <button
+                                      type="button"
+                                      onPointerDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        if (applyCoverageMutation.isPending) return;
+                                        applyCoverageMutation.mutate({
+                                          covId: cov.id,
+                                          type: activeTab,
+                                          value: currentValue,
+                                          targetQuoteIds: applicableQuotes.map(q => q.id),
+                                        });
+                                      }}
+                                      disabled={applyCoverageMutation.isPending}
+                                      className="text-[10px] px-2 py-1 rounded border border-purple-200 bg-purple-50 text-purple-600 hover:bg-purple-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {applyCoverageMutation.isPending ? 'Applying...' : 'All options'}
+                                    </button>
+                                    {applicableQuotes.slice(0, 4).map(q => (
+                                      <button
+                                        key={q.id}
+                                        type="button"
+                                        onPointerDown={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          if (applyCoverageMutation.isPending) return;
+                                          applyCoverageMutation.mutate({
+                                            covId: cov.id,
+                                            type: activeTab,
+                                            value: currentValue,
+                                            targetQuoteIds: [q.id],
+                                          });
+                                        }}
+                                        disabled={applyCoverageMutation.isPending}
+                                        className="text-[10px] px-2 py-1 rounded border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                                      >
+                                        {q.name}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  {/* Error message */}
+                                  {applyError && (
+                                    <div className="mt-2 p-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded">
+                                      {applyError}
+                                    </div>
+                                  )}
+                                </div>
+                                );
+                              })()}
+                            </Popover.Content>
+                          </Popover.Portal>
+                        </Popover.Root>
+                      </td>
+                    );
+                  })()}
                 </tr>
               );
             })}
