@@ -91,7 +91,7 @@ export default function CoverageEditor({
   setEditControls,
 }) {
   const [activeTab, setActiveTab] = useState('variable');
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(embedded); // Start in edit mode if embedded
   const [draft, setDraft] = useState({});
   const [showBatchEdit, setShowBatchEdit] = useState(false);
   const [batchCoverages, setBatchCoverages] = useState([{ id: '', value: 0 }]);
@@ -224,11 +224,54 @@ export default function CoverageEditor({
 
   // Reset editing state when coverages change externally
   useEffect(() => {
-    setIsEditing(false);
+    setIsEditing(embedded); // Respect embedded mode
     setDraft({});
-    treatmentRefs.current = {};
-    limitInputRefs.current = {};
-  }, [quote?.id]);
+    // Note: Don't clear refs here - they're populated by render
+  }, [quote?.id, embedded]);
+
+  // Initialize draft when starting in embedded edit mode
+  useEffect(() => {
+    if (embedded && isEditing && Object.keys(draft).length === 0) {
+      const initialDraft = {};
+      const currentCoverages = activeTab === 'variable' ? SUBLIMIT_COVERAGES : AGGREGATE_COVERAGES;
+      currentCoverages.forEach((cov) => {
+        if (activeTab === 'variable') {
+          const val = coverages.sublimit_coverages?.[cov.id];
+          initialDraft[cov.id] = val !== undefined ? val : cov.default;
+        } else {
+          const val = coverages.aggregate_coverages?.[cov.id];
+          initialDraft[cov.id] = val !== undefined ? val : effectiveAggregateLimit;
+        }
+      });
+      setDraft(initialDraft);
+    }
+  }, [embedded, isEditing, activeTab, coverages, effectiveAggregateLimit]);
+
+  // Track if we've done initial focus for this edit session
+  const hasInitialFocusRef = useRef(false);
+
+  // Reset focus tracking when exiting edit mode
+  useEffect(() => {
+    if (!isEditing) {
+      hasInitialFocusRef.current = false;
+    }
+  }, [isEditing]);
+
+  // Auto-focus first input when entering edit mode (only once per session)
+  useEffect(() => {
+    if (!isEditing || hasInitialFocusRef.current) return;
+    hasInitialFocusRef.current = true;
+    const timer = setTimeout(() => {
+      if (limitInputRefs.current[0]) {
+        limitInputRefs.current[0].focus();
+        limitInputRefs.current[0].select(); // Select text like TowerEditor
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [isEditing]);
+
+  // Column refs in left-to-right order for horizontal navigation (like TowerEditor)
+  const columnRefs = [treatmentRefs, limitInputRefs];
 
   // Initialize draft from coverages when entering edit mode
   const enterEditMode = (focusIdx = 0) => {
@@ -253,58 +296,68 @@ export default function CoverageEditor({
     }, 0);
   };
 
-  // Arrow key navigation - supports both vertical (up/down) and horizontal (left/right)
-  const handleArrowNav = (e, rowIdx, column = 'limit') => {
+  // Arrow key navigation - supports vertical (up/down), horizontal (left/right), and Tab wrapping
+  // Matches TowerEditor pattern with columnRefs array
+  const handleArrowNav = (e, rowIdx, colIdx) => {
     const currentCoverages = activeTab === 'variable' ? SUBLIMIT_COVERAGES : AGGREGATE_COVERAGES;
-    const maxIdx = currentCoverages.length - 1;
+    const maxRowIdx = currentCoverages.length - 1;
+    const maxColIdx = columnRefs.length - 1;
+
+    // Helper to focus a cell and select if it's an input
+    const focusCell = (row, col) => {
+      const ref = columnRefs[col]?.current?.[row];
+      if (ref) {
+        ref.focus();
+        if (ref.select) ref.select();
+      }
+    };
 
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      const prevIdx = rowIdx - 1;
-      if (prevIdx >= 0) {
-        const ref = column === 'treatment' ? treatmentRefs.current[prevIdx] : limitInputRefs.current[prevIdx];
-        if (ref) {
-          ref.focus();
-          if (column === 'limit') ref.select();
-        }
+      if (rowIdx > 0) {
+        focusCell(rowIdx - 1, colIdx);
       }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      const nextIdx = rowIdx + 1;
-      if (nextIdx <= maxIdx) {
-        const ref = column === 'treatment' ? treatmentRefs.current[nextIdx] : limitInputRefs.current[nextIdx];
-        if (ref) {
-          ref.focus();
-          if (column === 'limit') ref.select();
-        }
+      if (rowIdx < maxRowIdx) {
+        focusCell(rowIdx + 1, colIdx);
       }
     } else if (e.key === 'ArrowLeft') {
-      // Move from Limit to Treatment in same row
-      if (column === 'limit' && treatmentRefs.current[rowIdx]) {
-        e.preventDefault();
-        treatmentRefs.current[rowIdx].focus();
-      }
-    } else if (e.key === 'ArrowRight' || e.key === 'Tab') {
-      // Move from Treatment to Limit in same row
-      if (column === 'treatment' && limitInputRefs.current[rowIdx]) {
-        e.preventDefault();
-        limitInputRefs.current[rowIdx].focus();
-        limitInputRefs.current[rowIdx].select();
-      }
-    } else if (e.key === 'Enter') {
       e.preventDefault();
-      // Move to next row, same column
-      const nextIdx = rowIdx + 1;
-      if (nextIdx <= maxIdx) {
-        const ref = column === 'treatment' ? treatmentRefs.current[nextIdx] : limitInputRefs.current[nextIdx];
-        if (ref) {
-          ref.focus();
-          if (column === 'limit') ref.select();
+      if (colIdx > 0) {
+        focusCell(rowIdx, colIdx - 1);
+      }
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (colIdx < maxColIdx) {
+        focusCell(rowIdx, colIdx + 1);
+      }
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        // Shift+Tab: move left, wrap to prev row's last column
+        if (colIdx > 0) {
+          focusCell(rowIdx, colIdx - 1);
+        } else if (rowIdx > 0) {
+          focusCell(rowIdx - 1, maxColIdx);
+        }
+      } else {
+        // Tab: move right, wrap to next row's first column
+        if (colIdx < maxColIdx) {
+          focusCell(rowIdx, colIdx + 1);
+        } else if (rowIdx < maxRowIdx) {
+          focusCell(rowIdx + 1, 0);
         }
       }
-    } else if (e.key === 'Escape') {
-      handleCancel();
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter: Move to next row (consistent with Subjectivity screen)
+      e.preventDefault();
+      if (rowIdx < maxRowIdx) {
+        focusCell(rowIdx + 1, colIdx);
+      }
+      // If on last row, Enter does nothing (stay in place) - Escape to exit
     }
+    // Note: Escape is handled by the global keydown listener (saves and exits)
   };
 
   // Click outside to save
@@ -319,10 +372,11 @@ export default function CoverageEditor({
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        setIsEditing(false);
-        setDraft({});
-        setEditControls?.(null);
+        // Escape: Save all changes and exit (consistent with Subjectivity screen)
+        e.preventDefault();
+        handleSave();
       }
+      // Note: Enter is handled in handleArrowNav to move to next row
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -739,7 +793,7 @@ export default function CoverageEditor({
                           }
                           // Custom keeps current value
                         }}
-                        onKeyDown={(e) => handleArrowNav(e, idx, 'treatment')}
+                        onKeyDown={(e) => handleArrowNav(e, idx, 0)}
                       >
                         <option value={activeTab === 'variable' ? 'Default' : 'Full'}>
                           {activeTab === 'variable' ? 'Default' : 'Full'}
@@ -766,7 +820,8 @@ export default function CoverageEditor({
                           const raw = parseFormattedNumber(e.target.value);
                           setDraft({ ...draft, [cov.id]: raw ? Number(raw) : 0 });
                         }}
-                        onKeyDown={(e) => handleArrowNav(e, idx, 'limit')}
+                        onKeyDown={(e) => handleArrowNav(e, idx, 1)}
+                        onFocus={(e) => e.target.select()}
                       />
                     ) : (
                       <span className={`font-medium ${isExcluded ? 'text-gray-400' : 'text-green-600'}`}>

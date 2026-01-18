@@ -548,14 +548,13 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        setLayers(quote.tower_json || []);
-        setIsEditing(false);
-      } else if (e.key === 'Enter' && !e.shiftKey) {
-        // Save on Enter (unless Shift+Enter for potential future multi-line)
+        // Escape: Save all changes and exit (consistent with Subjectivity screen)
+        e.preventDefault();
         const recalculated = recalculateAttachments(layers);
         onSave({ tower_json: recalculated, quote_name: generateOptionName({ ...quote, tower_json: recalculated }) });
         setIsEditing(false);
       }
+      // Note: Enter is handled in handleArrowNav to move to next row
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -577,12 +576,14 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
       if (currentRefs.current[prevIdx]) {
         currentRefs.current[prevIdx].focus();
       }
-    } else if (e.key === 'ArrowDown') {
+    } else if (e.key === 'ArrowDown' || (e.key === 'Enter' && !e.shiftKey)) {
+      // ArrowDown or Enter: Move to next row (Enter consistent with Subjectivity screen)
       e.preventDefault();
       const nextIdx = displayIdx + 1;
       if (currentRefs.current[nextIdx]) {
         currentRefs.current[nextIdx].focus();
       }
+      // If on last row, Enter does nothing (stay in place) - Escape to exit
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       const currentColIdx = columnRefs.indexOf(currentRefs);
@@ -675,9 +676,20 @@ function TowerEditor({ quote, onSave, isPending, embedded = false, setEditContro
     return () => embedded && setEditControls?.(null);
   }, [isEditing, embedded, isPending]);
 
-  // Auto-focus first premium input when entering edit mode
+  // Track if we've done initial focus for this edit session
+  const hasInitialFocusRef = useRef(false);
+
+  // Reset focus tracking when exiting edit mode
   useEffect(() => {
-    if (!isEditing) return;
+    if (!isEditing) {
+      hasInitialFocusRef.current = false;
+    }
+  }, [isEditing]);
+
+  // Auto-focus first premium input when entering edit mode (only once per session)
+  useEffect(() => {
+    if (!isEditing || hasInitialFocusRef.current) return;
+    hasInitialFocusRef.current = true;
     // Small delay to ensure inputs are rendered
     const timer = setTimeout(() => {
       // Find CMAI layer's displayIdx (it's displayed in reverse order)
@@ -3629,9 +3641,28 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
               <span className="text-xs font-bold text-slate-600 uppercase tracking-wider text-right">Applies To</span>
             </div>
             <div className="divide-y divide-gray-100">
-              {filteredSubjectivityRulesAll.map((rule) => {
+              {filteredSubjectivityRulesAll.map((rule, ruleIndex) => {
                 const isMenuOpen = activeRuleMenu === rule.id;
                 const isEditing = editingSubjectivityId === rule.id;
+
+                // Navigate to another subjectivity (for Tab navigation)
+                const navigateToSubjectivity = (targetIndex) => {
+                  // Save current if changed
+                  if (editingSubjectivityText.trim() && editingSubjectivityText !== rule.label) {
+                    updateSubjectivityTextMutation.mutate({
+                      subjectivityId: editingSubjectivityId,
+                      text: editingSubjectivityText,
+                      status: editingSubjectivityStatus,
+                    });
+                  }
+                  // Move to target
+                  const target = filteredSubjectivityRulesAll[targetIndex];
+                  if (target) {
+                    setEditingSubjectivityId(target.id);
+                    setEditingSubjectivityText(target.label);
+                    setEditingSubjectivityStatus(target.status || 'pending');
+                  }
+                };
                 const statusIcon = rule.status === 'received'
                   ? <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                   : rule.status === 'waived'
@@ -3673,8 +3704,27 @@ function AllOptionsTabContent({ structures, onSelect, onUpdateOption, submission
                             value={editingSubjectivityText}
                             onChange={(e) => setEditingSubjectivityText(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveSubjectivity();
-                              if (e.key === 'Escape') handleCancelEditSubjectivity();
+                              if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+                                e.preventDefault();
+                                // Move to next row (wrap to top)
+                                const nextIndex = ruleIndex < filteredSubjectivityRulesAll.length - 1 ? ruleIndex + 1 : 0;
+                                navigateToSubjectivity(nextIndex);
+                              }
+                              if (e.key === 'Escape') {
+                                e.preventDefault();
+                                // Escape: Save and exit (consistent with other editors)
+                                handleSaveSubjectivity();
+                              }
+                              if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                const nextIndex = ruleIndex < filteredSubjectivityRulesAll.length - 1 ? ruleIndex + 1 : 0;
+                                navigateToSubjectivity(nextIndex);
+                              }
+                              if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+                                e.preventDefault();
+                                const prevIndex = ruleIndex > 0 ? ruleIndex - 1 : filteredSubjectivityRulesAll.length - 1;
+                                navigateToSubjectivity(prevIndex);
+                              }
                             }}
                             className="flex-1 text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                             autoFocus
@@ -5211,6 +5261,9 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   // Tower card ref
   const towerCardRef = useRef(null);
 
+  // Coverages card ref
+  const coveragesCardRef = useRef(null);
+
   // Click outside to close expanded subjectivities card
   useEffect(() => {
     if (expandedCard !== 'subjectivities') return;
@@ -5295,6 +5348,28 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
         // Trigger blur on active element to save any pending edit
         if (document.activeElement && towerCardRef.current.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+
+        setExpandedCard(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [expandedCard]);
+
+  // Click outside to close expanded coverages card
+  useEffect(() => {
+    if (expandedCard !== 'coverages') return;
+
+    const handleClickOutside = (e) => {
+      if (coveragesCardRef.current && !coveragesCardRef.current.contains(e.target)) {
+        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
+        if (isPopoverClick) return;
+
+        // Trigger blur on active element to save any pending edit
+        if (document.activeElement && coveragesCardRef.current.contains(document.activeElement)) {
           document.activeElement.blur();
         }
 
@@ -7410,75 +7485,124 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
       {/* Details Grid - 3 column layout */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Coverages - expands right (cols 1-2) when editing, stays visible when others expand */}
-        <div className={`border rounded-lg overflow-hidden transition-all duration-200 ${
-          expandedCard === 'coverages'
-            ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
-            : 'border-gray-200'
-        }`}>
-          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowAllSublimits(false)}
-                className={`text-xs font-bold uppercase ${!showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
-              >
-                Exceptions
-              </button>
-              <span className="text-gray-300">|</span>
-              <button
-                onClick={() => setShowAllSublimits(true)}
-                className={`text-xs font-bold uppercase ${showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
-              >
-                All
-              </button>
-            </div>
-            <button
-              onClick={() => setExpandedCard(expandedCard === 'coverages' ? null : 'coverages')}
-              className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+        {(() => {
+          const isEditingCoverages = expandedCard === 'coverages';
+          const isExcessQuote = structure?.position === 'excess';
+          const aggregateLimit = (() => {
+            if (!structure?.tower_json?.length) return 1000000;
+            const cmaiLayer = structure.tower_json.find(l => l.carrier?.toUpperCase().includes('CMAI')) || structure.tower_json[0];
+            return cmaiLayer?.limit || 1000000;
+          })();
+
+          return (
+            <div
+              ref={coveragesCardRef}
+              className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+                isEditingCoverages
+                  ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
+                  : 'border-gray-200 hover:border-gray-300 cursor-pointer'
+              }`}
+              onClick={() => !isEditingCoverages && setExpandedCard('coverages')}
             >
-              {expandedCard === 'coverages' ? 'Done' : 'Edit'}
-            </button>
-          </div>
-          <div className="p-4">
-            {showAllSublimits ? (
-              <div className="space-y-1">
-                {allSublimits.map(sub => (
-                  <div key={sub.id} className="flex justify-between text-sm">
-                    <span className="text-gray-600">{sub.label}</span>
-                    <span className={`font-medium ${sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
-                        {formatCompact(sub.value)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : coverageExceptions.length === 0 ? (
-                <div className="flex items-center gap-2 text-sm text-green-600">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span>All standard limits</span>
+              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+                {isEditingCoverages ? (
+                  <h3 className="text-xs font-bold text-gray-500 uppercase">Coverages</h3>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShowAllSublimits(false); }}
+                      className={`text-xs font-bold uppercase ${!showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Exceptions
+                    </button>
+                    <span className="text-gray-300">|</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShowAllSublimits(true); }}
+                      className={`text-xs font-bold uppercase ${showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      All
+                    </button>
+                  </div>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setExpandedCard(isEditingCoverages ? null : 'coverages'); }}
+                  className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                >
+                  {isEditingCoverages ? 'Done' : 'Edit'}
+                </button>
+              </div>
+
+              {isEditingCoverages ? (
+                /* Full Coverage Editor when editing */
+                <div className="p-2">
+                  {isExcessQuote ? (
+                    <ExcessCoverageCompact
+                      sublimits={structure.sublimits || []}
+                      towerJson={structure.tower_json || []}
+                      onSave={(updatedSublimits) => {
+                        onUpdateOption?.(structureId, { sublimits: updatedSublimits });
+                      }}
+                    />
+                  ) : (
+                    <CoverageEditor
+                      coverages={structure?.coverages || { aggregate_coverages: {}, sublimit_coverages: {} }}
+                      aggregateLimit={aggregateLimit}
+                      onSave={(updatedCoverages) => {
+                        onUpdateOption?.(structureId, { coverages: updatedCoverages });
+                      }}
+                      mode="quote"
+                      allQuotes={structures}
+                      submissionId={submission?.id}
+                      embedded={true}
+                    />
+                  )}
                 </div>
               ) : (
-                <div className="space-y-1">
-                  {coverageExceptions.map(exc => (
-                    <div key={exc.id} className="flex justify-between text-sm">
-                      <span className="text-gray-600">{exc.label}</span>
-                      <span className="font-medium text-amber-600">{formatCompact(exc.value)}</span>
+                /* Preview when collapsed */
+                <div className="p-4">
+                  {showAllSublimits ? (
+                    <div className="space-y-1">
+                      {allSublimits.map(sub => (
+                        <div key={sub.id} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{sub.label}</span>
+                          <span className={`font-medium ${sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
+                            {formatCompact(sub.value)}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  ) : coverageExceptions.length === 0 ? (
+                    <div className="flex items-center gap-2 text-sm text-green-600">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>All standard limits</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {coverageExceptions.map(exc => (
+                        <div key={exc.id} className="flex justify-between text-sm">
+                          <span className="text-gray-600">{exc.label}</span>
+                          <span className="font-medium text-amber-600">{formatCompact(exc.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          </div>
+          );
+        })()}
 
-          {/* Endorsements - expands right (cols 2-3) when editing, hidden when others expand */}
-          <div
-            ref={endorsementsCardRef}
-            className={`border rounded-lg overflow-hidden transition-all duration-200 ${
-              expandedCard === 'endorsements'
-                ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
-                : 'border-gray-200'
-            } ${expandedCard && expandedCard !== 'endorsements' ? 'hidden' : ''}`}
-          >
+        {/* Endorsements - expands right (cols 2-3) when editing, hidden when others expand */}
+        <div
+          ref={endorsementsCardRef}
+          className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+            expandedCard === 'endorsements'
+              ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
+              : 'border-gray-200'
+          } ${expandedCard && expandedCard !== 'endorsements' ? 'hidden' : ''}`}
+        >
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
@@ -7969,7 +8093,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                                 setEditingEndorsementId(null);
                               }}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
+                                if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
                                   e.preventDefault();
                                   // Save and move to next (wrap to top)
                                   const nextIndex = index < allEndorsements.length - 1 ? index + 1 : 0;
@@ -7991,7 +8115,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                                   const nextIndex = index < allEndorsements.length - 1 ? index + 1 : 0;
                                   navigateToEndorsement(nextIndex);
                                 }
-                                if (e.key === 'ArrowUp') {
+                                if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
                                   e.preventDefault();
                                   const prevIndex = index > 0 ? index - 1 : allEndorsements.length - 1;
                                   navigateToEndorsement(prevIndex);
@@ -8888,7 +9012,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                                 setEditingSubjId(null);
                               }}
                               onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
+                                if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
                                   e.preventDefault();
                                   // Save and move to next (wrap to top)
                                   const nextIndex = index < allSubjectivities.length - 1 ? index + 1 : 0;
@@ -8910,7 +9034,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                                   const nextIndex = index < allSubjectivities.length - 1 ? index + 1 : 0;
                                   navigateToItem(nextIndex);
                                 }
-                                if (e.key === 'ArrowUp') {
+                                if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
                                   e.preventDefault();
                                   const prevIndex = index > 0 ? index - 1 : allSubjectivities.length - 1;
                                   navigateToItem(prevIndex);
