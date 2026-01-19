@@ -837,7 +837,7 @@ export default function CoverageEditor({
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-100">
+      <div className="flex items-center gap-2 border-b border-gray-100">
         <button
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
             activeTab === 'variable'
@@ -862,8 +862,8 @@ export default function CoverageEditor({
         {isBound && (
           <>
             <div className="flex-1" />
-            <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-red-600 bg-red-50 rounded border border-red-200">
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 mb-3 text-xs text-red-600 bg-red-50 rounded border border-red-200">
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
               </svg>
               <span className="font-medium">Bound - View Only</span>
