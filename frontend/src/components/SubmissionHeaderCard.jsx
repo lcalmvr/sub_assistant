@@ -169,7 +169,7 @@ export default function SubmissionHeaderCard({
   // --- COLLAPSED MODE ---
   if (!expanded) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white px-4 py-3">
+      <div className="bg-white px-4 py-3">
         <div className="flex items-center gap-4">
           {/* Expand toggle */}
           <button
@@ -235,7 +235,7 @@ export default function SubmissionHeaderCard({
 
   // --- EXPANDED MODE ---
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="bg-white px-4 py-3">
       {/* Title row */}
       <div className="flex items-start justify-between gap-4 mb-3">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">

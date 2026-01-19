@@ -7693,7 +7693,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             expandedCard === 'endorsements'
               ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
               : 'border-gray-200'
-          } ${expandedCard && expandedCard !== 'endorsements' ? 'hidden' : ''}`}
+          } ${expandedCard && expandedCard !== 'endorsements' && expandedCard !== 'tower' && expandedCard !== 'coverages' ? 'hidden' : ''}`}
         >
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
@@ -8070,7 +8070,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 ) : (
                   /* Submission Mode - Collapsed Summary View */
                   <div className="space-y-2">
-                    {allSubmissionEndorsements.slice(0, 5).map((item) => {
+                    {allSubmissionEndorsements.slice(0, 10).map((item) => {
                       const linkedQuoteIds = item.quoteIds?.map(String) || [];
                       const linkedCount = linkedQuoteIds.length;
                       const totalCount = allOptions.length;
@@ -8094,12 +8094,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                         </div>
                       );
                     })}
-                    {allSubmissionEndorsements.length > 5 && (
+                    {allSubmissionEndorsements.length > 10 && (
                       <button
                         onClick={() => setExpandedCard('endorsements')}
                         className="text-xs text-purple-600 hover:text-purple-700"
                       >
-                        +{allSubmissionEndorsements.length - 5} more...
+                        +{allSubmissionEndorsements.length - 10} more...
                       </button>
                     )}
                   </div>
@@ -8562,7 +8562,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             expandedCard === 'subjectivities'
               ? 'md:col-start-2 md:col-span-2 border-purple-300 ring-1 ring-purple-100'
               : 'border-gray-200'
-          } ${expandedCard && expandedCard !== 'subjectivities' ? 'hidden' : ''}`}
+          } ${expandedCard && expandedCard !== 'subjectivities' && expandedCard !== 'tower' && expandedCard !== 'coverages' ? 'hidden' : ''}`}
         >
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
@@ -8953,7 +8953,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                 ) : (
                   /* Submission Mode - Collapsed Summary View */
                   <div className="space-y-2">
-                    {allSubmissionSubjectivities.slice(0, 5).map((item) => {
+                    {allSubmissionSubjectivities.slice(0, 10).map((item) => {
                       const linkedQuoteIds = item.quoteIds?.map(String) || [];
                       const linkedCount = linkedQuoteIds.length;
                       const totalCount = allOptions.length;
@@ -8997,12 +8997,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                         </div>
                       );
                     })}
-                    {allSubmissionSubjectivities.length > 5 && (
+                    {allSubmissionSubjectivities.length > 10 && (
                       <button
                         onClick={() => setExpandedCard('subjectivities')}
                         className="text-xs text-purple-600 hover:text-purple-700"
                       >
-                        +{allSubmissionSubjectivities.length - 5} more...
+                        +{allSubmissionSubjectivities.length - 10} more...
                       </button>
                     )}
                   </div>

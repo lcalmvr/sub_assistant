@@ -19,6 +19,7 @@ import {
 } from '../api/client';
 import PdfHighlighter from '../components/review/PdfHighlighter';
 import BrokerSelector from '../components/BrokerSelector';
+import DocumentsSidebar from '../components/DocumentsSidebar';
 import DateRangePicker from '../components/DateRangePicker';
 import SubmissionHeaderCard from '../components/SubmissionHeaderCard';
 
@@ -1972,6 +1973,7 @@ export default function SetupPage() {
   const [highlightPage, setHighlightPage] = useState(null);
   const [scrollTrigger, setScrollTrigger] = useState(0);
   const [activeHighlight, setActiveHighlight] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Queries
   const { data: submission, isLoading } = useQuery({
@@ -2137,62 +2139,133 @@ export default function SetupPage() {
   const showRequired = viewMode === 'required';
   const showConflicts = viewMode === 'conflicts';
 
+  // Use fixed positioning to break out of parent container constraints for true edge-to-edge layout
+  // This positions relative to viewport, ignoring max-w-7xl and padding from SubmissionLayout
+  // Header height: h-14 (56px) + tab row (~40px) = ~96px
   return (
-    <div className="space-y-4">
-      {/* Submission Summary - compact header card */}
-      <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} defaultExpanded={false} />
+    <div className="fixed left-0 right-0 top-[96px] bottom-0 flex flex-col z-0">
+      {/* Submission Summary */}
+      <div className="border-b border-gray-200">
+        <SubmissionSummaryCard submission={submission} onUpdate={handleSummaryUpdate} defaultExpanded={false} />
+      </div>
 
-      {/* Main content area */}
-      <div className="card p-0 overflow-hidden" style={{ height: 'calc(100vh - 200px)', minHeight: '500px' }}>
-        {/* Header: View mode toggles + Document selector in one row */}
-        <HeaderBar
-        mode={viewMode}
-        onModeChange={setViewMode}
-        verificationProgress={verifications?.progress}
-        conflictCount={conflictCount}
-        documents={documents}
-        selectedDocId={selectedDocument?.id}
-        onSelectDoc={handleSelectDocument}
-        onUpload={(file, type) => uploadDocumentMutation.mutate({ file, documentType: type })}
-        isUploading={uploadDocumentMutation.isPending}
-      />
+      {/* Main content area - full width edge to edge */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Documents Sidebar */}
+        <DocumentsSidebar
+          documents={documents}
+          selectedDocId={selectedDocument?.id}
+          onSelectDoc={handleSelectDocument}
+          onUpload={(file, type) => uploadDocumentMutation.mutate({ file, documentType: type })}
+          isUploading={uploadDocumentMutation.isPending}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
 
-      {/* Content area - Left panel (narrower) + PDF viewer on right (wider) */}
-      <div className={`grid ${isSplitScreen ? 'grid-cols-[2fr_3fr]' : 'grid-cols-1'} divide-x h-full`} style={{ height: 'calc(100% - 49px)' }}>
-        {/* Left panel based on mode (only in split screen) */}
-        {showRequired && (
-          <RequiredVerificationsPanel
-            submission={submission}
-            extractions={extractions}
-            verifications={verifications}
-            submissionId={submissionId}
-            onShowSource={handleShowSource}
-            onAcceptValue={(id) => acceptExtractionMutation.mutate(id)}
-            onClearAcceptedValue={(id) => unacceptExtractionMutation.mutateAsync(id)}
-          />
+        {/* Middle: Extraction panels (when in split mode) */}
+        {isSplitScreen && (
+          <div className="w-[400px] flex-shrink-0 border-r border-gray-200 flex flex-col overflow-hidden">
+            {/* Mode toggles header */}
+            <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-1">
+              <button
+                onClick={() => setViewMode('extract')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  viewMode === 'extract'
+                    ? 'bg-white shadow text-gray-900'
+                    : 'text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Extract
+              </button>
+              <button
+                onClick={() => setViewMode('required')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                  viewMode === 'required'
+                    ? 'bg-white shadow text-gray-900'
+                    : verifications?.progress?.completed === verifications?.progress?.total && verifications?.progress?.total > 0
+                      ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                      : 'text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                <span>Required</span>
+                {verifications?.progress && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                    verifications?.progress?.completed === verifications?.progress?.total
+                      ? 'bg-green-200 text-green-800'
+                      : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {verifications.progress.completed}/{verifications.progress.total}
+                  </span>
+                )}
+              </button>
+              {conflictCount > 0 && (
+                <button
+                  onClick={() => setViewMode('conflicts')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
+                    viewMode === 'conflicts'
+                      ? 'bg-white shadow text-gray-900'
+                      : 'bg-orange-50 text-orange-700 hover:bg-orange-100'
+                  }`}
+                >
+                  <span>Conflicts</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-orange-200 text-orange-800">
+                    {conflictCount}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {/* Panel content */}
+            <div className="flex-1 overflow-hidden">
+              {showRequired && (
+                <RequiredVerificationsPanel
+                  submission={submission}
+                  extractions={extractions}
+                  verifications={verifications}
+                  submissionId={submissionId}
+                  onShowSource={handleShowSource}
+                  onAcceptValue={(id) => acceptExtractionMutation.mutate(id)}
+                  onClearAcceptedValue={(id) => unacceptExtractionMutation.mutateAsync(id)}
+                />
+              )}
+
+              {showConflicts && (
+                <ExtractionPanel
+                  extractions={extractions}
+                  isLoading={extractionsLoading}
+                  onShowSource={handleShowSource}
+                  onAcceptValue={(id) => acceptExtractionMutation.mutate(id)}
+                  conflictsOnly
+                />
+              )}
+
+              {showExtractions && (
+                <ExtractionPanel
+                  extractions={extractions}
+                  isLoading={extractionsLoading}
+                  onShowSource={handleShowSource}
+                  onAcceptValue={(id) => acceptExtractionMutation.mutate(id)}
+                />
+              )}
+            </div>
+          </div>
         )}
 
-        {showConflicts && (
-          <ExtractionPanel
-            extractions={extractions}
-            isLoading={extractionsLoading}
-            onShowSource={handleShowSource}
-            onAcceptValue={(id) => acceptExtractionMutation.mutate(id)}
-            conflictsOnly
-          />
-        )}
+        {/* Right: PDF Viewer - takes remaining space */}
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-gray-100">
+          {/* Docs-only mode toggle when not in split */}
+          {!isSplitScreen && (
+            <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+              <span className="text-sm text-gray-500">View:</span>
+              <button
+                onClick={() => setViewMode('extract')}
+                className="px-3 py-1.5 text-sm font-medium rounded-lg bg-white shadow text-purple-600 hover:bg-purple-50"
+              >
+                + Show Extractions
+              </button>
+            </div>
+          )}
 
-        {showExtractions && (
-          <ExtractionPanel
-            extractions={extractions}
-            isLoading={extractionsLoading}
-            onShowSource={handleShowSource}
-            onAcceptValue={(id) => acceptExtractionMutation.mutate(id)}
-          />
-        )}
-
-        {/* PDF Viewer (right side in split, full width in docs mode) */}
-        <div className="flex flex-col h-full overflow-hidden">
           {selectedDocument?.url ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               {/\.(png|jpg|jpeg|gif|webp|bmp|tiff?)$/i.test(selectedDocument.filename) ? (
@@ -2210,12 +2283,11 @@ export default function SetupPage() {
               )}
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center bg-gray-100">
+            <div className="flex-1 flex items-center justify-center">
               <p className="text-gray-500">Select a document to view</p>
             </div>
           )}
         </div>
-      </div>
       </div>
     </div>
   );
