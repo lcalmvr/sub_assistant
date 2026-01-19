@@ -22,7 +22,6 @@ import {
   getSubjectivityTemplates,
   linkEndorsementToQuote,
   unlinkEndorsementFromQuote,
-  deleteEndorsement,
   linkSubjectivityToQuote,
   unlinkSubjectivityFromQuote,
   createSubjectivity,
@@ -5223,6 +5222,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const [notes, setNotes] = useState(structure?.notes || '');
   const [isEditingNotes, setIsEditingNotes] = useState(false);
   const [showAllSublimits, setShowAllSublimits] = useState(false);
+  const [excessCoverageFilter, setExcessCoverageFilter] = useState('all'); // 'dropdown' | 'all' | 'nonfollow' for excess quotes
   const [showMissingSuggestions, setShowMissingSuggestions] = useState(false); // Single toggle for all missing suggestions
   const [showOnlyOurLayer, setShowOnlyOurLayer] = useState(false);
   const [showQuoteOptions, setShowQuoteOptions] = useState(true); // Collapsible quote options in submission mode
@@ -5253,6 +5253,31 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   const [editingEndorsementText, setEditingEndorsementText] = useState('');
   const [endorsementAppliesToPopoverId, setEndorsementAppliesToPopoverId] = useState(null);
   const [subjectivityAppliesToPopoverId, setSubjectivityAppliesToPopoverId] = useState(null);
+  const [termAppliesToPopoverId, setTermAppliesToPopoverId] = useState(null);
+  const [retroAppliesToPopoverId, setRetroAppliesToPopoverId] = useState(null);
+  const [commissionAppliesToPopoverId, setCommissionAppliesToPopoverId] = useState(null);
+  // State for editing/adding term configurations
+  const [editingTermKey, setEditingTermKey] = useState(null);
+  const [editingTermEffective, setEditingTermEffective] = useState('');
+  const [editingTermExpiration, setEditingTermExpiration] = useState('');
+  const [editingTermDatesTbd, setEditingTermDatesTbd] = useState(false);
+  const [isAddingTerm, setIsAddingTerm] = useState(false);
+  const [newTermEffective, setNewTermEffective] = useState('');
+  const [newTermExpiration, setNewTermExpiration] = useState('');
+  const [newTermDatesTbd, setNewTermDatesTbd] = useState(false);
+  const [newTermSelectedQuotes, setNewTermSelectedQuotes] = useState([]);
+  // State for editing/adding retro configurations
+  const [editingRetroKey, setEditingRetroKey] = useState(null);
+  const [isAddingRetro, setIsAddingRetro] = useState(false);
+  const [inlineEditRetroSchedule, setInlineEditRetroSchedule] = useState([]);
+  const [inlineNewRetroSchedule, setInlineNewRetroSchedule] = useState([]);
+  const [newRetroSelectedQuotes, setNewRetroSelectedQuotes] = useState([]);
+  // State for editing/adding commission configurations (no Net Out in submission mode - premiums not available)
+  const [editingCommissionKey, setEditingCommissionKey] = useState(null);
+  const [editingCommissionRate, setEditingCommissionRate] = useState('');
+  const [isAddingCommission, setIsAddingCommission] = useState(false);
+  const [newCommissionRate, setNewCommissionRate] = useState('');
+  const [newCommissionSelectedQuotes, setNewCommissionSelectedQuotes] = useState([]);
   const [isAddingEndorsement, setIsAddingEndorsement] = useState(false);
   const [newEndorsementText, setNewEndorsementText] = useState('');
   const [showEndorsementLibraryPicker, setShowEndorsementLibraryPicker] = useState(false);
@@ -5261,6 +5286,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
   // Retro card ref
   const retroCardRef = useRef(null);
+
+  // Terms card ref
+  const termsCardRef = useRef(null);
+
+  // Commission card ref
+  const commissionCardRef = useRef(null);
 
   // Tower card ref
   const towerCardRef = useRef(null);
@@ -5330,6 +5361,50 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
         // Trigger blur on active element to save any pending edit
         if (document.activeElement && retroCardRef.current.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+
+        setExpandedCard(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [expandedCard]);
+
+  // Click outside to close expanded terms card
+  useEffect(() => {
+    if (expandedCard !== 'terms') return;
+
+    const handleClickOutside = (e) => {
+      if (termsCardRef.current && !termsCardRef.current.contains(e.target)) {
+        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
+        if (isPopoverClick) return;
+
+        // Trigger blur on active element to save any pending edit
+        if (document.activeElement && termsCardRef.current.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+
+        setExpandedCard(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [expandedCard]);
+
+  // Click outside to close expanded commission card
+  useEffect(() => {
+    if (expandedCard !== 'commission') return;
+
+    const handleClickOutside = (e) => {
+      if (commissionCardRef.current && !commissionCardRef.current.contains(e.target)) {
+        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
+        if (isPopoverClick) return;
+
+        // Trigger blur on active element to save any pending edit
+        if (document.activeElement && commissionCardRef.current.contains(document.activeElement)) {
           document.activeElement.blur();
         }
 
@@ -5460,30 +5535,29 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
       fiduciary: 'Fid',
     };
 
-    // Retro abbreviations
-    const retroAbbrev = (entry) => {
-      if (entry.retro === 'full_prior_acts') return 'FPA';
-      if (entry.retro === 'follow_form') return 'FF';
-      if (entry.retro === 'inception') return 'Inc';
+    // Retro labels (no abbreviations - need to be readable)
+    const retroLabel = (entry) => {
+      if (entry.retro === 'full_prior_acts') return 'Full Prior Acts';
+      if (entry.retro === 'follow_form') return 'Follow Form';
+      if (entry.retro === 'inception') return 'Inception';
       if (entry.retro === 'date') return entry.date || 'Date';
-      if (entry.retro === 'custom') return entry.custom_text || 'Custom';
+      if (entry.retro === 'custom') return entry.custom_text || 'custom';
       return entry.retro || '—';
     };
 
     // Check if all coverages have the same retro
     const uniqueRetros = new Set(schedule.map(e => e.retro));
     if (uniqueRetros.size === 1) {
-      const retro = schedule[0].retro;
-      if (retro === 'full_prior_acts') return 'Full Prior Acts';
-      if (retro === 'follow_form') return 'Follow Form';
-      if (retro === 'inception') return 'Inception';
-      return retroAbbrev(schedule[0]);
+      const label = retroLabel(schedule[0]);
+      // Show coverages for context: "Cyber, Tech: Inception"
+      const coverageList = schedule.map(e => covAbbrev[e.coverage] || e.coverage).join(', ');
+      return `${coverageList}: ${label}`;
     }
 
-    // Mixed - show each coverage with its retro
+    // Mixed - show each coverage with its retro on separate lines
     return schedule
-      .map(entry => `${covAbbrev[entry.coverage] || entry.coverage}: ${retroAbbrev(entry)}`)
-      .join(', ');
+      .map(entry => `${covAbbrev[entry.coverage] || entry.coverage}: ${retroLabel(entry)}`)
+      .join('\n');
   };
 
   // Premium editing helpers for Quote Options table
@@ -5681,9 +5755,14 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           key: t.key,
           label: t.datesTbd ? 'TBD' : `${formatDate(t.effDate)} - ${formatDate(t.expDate)}`,
           count: 0,
+          datesTbd: t.datesTbd,
+          effDate: t.effDate,
+          expDate: t.expDate,
+          quoteIds: [],
         };
       }
       groups[t.key].count++;
+      groups[t.key].quoteIds.push(String(t.quoteId));
     });
     // Sort by count descending (most common first)
     return Object.values(groups).sort((a, b) => b.count - a.count);
@@ -5698,9 +5777,11 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           label: formatRetroSummary(r.retroSchedule),
           schedule: r.retroSchedule, // Keep raw schedule for detailed rendering
           count: 0,
+          quoteIds: [],
         };
       }
       groups[r.key].count++;
+      groups[r.key].quoteIds.push(String(r.quoteId));
     });
     return Object.values(groups).sort((a, b) => b.count - a.count);
   }, [allQuoteRetros]);
@@ -5713,9 +5794,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           key: c.key,
           label: `${c.commissionRate}%`,
           count: 0,
+          commissionRate: c.commissionRate,
+          quoteIds: [],
         };
       }
       groups[c.key].count++;
+      groups[c.key].quoteIds.push(String(c.quoteId));
     });
     return Object.values(groups).sort((a, b) => b.count - a.count);
   }, [allQuoteCommissions]);
@@ -6189,12 +6273,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   });
 
   // Bulk apply subjectivity to a set of quotes
-  // Auto-deletes when unlinking from all quotes (no orphaned data)
+  // Unlinks from all quotes when targetIds is empty
   const applySubjectivitySelectionMutation = useMutation({
     mutationFn: async ({ subjectivityId, currentIds, targetIds }) => {
-      // If targetIds is empty, delete the subjectivity entirely
+      // If targetIds is empty, unlink from all current quotes
       if (targetIds.length === 0) {
-        return deleteSubjectivity(subjectivityId);
+        return Promise.all(currentIds.map(id => unlinkSubjectivityFromQuote(id, subjectivityId)));
       }
       const currentSet = new Set(currentIds.map(String));
       const targetSet = new Set(targetIds.map(String));
@@ -6289,12 +6373,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   });
 
   // Bulk apply endorsement to a set of quotes
-  // Auto-deletes when unlinking from all quotes (no orphaned data)
+  // Unlinks from all quotes when targetIds is empty
   const applyEndorsementSelectionMutation = useMutation({
     mutationFn: async ({ endorsementId, currentIds, targetIds }) => {
-      // If targetIds is empty, delete the endorsement entirely
+      // If targetIds is empty, unlink from all current quotes
       if (targetIds.length === 0) {
-        return deleteEndorsement(endorsementId);
+        return Promise.all(currentIds.map(id => unlinkEndorsementFromQuote(id, endorsementId)));
       }
       const currentSet = new Set(currentIds.map(String));
       const targetSet = new Set(targetIds.map(String));
@@ -6402,6 +6486,101 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
     },
     onSuccess: () => {
       setShowRetroApplyPopover(false);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  // Mutation: Apply policy term to quotes (for HoverCard click)
+  const applyPolicyTermSelection = useMutation({
+    mutationFn: async ({ datesTbd, effectiveDate, expirationDate, quoteId }) => {
+      const struct = structures.find(s => String(s.id) === String(quoteId));
+      const firstVariation = struct?.variations?.[0];
+      const updateData = datesTbd
+        ? { dates_tbd: true, effective_date_override: null, expiration_date_override: null }
+        : { dates_tbd: false, effective_date_override: effectiveDate || null, expiration_date_override: expirationDate || null };
+      if (firstVariation) {
+        return updateVariation(firstVariation.id, updateData);
+      } else if (struct) {
+        return updateQuoteOption(quoteId, updateData);
+      }
+    },
+    onMutate: async ({ datesTbd, effectiveDate, expirationDate, quoteId }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      const updateData = datesTbd
+        ? { dates_tbd: true, effective_date_override: null, expiration_date_override: null }
+        : { dates_tbd: false, effective_date_override: effectiveDate, expiration_date_override: expirationDate };
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          if (String(s.id) === String(quoteId) && s.variations?.[0]) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) => idx === 0 ? { ...v, ...updateData } : v),
+            };
+          }
+          return s;
+        })
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['structures', submissionId], ctx.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  // Mutation: Apply retro schedule to a specific quote (for HoverCard click)
+  const applyRetroSelection = useMutation({
+    mutationFn: async ({ schedule, quoteId }) => {
+      return updateQuoteOption(quoteId, { retro_schedule: schedule });
+    },
+    onMutate: async ({ schedule, quoteId }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => String(s.id) === String(quoteId) ? { ...s, retro_schedule: schedule } : s)
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['structures', submissionId], ctx.previous);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
+    },
+  });
+
+  // Mutation: Apply commission to a specific quote (for HoverCard click)
+  const applyCommissionSelection = useMutation({
+    mutationFn: async ({ commission, quoteId }) => {
+      const struct = structures.find(s => String(s.id) === String(quoteId));
+      const firstVariation = struct?.variations?.[0];
+      if (firstVariation) {
+        return updateVariation(firstVariation.id, { commission_override: commission });
+      }
+    },
+    onMutate: async ({ commission, quoteId }) => {
+      await queryClient.cancelQueries({ queryKey: ['structures', submissionId] });
+      const previous = queryClient.getQueryData(['structures', submissionId]);
+      queryClient.setQueryData(['structures', submissionId], (old) =>
+        (old || []).map(s => {
+          if (String(s.id) === String(quoteId) && s.variations?.[0]) {
+            return {
+              ...s,
+              variations: s.variations.map((v, idx) => idx === 0 ? { ...v, commission_override: commission } : v),
+            };
+          }
+          return s;
+        })
+      );
+      return { previous };
+    },
+    onError: (err, vars, ctx) => {
+      if (ctx?.previous) queryClient.setQueryData(['structures', submissionId], ctx.previous);
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['structures', submissionId] });
@@ -6535,18 +6714,39 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   // Get all sublimits with their current values (or defaults)
   const allSublimits = (() => {
     if (isExcess) {
-      // Excess quotes - show from structure.sublimits
+      // Excess quotes - show from structure.sublimits with limit AND attachment
       const excessSublimits = structure?.sublimits || [];
+      const primaryLimit = primaryLayer?.limit || 0;
+
+      // Calculate proportional values for excess sublimits
+      const calcProp = (primarySublimit) => {
+        if (!primarySublimit || !primaryLimit) return { limit: 0, attachment };
+        const ratio = primarySublimit / primaryLimit;
+        const propLimit = Math.round(ratio * ourLimit);
+        const propAttach = Math.round(ratio * attachment);
+        return { limit: propLimit, attachment: propAttach };
+      };
+
       return excessSublimits.map(cov => {
         const isExcluded = cov.treatment === 'no_coverage' || cov.treatment === 'exclude';
-        const hasCustom = cov.our_limit != null;
+        const hasCustomLimit = cov.our_limit != null;
+        const hasCustomAttach = cov.our_attachment != null;
+        const prop = calcProp(cov.primary_limit);
+
+        const effectiveLimit = isExcluded ? null : (cov.our_limit ?? prop.limit);
+        const effectiveAttach = isExcluded ? null : (cov.our_attachment ?? prop.attachment);
+
         return {
           id: cov.coverage,
           label: cov.coverage,
-          value: isExcluded ? 'Excluded' : (cov.our_limit ?? cov.primary_limit),
+          value: isExcluded ? 'Excluded' : effectiveLimit,
+          attachment: effectiveAttach,
           defaultValue: cov.primary_limit,
-          isException: isExcluded || hasCustom,
-          isExcluded
+          isException: isExcluded || hasCustomLimit || hasCustomAttach,
+          isExcluded,
+          isExcess: true,
+          treatment: cov.treatment || 'follow_form', // 'follow_form' | 'different' | 'exclude' | 'no_coverage'
+          isFollowForm: cov.treatment === 'follow_form' || !cov.treatment
         };
       });
     } else {
@@ -6755,6 +6955,126 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
   return (
     <div className="space-y-6">
+      {/* Quote Options Summary (Submission Mode) - Full width table */}
+      {summaryScope === 'submission' && (
+        <div ref={quoteOptionsRef} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+          {/* Collapsible header */}
+          <button
+            onClick={() => setShowQuoteOptions(!showQuoteOptions)}
+            className="w-full bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center gap-2 hover:bg-gray-100 transition-colors"
+          >
+            <svg
+              className={`w-4 h-4 text-gray-500 transition-transform ${showQuoteOptions ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            <span className="text-sm font-semibold text-gray-700">Quote Options</span>
+            <span className="text-xs text-gray-400">({allOptions.length})</span>
+          </button>
+          {showQuoteOptions && (
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wide">
+                  <th className="py-2 pl-4 pr-2 text-left font-medium w-8">#</th>
+                  <th className="py-2 px-2 text-left font-medium w-12">Type</th>
+                  <th className="py-2 px-2 text-left font-medium">Quote Option</th>
+                  <th className="py-2 px-2 text-right font-medium w-28">Premium</th>
+                  <th className="py-2 px-2 text-center font-medium w-14">Subjs</th>
+                  <th className="py-2 px-2 text-center font-medium w-14">Endts</th>
+                  <th className="py-2 px-2 text-center font-medium w-20">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {allOptions.map((opt, idx) => {
+                  const struct = structures?.find(s => String(s.id) === String(opt.id));
+                  const optTower = struct?.tower_json || [];
+                  const cmaiLayer = optTower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+                  const optPremium = struct?.sold_premium || cmaiLayer?.premium || 0;
+                  const draftPremium = premiumDraft[opt.id] ?? optPremium;
+                  const optStatus = struct?.is_bound ? 'bound' : (struct?.status || 'draft');
+                  const isExcess = getStructurePosition(struct) === 'excess';
+                  const subjList = subjectivitiesByQuote.get(String(opt.id)) || [];
+                  const endtList = endorsementsByQuote.get(String(opt.id)) || [];
+                  const isSelected = String(selectedQuoteId) === String(opt.id);
+                  return (
+                    <tr
+                      key={opt.id}
+                      className={`cursor-pointer transition-colors ${
+                        isSelected ? 'bg-purple-50' : 'hover:bg-gray-50'
+                      }`}
+                      onClick={() => onSelect(opt.id)}
+                    >
+                      <td className={`py-2.5 pl-4 pr-2 text-xs text-gray-400 ${isSelected ? 'border-l-2 border-purple-500' : 'border-l-2 border-transparent'}`}>
+                        {idx + 1}
+                      </td>
+                      <td className="py-2.5 px-2">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                          isExcess ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-700'
+                        }`}>
+                          {isExcess ? 'XS' : 'PRI'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2">
+                        <span className={`text-sm font-medium ${isSelected ? 'text-purple-700' : 'text-gray-900'}`}>
+                          {opt.name}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2 text-right">
+                        {isEditingPremiums ? (
+                          <input
+                            ref={el => premiumInputRefs.current[opt.id] = el}
+                            type="text"
+                            value={formatWithCommas(draftPremium)}
+                            onChange={(e) => {
+                              const val = parseNumber(e.target.value);
+                              updatePremiumDraft(opt.id, val);
+                            }}
+                            onKeyDown={(e) => handlePremiumKeyDown(e, opt.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-24 px-2 py-1 text-right border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-300 text-sm"
+                          />
+                        ) : (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); enterPremiumEditMode(opt.id); }}
+                            className="text-sm font-semibold text-green-600 hover:text-green-700"
+                          >
+                            {formatCurrency(optPremium)}
+                          </button>
+                        )}
+                      </td>
+                      <td className={`py-2.5 px-2 text-center text-xs ${
+                        subjList.length > 0 ? 'text-amber-600 font-medium' : 'text-gray-400'
+                      }`}>
+                        {subjList.length}
+                      </td>
+                      <td className={`py-2.5 px-2 text-center text-xs ${
+                        endtList.length > 0 ? 'text-blue-600 font-medium' : 'text-gray-400'
+                      }`}>
+                        {endtList.length}
+                      </td>
+                      <td className="py-2.5 px-2 text-center">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium inline-block ${
+                          optStatus === 'bound' ? 'bg-green-100 text-green-700' :
+                          optStatus === 'issued' ? 'bg-green-100 text-green-700' :
+                          optStatus === 'approved' ? 'bg-blue-100 text-blue-700' :
+                          optStatus === 'pending' ? 'bg-amber-100 text-amber-700' :
+                          'bg-gray-100 text-gray-500'
+                        }`}>
+                          {optStatus.charAt(0).toUpperCase() + optStatus.slice(1)}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       {/* KPI Row - Policy Terms, Retro, Premium (quote mode only), Commission */}
       <div className={`grid gap-3 ${summaryScope === 'submission' ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-2 lg:grid-cols-4'}`}>
         {/* Policy Terms - expands right (cols 1-2) when editing */}
@@ -6766,43 +7086,147 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           const allSameTerm = termVariationCount === 1;
           return (
             <div
+              ref={termsCardRef}
               className={`bg-white rounded-lg border transition-all ${
                 isExpanded
-                  ? 'lg:col-span-2 border-purple-300 ring-1 ring-purple-100'
+                  ? 'border-purple-300 ring-1 ring-purple-100'
                   : 'border-gray-200 hover:border-gray-300 cursor-pointer'
-              } ${expandedCard === 'retro' ? 'hidden lg:hidden' : ''}`}
+              }`}
               onClick={() => !isExpanded && setExpandedCard('terms')}
             >
-              {/* Header - bold with border when in submission mode with variations */}
-              {summaryScope === 'submission' && !isExpanded && termVariationGroups.length > 1 ? (
+              {/* Header - bold with border when in submission mode */}
+              {summaryScope === 'submission' && !isExpanded ? (
                 <>
                   <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
                     <h3 className="text-xs font-bold text-gray-500 uppercase">Policy Term</h3>
                   </div>
                   <div className="px-4 py-3 space-y-1.5">
-                    {termVariationGroups.map((group) => (
-                      <div key={group.key} className="flex items-center justify-between gap-2">
-                        <span className="text-sm text-gray-700">{group.label}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
-                          {group.count}/{allQuoteTerms.length}
-                        </span>
-                      </div>
-                    ))}
+                    {termVariationGroups.length === 1 ? (
+                      /* Single term - just show the value */
+                      <div className="text-sm font-medium text-gray-700">{termVariationGroups[0]?.label}</div>
+                    ) : termVariationGroups.map((group) => {
+                      const quotesInGroup = allQuoteTerms.filter(t => t.key === group.key);
+                      const quotesNotInGroup = allQuoteTerms.filter(t => t.key !== group.key);
+                      return (
+                        <div key={group.key} className="flex items-center justify-between gap-2">
+                          <span className="text-sm text-gray-700">{group.label}</span>
+                          <HoverCard.Root openDelay={200} closeDelay={100}>
+                            <HoverCard.Trigger asChild>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
+                                className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors"
+                              >
+                                {group.count}/{allQuoteTerms.length}
+                              </button>
+                            </HoverCard.Trigger>
+                            <HoverCard.Portal>
+                              <HoverCard.Content
+                                className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                                sideOffset={4}
+                              >
+                                {quotesInGroup.length > 0 && (
+                                  <>
+                                    <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({quotesInGroup.length})</div>
+                                    <div className="space-y-0.5 mb-3">
+                                      {quotesInGroup.map(qt => (
+                                        <button
+                                          key={qt.quoteId}
+                                          onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
+                                          className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                                        >
+                                          <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                          <span className="flex-1 truncate">{qt.quoteName}</span>
+                                          <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                                {quotesNotInGroup.length > 0 && (
+                                  <>
+                                    <div className="text-[10px] text-amber-600 uppercase tracking-wide font-semibold mb-1">Not On ({quotesNotInGroup.length})</div>
+                                    <div className="space-y-0.5">
+                                      {quotesNotInGroup.map(qt => (
+                                        <button
+                                          key={qt.quoteId}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            // Apply this policy term to the clicked quote
+                                            applyPolicyTermSelection.mutate({
+                                              datesTbd: group.datesTbd,
+                                              effectiveDate: group.effDate,
+                                              expirationDate: group.expDate,
+                                              quoteId: qt.quoteId,
+                                            });
+                                          }}
+                                          className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
+                                        >
+                                          <span className="text-amber-400 group-hover/item:text-green-400">•</span>
+                                          <span className="flex-1 truncate">{qt.quoteName}</span>
+                                          <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                                <HoverCard.Arrow className="fill-white" />
+                              </HoverCard.Content>
+                            </HoverCard.Portal>
+                          </HoverCard.Root>
+                        </div>
+                      );
+                    })}
                   </div>
                 </>
               ) : (
-                <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
+                <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-2'}`}>
                   <div className={isExpanded ? '' : 'w-full text-center'}>
-                    <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Policy Term</div>
+                    <div className="text-[10px] text-gray-400 uppercase font-semibold mb-0.5">Policy Term</div>
                     {!isExpanded && (
                       summaryScope === 'submission' ? (
-                        /* Single value - centered with All badge */
-                        <div className="flex flex-col items-center gap-1">
+                        termVariationGroups.length === 1 ? (
+                          /* Single term - simple compact display */
                           <span className="text-sm font-semibold text-gray-800">{termVariationGroups[0]?.label}</span>
-                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200">
-                            All
-                          </span>
-                        </div>
+                        ) : (
+                          /* Multiple terms - show first with badge */
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-sm font-semibold text-gray-800">{termVariationGroups[0]?.label}</span>
+                            <HoverCard.Root openDelay={200} closeDelay={100}>
+                              <HoverCard.Trigger asChild>
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
+                                  className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200 hover:bg-green-100 transition-colors"
+                                >
+                                  +{termVariationGroups.length - 1} more
+                                </button>
+                              </HoverCard.Trigger>
+                              <HoverCard.Portal>
+                                <HoverCard.Content
+                                  className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                                  sideOffset={4}
+                                >
+                                  <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({allQuoteTerms.length})</div>
+                                  <div className="space-y-0.5">
+                                    {allQuoteTerms.map(qt => (
+                                      <button
+                                        key={qt.quoteId}
+                                        onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
+                                        className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                                      >
+                                        <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                        <span className="flex-1 truncate">{qt.quoteName}</span>
+                                        <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <HoverCard.Arrow className="fill-white" />
+                                </HoverCard.Content>
+                              </HoverCard.Portal>
+                            </HoverCard.Root>
+                          </div>
+                        )
                       ) : (
                         <div className="text-sm font-bold text-gray-800 truncate">
                           {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
@@ -6823,16 +7247,402 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               {isExpanded && (
                 <div className="p-4">
                   {summaryScope === 'submission' ? (
-                    /* Submission mode - show per-quote terms */
+                    /* Submission mode - show unique terms with PolicyTermEditor */
                     <div className="space-y-2">
-                      {allQuoteTerms.map(qt => (
-                        <div key={qt.quoteId} className="flex items-center justify-between text-sm py-1 border-b border-gray-100 last:border-0">
-                          <span className="text-gray-600 truncate">{qt.quoteName}</span>
-                          <span className="text-gray-800 font-medium">
-                            {qt.datesTbd ? 'TBD' : `${formatDate(qt.effDate)} - ${formatDate(qt.expDate)}`}
-                          </span>
-                        </div>
-                      ))}
+                      {termVariationGroups.map((group) => {
+                        const quotesInGroup = allQuoteTerms.filter(t => t.key === group.key);
+                        const isEditing = editingTermKey === group.key;
+
+                        return (
+                          <div
+                            key={group.key}
+                            className={`rounded-lg transition-colors ${
+                              isEditing ? 'bg-purple-50/50 p-3' : 'px-2 py-1.5 hover:bg-gray-50'
+                            }`}
+                          >
+                            {isEditing ? (
+                              /* Editing mode - use PolicyTermEditor */
+                              <div className="space-y-3">
+                                <PolicyTermEditor
+                                  datesTbd={editingTermDatesTbd}
+                                  effectiveDate={editingTermEffective}
+                                  expirationDate={editingTermExpiration}
+                                  onDatesChange={({ datesTbd, effectiveDate, expirationDate }) => {
+                                    setEditingTermDatesTbd(datesTbd);
+                                    setEditingTermEffective(effectiveDate || '');
+                                    setEditingTermExpiration(expirationDate || '');
+                                  }}
+                                  onTbdToggle={(tbd) => {
+                                    setEditingTermDatesTbd(tbd);
+                                    if (tbd) {
+                                      setEditingTermEffective('');
+                                      setEditingTermExpiration('');
+                                    }
+                                  }}
+                                  compact
+                                />
+                                <div className="flex items-center justify-between pt-2 border-t border-purple-100">
+                                  {/* Applies To Badge */}
+                                  <Popover.Root
+                                    open={termAppliesToPopoverId === group.key}
+                                    onOpenChange={(open) => setTermAppliesToPopoverId(open ? group.key : null)}
+                                    modal={false}
+                                  >
+                                    <Popover.Trigger asChild>
+                                      <button
+                                        onClick={(e) => e.stopPropagation()}
+                                        className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                                          quotesInGroup.length === allQuoteTerms.length
+                                            ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                            : quotesInGroup.length > 0
+                                            ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                            : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                        }`}
+                                      >
+                                        {quotesInGroup.length === allQuoteTerms.length ? `All ${allQuoteTerms.length} Options` : `${quotesInGroup.length}/${allQuoteTerms.length} Options`}
+                                      </button>
+                                    </Popover.Trigger>
+                                    <Popover.Portal>
+                                      <Popover.Content
+                                        className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                        sideOffset={4}
+                                        align="start"
+                                      >
+                                        <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                        <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                          <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                            <input
+                                              type="checkbox"
+                                              checked={quotesInGroup.length === allQuoteTerms.length}
+                                              onChange={() => {
+                                                if (quotesInGroup.length !== allQuoteTerms.length) {
+                                                  allQuoteTerms.forEach(qt => {
+                                                    if (!quotesInGroup.some(q => q.quoteId === qt.quoteId)) {
+                                                      applyPolicyTermSelection.mutate({
+                                                        datesTbd: editingTermDatesTbd,
+                                                        effectiveDate: editingTermDatesTbd ? null : editingTermEffective,
+                                                        expirationDate: editingTermDatesTbd ? null : editingTermExpiration,
+                                                        quoteId: qt.quoteId,
+                                                      });
+                                                    }
+                                                  });
+                                                }
+                                              }}
+                                              className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                            />
+                                            <span>All Options</span>
+                                          </label>
+                                        </div>
+                                        <div className="space-y-1 max-h-40 overflow-y-auto">
+                                          {allQuoteTerms.map(qt => {
+                                            const isLinked = quotesInGroup.some(q => q.quoteId === qt.quoteId);
+                                            return (
+                                              <label
+                                                key={qt.quoteId}
+                                                className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                              >
+                                                <input
+                                                  type="checkbox"
+                                                  checked={isLinked}
+                                                  onChange={() => {
+                                                    if (!isLinked) {
+                                                      applyPolicyTermSelection.mutate({
+                                                        datesTbd: editingTermDatesTbd,
+                                                        effectiveDate: editingTermDatesTbd ? null : editingTermEffective,
+                                                        expirationDate: editingTermDatesTbd ? null : editingTermExpiration,
+                                                        quoteId: qt.quoteId,
+                                                      });
+                                                    }
+                                                  }}
+                                                  className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                                />
+                                                <span className="truncate">{qt.quoteName}</span>
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      </Popover.Content>
+                                    </Popover.Portal>
+                                  </Popover.Root>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      // Apply changes to all quotes in this group
+                                      quotesInGroup.forEach(qt => {
+                                        applyPolicyTermSelection.mutate({
+                                          datesTbd: editingTermDatesTbd,
+                                          effectiveDate: editingTermDatesTbd ? null : editingTermEffective,
+                                          expirationDate: editingTermDatesTbd ? null : editingTermExpiration,
+                                          quoteId: qt.quoteId,
+                                        });
+                                      });
+                                      setEditingTermKey(null);
+                                    }}
+                                    className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                                  >
+                                    Done
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              /* Display mode - clickable row with hover preview on pill */
+                              <div className="flex items-center gap-2 text-sm">
+                                <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                </svg>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    // Initialize editing state with current values
+                                    setEditingTermDatesTbd(group.datesTbd);
+                                    setEditingTermEffective(group.effDate || '');
+                                    setEditingTermExpiration(group.expDate || '');
+                                    setEditingTermKey(group.key);
+                                  }}
+                                  className="flex-1 text-left text-gray-700 hover:text-purple-700 cursor-pointer"
+                                >
+                                  {group.label}
+                                </button>
+                                <HoverCard.Root
+                                  openDelay={300}
+                                  closeDelay={100}
+                                  open={termAppliesToPopoverId !== group.key ? undefined : false}
+                                >
+                                  <HoverCard.Trigger asChild>
+                                    <span>
+                                      <Popover.Root
+                                        open={termAppliesToPopoverId === group.key}
+                                        onOpenChange={(open) => setTermAppliesToPopoverId(open ? group.key : null)}
+                                        modal={false}
+                                      >
+                                  <Popover.Trigger asChild>
+                                    <button
+                                      onClick={(e) => e.stopPropagation()}
+                                      className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+                                        quotesInGroup.length === allQuoteTerms.length
+                                          ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                          : quotesInGroup.length > 0
+                                          ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                          : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                      }`}
+                                    >
+                                      {quotesInGroup.length === allQuoteTerms.length ? `All ${allQuoteTerms.length} Options` : `${quotesInGroup.length}/${allQuoteTerms.length} Options`}
+                                    </button>
+                                  </Popover.Trigger>
+                                  <Popover.Portal>
+                                    <Popover.Content
+                                      className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                      sideOffset={4}
+                                      align="end"
+                                    >
+                                      <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                      <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                        <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                          <input
+                                            type="checkbox"
+                                            checked={quotesInGroup.length === allQuoteTerms.length}
+                                            onChange={() => {
+                                              if (quotesInGroup.length !== allQuoteTerms.length) {
+                                                allQuoteTerms.forEach(qt => {
+                                                  if (!quotesInGroup.some(q => q.quoteId === qt.quoteId)) {
+                                                    applyPolicyTermSelection.mutate({
+                                                      datesTbd: group.datesTbd,
+                                                      effectiveDate: group.effDate,
+                                                      expirationDate: group.expDate,
+                                                      quoteId: qt.quoteId,
+                                                    });
+                                                  }
+                                                });
+                                              }
+                                            }}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span>All Options</span>
+                                        </label>
+                                      </div>
+                                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                                        {allQuoteTerms.map(qt => {
+                                          const isLinked = quotesInGroup.some(q => q.quoteId === qt.quoteId);
+                                          return (
+                                            <label
+                                              key={qt.quoteId}
+                                              className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                            >
+                                              <input
+                                                type="checkbox"
+                                                checked={isLinked}
+                                                onChange={() => {
+                                                  if (!isLinked) {
+                                                    applyPolicyTermSelection.mutate({
+                                                      datesTbd: group.datesTbd,
+                                                      effectiveDate: group.effDate,
+                                                      expirationDate: group.expDate,
+                                                      quoteId: qt.quoteId,
+                                                    });
+                                                  }
+                                                }}
+                                                className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                              />
+                                              <span className="truncate">{qt.quoteName}</span>
+                                            </label>
+                                          );
+                                        })}
+                                      </div>
+                                    </Popover.Content>
+                                  </Popover.Portal>
+                                      </Popover.Root>
+                                    </span>
+                                  </HoverCard.Trigger>
+                                  <HoverCard.Portal>
+                                    <HoverCard.Content
+                                      className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                      sideOffset={4}
+                                      align="end"
+                                    >
+                                      <div className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-1 px-1">Applies To</div>
+                                      <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                        {quotesInGroup.map(qt => (
+                                          <div key={qt.quoteId} className="text-xs text-gray-600 flex items-center gap-1.5 px-1 py-0.5">
+                                            <span className="text-green-400">•</span>
+                                            <span className="truncate">{qt.quoteName}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <HoverCard.Arrow className="fill-white" />
+                                    </HoverCard.Content>
+                                  </HoverCard.Portal>
+                                </HoverCard.Root>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Add New Term section */}
+                      <div className="pt-2 border-t border-gray-100 mt-2">
+                        {isAddingTerm ? (
+                          <div className="bg-purple-50/50 rounded-lg p-3 space-y-3">
+                            <PolicyTermEditor
+                              datesTbd={newTermDatesTbd}
+                              effectiveDate={newTermEffective}
+                              expirationDate={newTermExpiration}
+                              onDatesChange={({ datesTbd, effectiveDate, expirationDate }) => {
+                                setNewTermDatesTbd(datesTbd);
+                                setNewTermEffective(effectiveDate || '');
+                                setNewTermExpiration(expirationDate || '');
+                              }}
+                              onTbdToggle={(tbd) => {
+                                setNewTermDatesTbd(tbd);
+                                if (tbd) {
+                                  setNewTermEffective('');
+                                  setNewTermExpiration('');
+                                }
+                              }}
+                              compact
+                            />
+                            {/* Quote selection for new policy term */}
+                            <div className="border-t border-purple-100 pt-2">
+                              <div className="text-xs font-medium text-gray-500 mb-2">Apply to:</div>
+                              <div className="space-y-1 max-h-32 overflow-y-auto">
+                                <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-purple-100/50 rounded px-1 py-0.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={newTermSelectedQuotes.length === allQuoteTerms.length}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setNewTermSelectedQuotes(allQuoteTerms.map(qt => qt.quoteId));
+                                      } else {
+                                        setNewTermSelectedQuotes([]);
+                                      }
+                                    }}
+                                    className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                  />
+                                  <span className="font-medium text-gray-700">All Options</span>
+                                </label>
+                                {allQuoteTerms.map(qt => (
+                                  <label key={qt.quoteId} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-purple-100/50 rounded px-1 py-0.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={newTermSelectedQuotes.includes(qt.quoteId)}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setNewTermSelectedQuotes([...newTermSelectedQuotes, qt.quoteId]);
+                                        } else {
+                                          setNewTermSelectedQuotes(newTermSelectedQuotes.filter(id => id !== qt.quoteId));
+                                        }
+                                      }}
+                                      className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                    />
+                                    <span className="truncate">{qt.quoteName}</span>
+                                    <span className="text-gray-400 ml-auto text-[10px]">
+                                      {qt.datesTbd ? 'TBD' : qt.effectiveDate ? new Date(qt.effectiveDate).toLocaleDateString() : '—'}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if ((newTermDatesTbd || (newTermEffective && newTermExpiration)) && newTermSelectedQuotes.length > 0) {
+                                    newTermSelectedQuotes.forEach(quoteId => {
+                                      applyPolicyTermSelection.mutate({
+                                        datesTbd: newTermDatesTbd,
+                                        effectiveDate: newTermDatesTbd ? null : newTermEffective,
+                                        expirationDate: newTermDatesTbd ? null : newTermExpiration,
+                                        quoteId: quoteId,
+                                      });
+                                    });
+                                    setIsAddingTerm(false);
+                                    setNewTermEffective('');
+                                    setNewTermExpiration('');
+                                    setNewTermDatesTbd(false);
+                                    setNewTermSelectedQuotes([]);
+                                  }
+                                }}
+                                disabled={(!newTermDatesTbd && (!newTermEffective || !newTermExpiration)) || newTermSelectedQuotes.length === 0}
+                                className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Add
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setIsAddingTerm(false);
+                                  setNewTermEffective('');
+                                  setNewTermExpiration('');
+                                  setNewTermDatesTbd(false);
+                                  setNewTermSelectedQuotes([]);
+                                }}
+                                className="text-xs text-gray-500 hover:text-gray-700"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              // Initialize with today + 1 year default
+                              const today = new Date().toISOString().split('T')[0];
+                              const nextYear = new Date();
+                              nextYear.setFullYear(nextYear.getFullYear() + 1);
+                              const expiration = nextYear.toISOString().split('T')[0];
+                              setNewTermEffective(today);
+                              setNewTermExpiration(expiration);
+                              setIsAddingTerm(true);
+                            }}
+                            className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            Add New Term
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} />
@@ -6843,58 +7653,138 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           );
         })()}
 
-        {/* Retro Dates - expands left (cols 1-2) when editing */}
+        {/* Retro Dates */}
         <div
           ref={retroCardRef}
           className={`bg-white rounded-lg border transition-all ${
             expandedCard === 'retro'
-              ? 'lg:col-span-2 border-purple-300 ring-1 ring-purple-100'
+              ? 'border-purple-300 ring-1 ring-purple-100'
               : 'border-gray-200 hover:border-gray-300 cursor-pointer'
-          } ${expandedCard === 'terms' ? 'hidden lg:hidden' : ''}`}
+          }`}
           onClick={() => expandedCard !== 'retro' && setExpandedCard('retro')}
         >
-          {/* Header - bold with border when in submission mode with multiple variations */}
-          {summaryScope === 'submission' && expandedCard !== 'retro' && retroVariationGroups.length > 1 ? (
+          {/* Header - bold with border when in submission mode */}
+          {summaryScope === 'submission' && expandedCard !== 'retro' ? (
             <>
               <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Retro</h3>
               </div>
               <div className="px-4 py-3 divide-y divide-gray-100">
-                {retroVariationGroups.map((group) => {
+                {retroVariationGroups.length === 1 ? (
+                  /* Single retro config - just show the value */
+                  (() => {
+                    const group = retroVariationGroups[0];
+                    const schedule = group?.schedule || [];
+                    const uniqueRetros = new Set(schedule.map(e => e.retro));
+                    const isSimple = schedule.length === 0 || uniqueRetros.size === 1;
+
+                    if (isSimple) {
+                      return <div className="text-sm font-medium text-gray-700">{group?.label}</div>;
+                    }
+                    return (
+                      <div className="text-xs text-gray-700 space-y-0.5">
+                        {schedule.map(entry => {
+                          const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary', media: 'Media' }[entry.coverage] || entry.coverage;
+                          const retroLabel = entry.retro === 'full_prior_acts' ? 'Full Prior Acts' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'Follow Form' : entry.retro;
+                          return <div key={entry.coverage}><span className="text-gray-400">{covLabel}:</span> {retroLabel}</div>;
+                        })}
+                      </div>
+                    );
+                  })()
+                ) : retroVariationGroups.map((group) => {
                   const schedule = group.schedule || [];
-                  const uniqueRetros = new Set(schedule.map(e => e.retro));
-                  const isSimple = schedule.length === 0 || uniqueRetros.size === 1;
+                  const quotesInGroup = allQuoteRetros.filter(r => r.key === group.key);
+                  const quotesNotInGroup = allQuoteRetros.filter(r => r.key !== group.key);
 
                   return (
                     <div key={group.key} className="flex items-start justify-between gap-2 py-1.5 first:pt-0 last:pb-0">
-                      {isSimple ? (
-                        <span className="text-sm text-gray-700">{group.label}</span>
-                      ) : (
-                        <div className="text-xs text-gray-700 space-y-0.5">
-                          {schedule.map(entry => {
+                      {/* Always render each coverage on its own line for readability */}
+                      <div className="text-xs text-gray-700 space-y-0.5">
+                        {schedule.length === 0 ? (
+                          <div>Full Prior Acts</div>
+                        ) : (
+                          schedule.map(entry => {
                             const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary' }[entry.coverage] || entry.coverage;
-                            const retroLabel = entry.retro === 'full_prior_acts' ? 'FPA' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'FF' : entry.retro;
-                            return <div key={entry.coverage}><span className="text-gray-400">{covLabel}:</span> {retroLabel}</div>;
-                          })}
-                        </div>
-                      )}
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 shrink-0">
-                        {group.count}/{allQuoteRetros.length}
-                      </span>
+                            const retro = entry.retro === 'full_prior_acts' ? 'Full Prior Acts'
+                              : entry.retro === 'inception' ? 'Inception'
+                              : entry.retro === 'follow_form' ? 'Follow Form'
+                              : entry.retro === 'date' ? entry.date
+                              : entry.retro === 'custom' ? (entry.custom_text || 'custom')
+                              : entry.retro;
+                            return <div key={entry.coverage}><span className="text-gray-400">{covLabel}:</span> {retro}</div>;
+                          })
+                        )}
+                      </div>
+                      <HoverCard.Root openDelay={200} closeDelay={100}>
+                        <HoverCard.Trigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setExpandedCard('retro'); }}
+                            className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors shrink-0"
+                          >
+                            {group.count}/{allQuoteRetros.length}
+                          </button>
+                        </HoverCard.Trigger>
+                        <HoverCard.Portal>
+                          <HoverCard.Content className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3" sideOffset={4}>
+                            {quotesInGroup.length > 0 && (
+                              <>
+                                <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({quotesInGroup.length})</div>
+                                <div className="space-y-0.5 mb-3">
+                                  {quotesInGroup.map(qr => (
+                                    <button key={qr.quoteId} onClick={(e) => { e.stopPropagation(); setExpandedCard('retro'); }}
+                                      className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item">
+                                      <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                      <span className="flex-1 truncate">{qr.quoteName}</span>
+                                      <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            {quotesNotInGroup.length > 0 && (
+                              <>
+                                <div className="text-[10px] text-amber-600 uppercase tracking-wide font-semibold mb-1">Not On ({quotesNotInGroup.length})</div>
+                                <div className="space-y-0.5">
+                                  {quotesNotInGroup.map(qr => (
+                                    <button
+                                      key={qr.quoteId}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        // Apply this retro schedule to the clicked quote
+                                        applyRetroSelection.mutate({
+                                          schedule: group.schedule,
+                                          quoteId: qr.quoteId,
+                                        });
+                                      }}
+                                      className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
+                                    >
+                                      <span className="text-amber-400 group-hover/item:text-green-400">•</span>
+                                      <span className="flex-1 truncate">{qr.quoteName}</span>
+                                      <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            <HoverCard.Arrow className="fill-white" />
+                          </HoverCard.Content>
+                        </HoverCard.Portal>
+                      </HoverCard.Root>
                     </div>
                   );
                 })}
               </div>
             </>
           ) : (
-          <div className={`flex items-center justify-between ${expandedCard === 'retro' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
+          <div className={`flex items-center justify-between ${expandedCard === 'retro' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-2'}`}>
             <div className={expandedCard === 'retro' ? '' : 'w-full text-center'}>
-              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Retro</div>
+              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-0.5">Retro</div>
               {expandedCard !== 'retro' && (
                 summaryScope === 'submission' ? (
-                  /* Single retro config - centered */
-                  <div className="flex flex-col items-center gap-1">
-                    {(() => {
+                  retroVariationGroups.length === 1 ? (
+                    /* Single retro config - compact display */
+                    (() => {
                       const group = retroVariationGroups[0];
                       const schedule = group?.schedule || [];
                       const uniqueRetros = new Set(schedule.map(e => e.retro));
@@ -6907,17 +7797,70 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                       return (
                         <div className="text-xs text-gray-700 space-y-0.5">
                           {schedule.map(entry => {
-                            const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary' }[entry.coverage] || entry.coverage;
-                            const retroLabel = entry.retro === 'full_prior_acts' ? 'FPA' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'FF' : entry.retro;
+                            const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary', media: 'Media' }[entry.coverage] || entry.coverage;
+                            const retroLabel = entry.retro === 'full_prior_acts' ? 'Full Prior Acts' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'Follow Form' : entry.retro;
                             return <div key={entry.coverage}><span className="text-gray-500">{covLabel}:</span> {retroLabel}</div>;
                           })}
                         </div>
                       );
-                    })()}
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200">
-                      All
-                    </span>
-                  </div>
+                    })()
+                  ) : (
+                    /* Multiple retro configs - show first with badge */
+                    <div className="flex flex-col items-center gap-0.5">
+                      {(() => {
+                        const group = retroVariationGroups[0];
+                        const schedule = group?.schedule || [];
+                        const uniqueRetros = new Set(schedule.map(e => e.retro));
+                        const isSimple = schedule.length === 0 || uniqueRetros.size === 1;
+
+                        if (isSimple) {
+                          return <span className="text-sm font-semibold text-gray-800">{group?.label}</span>;
+                        }
+                        return (
+                          <div className="text-xs text-gray-700 space-y-0.5">
+                            {schedule.map(entry => {
+                              const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary', media: 'Media' }[entry.coverage] || entry.coverage;
+                              const retroLabel = entry.retro === 'full_prior_acts' ? 'Full Prior Acts' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'Follow Form' : entry.retro;
+                              return <div key={entry.coverage}><span className="text-gray-500">{covLabel}:</span> {retroLabel}</div>;
+                            })}
+                          </div>
+                        );
+                      })()}
+                      <HoverCard.Root openDelay={200} closeDelay={100}>
+                        <HoverCard.Trigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setExpandedCard('retro'); }}
+                            className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200 hover:bg-green-100 transition-colors"
+                          >
+                            +{retroVariationGroups.length - 1} more
+                          </button>
+                        </HoverCard.Trigger>
+                        <HoverCard.Portal>
+                          <HoverCard.Content
+                            className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                            sideOffset={4}
+                          >
+                            <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({allQuoteRetros.length})</div>
+                            <div className="space-y-0.5">
+                              {allQuoteRetros.map(qr => (
+                                <button
+                                  key={qr.quoteId}
+                                  onClick={(e) => { e.stopPropagation(); setExpandedCard('retro'); }}
+                                  className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                                >
+                                  <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                  <span className="flex-1 truncate">{qr.quoteName}</span>
+                                  <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                </button>
+                              ))}
+                            </div>
+                            <HoverCard.Arrow className="fill-white" />
+                          </HoverCard.Content>
+                        </HoverCard.Portal>
+                      </HoverCard.Root>
+                    </div>
+                  )
                 ) : (
                   <div className="text-sm font-bold text-gray-800">
                     {formatRetroSummary(structure?.retro_schedule)}
@@ -7060,14 +8003,379 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           {expandedCard === 'retro' && (
             <div className="p-4">
               {summaryScope === 'submission' ? (
-                /* Submission mode - show per-quote retros */
+                /* Submission mode - show unique retros with RetroScheduleEditor */
                 <div className="space-y-2">
-                  {allQuoteRetros.map(qr => (
-                    <div key={qr.quoteId} className="flex items-center justify-between text-sm py-1 border-b border-gray-100 last:border-0">
-                      <span className="text-gray-600 truncate">{qr.quoteName}</span>
-                      <span className="text-gray-800 font-medium">{formatRetroSummary(qr.retroSchedule)}</span>
-                    </div>
-                  ))}
+                  {retroVariationGroups.map((group) => {
+                    const quotesInGroup = allQuoteRetros.filter(r => r.key === group.key);
+                    const isEditing = editingRetroKey === group.key;
+
+                    return (
+                      <div
+                        key={group.key}
+                        className={`rounded-lg transition-colors ${
+                          isEditing ? 'bg-purple-50/50 p-3' : 'px-2 py-1.5 hover:bg-gray-50'
+                        }`}
+                      >
+                        {isEditing ? (
+                          /* Editing mode - use RetroScheduleEditor */
+                          <div className="space-y-3">
+                            <RetroScheduleEditor
+                              schedule={inlineEditRetroSchedule}
+                              onChange={setInlineEditRetroSchedule}
+                              showHeader={true}
+                              showEmptyState={true}
+                              addButtonText="+ Add Restriction"
+                              compact={false}
+                            />
+                            <div className="flex items-center justify-between pt-2 border-t border-purple-100">
+                              {/* Applies To Badge */}
+                              <Popover.Root
+                                open={retroAppliesToPopoverId === group.key}
+                                onOpenChange={(open) => setRetroAppliesToPopoverId(open ? group.key : null)}
+                                modal={false}
+                              >
+                                <Popover.Trigger asChild>
+                                  <button
+                                    onClick={(e) => e.stopPropagation()}
+                                    className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                                      quotesInGroup.length === allQuoteRetros.length
+                                        ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                        : quotesInGroup.length > 0
+                                        ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                        : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    {quotesInGroup.length === allQuoteRetros.length ? `All ${allQuoteRetros.length} Options` : `${quotesInGroup.length}/${allQuoteRetros.length} Options`}
+                                  </button>
+                                </Popover.Trigger>
+                                <Popover.Portal>
+                                  <Popover.Content
+                                    className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                    sideOffset={4}
+                                    align="start"
+                                  >
+                                    <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                    <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                      <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                        <input
+                                          type="checkbox"
+                                          checked={quotesInGroup.length === allQuoteRetros.length}
+                                          onChange={() => {
+                                            if (quotesInGroup.length !== allQuoteRetros.length) {
+                                              allQuoteRetros.forEach(qr => {
+                                                if (!quotesInGroup.some(q => q.quoteId === qr.quoteId)) {
+                                                  applyRetroSelection.mutate({
+                                                    schedule: inlineEditRetroSchedule,
+                                                    quoteId: qr.quoteId,
+                                                  });
+                                                }
+                                              });
+                                            }
+                                          }}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span>All Options</span>
+                                      </label>
+                                    </div>
+                                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                                      {allQuoteRetros.map(qr => {
+                                        const isLinked = quotesInGroup.some(q => q.quoteId === qr.quoteId);
+                                        return (
+                                          <label
+                                            key={qr.quoteId}
+                                            className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={isLinked}
+                                              onChange={() => {
+                                                if (!isLinked) {
+                                                  applyRetroSelection.mutate({
+                                                    schedule: inlineEditRetroSchedule,
+                                                    quoteId: qr.quoteId,
+                                                  });
+                                                }
+                                              }}
+                                              className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                            />
+                                            <span className="truncate">{qr.quoteName}</span>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  </Popover.Content>
+                                </Popover.Portal>
+                              </Popover.Root>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // Apply changes to all quotes in this group
+                                  quotesInGroup.forEach(qt => {
+                                    applyRetroSelection.mutate({
+                                      schedule: inlineEditRetroSchedule,
+                                      quoteId: qt.quoteId,
+                                    });
+                                  });
+                                  setEditingRetroKey(null);
+                                  setInlineEditRetroSchedule([]);
+                                }}
+                                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                              >
+                                Done
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          /* Display mode - clickable row with hover preview on pill */
+                          <div className="flex items-start gap-2 text-sm">
+                            <svg className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setInlineEditRetroSchedule([...group.schedule]);
+                                setEditingRetroKey(group.key);
+                              }}
+                              className="flex-1 text-left text-gray-700 hover:text-purple-700 cursor-pointer"
+                            >
+                              {/* Render each coverage on its own line */}
+                              {group.schedule.length === 0 ? (
+                                <div>Full Prior Acts</div>
+                              ) : (
+                                <div className="space-y-0.5">
+                                  {group.schedule.map(entry => {
+                                    const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary', media: 'Media' }[entry.coverage] || entry.coverage;
+                                    const retroLabel = entry.retro === 'full_prior_acts' ? 'Full Prior Acts'
+                                      : entry.retro === 'inception' ? 'Inception'
+                                      : entry.retro === 'follow_form' ? 'Follow Form'
+                                      : entry.retro === 'date' ? entry.date
+                                      : entry.retro === 'custom' ? (entry.custom_text || 'custom')
+                                      : entry.retro;
+                                    return <div key={entry.coverage}><span className="text-gray-400">{covLabel}:</span> {retroLabel}</div>;
+                                  })}
+                                </div>
+                              )}
+                            </button>
+                            <HoverCard.Root
+                              openDelay={300}
+                              closeDelay={100}
+                              open={retroAppliesToPopoverId !== group.key ? undefined : false}
+                            >
+                              <HoverCard.Trigger asChild>
+                                <span>
+                                  <Popover.Root
+                              open={retroAppliesToPopoverId === group.key}
+                              onOpenChange={(open) => setRetroAppliesToPopoverId(open ? group.key : null)}
+                              modal={false}
+                            >
+                              <Popover.Trigger asChild>
+                                <button
+                                  onClick={(e) => e.stopPropagation()}
+                                  className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+                                    quotesInGroup.length === allQuoteRetros.length
+                                      ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                      : quotesInGroup.length > 0
+                                      ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                      : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  {quotesInGroup.length === allQuoteRetros.length ? `All ${allQuoteRetros.length} Options` : `${quotesInGroup.length}/${allQuoteRetros.length} Options`}
+                                </button>
+                              </Popover.Trigger>
+                              <Popover.Portal>
+                                <Popover.Content
+                                  className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                  sideOffset={4}
+                                  align="end"
+                                >
+                                  <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                  <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                    <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                      <input
+                                        type="checkbox"
+                                        checked={quotesInGroup.length === allQuoteRetros.length}
+                                        onChange={() => {
+                                          if (quotesInGroup.length !== allQuoteRetros.length) {
+                                            allQuoteRetros.forEach(qr => {
+                                              if (!quotesInGroup.some(q => q.quoteId === qr.quoteId)) {
+                                                applyRetroSelection.mutate({
+                                                  schedule: group.schedule,
+                                                  quoteId: qr.quoteId,
+                                                });
+                                              }
+                                            });
+                                          }
+                                        }}
+                                        className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                      />
+                                      <span>All Options</span>
+                                    </label>
+                                  </div>
+                                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                                    {allQuoteRetros.map(qr => {
+                                      const isLinked = quotesInGroup.some(q => q.quoteId === qr.quoteId);
+                                      return (
+                                        <label
+                                          key={qr.quoteId}
+                                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={isLinked}
+                                            onChange={() => {
+                                              if (!isLinked) {
+                                                applyRetroSelection.mutate({
+                                                  schedule: group.schedule,
+                                                  quoteId: qr.quoteId,
+                                                });
+                                              }
+                                            }}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span className="truncate">{qr.quoteName}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </Popover.Content>
+                              </Popover.Portal>
+                            </Popover.Root>
+                                </span>
+                              </HoverCard.Trigger>
+                              <HoverCard.Portal>
+                                <HoverCard.Content
+                                  className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                  sideOffset={4}
+                                  align="end"
+                                >
+                                  <div className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-1 px-1">Applies To</div>
+                                  <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                    {quotesInGroup.map(qr => (
+                                      <div key={qr.quoteId} className="text-xs text-gray-600 flex items-center gap-1.5 px-1 py-0.5">
+                                        <span className="text-green-400">•</span>
+                                        <span className="truncate">{qr.quoteName}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <HoverCard.Arrow className="fill-white" />
+                                </HoverCard.Content>
+                              </HoverCard.Portal>
+                            </HoverCard.Root>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add New Retro section */}
+                  <div className="pt-2 border-t border-gray-100 mt-2">
+                    {isAddingRetro ? (
+                      <div className="bg-purple-50/50 rounded-lg p-3 space-y-3">
+                        <RetroScheduleEditor
+                          schedule={inlineNewRetroSchedule}
+                          onChange={setInlineNewRetroSchedule}
+                          showHeader={true}
+                          showEmptyState={true}
+                          addButtonText="+ Add Restriction"
+                          compact={false}
+                        />
+                        {/* Quote selection for new retro */}
+                        <div className="border-t border-purple-100 pt-2">
+                          <div className="text-xs font-medium text-gray-500 mb-2">Apply to:</div>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-purple-100/50 rounded px-1 py-0.5">
+                              <input
+                                type="checkbox"
+                                checked={newRetroSelectedQuotes.length === allQuoteRetros.length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setNewRetroSelectedQuotes(allQuoteRetros.map(qr => qr.quoteId));
+                                  } else {
+                                    setNewRetroSelectedQuotes([]);
+                                  }
+                                }}
+                                className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                              />
+                              <span className="font-medium text-gray-700">All Options</span>
+                            </label>
+                            {allQuoteRetros.map(qr => {
+                              const schedule = qr.schedule || [];
+                              const uniqueRetros = new Set(schedule.map(e => e.retro));
+                              const retroLabel = schedule.length === 0 ? 'Full Prior' :
+                                uniqueRetros.size === 1 ? Array.from(uniqueRetros)[0] : 'Mixed';
+                              return (
+                                <label key={qr.quoteId} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-purple-100/50 rounded px-1 py-0.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={newRetroSelectedQuotes.includes(qr.quoteId)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setNewRetroSelectedQuotes([...newRetroSelectedQuotes, qr.quoteId]);
+                                      } else {
+                                        setNewRetroSelectedQuotes(newRetroSelectedQuotes.filter(id => id !== qr.quoteId));
+                                      }
+                                    }}
+                                    className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                  />
+                                  <span className="truncate">{qr.quoteName}</span>
+                                  <span className="text-gray-400 ml-auto text-[10px]">{retroLabel}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (inlineNewRetroSchedule.length > 0 && newRetroSelectedQuotes.length > 0) {
+                                newRetroSelectedQuotes.forEach(quoteId => {
+                                  applyRetroSelection.mutate({
+                                    schedule: inlineNewRetroSchedule,
+                                    quoteId: quoteId,
+                                  });
+                                });
+                                setIsAddingRetro(false);
+                                setInlineNewRetroSchedule([]);
+                                setNewRetroSelectedQuotes([]);
+                              }
+                            }}
+                            disabled={inlineNewRetroSchedule.length === 0 || newRetroSelectedQuotes.length === 0}
+                            className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Add
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setIsAddingRetro(false);
+                              setInlineNewRetroSchedule([]);
+                              setNewRetroSelectedQuotes([]);
+                            }}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsAddingRetro(true);
+                          setInlineNewRetroSchedule([]);
+                          setNewRetroSelectedQuotes([]);
+                        }}
+                        className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add New Retro
+                      </button>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <RetroPanel structure={structure} submissionId={submission?.id} />
@@ -7084,9 +8392,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           const hasTechnical = technical > 0 && Math.abs(sold - technical) > 1;
           const diff = technical > 0 ? ((sold - technical) / technical) * 100 : 0;
           return (
-            <div className={`bg-gray-50 rounded-lg px-4 py-3 border border-gray-200 ${
-              expandedCard === 'commission' ? 'hidden lg:hidden' : ''
-            }`}>
+            <div className="bg-gray-50 rounded-lg px-4 py-3 border border-gray-200">
               {hasTechnical ? (
                 <div className="flex items-end justify-between">
                   <div className="text-left">
@@ -7111,45 +8417,141 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           );
         })()}
 
-        {/* Commission - expands left (cols 3-4) when editing */}
+        {/* Commission */}
         <div
+          ref={commissionCardRef}
           className={`bg-white rounded-lg border transition-all ${
             expandedCard === 'commission'
-              ? 'lg:col-span-2 border-purple-300 ring-1 ring-purple-100'
+              ? 'border-purple-300 ring-1 ring-purple-100'
               : 'border-gray-200 hover:border-gray-300 cursor-pointer'
           }`}
           onClick={() => expandedCard !== 'commission' && setExpandedCard('commission')}
         >
-          {/* Header - styled like endorsements when in submission mode with variations */}
-          {summaryScope === 'submission' && expandedCard !== 'commission' && commissionVariationGroups.length > 1 ? (
+          {/* Header - styled like endorsements when in submission mode */}
+          {summaryScope === 'submission' && expandedCard !== 'commission' ? (
             <>
               <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
                 <h3 className="text-xs font-bold text-gray-500 uppercase">Commission</h3>
               </div>
               <div className="px-4 py-3 space-y-1.5">
-                {commissionVariationGroups.map((group) => (
-                  <div key={group.key} className="flex items-center justify-between gap-2">
-                    <span className="text-base text-gray-700">{group.label}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
-                      {group.count}/{allQuoteCommissions.length}
-                    </span>
-                  </div>
-                ))}
+                {commissionVariationGroups.length === 1 ? (
+                  /* Single commission value - just show the value */
+                  <div className="text-base font-medium text-gray-700">{commissionVariationGroups[0]?.label}</div>
+                ) : commissionVariationGroups.map((group) => {
+                  const quotesInGroup = allQuoteCommissions.filter(c => c.key === group.key);
+                  const quotesNotInGroup = allQuoteCommissions.filter(c => c.key !== group.key);
+                  return (
+                    <div key={group.key} className="flex items-center justify-between gap-2">
+                      <span className="text-base text-gray-700">{group.label}</span>
+                      <HoverCard.Root openDelay={200} closeDelay={100}>
+                        <HoverCard.Trigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setExpandedCard('commission'); }}
+                            className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors"
+                          >
+                            {group.count}/{allQuoteCommissions.length}
+                          </button>
+                        </HoverCard.Trigger>
+                        <HoverCard.Portal>
+                          <HoverCard.Content className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3" sideOffset={4}>
+                            {quotesInGroup.length > 0 && (
+                              <>
+                                <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({quotesInGroup.length})</div>
+                                <div className="space-y-0.5 mb-3">
+                                  {quotesInGroup.map(qc => (
+                                    <button key={qc.quoteId} onClick={(e) => { e.stopPropagation(); setExpandedCard('commission'); }}
+                                      className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item">
+                                      <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                      <span className="flex-1 truncate">{qc.quoteName}</span>
+                                      <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            {quotesNotInGroup.length > 0 && (
+                              <>
+                                <div className="text-[10px] text-amber-600 uppercase tracking-wide font-semibold mb-1">Not On ({quotesNotInGroup.length})</div>
+                                <div className="space-y-0.5">
+                                  {quotesNotInGroup.map(qc => (
+                                    <button
+                                      key={qc.quoteId}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        // Apply this commission rate to the clicked quote
+                                        applyCommissionSelection.mutate({
+                                          commission: group.commissionRate,
+                                          quoteId: qc.quoteId,
+                                        });
+                                      }}
+                                      className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
+                                    >
+                                      <span className="text-amber-400 group-hover/item:text-green-400">•</span>
+                                      <span className="flex-1 truncate">{qc.quoteName}</span>
+                                      <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            <HoverCard.Arrow className="fill-white" />
+                          </HoverCard.Content>
+                        </HoverCard.Portal>
+                      </HoverCard.Root>
+                    </div>
+                  );
+                })}
               </div>
             </>
           ) : (
-          <div className={`flex items-center justify-between ${expandedCard === 'commission' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-3'}`}>
+          <div className={`flex items-center justify-between ${expandedCard === 'commission' ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-2'}`}>
             <div className={expandedCard === 'commission' ? '' : 'w-full text-center'}>
-              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Commission</div>
+              <div className="text-[10px] text-gray-400 uppercase font-semibold mb-0.5">Commission</div>
               {expandedCard !== 'commission' && (
                 summaryScope === 'submission' ? (
-                  /* Single commission value - centered with All badge */
-                  <div className="flex flex-col items-center gap-1">
+                  commissionVariationGroups.length === 1 ? (
+                    /* Single commission value - compact display */
                     <span className="text-base font-semibold text-gray-800">{commissionVariationGroups[0]?.label}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200">
-                      All
-                    </span>
-                  </div>
+                  ) : (
+                    /* Multiple commission values - show first with badge */
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-base font-semibold text-gray-800">{commissionVariationGroups[0]?.label}</span>
+                      <HoverCard.Root openDelay={200} closeDelay={100}>
+                        <HoverCard.Trigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setExpandedCard('commission'); }}
+                            className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200 hover:bg-green-100 transition-colors"
+                          >
+                            +{commissionVariationGroups.length - 1} more
+                          </button>
+                        </HoverCard.Trigger>
+                        <HoverCard.Portal>
+                          <HoverCard.Content
+                            className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                            sideOffset={4}
+                          >
+                            <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({allQuoteCommissions.length})</div>
+                            <div className="space-y-0.5">
+                              {allQuoteCommissions.map(qc => (
+                                <button
+                                  key={qc.quoteId}
+                                  onClick={(e) => { e.stopPropagation(); setExpandedCard('commission'); }}
+                                  className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                                >
+                                  <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                  <span className="flex-1 truncate">{qc.quoteName}</span>
+                                  <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                </button>
+                              ))}
+                            </div>
+                            <HoverCard.Arrow className="fill-white" />
+                          </HoverCard.Content>
+                        </HoverCard.Portal>
+                      </HoverCard.Root>
+                    </div>
+                  )
                 ) : (
                   <div className="text-base font-bold text-gray-800">{commission}%</div>
                 )
@@ -7168,16 +8570,358 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           {expandedCard === 'commission' && (
             <div className="p-4">
               {summaryScope === 'submission' ? (
-                /* Submission mode - show per-quote commissions */
+                /* Submission mode - show unique commissions with CommissionEditor */
                 <div className="space-y-2">
-                  {allQuoteCommissions.map(qc => (
-                    <div key={qc.quoteId} className="flex items-center justify-between text-sm py-1 border-b border-gray-100 last:border-0">
-                      <span className="text-gray-600 truncate">{qc.quoteName}</span>
-                      <span className="text-gray-800 font-medium">
-                        {qc.commissionRate}%{qc.isNetOfCommission ? ' (Net)' : ''}
-                      </span>
-                    </div>
-                  ))}
+                  {commissionVariationGroups.map((group) => {
+                    const quotesInGroup = allQuoteCommissions.filter(c => c.key === group.key);
+                    const isEditing = editingCommissionKey === group.key;
+
+                    return (
+                      <div
+                        key={group.key}
+                        className={`rounded-lg transition-colors ${
+                          isEditing ? 'bg-purple-50/50 p-3' : 'px-2 py-1.5 hover:bg-gray-50'
+                        }`}
+                      >
+                        {isEditing ? (
+                          /* Editing mode - CommissionEditor only (no Net Out in submission mode - no premiums available) */
+                          <div className="space-y-3">
+                            <CommissionEditor
+                              value={editingCommissionRate}
+                              onChange={setEditingCommissionRate}
+                            />
+                            <div className="flex items-center justify-between pt-2 border-t border-purple-100">
+                              {/* Applies To Badge */}
+                              <Popover.Root
+                                open={commissionAppliesToPopoverId === group.key}
+                                onOpenChange={(open) => setCommissionAppliesToPopoverId(open ? group.key : null)}
+                                modal={false}
+                              >
+                                <Popover.Trigger asChild>
+                                  <button
+                                    onClick={(e) => e.stopPropagation()}
+                                    className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                                      quotesInGroup.length === allQuoteCommissions.length
+                                        ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                        : quotesInGroup.length > 0
+                                        ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                        : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    {quotesInGroup.length === allQuoteCommissions.length ? `All ${allQuoteCommissions.length} Options` : `${quotesInGroup.length}/${allQuoteCommissions.length} Options`}
+                                  </button>
+                                </Popover.Trigger>
+                                <Popover.Portal>
+                                  <Popover.Content
+                                    className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                    sideOffset={4}
+                                    align="start"
+                                  >
+                                    <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                    <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                      <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                        <input
+                                          type="checkbox"
+                                          checked={quotesInGroup.length === allQuoteCommissions.length}
+                                          onChange={() => {
+                                            if (quotesInGroup.length !== allQuoteCommissions.length) {
+                                              const rate = parseFloat(editingCommissionRate);
+                                              if (!isNaN(rate) && rate >= 0 && rate <= 100) {
+                                                allQuoteCommissions.forEach(qc => {
+                                                  if (!quotesInGroup.some(q => q.quoteId === qc.quoteId)) {
+                                                    applyCommissionSelection.mutate({
+                                                      commission: rate,
+                                                      quoteId: qc.quoteId,
+                                                    });
+                                                  }
+                                                });
+                                              }
+                                            }
+                                          }}
+                                          className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                        />
+                                        <span>All Options</span>
+                                      </label>
+                                    </div>
+                                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                                      {allQuoteCommissions.map(qc => {
+                                        const isLinked = quotesInGroup.some(q => q.quoteId === qc.quoteId);
+                                        return (
+                                          <label
+                                            key={qc.quoteId}
+                                            className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={isLinked}
+                                              onChange={() => {
+                                                if (!isLinked) {
+                                                  const rate = parseFloat(editingCommissionRate);
+                                                  if (!isNaN(rate) && rate >= 0 && rate <= 100) {
+                                                    applyCommissionSelection.mutate({
+                                                      commission: rate,
+                                                      quoteId: qc.quoteId,
+                                                    });
+                                                  }
+                                                }
+                                              }}
+                                              className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                            />
+                                            <span className="truncate">{qc.quoteName}</span>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  </Popover.Content>
+                                </Popover.Portal>
+                              </Popover.Root>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const rate = parseFloat(editingCommissionRate);
+                                  if (!isNaN(rate) && rate >= 0 && rate <= 100) {
+                                    // Apply changes to all quotes in this group
+                                    quotesInGroup.forEach(qc => {
+                                      applyCommissionSelection.mutate({
+                                        commission: rate,
+                                        quoteId: qc.quoteId,
+                                      });
+                                    });
+                                  }
+                                  setEditingCommissionKey(null);
+                                  setEditingCommissionRate('');
+                                }}
+                                className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+                              >
+                                Done
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          /* Display mode - clickable row with hover preview on pill */
+                          <div className="flex items-center gap-2 text-sm">
+                            <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                            </svg>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingCommissionRate(group.commissionRate.toString());
+                                setEditingCommissionKey(group.key);
+                              }}
+                              className="flex-1 text-left text-gray-700 hover:text-purple-700 cursor-pointer"
+                            >
+                              {group.label}
+                            </button>
+                            <HoverCard.Root
+                              openDelay={300}
+                              closeDelay={100}
+                              open={commissionAppliesToPopoverId !== group.key ? undefined : false}
+                            >
+                              <HoverCard.Trigger asChild>
+                                <span>
+                                  <Popover.Root
+                                    open={commissionAppliesToPopoverId === group.key}
+                                    onOpenChange={(open) => setCommissionAppliesToPopoverId(open ? group.key : null)}
+                                    modal={false}
+                                  >
+                              <Popover.Trigger asChild>
+                                <button
+                                  onClick={(e) => e.stopPropagation()}
+                                  className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+                                    quotesInGroup.length === allQuoteCommissions.length
+                                      ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                      : quotesInGroup.length > 0
+                                      ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                      : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  {quotesInGroup.length === allQuoteCommissions.length ? `All ${allQuoteCommissions.length} Options` : `${quotesInGroup.length}/${allQuoteCommissions.length} Options`}
+                                </button>
+                              </Popover.Trigger>
+                              <Popover.Portal>
+                                <Popover.Content
+                                  className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                  sideOffset={4}
+                                  align="end"
+                                >
+                                  <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
+                                  <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
+                                    <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
+                                      <input
+                                        type="checkbox"
+                                        checked={quotesInGroup.length === allQuoteCommissions.length}
+                                        onChange={() => {
+                                          if (quotesInGroup.length !== allQuoteCommissions.length) {
+                                            allQuoteCommissions.forEach(qc => {
+                                              if (!quotesInGroup.some(q => q.quoteId === qc.quoteId)) {
+                                                applyCommissionSelection.mutate({
+                                                  commission: group.commissionRate,
+                                                  quoteId: qc.quoteId,
+                                                });
+                                              }
+                                            });
+                                          }
+                                        }}
+                                        className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                      />
+                                      <span>All Options</span>
+                                    </label>
+                                  </div>
+                                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                                    {allQuoteCommissions.map(qc => {
+                                      const isLinked = quotesInGroup.some(q => q.quoteId === qc.quoteId);
+                                      return (
+                                        <label
+                                          key={qc.quoteId}
+                                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={isLinked}
+                                            onChange={() => {
+                                              if (!isLinked) {
+                                                applyCommissionSelection.mutate({
+                                                  commission: group.commissionRate,
+                                                  quoteId: qc.quoteId,
+                                                });
+                                              }
+                                            }}
+                                            className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                          />
+                                          <span className="truncate">{qc.quoteName}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                </Popover.Content>
+                              </Popover.Portal>
+                                  </Popover.Root>
+                                </span>
+                              </HoverCard.Trigger>
+                              <HoverCard.Portal>
+                                <HoverCard.Content
+                                  className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                  sideOffset={4}
+                                  align="end"
+                                >
+                                  <div className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-1 px-1">Applies To</div>
+                                  <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                    {quotesInGroup.map(qc => (
+                                      <div key={qc.quoteId} className="text-xs text-gray-600 flex items-center gap-1.5 px-1 py-0.5">
+                                        <span className="text-green-400">•</span>
+                                        <span className="truncate">{qc.quoteName}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <HoverCard.Arrow className="fill-white" />
+                                </HoverCard.Content>
+                              </HoverCard.Portal>
+                            </HoverCard.Root>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add New Commission section */}
+                  <div className="pt-2 border-t border-gray-100 mt-2">
+                    {isAddingCommission ? (
+                      <div className="bg-purple-50/50 rounded-lg p-3 space-y-3">
+                        {/* Commission only - no Net Out in submission mode (no premiums available) */}
+                        <CommissionEditor
+                          value={newCommissionRate}
+                          onChange={setNewCommissionRate}
+                        />
+                        {/* Quote selection for new commission */}
+                        <div className="border-t border-purple-100 pt-2">
+                          <div className="text-xs font-medium text-gray-500 mb-2">Apply to:</div>
+                          <div className="space-y-1 max-h-32 overflow-y-auto">
+                            <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-purple-100/50 px-1 py-0.5 rounded">
+                              <input
+                                type="checkbox"
+                                checked={newCommissionSelectedQuotes.length === allQuoteCommissions.length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setNewCommissionSelectedQuotes(allQuoteCommissions.map(qc => qc.quoteId));
+                                  } else {
+                                    setNewCommissionSelectedQuotes([]);
+                                  }
+                                }}
+                                className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                              />
+                              <span className="font-medium text-gray-700">All Options</span>
+                            </label>
+                            {allQuoteCommissions.map(qc => (
+                              <label key={qc.quoteId} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-purple-100/50 px-1 py-0.5 rounded text-gray-600">
+                                <input
+                                  type="checkbox"
+                                  checked={newCommissionSelectedQuotes.includes(qc.quoteId)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setNewCommissionSelectedQuotes([...newCommissionSelectedQuotes, qc.quoteId]);
+                                    } else {
+                                      setNewCommissionSelectedQuotes(newCommissionSelectedQuotes.filter(id => id !== qc.quoteId));
+                                    }
+                                  }}
+                                  className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
+                                />
+                                <span className="truncate">{qc.quoteName}</span>
+                                <span className="text-gray-400 ml-auto">{qc.commissionRate}%</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rate = parseFloat(newCommissionRate);
+                              if (!isNaN(rate) && rate >= 0 && rate <= 100 && newCommissionSelectedQuotes.length > 0) {
+                                newCommissionSelectedQuotes.forEach(quoteId => {
+                                  applyCommissionSelection.mutate({
+                                    commission: rate,
+                                    quoteId: quoteId,
+                                  });
+                                });
+                                setIsAddingCommission(false);
+                                setNewCommissionRate('');
+                                setNewCommissionSelectedQuotes([]);
+                              }
+                            }}
+                            disabled={!newCommissionRate || isNaN(parseFloat(newCommissionRate)) || newCommissionSelectedQuotes.length === 0}
+                            className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Add
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setIsAddingCommission(false);
+                              setNewCommissionRate('');
+                              setNewCommissionSelectedQuotes([]);
+                            }}
+                            className="text-xs text-gray-500 hover:text-gray-700"
+                          >
+                            Cancel
+                          </button>
+                          {newCommissionSelectedQuotes.length === 0 && newCommissionRate && (
+                            <span className="text-xs text-amber-600">Select at least one option</span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setIsAddingCommission(true); }}
+                        className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center gap-1"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add New Rate
+                      </button>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <CommissionPanel structure={structure} variation={variation} submissionId={submission?.id} />
@@ -7186,113 +8930,6 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
           )}
         </div>
       </div>
-
-      {/* Quote Options Summary (Submission Mode) - Collapsible with editable premiums */}
-      {summaryScope === 'submission' && (
-        <div ref={quoteOptionsRef} className="border border-gray-200 rounded-lg bg-white overflow-hidden">
-          {/* Header row with column labels */}
-          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center">
-            <button
-              onClick={() => setShowQuoteOptions(!showQuoteOptions)}
-              className="flex items-center flex-1 text-left hover:opacity-80"
-            >
-              <svg
-                className={`w-4 h-4 text-gray-400 mr-2 transition-transform ${showQuoteOptions ? 'rotate-90' : ''}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-              <span className="text-xs font-bold text-gray-500 uppercase">Quote Options</span>
-            </button>
-            <span className="text-[10px] text-gray-400 uppercase w-24 text-right mr-4">Premium</span>
-            <span className="text-[10px] text-gray-400 uppercase w-12 text-center">Subjs</span>
-            <span className="text-[10px] text-gray-400 uppercase w-12 text-center">Endts</span>
-            <span className="text-[10px] text-gray-400 uppercase w-16 text-center">Status</span>
-          </div>
-          {showQuoteOptions && (
-            <div className="divide-y divide-gray-100">
-              {allOptions.map((opt) => {
-                const struct = structures?.find(s => String(s.id) === String(opt.id));
-                const optTower = struct?.tower_json || [];
-                const cmaiLayer = optTower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-                // For bound quotes, use sold_premium
-                const optPremium = struct?.sold_premium || cmaiLayer?.premium || 0;
-                const draftPremium = premiumDraft[opt.id] ?? optPremium;
-                const optStatus = struct?.is_bound ? 'bound' : (struct?.status || 'draft');
-                const isExcess = getStructurePosition(struct) === 'excess';
-                const subjList = subjectivitiesByQuote.get(String(opt.id)) || [];
-                const endtList = endorsementsByQuote.get(String(opt.id)) || [];
-                return (
-                  <div
-                    key={opt.id}
-                    className="flex items-center px-4 py-2 transition-colors hover:bg-gray-50"
-                  >
-                    <div
-                      className="flex items-center gap-2 flex-1 pl-6 cursor-pointer"
-                      onClick={() => onSelect(opt.id)}
-                    >
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                        isExcess
-                          ? 'bg-blue-100 text-blue-600'
-                          : 'bg-emerald-100 text-emerald-700'
-                      }`}>
-                        {isExcess ? 'XS' : 'PRI'}
-                      </span>
-                      <span className="text-sm font-medium text-gray-900">
-                        {opt.name}
-                      </span>
-                    </div>
-                    {/* Premium - editable */}
-                    <div className="w-24 text-right mr-4">
-                      {isEditingPremiums ? (
-                        <input
-                          ref={el => premiumInputRefs.current[opt.id] = el}
-                          type="text"
-                          value={formatWithCommas(draftPremium)}
-                          onChange={(e) => {
-                            const val = parseNumber(e.target.value);
-                            updatePremiumDraft(opt.id, val);
-                          }}
-                          onKeyDown={(e) => handlePremiumKeyDown(e, opt.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="w-full px-2 py-1 text-right border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-300 text-sm"
-                        />
-                      ) : (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); enterPremiumEditMode(opt.id); }}
-                          className="text-sm font-semibold text-green-600 hover:text-green-700 hover:underline"
-                        >
-                          {formatCurrency(optPremium)}
-                        </button>
-                      )}
-                    </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full w-12 text-center ${
-                      subjList.length > 0 ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-400'
-                    }`}>
-                      {subjList.length}
-                    </span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full w-12 text-center ${
-                      endtList.length > 0 ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-400'
-                    }`}>
-                      {endtList.length}
-                    </span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium w-16 text-center ${
-                      optStatus === 'issued' ? 'bg-green-100 text-green-700' :
-                      optStatus === 'approved' ? 'bg-blue-100 text-blue-700' :
-                      optStatus === 'pending' ? 'bg-amber-100 text-amber-700' :
-                      'bg-gray-100 text-gray-500'
-                    }`}>
-                      {optStatus.charAt(0).toUpperCase() + optStatus.slice(1)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Tower Position & Structure Preview (Quote Mode only) */}
       {summaryScope !== 'submission' && (() => {
@@ -7572,7 +9209,32 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
                 {isEditingCoverages ? (
                   <h3 className="text-xs font-bold text-gray-500 uppercase">Coverages</h3>
+                ) : isExcessQuote ? (
+                  /* Excess quote filters: Drop Down | All | Non-Follow */
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExcessCoverageFilter('dropdown'); }}
+                      className={`text-xs font-bold uppercase ${excessCoverageFilter === 'dropdown' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Drop Down
+                    </button>
+                    <span className="text-gray-300">|</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExcessCoverageFilter('all'); }}
+                      className={`text-xs font-bold uppercase ${excessCoverageFilter === 'all' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      All
+                    </button>
+                    <span className="text-gray-300">|</span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setExcessCoverageFilter('nonfollow'); }}
+                      className={`text-xs font-bold uppercase ${excessCoverageFilter === 'nonfollow' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Non-Follow
+                    </button>
+                  </div>
                 ) : (
+                  /* Primary quote filters: Exceptions | All */
                   <div className="flex items-center gap-2">
                     <button
                       onClick={(e) => { e.stopPropagation(); setShowAllSublimits(false); }}
@@ -7648,7 +9310,44 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
               ) : (
                 /* Preview when collapsed */
                 <div className="p-4">
-                  {showAllSublimits ? (
+                  {isExcessQuote ? (
+                    /* Excess quote display with 3-way filter */
+                    (() => {
+                      const filteredSublimits = excessCoverageFilter === 'all'
+                        ? allSublimits
+                        : excessCoverageFilter === 'dropdown'
+                          ? allSublimits.filter(s => s.isFollowForm && !s.isExcluded)
+                          : allSublimits.filter(s => !s.isFollowForm || s.isExcluded);
+
+                      if (filteredSublimits.length === 0) {
+                        return (
+                          <div className="text-sm text-gray-400 italic">
+                            {excessCoverageFilter === 'dropdown' ? 'No drop-down coverages' :
+                             excessCoverageFilter === 'nonfollow' ? 'All coverages follow form' :
+                             'No coverages defined'}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-1">
+                          {filteredSublimits.map(sub => (
+                            <div key={sub.id} className="flex justify-between text-sm">
+                              <span className={`text-gray-600 ${sub.isExcluded ? 'line-through' : ''}`}>{sub.label}</span>
+                              <span className={`font-medium ${sub.isExcluded ? 'text-red-500' : sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
+                                {sub.value === 'Excluded' ? 'Excluded' : (
+                                  sub.attachment != null
+                                    ? `${formatCompact(sub.value)} xs ${formatCompact(sub.attachment)}`
+                                    : formatCompact(sub.value)
+                                )}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()
+                  ) : showAllSublimits ? (
+                    /* Primary quote: show all sublimits */
                     <div className="space-y-1">
                       {allSublimits.length === 0 ? (
                         <div className="text-sm text-gray-400 italic">No coverages defined</div>
@@ -7656,19 +9355,21 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                         <div key={sub.id} className="flex justify-between text-sm">
                           <span className={`text-gray-600 ${sub.isExcluded ? 'line-through' : ''}`}>{sub.label}</span>
                           <span className={`font-medium ${sub.isExcluded ? 'text-red-500' : sub.isException ? 'text-amber-600' : 'text-green-600'}`}>
-                            {sub.value === 'Excluded' ? 'Excluded' : formatCompact(sub.value)}
+                            {formatCompact(sub.value)}
                           </span>
                         </div>
                       ))}
                     </div>
                   ) : coverageExceptions.length === 0 ? (
+                    /* Primary quote: no exceptions */
                     <div className="flex items-center gap-2 text-sm text-green-600">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
-                      <span>{isExcessQuote ? 'All follow form' : 'All standard limits'}</span>
+                      <span>All standard limits</span>
                     </div>
                   ) : (
+                    /* Primary quote: show exceptions */
                     <div className="space-y-1">
                       {coverageExceptions.map(exc => (
                         <div key={exc.id} className="flex justify-between text-sm">
@@ -7693,7 +9394,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             expandedCard === 'endorsements'
               ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
               : 'border-gray-200'
-          } ${expandedCard && expandedCard !== 'endorsements' && expandedCard !== 'tower' && expandedCard !== 'coverages' ? 'hidden' : ''}`}
+          } ${expandedCard && expandedCard !== 'endorsements' && expandedCard !== 'tower' && expandedCard !== 'coverages' && expandedCard !== 'terms' && expandedCard !== 'retro' && expandedCard !== 'commission' ? 'hidden' : ''}`}
         >
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
@@ -7808,34 +9509,38 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                             </button>
                           )}
 
-                          {/* Coverage badge with popover */}
-                          <Popover.Root
-                            open={endorsementAppliesToPopoverId === item.id}
-                            onOpenChange={(open) => setEndorsementAppliesToPopoverId(open ? item.id : null)}
-                            modal={false}
+                          {/* Coverage badge with hover preview and popover */}
+                          <HoverCard.Root
+                            openDelay={300}
+                            closeDelay={100}
+                            open={endorsementAppliesToPopoverId !== item.id ? undefined : false}
                           >
-                            <Popover.Trigger asChild>
-                              <button
-                                className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
-                                  isAllLinked
-                                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                                    : linkedCount > 0
-                                    ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
-                                    : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
-                                }`}
-                              >
-                                {isAllLinked ? (
-                                  `All ${totalCount} Options`
-                                ) : linkedCount === 0 ? (
-                                  'No quotes'
-                                ) : (
-                                  <>
-                                    {firstLinkedQuote?.name}
-                                    {otherCount > 0 && <span className="ml-1 text-[10px] opacity-75">+{otherCount}</span>}
-                                  </>
-                                )}
-                              </button>
-                            </Popover.Trigger>
+                            <HoverCard.Trigger asChild>
+                              <span>
+                                <Popover.Root
+                                  open={endorsementAppliesToPopoverId === item.id}
+                                  onOpenChange={(open) => setEndorsementAppliesToPopoverId(open ? item.id : null)}
+                                  modal={false}
+                                >
+                                  <Popover.Trigger asChild>
+                                    <button
+                                      className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+                                        isAllLinked
+                                          ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                          : linkedCount > 0
+                                          ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                          : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                      }`}
+                                    >
+                                      {isAllLinked ? (
+                                        `All ${totalCount} Options`
+                                      ) : linkedCount === 0 ? (
+                                        'No quotes'
+                                      ) : (
+                                        `${linkedCount}/${totalCount} Options`
+                                      )}
+                                    </button>
+                                  </Popover.Trigger>
                             <Popover.Portal>
                               <Popover.Content
                                 className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
@@ -7936,7 +9641,31 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                                 </div>
                               </Popover.Content>
                             </Popover.Portal>
-                          </Popover.Root>
+                                </Popover.Root>
+                              </span>
+                            </HoverCard.Trigger>
+                            <HoverCard.Portal>
+                              <HoverCard.Content
+                                className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                sideOffset={4}
+                                align="end"
+                              >
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-1 px-1">Applies To</div>
+                                <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                  {allOptions.filter(opt => linkedQuoteIds.includes(String(opt.id))).map(opt => (
+                                    <div key={opt.id} className="text-xs text-gray-600 flex items-center gap-1.5 px-1 py-0.5">
+                                      <span className="text-green-400">•</span>
+                                      <span className="truncate">{opt.name}</span>
+                                    </div>
+                                  ))}
+                                  {linkedQuoteIds.length === 0 && (
+                                    <div className="text-xs text-gray-400 italic px-1">No quotes linked</div>
+                                  )}
+                                </div>
+                                <HoverCard.Arrow className="fill-white" />
+                              </HoverCard.Content>
+                            </HoverCard.Portal>
+                          </HoverCard.Root>
 
                           {/* Remove button */}
                           <button
@@ -8078,19 +9807,99 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                       const firstLinkedQuote = allOptions.find(opt => linkedQuoteIds.includes(String(opt.id)));
                       const otherCount = linkedCount - 1;
 
+                      // Get linked and not-linked quotes for HoverCard
+                      const linkedQuotes = allOptions.filter(opt => linkedQuoteIds.includes(String(opt.id)));
+                      const notLinkedQuotes = allOptions.filter(opt => !linkedQuoteIds.includes(String(opt.id)));
+                      const mutationId = item.rawId || item.id;
+
                       return (
-                        <div key={item.id} className="flex items-center gap-2 text-sm">
+                        <div key={item.id} className="flex items-center gap-2 text-sm group hover:bg-gray-50 rounded px-1 -mx-1 cursor-pointer">
                           {getEndorsementIcon(item)}
-                          <span className="flex-1 text-gray-700 truncate">{item.label}</span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
-                            isAllLinked
-                              ? 'bg-green-50 text-green-700 border-green-200'
-                              : linkedCount > 0
-                              ? 'bg-blue-50 text-blue-600 border-blue-200'
-                              : 'bg-gray-50 text-gray-500 border-gray-200'
-                          }`}>
-                            {isAllLinked ? 'All' : linkedCount === 0 ? 'None' : `${linkedCount}/${totalCount}`}
-                          </span>
+                          <button
+                            onClick={() => setExpandedCard('endorsements')}
+                            className="flex-1 text-gray-700 hover:text-purple-700 truncate text-left"
+                          >
+                            {item.label}
+                          </button>
+                          <HoverCard.Root openDelay={200} closeDelay={100}>
+                            <HoverCard.Trigger asChild>
+                              <button
+                                type="button"
+                                className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 hover:opacity-80 ${
+                                  isAllLinked
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : linkedCount > 0
+                                    ? 'bg-blue-50 text-blue-600 border-blue-200'
+                                    : 'bg-gray-50 text-gray-500 border-gray-200'
+                                }`}
+                              >
+                                {isAllLinked ? 'All' : linkedCount === 0 ? 'None' : `${linkedCount}/${totalCount}`}
+                              </button>
+                            </HoverCard.Trigger>
+                            <HoverCard.Portal>
+                              <HoverCard.Content
+                                className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                                sideOffset={4}
+                              >
+                                {/* ON section - quotes it's applied to */}
+                                {linkedQuotes.length > 0 && (
+                                  <>
+                                    <div className="text-[10px] text-green-600 uppercase tracking-wide mb-1">On ({linkedCount})</div>
+                                    <div className="space-y-0.5 mb-3">
+                                      {linkedQuotes.map(opt => (
+                                        <button
+                                          key={opt.id}
+                                          onClick={() => {
+                                            const newIds = linkedQuoteIds.filter(id => id !== opt.id);
+                                            applyEndorsementSelectionMutation.mutate({
+                                              endorsementId: mutationId,
+                                              currentIds: linkedQuoteIds,
+                                              targetIds: newIds,
+                                            });
+                                          }}
+                                          className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                                        >
+                                          <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                          <span className="flex-1">{opt.name}</span>
+                                          <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                                {/* NOT ON section - quotes it's not applied to */}
+                                {notLinkedQuotes.length > 0 && (
+                                  <>
+                                    <div className="text-[10px] text-amber-600 uppercase tracking-wide mb-1">Not On ({notLinkedQuotes.length})</div>
+                                    <div className="space-y-0.5">
+                                      {notLinkedQuotes.map(opt => (
+                                        <button
+                                          key={opt.id}
+                                          onClick={() => {
+                                            const newIds = [...linkedQuoteIds, opt.id];
+                                            applyEndorsementSelectionMutation.mutate({
+                                              endorsementId: mutationId,
+                                              currentIds: linkedQuoteIds,
+                                              targetIds: newIds,
+                                            });
+                                          }}
+                                          className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
+                                        >
+                                          <span className="text-amber-400 group-hover/item:text-green-400">•</span>
+                                          <span className="flex-1">{opt.name}</span>
+                                          <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                                {linkedCount === 0 && notLinkedQuotes.length === 0 && (
+                                  <div className="text-xs text-gray-500">No quote options available</div>
+                                )}
+                                <HoverCard.Arrow className="fill-white" />
+                              </HoverCard.Content>
+                            </HoverCard.Portal>
+                          </HoverCard.Root>
                         </div>
                       );
                     })}
@@ -8562,7 +10371,7 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
             expandedCard === 'subjectivities'
               ? 'md:col-start-2 md:col-span-2 border-purple-300 ring-1 ring-purple-100'
               : 'border-gray-200'
-          } ${expandedCard && expandedCard !== 'subjectivities' && expandedCard !== 'tower' && expandedCard !== 'coverages' ? 'hidden' : ''}`}
+          } ${expandedCard && expandedCard !== 'subjectivities' && expandedCard !== 'tower' && expandedCard !== 'coverages' && expandedCard !== 'terms' && expandedCard !== 'retro' && expandedCard !== 'commission' ? 'hidden' : ''}`}
         >
             <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
               <div className="flex items-center gap-2">
@@ -8691,34 +10500,38 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                             </button>
                           )}
 
-                          {/* Coverage badge with popover */}
-                          <Popover.Root
-                            open={subjectivityAppliesToPopoverId === item.id}
-                            onOpenChange={(open) => setSubjectivityAppliesToPopoverId(open ? item.id : null)}
-                            modal={false}
+                          {/* Coverage badge with hover preview and popover */}
+                          <HoverCard.Root
+                            openDelay={300}
+                            closeDelay={100}
+                            open={subjectivityAppliesToPopoverId !== item.id ? undefined : false}
                           >
-                            <Popover.Trigger asChild>
-                              <button
-                                className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
-                                  isAllLinked
-                                    ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                                    : linkedCount > 0
-                                    ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
-                                    : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
-                                }`}
-                              >
-                                {isAllLinked ? (
-                                  `All ${totalCount} Options`
-                                ) : linkedCount === 0 ? (
-                                  'No quotes'
-                                ) : (
-                                  <>
-                                    {firstLinkedQuote?.name}
-                                    {otherCount > 0 && <span className="ml-1 text-[10px] opacity-75">+{otherCount}</span>}
-                                  </>
-                                )}
-                              </button>
-                            </Popover.Trigger>
+                            <HoverCard.Trigger asChild>
+                              <span>
+                                <Popover.Root
+                                  open={subjectivityAppliesToPopoverId === item.id}
+                                  onOpenChange={(open) => setSubjectivityAppliesToPopoverId(open ? item.id : null)}
+                                  modal={false}
+                                >
+                                  <Popover.Trigger asChild>
+                                    <button
+                                      className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
+                                        isAllLinked
+                                          ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
+                                          : linkedCount > 0
+                                          ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                                          : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
+                                      }`}
+                                    >
+                                      {isAllLinked ? (
+                                        `All ${totalCount} Options`
+                                      ) : linkedCount === 0 ? (
+                                        'No quotes'
+                                      ) : (
+                                        `${linkedCount}/${totalCount} Options`
+                                      )}
+                                    </button>
+                                  </Popover.Trigger>
                             <Popover.Portal>
                               <Popover.Content
                                 className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
@@ -8819,7 +10632,31 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                                 </div>
                               </Popover.Content>
                             </Popover.Portal>
-                          </Popover.Root>
+                                </Popover.Root>
+                              </span>
+                            </HoverCard.Trigger>
+                            <HoverCard.Portal>
+                              <HoverCard.Content
+                                className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
+                                sideOffset={4}
+                                align="end"
+                              >
+                                <div className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-1 px-1">Applies To</div>
+                                <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                                  {allOptions.filter(opt => linkedQuoteIds.includes(String(opt.id))).map(opt => (
+                                    <div key={opt.id} className="text-xs text-gray-600 flex items-center gap-1.5 px-1 py-0.5">
+                                      <span className="text-green-400">•</span>
+                                      <span className="truncate">{opt.name}</span>
+                                    </div>
+                                  ))}
+                                  {linkedQuoteIds.length === 0 && (
+                                    <div className="text-xs text-gray-400 italic px-1">No quotes linked</div>
+                                  )}
+                                </div>
+                                <HoverCard.Arrow className="fill-white" />
+                              </HoverCard.Content>
+                            </HoverCard.Portal>
+                          </HoverCard.Root>
 
                           {/* Remove button */}
                           <button
@@ -8960,8 +10797,12 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                       const isAllLinked = linkedCount === totalCount && totalCount > 0;
                       const mutationId = item.rawId || item.id;
 
+                      // Get linked and not-linked quotes for HoverCard
+                      const linkedQuotes = allOptions.filter(opt => linkedQuoteIds.includes(String(opt.id)));
+                      const notLinkedQuotes = allOptions.filter(opt => !linkedQuoteIds.includes(String(opt.id)));
+
                       return (
-                        <div key={item.id} className="flex items-center gap-2 text-sm">
+                        <div key={item.id} className="flex items-center gap-2 text-sm group hover:bg-gray-50 rounded px-1 -mx-1">
                           <button
                             onClick={() => updateSubjectivityStatusMutation.mutate({
                               subjectivityId: mutationId,
@@ -8984,16 +10825,91 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
                               </svg>
                             )}
                           </button>
-                          <span className="flex-1 text-gray-700 truncate">{item.label}</span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
-                            isAllLinked
-                              ? 'bg-green-50 text-green-700 border-green-200'
-                              : linkedCount > 0
-                              ? 'bg-blue-50 text-blue-600 border-blue-200'
-                              : 'bg-gray-50 text-gray-500 border-gray-200'
-                          }`}>
-                            {isAllLinked ? 'All' : linkedCount === 0 ? 'None' : `${linkedCount}/${totalCount}`}
-                          </span>
+                          <button
+                            onClick={() => setExpandedCard('subjectivities')}
+                            className="flex-1 text-gray-700 hover:text-purple-700 truncate text-left cursor-pointer"
+                          >
+                            {item.label}
+                          </button>
+                          <HoverCard.Root openDelay={200} closeDelay={100}>
+                            <HoverCard.Trigger asChild>
+                              <button
+                                type="button"
+                                className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 hover:opacity-80 ${
+                                  isAllLinked
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : linkedCount > 0
+                                    ? 'bg-blue-50 text-blue-600 border-blue-200'
+                                    : 'bg-gray-50 text-gray-500 border-gray-200'
+                                }`}
+                              >
+                                {isAllLinked ? 'All' : linkedCount === 0 ? 'None' : `${linkedCount}/${totalCount}`}
+                              </button>
+                            </HoverCard.Trigger>
+                            <HoverCard.Portal>
+                              <HoverCard.Content
+                                className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                                sideOffset={4}
+                              >
+                                {/* ON section - quotes it's applied to */}
+                                {linkedQuotes.length > 0 && (
+                                  <>
+                                    <div className="text-[10px] text-green-600 uppercase tracking-wide mb-1">On ({linkedCount})</div>
+                                    <div className="space-y-0.5 mb-3">
+                                      {linkedQuotes.map(opt => (
+                                        <button
+                                          key={opt.id}
+                                          onClick={() => {
+                                            const newIds = linkedQuoteIds.filter(id => id !== opt.id);
+                                            applySubjectivitySelectionMutation.mutate({
+                                              subjectivityId: mutationId,
+                                              currentIds: linkedQuoteIds,
+                                              targetIds: newIds,
+                                            });
+                                          }}
+                                          className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                                        >
+                                          <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                          <span className="flex-1">{opt.name}</span>
+                                          <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                                {/* NOT ON section - quotes it's not applied to */}
+                                {notLinkedQuotes.length > 0 && (
+                                  <>
+                                    <div className="text-[10px] text-amber-600 uppercase tracking-wide mb-1">Not On ({notLinkedQuotes.length})</div>
+                                    <div className="space-y-0.5">
+                                      {notLinkedQuotes.map(opt => (
+                                        <button
+                                          key={opt.id}
+                                          onClick={() => {
+                                            const newIds = [...linkedQuoteIds, opt.id];
+                                            applySubjectivitySelectionMutation.mutate({
+                                              subjectivityId: mutationId,
+                                              currentIds: linkedQuoteIds,
+                                              targetIds: newIds,
+                                            });
+                                          }}
+                                          className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
+                                        >
+                                          <span className="text-amber-400 group-hover/item:text-green-400">•</span>
+                                          <span className="flex-1">{opt.name}</span>
+                                          <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
+                                {linkedCount === 0 && notLinkedQuotes.length === 0 && (
+                                  <div className="text-xs text-gray-500">No quote options available</div>
+                                )}
+                                <HoverCard.Arrow className="fill-white" />
+                              </HoverCard.Content>
+                            </HoverCard.Portal>
+                          </HoverCard.Root>
                         </div>
                       );
                     })}
@@ -9524,33 +11440,35 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
 
       </div>
 
-      {/* Notes - Full width below the grid */}
-      <div className="border border-gray-200 rounded-lg overflow-hidden">
-        <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-          <h3 className="text-xs font-bold text-gray-500 uppercase">Notes</h3>
-          <button
-            onClick={() => setIsEditingNotes(!isEditingNotes)}
-            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
-          >
-            {isEditingNotes ? 'Done' : 'Edit'}
-          </button>
+      {/* Notes - Full width below the grid (hidden in submission mode since notes are per-quote) */}
+      {summaryScope !== 'submission' && (
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+            <h3 className="text-xs font-bold text-gray-500 uppercase">Notes</h3>
+            <button
+              onClick={() => setIsEditingNotes(!isEditingNotes)}
+              className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+            >
+              {isEditingNotes ? 'Done' : 'Edit'}
+            </button>
+          </div>
+          <div className="p-4">
+            {isEditingNotes ? (
+              <textarea
+                className="w-full text-sm border border-gray-200 rounded-lg p-2 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none resize-none"
+                rows={3}
+                placeholder="Add notes about this quote (pricing rationale, broker communications, etc.)"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            ) : notes ? (
+              <p className="text-sm text-gray-600">{notes}</p>
+            ) : (
+              <p className="text-sm text-gray-400 italic">No notes added</p>
+            )}
+          </div>
         </div>
-        <div className="p-4">
-          {isEditingNotes ? (
-            <textarea
-              className="w-full text-sm border border-gray-200 rounded-lg p-2 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none resize-none"
-              rows={3}
-              placeholder="Add notes about this quote (pricing rationale, broker communications, etc.)"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-            />
-          ) : notes ? (
-            <p className="text-sm text-gray-600">{notes}</p>
-          ) : (
-            <p className="text-sm text-gray-400 italic">No notes added</p>
-          )}
-        </div>
-      </div>
+      )}
 
       {/* Compact Status Footer - Cross-Option Drift only (Bind Readiness moved to header) */}
       <div className="border-t border-gray-200 pt-4 mt-2">
