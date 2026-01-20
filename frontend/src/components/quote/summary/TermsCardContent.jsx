@@ -67,149 +67,107 @@ export default function TermsCardContent({
       }`}
       onClick={() => !isExpanded && setExpandedCard('terms')}
     >
-      {/* Header - bold with border when in submission mode */}
-      {summaryScope === 'submission' && !isExpanded ? (
-        <>
-          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
-            <h3 className="text-xs font-bold text-gray-500 uppercase">Policy Term</h3>
-          </div>
-          <div className="px-4 py-3 space-y-1.5">
-            {termVariationGroups.length === 1 ? (
+      {/* Header bar - consistent for all states */}
+      <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200 rounded-t-lg">
+        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Policy Term</h3>
+        {isExpanded && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+            className="text-xs text-purple-600 hover:text-purple-700 font-medium leading-none"
+          >
+            Done
+          </button>
+        )}
+      </div>
+
+      {/* Collapsed content */}
+      {!isExpanded && (
+        <div className="px-4 py-3">
+          {summaryScope === 'submission' ? (
+            /* Submission mode collapsed: show grouped terms with pills */
+            termVariationGroups.length === 1 ? (
               <div className="text-sm font-medium text-gray-700">{termVariationGroups[0]?.label}</div>
-            ) : termVariationGroups.map((group) => {
-              const quotesInGroup = allQuoteTerms.filter(t => t.key === group.key);
-              const quotesNotInGroup = allQuoteTerms.filter(t => t.key !== group.key);
-              return (
-                <div key={group.key} className="flex items-center justify-between gap-2">
-                  <span className="text-sm text-gray-700">{group.label}</span>
-                  <HoverCard.Root openDelay={200} closeDelay={100}>
-                    <HoverCard.Trigger asChild>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
-                        className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors"
-                      >
-                        {group.count}/{allQuoteTerms.length}
-                      </button>
-                    </HoverCard.Trigger>
-                    <HoverCard.Portal>
-                      <HoverCard.Content
-                        className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
-                        sideOffset={4}
-                      >
-                        {quotesInGroup.length > 0 && (
-                          <>
-                            <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({quotesInGroup.length})</div>
-                            <div className="space-y-0.5 mb-3">
-                              {quotesInGroup.map(qt => (
-                                <button
-                                  key={qt.quoteId}
-                                  onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
-                                  className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
-                                >
-                                  <span className="text-green-400 group-hover/item:text-red-400">•</span>
-                                  <span className="flex-1 truncate">{qt.quoteName}</span>
-                                  <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
-                                </button>
-                              ))}
-                            </div>
-                          </>
-                        )}
-                        {quotesNotInGroup.length > 0 && (
-                          <>
-                            <div className="text-[10px] text-amber-600 uppercase tracking-wide font-semibold mb-1">Not On ({quotesNotInGroup.length})</div>
-                            <div className="space-y-0.5">
-                              {quotesNotInGroup.map(qt => (
-                                <button
-                                  key={qt.quoteId}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onApplyPolicyTerm({
-                                      datesTbd: group.datesTbd,
-                                      effectiveDate: group.effDate,
-                                      expirationDate: group.expDate,
-                                      quoteId: qt.quoteId,
-                                    });
-                                  }}
-                                  className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
-                                >
-                                  <span className="text-amber-400 group-hover/item:text-green-400">•</span>
-                                  <span className="flex-1 truncate">{qt.quoteName}</span>
-                                  <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
-                                </button>
-                              ))}
-                            </div>
-                          </>
-                        )}
-                        <HoverCard.Arrow className="fill-white" />
-                      </HoverCard.Content>
-                    </HoverCard.Portal>
-                  </HoverCard.Root>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      ) : (
-        <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-2'}`}>
-          <div className={isExpanded ? '' : 'w-full text-center'}>
-            <div className="text-[10px] text-gray-400 uppercase font-semibold mb-0.5">Policy Term</div>
-            {!isExpanded && (
-              summaryScope === 'submission' ? (
-                termVariationGroups.length === 1 ? (
-                  <span className="text-sm font-semibold text-gray-800">{termVariationGroups[0]?.label}</span>
-                ) : (
-                  <div className="flex flex-col items-center gap-0.5">
-                    <span className="text-sm font-semibold text-gray-800">{termVariationGroups[0]?.label}</span>
-                    <HoverCard.Root openDelay={200} closeDelay={100}>
-                      <HoverCard.Trigger asChild>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
-                          className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200 hover:bg-green-100 transition-colors"
-                        >
-                          +{termVariationGroups.length - 1} more
-                        </button>
-                      </HoverCard.Trigger>
-                      <HoverCard.Portal>
-                        <HoverCard.Content
-                          className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
-                          sideOffset={4}
-                        >
-                          <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({allQuoteTerms.length})</div>
-                          <div className="space-y-0.5">
-                            {allQuoteTerms.map(qt => (
-                              <button
-                                key={qt.quoteId}
-                                onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
-                                className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
-                              >
-                                <span className="text-green-400 group-hover/item:text-red-400">•</span>
-                                <span className="flex-1 truncate">{qt.quoteName}</span>
-                                <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
-                              </button>
-                            ))}
-                          </div>
-                          <HoverCard.Arrow className="fill-white" />
-                        </HoverCard.Content>
-                      </HoverCard.Portal>
-                    </HoverCard.Root>
-                  </div>
-                )
-              ) : (
-                <div className="text-sm font-bold text-gray-800 truncate">
-                  {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
-                </div>
-              )
-            )}
-          </div>
-          {isExpanded && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
-              className="text-xs text-purple-600 hover:text-purple-700 font-medium"
-            >
-              Done
-            </button>
+            ) : (
+              <div className="space-y-1.5">
+                {termVariationGroups.map((group) => {
+                  const quotesInGroup = allQuoteTerms.filter(t => t.key === group.key);
+                  const quotesNotInGroup = allQuoteTerms.filter(t => t.key !== group.key);
+                  return (
+                    <div key={group.key} className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-gray-700">{group.label}</span>
+                      <HoverCard.Root openDelay={200} closeDelay={100}>
+                        <HoverCard.Trigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
+                            className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors"
+                          >
+                            {group.count}/{allQuoteTerms.length}
+                          </button>
+                        </HoverCard.Trigger>
+                        <HoverCard.Portal>
+                          <HoverCard.Content
+                            className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                            sideOffset={4}
+                          >
+                            {quotesInGroup.length > 0 && (
+                              <>
+                                <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({quotesInGroup.length})</div>
+                                <div className="space-y-0.5 mb-3">
+                                  {quotesInGroup.map(qt => (
+                                    <button
+                                      key={qt.quoteId}
+                                      onClick={(e) => { e.stopPropagation(); setExpandedCard('terms'); }}
+                                      className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                                    >
+                                      <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                                      <span className="flex-1 truncate">{qt.quoteName}</span>
+                                      <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            {quotesNotInGroup.length > 0 && (
+                              <>
+                                <div className="text-[10px] text-amber-600 uppercase tracking-wide font-semibold mb-1">Not On ({quotesNotInGroup.length})</div>
+                                <div className="space-y-0.5">
+                                  {quotesNotInGroup.map(qt => (
+                                    <button
+                                      key={qt.quoteId}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onApplyPolicyTerm({
+                                          datesTbd: group.datesTbd,
+                                          effectiveDate: group.effDate,
+                                          expirationDate: group.expDate,
+                                          quoteId: qt.quoteId,
+                                        });
+                                      }}
+                                      className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
+                                    >
+                                      <span className="text-amber-400 group-hover/item:text-green-400">•</span>
+                                      <span className="flex-1 truncate">{qt.quoteName}</span>
+                                      <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            <HoverCard.Arrow className="fill-white" />
+                          </HoverCard.Content>
+                        </HoverCard.Portal>
+                      </HoverCard.Root>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            /* Quote mode collapsed: show date range */
+            <div className="text-sm font-semibold text-gray-800">
+              {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
+            </div>
           )}
         </div>
       )}

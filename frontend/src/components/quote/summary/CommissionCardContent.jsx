@@ -52,23 +52,50 @@ export default function CommissionCardContent({
       }`}
       onClick={() => !isExpanded && setExpandedCard('commission')}
     >
-      {/* Header - styled like endorsements when in submission mode */}
-      {summaryScope === 'submission' && !isExpanded ? (
-        <SubmissionModeCollapsed
-          commissionVariationGroups={commissionVariationGroups}
-          allQuoteCommissions={allQuoteCommissions}
-          setExpandedCard={setExpandedCard}
-          onApplyCommissionSelection={onApplyCommissionSelection}
-        />
-      ) : (
-        <QuoteModeHeader
-          isExpanded={isExpanded}
-          summaryScope={summaryScope}
-          commissionVariationGroups={commissionVariationGroups}
-          allQuoteCommissions={allQuoteCommissions}
-          commission={commission}
-          setExpandedCard={setExpandedCard}
-        />
+      {/* Header bar - consistent for all states */}
+      <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200 rounded-t-lg">
+        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Commission</h3>
+        {isExpanded && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+            className="text-xs text-purple-600 hover:text-purple-700 font-medium leading-none"
+          >
+            Done
+          </button>
+        )}
+      </div>
+
+      {/* Collapsed content */}
+      {!isExpanded && (
+        <div className="px-4 py-3">
+          {summaryScope === 'submission' ? (
+            /* Submission mode collapsed: show grouped commissions with pills */
+            commissionVariationGroups.length === 1 ? (
+              <div className="text-sm font-medium text-gray-700">{commissionVariationGroups[0]?.label}</div>
+            ) : (
+              <div className="space-y-1.5">
+                {commissionVariationGroups.map((group) => {
+                  const quotesInGroup = allQuoteCommissions.filter(c => c.key === group.key);
+                  const quotesNotInGroup = allQuoteCommissions.filter(c => c.key !== group.key);
+                  return (
+                    <MultiCommissionRow
+                      key={group.key}
+                      group={group}
+                      quotesInGroup={quotesInGroup}
+                      quotesNotInGroup={quotesNotInGroup}
+                      allQuoteCommissions={allQuoteCommissions}
+                      setExpandedCard={setExpandedCard}
+                      onApplyCommissionSelection={onApplyCommissionSelection}
+                    />
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            /* Quote mode collapsed: show commission value */
+            <div className="text-sm font-semibold text-gray-800">{commission}%</div>
+          )}
+        </div>
       )}
 
       {/* Expanded content */}
@@ -102,42 +129,8 @@ export default function CommissionCardContent({
 }
 
 // ============================================================================
-// SUBMISSION MODE COLLAPSED
+// HELPERS FOR COLLAPSED CONTENT
 // ============================================================================
-
-function SubmissionModeCollapsed({
-  commissionVariationGroups,
-  allQuoteCommissions,
-  setExpandedCard,
-  onApplyCommissionSelection,
-}) {
-  return (
-    <>
-      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
-        <h3 className="text-xs font-bold text-gray-500 uppercase">Commission</h3>
-      </div>
-      <div className="px-4 py-3 space-y-1.5">
-        {commissionVariationGroups.length === 1 ? (
-          <div className="text-base font-medium text-gray-700">{commissionVariationGroups[0]?.label}</div>
-        ) : commissionVariationGroups.map((group) => {
-          const quotesInGroup = allQuoteCommissions.filter(c => c.key === group.key);
-          const quotesNotInGroup = allQuoteCommissions.filter(c => c.key !== group.key);
-          return (
-            <MultiCommissionRow
-              key={group.key}
-              group={group}
-              quotesInGroup={quotesInGroup}
-              quotesNotInGroup={quotesNotInGroup}
-              allQuoteCommissions={allQuoteCommissions}
-              setExpandedCard={setExpandedCard}
-              onApplyCommissionSelection={onApplyCommissionSelection}
-            />
-          );
-        })}
-      </div>
-    </>
-  );
-}
 
 function MultiCommissionRow({ group, quotesInGroup, quotesNotInGroup, allQuoteCommissions, setExpandedCard, onApplyCommissionSelection }) {
   return (
@@ -191,91 +184,6 @@ function MultiCommissionRow({ group, quotesInGroup, quotesNotInGroup, allQuoteCo
                 </div>
               </>
             )}
-            <HoverCard.Arrow className="fill-white" />
-          </HoverCard.Content>
-        </HoverCard.Portal>
-      </HoverCard.Root>
-    </div>
-  );
-}
-
-// ============================================================================
-// QUOTE MODE HEADER
-// ============================================================================
-
-function QuoteModeHeader({
-  isExpanded,
-  summaryScope,
-  commissionVariationGroups,
-  allQuoteCommissions,
-  commission,
-  setExpandedCard,
-}) {
-  return (
-    <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-2'}`}>
-      <div className={isExpanded ? '' : 'w-full text-center'}>
-        <div className="text-[10px] text-gray-400 uppercase font-semibold mb-0.5">Commission</div>
-        {!isExpanded && (
-          summaryScope === 'submission' ? (
-            <SubmissionModeCompactDisplay
-              commissionVariationGroups={commissionVariationGroups}
-              allQuoteCommissions={allQuoteCommissions}
-              setExpandedCard={setExpandedCard}
-            />
-          ) : (
-            <div className="text-base font-bold text-gray-800">{commission}%</div>
-          )
-        )}
-      </div>
-      {isExpanded && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
-          className="text-xs text-purple-600 hover:text-purple-700 font-medium"
-        >
-          Done
-        </button>
-      )}
-    </div>
-  );
-}
-
-function SubmissionModeCompactDisplay({ commissionVariationGroups, allQuoteCommissions, setExpandedCard }) {
-  if (commissionVariationGroups.length === 1) {
-    return <span className="text-base font-semibold text-gray-800">{commissionVariationGroups[0]?.label}</span>;
-  }
-
-  return (
-    <div className="flex flex-col items-center gap-0.5">
-      <span className="text-base font-semibold text-gray-800">{commissionVariationGroups[0]?.label}</span>
-      <HoverCard.Root openDelay={200} closeDelay={100}>
-        <HoverCard.Trigger asChild>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setExpandedCard('commission'); }}
-            className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200 hover:bg-green-100 transition-colors"
-          >
-            +{commissionVariationGroups.length - 1} more
-          </button>
-        </HoverCard.Trigger>
-        <HoverCard.Portal>
-          <HoverCard.Content
-            className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
-            sideOffset={4}
-          >
-            <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({allQuoteCommissions.length})</div>
-            <div className="space-y-0.5">
-              {allQuoteCommissions.map(qc => (
-                <button
-                  key={qc.quoteId}
-                  onClick={(e) => { e.stopPropagation(); setExpandedCard('commission'); }}
-                  className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
-                >
-                  <span className="text-green-400 group-hover/item:text-red-400">•</span>
-                  <span className="flex-1 truncate">{qc.quoteName}</span>
-                  <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
-                </button>
-              ))}
-            </div>
             <HoverCard.Arrow className="fill-white" />
           </HoverCard.Content>
         </HoverCard.Portal>

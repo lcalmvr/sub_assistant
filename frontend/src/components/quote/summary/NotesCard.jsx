@@ -24,12 +24,12 @@ export default function NotesCard({ structure, onSave }) {
   };
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
-      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-        <h3 className="text-xs font-bold text-gray-500 uppercase">Notes</h3>
+    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200">
+        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Notes</h3>
         <button
           onClick={() => isEditing ? handleDone() : setIsEditing(true)}
-          className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+          className="text-xs text-purple-600 hover:text-purple-700 font-medium leading-none"
         >
           {isEditing ? 'Done' : 'Edit'}
         </button>

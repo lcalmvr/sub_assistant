@@ -61,32 +61,62 @@ export default function RetroCardContent({
       }`}
       onClick={() => !isExpanded && setExpandedCard('retro')}
     >
-      {/* Header - bold with border when in submission mode */}
-      {summaryScope === 'submission' && !isExpanded ? (
-        <SubmissionModeCollapsed
-          retroVariationGroups={retroVariationGroups}
-          allQuoteRetros={allQuoteRetros}
-          setExpandedCard={setExpandedCard}
-          onApplyRetroSelection={onApplyRetroSelection}
-        />
-      ) : (
-        <QuoteModeHeader
-          isExpanded={isExpanded}
-          summaryScope={summaryScope}
-          retroVariationGroups={retroVariationGroups}
-          allQuoteRetros={allQuoteRetros}
-          structure={structure}
-          setExpandedCard={setExpandedCard}
-          showRetroApplyPopover={showRetroApplyPopover}
-          setShowRetroApplyPopover={setShowRetroApplyPopover}
-          retroMatchingPeerIds={retroMatchingPeerIds}
-          allOptionIds={allOptionIds}
-          allPrimaryIds={allPrimaryIds}
-          allExcessIds={allExcessIds}
-          allOptions={allOptions}
-          structureId={structureId}
-          onApplyRetroToQuotes={onApplyRetroToQuotes}
-        />
+      {/* Header bar - consistent for all states */}
+      <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200 rounded-t-lg">
+        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Retro</h3>
+        {isExpanded && (
+          <div className="flex items-center gap-2">
+            {summaryScope !== 'submission' && (
+              <QuoteModeApplyPopover
+                showRetroApplyPopover={showRetroApplyPopover}
+                setShowRetroApplyPopover={setShowRetroApplyPopover}
+                retroMatchingPeerIds={retroMatchingPeerIds}
+                allOptionIds={allOptionIds}
+                allPrimaryIds={allPrimaryIds}
+                allExcessIds={allExcessIds}
+                allOptions={allOptions}
+                structureId={structureId}
+                onApplyRetroToQuotes={onApplyRetroToQuotes}
+              />
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+              className="text-xs text-purple-600 hover:text-purple-700 font-medium leading-none"
+            >
+              Done
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Collapsed content */}
+      {!isExpanded && (
+        <div className="px-4 py-3">
+          {summaryScope === 'submission' ? (
+            /* Submission mode collapsed: show grouped retros with pills */
+            retroVariationGroups.length === 1 ? (
+              <SingleRetroDisplay group={retroVariationGroups[0]} />
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {retroVariationGroups.map((group) => (
+                  <MultiRetroRow
+                    key={group.key}
+                    group={group}
+                    allQuoteRetros={allQuoteRetros}
+                    setExpandedCard={setExpandedCard}
+                    onApplyRetroSelection={onApplyRetroSelection}
+                  />
+                ))}
+              </div>
+            )
+          ) : (
+            /* Quote mode collapsed: show retro summary matching submission style */
+            <SingleRetroDisplay group={{
+              label: formatRetroSummary(structure?.retro_schedule),
+              schedule: structure?.retro_schedule || []
+            }} />
+          )}
+        </div>
       )}
 
       {/* Expanded content */}
@@ -120,36 +150,8 @@ export default function RetroCardContent({
 }
 
 // ============================================================================
-// SUBMISSION MODE COLLAPSED
+// HELPERS FOR COLLAPSED CONTENT
 // ============================================================================
-
-function SubmissionModeCollapsed({
-  retroVariationGroups,
-  allQuoteRetros,
-  setExpandedCard,
-  onApplyRetroSelection,
-}) {
-  return (
-    <>
-      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 rounded-t-lg">
-        <h3 className="text-xs font-bold text-gray-500 uppercase">Retro</h3>
-      </div>
-      <div className="px-4 py-3 divide-y divide-gray-100">
-        {retroVariationGroups.length === 1 ? (
-          <SingleRetroDisplay group={retroVariationGroups[0]} />
-        ) : retroVariationGroups.map((group) => (
-          <MultiRetroRow
-            key={group.key}
-            group={group}
-            allQuoteRetros={allQuoteRetros}
-            setExpandedCard={setExpandedCard}
-            onApplyRetroSelection={onApplyRetroSelection}
-          />
-        ))}
-      </div>
-    </>
-  );
-}
 
 function SingleRetroDisplay({ group }) {
   const schedule = group?.schedule || [];
@@ -245,147 +247,8 @@ function MultiRetroRow({ group, allQuoteRetros, setExpandedCard, onApplyRetroSel
 }
 
 // ============================================================================
-// QUOTE MODE HEADER
+// QUOTE MODE APPLY POPOVER
 // ============================================================================
-
-function QuoteModeHeader({
-  isExpanded,
-  summaryScope,
-  retroVariationGroups,
-  allQuoteRetros,
-  structure,
-  setExpandedCard,
-  showRetroApplyPopover,
-  setShowRetroApplyPopover,
-  retroMatchingPeerIds,
-  allOptionIds,
-  allPrimaryIds,
-  allExcessIds,
-  allOptions,
-  structureId,
-  onApplyRetroToQuotes,
-}) {
-  return (
-    <div className={`flex items-center justify-between ${isExpanded ? 'px-4 py-2 border-b border-gray-100' : 'px-3 py-2'}`}>
-      <div className={isExpanded ? '' : 'w-full text-center'}>
-        <div className="text-[10px] text-gray-400 uppercase font-semibold mb-0.5">Retro</div>
-        {!isExpanded && (
-          summaryScope === 'submission' ? (
-            <SubmissionModeCompactDisplay
-              retroVariationGroups={retroVariationGroups}
-              allQuoteRetros={allQuoteRetros}
-              setExpandedCard={setExpandedCard}
-            />
-          ) : (
-            <div className="text-sm font-bold text-gray-800">
-              {formatRetroSummary(structure?.retro_schedule)}
-            </div>
-          )
-        )}
-      </div>
-      {isExpanded && (
-        <div className="flex items-center gap-2">
-          {summaryScope !== 'submission' && (
-            <QuoteModeApplyPopover
-              showRetroApplyPopover={showRetroApplyPopover}
-              setShowRetroApplyPopover={setShowRetroApplyPopover}
-              retroMatchingPeerIds={retroMatchingPeerIds}
-              allOptionIds={allOptionIds}
-              allPrimaryIds={allPrimaryIds}
-              allExcessIds={allExcessIds}
-              allOptions={allOptions}
-              structureId={structureId}
-              onApplyRetroToQuotes={onApplyRetroToQuotes}
-            />
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
-            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
-          >
-            Done
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SubmissionModeCompactDisplay({ retroVariationGroups, allQuoteRetros, setExpandedCard }) {
-  if (retroVariationGroups.length === 1) {
-    const group = retroVariationGroups[0];
-    const schedule = group?.schedule || [];
-    const uniqueRetros = new Set(schedule.map(e => e.retro));
-    const isSimple = schedule.length === 0 || uniqueRetros.size === 1;
-
-    if (isSimple) {
-      return <span className="text-sm font-semibold text-gray-800">{group?.label}</span>;
-    }
-    return (
-      <div className="text-xs text-gray-700 space-y-0.5">
-        {schedule.map(entry => {
-          const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary', media: 'Media' }[entry.coverage] || entry.coverage;
-          const retroLabel = entry.retro === 'full_prior_acts' ? 'Full Prior Acts' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'Follow Form' : entry.retro;
-          return <div key={entry.coverage}><span className="text-gray-500">{covLabel}:</span> {retroLabel}</div>;
-        })}
-      </div>
-    );
-  }
-
-  // Multiple retro configs - show first with badge
-  const group = retroVariationGroups[0];
-  const schedule = group?.schedule || [];
-  const uniqueRetros = new Set(schedule.map(e => e.retro));
-  const isSimple = schedule.length === 0 || uniqueRetros.size === 1;
-
-  return (
-    <div className="flex flex-col items-center gap-0.5">
-      {isSimple ? (
-        <span className="text-sm font-semibold text-gray-800">{group?.label}</span>
-      ) : (
-        <div className="text-xs text-gray-700 space-y-0.5">
-          {schedule.map(entry => {
-            const covLabel = { cyber: 'Cyber', tech_eo: 'Tech E&O', do: 'D&O', epl: 'EPL', fiduciary: 'Fiduciary', media: 'Media' }[entry.coverage] || entry.coverage;
-            const retroLabel = entry.retro === 'full_prior_acts' ? 'Full Prior Acts' : entry.retro === 'inception' ? 'Inception' : entry.retro === 'follow_form' ? 'Follow Form' : entry.retro;
-            return <div key={entry.coverage}><span className="text-gray-500">{covLabel}:</span> {retroLabel}</div>;
-          })}
-        </div>
-      )}
-      <HoverCard.Root openDelay={200} closeDelay={100}>
-        <HoverCard.Trigger asChild>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setExpandedCard('retro'); }}
-            className="text-[10px] px-2 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200 hover:bg-green-100 transition-colors"
-          >
-            +{retroVariationGroups.length - 1} more
-          </button>
-        </HoverCard.Trigger>
-        <HoverCard.Portal>
-          <HoverCard.Content
-            className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
-            sideOffset={4}
-          >
-            <div className="text-[10px] text-green-600 uppercase tracking-wide font-semibold mb-1">On ({allQuoteRetros.length})</div>
-            <div className="space-y-0.5">
-              {allQuoteRetros.map(qr => (
-                <button
-                  key={qr.quoteId}
-                  onClick={(e) => { e.stopPropagation(); setExpandedCard('retro'); }}
-                  className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
-                >
-                  <span className="text-green-400 group-hover/item:text-red-400">•</span>
-                  <span className="flex-1 truncate">{qr.quoteName}</span>
-                  <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
-                </button>
-              ))}
-            </div>
-            <HoverCard.Arrow className="fill-white" />
-          </HoverCard.Content>
-        </HoverCard.Portal>
-      </HoverCard.Root>
-    </div>
-  );
-}
 
 function QuoteModeApplyPopover({
   showRetroApplyPopover,

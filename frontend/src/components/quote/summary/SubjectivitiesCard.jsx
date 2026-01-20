@@ -130,16 +130,21 @@ export default function SubjectivitiesCard({
   return (
     <div
       ref={containerRef}
-      className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+      className={`bg-white border rounded-lg overflow-hidden transition-all duration-200 ${
         isExpanded
           ? 'md:col-start-2 md:col-span-2 border-purple-300 ring-1 ring-purple-100'
-          : 'border-gray-200'
+          : 'border-gray-200 hover:border-gray-300 cursor-pointer'
       } ${expandedCard && expandedCard !== 'subjectivities' && expandedCard !== 'tower' && expandedCard !== 'coverages' && expandedCard !== 'terms' && expandedCard !== 'retro' && expandedCard !== 'commission' ? 'hidden' : ''}`}
+      onClick={() => {
+        if (!isExpanded) {
+          toggle();
+        }
+      }}
     >
       {/* Card Header */}
-      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+      <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200">
         <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-gray-500 uppercase">Subjectivities</h3>
+          <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Subjectivities</h3>
           {summaryScope === 'submission' ? (
             isExpanded ? (
               <span className="text-[11px] text-gray-400">
@@ -167,8 +172,8 @@ export default function SubjectivitiesCard({
         </div>
         {((summaryScope === 'quote' && subjectivities.length > 0) || (summaryScope === 'submission' && allSubmissionSubjectivities.length > 0) || subjectivities.length === 0) && (
           <button
-            onClick={toggle}
-            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+            onClick={(e) => { e.stopPropagation(); toggle(); }}
+            className="text-xs text-purple-600 hover:text-purple-700 font-medium leading-none"
           >
             {isExpanded ? 'Done' : 'Edit'}
           </button>
@@ -259,6 +264,7 @@ export default function SubjectivitiesCard({
             uniqueSubjectivities={uniqueSubjectivities}
             alignedSubjectivities={alignedSubjectivities}
             showMissingSuggestions={showMissingSuggestions}
+            allOptions={allOptions}
             cycleStatus={cycleStatus}
             StatusIcon={StatusIcon}
             onUpdateStatus={onUpdateStatus}
@@ -1148,6 +1154,7 @@ function QuoteModeCollapsedContent({
   uniqueSubjectivities,
   alignedSubjectivities,
   showMissingSuggestions,
+  allOptions,
   cycleStatus,
   StatusIcon,
   onUpdateStatus,
@@ -1156,6 +1163,7 @@ function QuoteModeCollapsedContent({
   setEditingSubjId,
   setEditingSubjText,
 }) {
+  const totalCount = allOptions?.length || 0;
   return (
     <div className="space-y-2">
       {showMissingSuggestions && missingSubjectivities.map((item) => (
@@ -1180,6 +1188,8 @@ function QuoteModeCollapsedContent({
       ))}
       {uniqueSubjectivities.map((item) => {
         const mutationId = item.rawId || item.id;
+        const linkedCount = item.quoteIds?.length || 0;
+        const isAllLinked = linkedCount === totalCount && totalCount > 0;
         return (
           <div key={item.id} className="flex items-center gap-2 text-sm">
             <button
@@ -1199,14 +1209,22 @@ function QuoteModeCollapsedContent({
             >
               {item.label}
             </button>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 flex-shrink-0">
-              Only here
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
+              isAllLinked
+                ? 'bg-green-50 text-green-700 border-green-200'
+                : linkedCount > 1
+                ? 'bg-blue-50 text-blue-600 border-blue-200'
+                : 'bg-purple-50 text-purple-600 border-purple-200'
+            }`}>
+              {isAllLinked ? 'All' : `${linkedCount}/${totalCount}`}
             </span>
           </div>
         );
       })}
       {alignedSubjectivities.map((item) => {
         const mutationId = item.rawId || item.id;
+        const linkedCount = item.quoteIds?.length || 0;
+        const isAllLinked = linkedCount === totalCount && totalCount > 0;
         return (
           <div key={item.id} className="flex items-center gap-2 text-sm">
             <button
@@ -1226,6 +1244,15 @@ function QuoteModeCollapsedContent({
             >
               {item.label}
             </button>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
+              isAllLinked
+                ? 'bg-green-50 text-green-700 border-green-200'
+                : linkedCount > 1
+                ? 'bg-blue-50 text-blue-600 border-blue-200'
+                : 'bg-purple-50 text-purple-600 border-purple-200'
+            }`}>
+              {isAllLinked ? 'All' : `${linkedCount}/${totalCount}`}
+            </span>
           </div>
         );
       })}

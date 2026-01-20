@@ -50,7 +50,7 @@ export default function CoveragesCardContent({
   return (
     <div
       ref={coveragesCardRef}
-      className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+      className={`bg-white border rounded-lg overflow-hidden transition-all duration-200 ${
         isEditingCoverages
           ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
           : 'border-gray-200 hover:border-gray-300 cursor-pointer'
@@ -63,9 +63,9 @@ export default function CoveragesCardContent({
       }}
     >
       {/* Header */}
-      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+      <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200">
         {isEditingCoverages ? (
-          <h3 className="text-xs font-bold text-gray-500 uppercase">Coverages</h3>
+          <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Coverages</h3>
         ) : isExcessQuote ? (
           /* Excess quote filters: Drop Down | All | Non-Follow */
           <ExcessFilterButtons
@@ -95,7 +95,7 @@ export default function CoveragesCardContent({
               setExpandedCard('coverages');
             }
           }}
-          className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+          className="text-xs text-purple-600 hover:text-purple-700 font-medium leading-none"
         >
           {isEditingCoverages ? 'Done' : 'Edit'}
         </button>
@@ -162,24 +162,24 @@ export default function CoveragesCardContent({
  */
 function ExcessFilterButtons({ excessCoverageFilter, setExcessCoverageFilter }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 whitespace-nowrap">
       <button
         onClick={(e) => { e.stopPropagation(); setExcessCoverageFilter('dropdown'); }}
-        className={`text-xs font-bold uppercase ${excessCoverageFilter === 'dropdown' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+        className={`text-xs font-bold uppercase leading-none ${excessCoverageFilter === 'dropdown' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
       >
         Drop Down
       </button>
-      <span className="text-gray-300">|</span>
+      <span className="text-gray-300 leading-none">|</span>
       <button
         onClick={(e) => { e.stopPropagation(); setExcessCoverageFilter('all'); }}
-        className={`text-xs font-bold uppercase ${excessCoverageFilter === 'all' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+        className={`text-xs font-bold uppercase leading-none ${excessCoverageFilter === 'all' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
       >
         All
       </button>
-      <span className="text-gray-300">|</span>
+      <span className="text-gray-300 leading-none">|</span>
       <button
         onClick={(e) => { e.stopPropagation(); setExcessCoverageFilter('nonfollow'); }}
-        className={`text-xs font-bold uppercase ${excessCoverageFilter === 'nonfollow' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+        className={`text-xs font-bold uppercase leading-none ${excessCoverageFilter === 'nonfollow' ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
       >
         Non-Follow
       </button>
@@ -192,17 +192,17 @@ function ExcessFilterButtons({ excessCoverageFilter, setExcessCoverageFilter }) 
  */
 function PrimaryFilterButtons({ showAllSublimits, setShowAllSublimits }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 whitespace-nowrap">
       <button
         onClick={(e) => { e.stopPropagation(); setShowAllSublimits(false); }}
-        className={`text-xs font-bold uppercase ${!showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+        className={`text-xs font-bold uppercase leading-none ${!showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
       >
         Exceptions
       </button>
-      <span className="text-gray-300">|</span>
+      <span className="text-gray-300 leading-none">|</span>
       <button
         onClick={(e) => { e.stopPropagation(); setShowAllSublimits(true); }}
-        className={`text-xs font-bold uppercase ${showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
+        className={`text-xs font-bold uppercase leading-none ${showAllSublimits ? 'text-gray-700' : 'text-gray-400 hover:text-gray-600'}`}
       >
         All
       </button>

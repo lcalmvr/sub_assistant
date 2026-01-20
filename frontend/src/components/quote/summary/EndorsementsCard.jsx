@@ -121,16 +121,21 @@ export default function EndorsementsCard({
   return (
     <div
       ref={containerRef}
-      className={`border rounded-lg overflow-hidden transition-all duration-200 ${
+      className={`bg-white border rounded-lg overflow-hidden transition-all duration-200 ${
         isExpanded
           ? 'md:col-span-2 border-purple-300 ring-1 ring-purple-100'
-          : 'border-gray-200'
+          : 'border-gray-200 hover:border-gray-300 cursor-pointer'
       } ${isHiddenByOtherCard ? 'hidden' : ''}`}
+      onClick={() => {
+        if (!isExpanded) {
+          toggle();
+        }
+      }}
     >
       {/* Header */}
-      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
+      <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200">
         <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-gray-500 uppercase">Endorsements</h3>
+          <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Endorsements</h3>
           {summaryScope === 'submission' ? (
             isExpanded ? (
               <span className="text-[11px] text-gray-400">
@@ -158,8 +163,8 @@ export default function EndorsementsCard({
         </div>
         {((summaryScope === 'quote' && endorsements.length > 0) || (summaryScope === 'submission' && allSubmissionEndorsements.length > 0)) && (
           <button
-            onClick={toggle}
-            className="text-xs text-purple-600 hover:text-purple-700 font-medium"
+            onClick={(e) => { e.stopPropagation(); toggle(); }}
+            className="text-xs text-purple-600 hover:text-purple-700 font-medium leading-none"
           >
             {isExpanded ? 'Done' : 'Edit'}
           </button>
@@ -185,6 +190,7 @@ export default function EndorsementsCard({
             onToggleLink={onToggleLink}
             getEndorsementIcon={getEndorsementIcon}
             onUpdateManuscriptText={onUpdateManuscriptText}
+            setExpandedCard={setExpandedCard}
           />
         ) : endorsementsEmpty ? (
           <p className="text-sm text-gray-400">No endorsements attached</p>
@@ -232,6 +238,7 @@ export default function EndorsementsCard({
             missingEndorsements={missingEndorsements}
             uniqueEndorsements={uniqueEndorsements}
             alignedEndorsements={alignedEndorsements}
+            allOptions={allOptions}
             setExpandedCard={setExpandedCard}
             setSelectedEndorsementId={setSelectedEndorsementId}
             getEndorsementIcon={getEndorsementIcon}
@@ -260,6 +267,7 @@ function SubmissionModeContent({
   onToggleLink,
   getEndorsementIcon,
   onUpdateManuscriptText,
+  setExpandedCard,
 }) {
   if (allSubmissionEndorsements.length === 0) {
     return <p className="text-sm text-gray-400">No endorsements in this submission</p>;
@@ -323,18 +331,103 @@ function SubmissionModeContent({
     );
   }
 
-  // Collapsed submission mode - show up to 10 items
+  // Collapsed submission mode - show up to 10 items with x/y pills and hover preview
   return (
-    <div className="space-y-1.5">
-      {allSubmissionEndorsements.slice(0, 10).map((item) => (
-        <div key={item.id} className="flex items-center gap-2 text-sm">
-          {getEndorsementIcon(item)}
-          <span className="flex-1 min-w-0 truncate text-gray-700">{item.label}</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 flex-shrink-0">
-            {item.quoteIds?.length || 0} option{(item.quoteIds?.length || 0) !== 1 ? 's' : ''}
-          </span>
-        </div>
-      ))}
+    <div className="space-y-2">
+      {allSubmissionEndorsements.slice(0, 10).map((item) => {
+        const linkedQuoteIds = item.quoteIds?.map(String) || [];
+        const linkedCount = linkedQuoteIds.length;
+        const totalCount = allOptions.length;
+        const isAllLinked = linkedCount === totalCount && totalCount > 0;
+
+        // Get linked and not-linked quotes for HoverCard
+        const linkedQuotes = allOptions.filter(opt => linkedQuoteIds.includes(String(opt.id)));
+        const notLinkedQuotes = allOptions.filter(opt => !linkedQuoteIds.includes(String(opt.id)));
+        const mutationId = item.rawId || item.id;
+
+        return (
+          <div key={item.id} className="flex items-center gap-2 text-sm group hover:bg-gray-50 rounded px-1 -mx-1">
+            {getEndorsementIcon(item)}
+            <button
+              onClick={() => setExpandedCard('endorsements')}
+              className="flex-1 min-w-0 truncate text-gray-700 hover:text-purple-700 text-left cursor-pointer"
+            >
+              {item.label}
+            </button>
+            <HoverCard.Root openDelay={200} closeDelay={100}>
+              <HoverCard.Trigger asChild>
+                <button
+                  type="button"
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 hover:opacity-80 ${
+                    isAllLinked
+                      ? 'bg-green-50 text-green-700 border-green-200'
+                      : linkedCount > 0
+                      ? 'bg-blue-50 text-blue-600 border-blue-200'
+                      : 'bg-gray-50 text-gray-500 border-gray-200'
+                  }`}
+                >
+                  {isAllLinked ? 'All' : linkedCount === 0 ? 'None' : `${linkedCount}/${totalCount}`}
+                </button>
+              </HoverCard.Trigger>
+              <HoverCard.Portal>
+                <HoverCard.Content
+                  className="z-[9999] w-64 rounded-lg border border-gray-200 bg-white shadow-xl p-3"
+                  sideOffset={4}
+                >
+                  {/* ON section - quotes it's applied to */}
+                  {linkedQuotes.length > 0 && (
+                    <>
+                      <div className="text-[10px] text-green-600 uppercase tracking-wide mb-1">On ({linkedCount})</div>
+                      <div className="space-y-0.5 mb-3">
+                        {linkedQuotes.map(opt => (
+                          <button
+                            key={opt.id}
+                            onClick={() => {
+                              const newIds = linkedQuoteIds.filter(id => id !== String(opt.id));
+                              onApplySelection(mutationId, linkedQuoteIds, newIds);
+                            }}
+                            className="w-full text-left text-xs text-gray-700 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-red-50 hover:text-red-700 transition-colors group/item"
+                          >
+                            <span className="text-green-400 group-hover/item:text-red-400">•</span>
+                            <span className="flex-1">{opt.name}</span>
+                            <span className="text-[10px] text-gray-400 group-hover/item:text-red-500 opacity-0 group-hover/item:opacity-100">−</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {/* NOT ON section - quotes it's not applied to */}
+                  {notLinkedQuotes.length > 0 && (
+                    <>
+                      <div className="text-[10px] text-amber-600 uppercase tracking-wide mb-1">Not On ({notLinkedQuotes.length})</div>
+                      <div className="space-y-0.5">
+                        {notLinkedQuotes.map(opt => (
+                          <button
+                            key={opt.id}
+                            onClick={() => {
+                              const newIds = [...linkedQuoteIds, String(opt.id)];
+                              onApplySelection(mutationId, linkedQuoteIds, newIds);
+                            }}
+                            className="w-full text-left text-xs text-gray-500 flex items-center gap-2 px-1 py-0.5 rounded hover:bg-green-50 hover:text-green-700 transition-colors group/item"
+                          >
+                            <span className="text-amber-400 group-hover/item:text-green-400">•</span>
+                            <span className="flex-1">{opt.name}</span>
+                            <span className="text-[10px] text-gray-400 group-hover/item:text-green-500 opacity-0 group-hover/item:opacity-100">+</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  {linkedCount === 0 && notLinkedQuotes.length === 0 && (
+                    <div className="text-xs text-gray-500">No quote options available</div>
+                  )}
+                  <HoverCard.Arrow className="fill-white" />
+                </HoverCard.Content>
+              </HoverCard.Portal>
+            </HoverCard.Root>
+          </div>
+        );
+      })}
       {allSubmissionEndorsements.length > 10 && (
         <button
           onClick={() => setExpandedCard('endorsements')}
@@ -660,11 +753,14 @@ function QuoteModeCollapsedContent({
   missingEndorsements,
   uniqueEndorsements,
   alignedEndorsements,
+  allOptions,
   setExpandedCard,
   setSelectedEndorsementId,
   getEndorsementIcon,
   onRestoreEndorsement,
 }) {
+  const totalCount = allOptions?.length || 0;
+
   return (
     <div className="space-y-2">
       {showMissingSuggestions && missingEndorsements.map((item) => (
@@ -687,37 +783,60 @@ function QuoteModeCollapsedContent({
           </button>
         </div>
       ))}
-      {uniqueEndorsements.map((item) => (
-        <div key={item.id} className="flex items-center gap-2 text-sm">
-          {getEndorsementIcon(item)}
-          <button
-            onClick={() => {
-              setExpandedCard('endorsements');
-              setSelectedEndorsementId(item.id);
-            }}
-            className="text-gray-700 hover:text-purple-700 truncate flex-1 text-left"
-          >
-            {item.label}
-          </button>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600">
-            Only here
-          </span>
-        </div>
-      ))}
-      {alignedEndorsements.map((item) => (
-        <div key={item.id} className="flex items-center gap-2 text-sm">
-          {getEndorsementIcon(item)}
-          <button
-            onClick={() => {
-              setExpandedCard('endorsements');
-              setSelectedEndorsementId(item.id);
-            }}
-            className="text-gray-700 hover:text-purple-700 truncate flex-1 text-left"
-          >
-            {item.label}
-          </button>
-        </div>
-      ))}
+      {uniqueEndorsements.map((item) => {
+        const linkedCount = item.quoteIds?.length || 0;
+        const isAllLinked = linkedCount === totalCount && totalCount > 0;
+        return (
+          <div key={item.id} className="flex items-center gap-2 text-sm">
+            {getEndorsementIcon(item)}
+            <button
+              onClick={() => {
+                setExpandedCard('endorsements');
+                setSelectedEndorsementId(item.id);
+              }}
+              className="text-gray-700 hover:text-purple-700 truncate flex-1 text-left"
+            >
+              {item.label}
+            </button>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
+              isAllLinked
+                ? 'bg-green-50 text-green-700 border-green-200'
+                : linkedCount > 1
+                ? 'bg-blue-50 text-blue-600 border-blue-200'
+                : 'bg-purple-50 text-purple-600 border-purple-200'
+            }`}>
+              {isAllLinked ? 'All' : `${linkedCount}/${totalCount}`}
+            </span>
+          </div>
+        );
+      })}
+      {alignedEndorsements.map((item) => {
+        const linkedCount = item.quoteIds?.length || 0;
+        const isAllLinked = linkedCount === totalCount && totalCount > 0;
+        return (
+          <div key={item.id} className="flex items-center gap-2 text-sm">
+            {getEndorsementIcon(item)}
+            <button
+              onClick={() => {
+                setExpandedCard('endorsements');
+                setSelectedEndorsementId(item.id);
+              }}
+              className="text-gray-700 hover:text-purple-700 truncate flex-1 text-left"
+            >
+              {item.label}
+            </button>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
+              isAllLinked
+                ? 'bg-green-50 text-green-700 border-green-200'
+                : linkedCount > 1
+                ? 'bg-blue-50 text-blue-600 border-blue-200'
+                : 'bg-purple-50 text-purple-600 border-purple-200'
+            }`}>
+              {isAllLinked ? 'All' : `${linkedCount}/${totalCount}`}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

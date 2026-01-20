@@ -1614,27 +1614,29 @@ export default function SummaryTabContent({ structure, variation, submission, st
           const hasTechnical = technical > 0 && Math.abs(sold - technical) > 1;
           const diff = technical > 0 ? ((sold - technical) / technical) * 100 : 0;
           return (
-            <div className="bg-gray-50 rounded-lg px-4 py-3 border border-gray-200">
-              {hasTechnical ? (
-                <div className="flex items-end justify-between">
-                  <div className="text-left">
-                    <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Technical</div>
-                    <div className="text-base font-bold text-gray-800">{formatCurrency(technical)}</div>
+            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+              <div className="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200">
+                <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Premium</h3>
+              </div>
+              <div className="px-4 py-3">
+                {hasTechnical ? (
+                  <div className="flex items-end justify-between">
+                    <div className="text-left">
+                      <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Technical</div>
+                      <div className="text-sm font-semibold text-gray-800">{formatCurrency(technical)}</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Sold</div>
+                      <div className="text-sm font-semibold text-gray-800">{formatCurrency(sold)}</div>
+                    </div>
+                    <div className={`text-sm font-semibold text-right ${diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {diff >= 0 ? '+' : ''}{diff.toFixed(0)}%
+                    </div>
                   </div>
-                  <div className="text-center">
-                    <div className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Sold</div>
-                    <div className="text-base font-bold text-gray-800">{formatCurrency(sold)}</div>
-                  </div>
-                  <div className={`text-sm font-semibold text-right ${diff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {diff >= 0 ? '+' : ''}{diff.toFixed(0)}%
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center">
-                  <div className="text-[10px] text-gray-400 uppercase font-semibold mb-2">Premium</div>
-                  <div className="text-base font-bold text-gray-800">{formatCurrency(sold)}</div>
-                </div>
-              )}
+                ) : (
+                  <div className="text-sm font-semibold text-gray-800">{formatCurrency(sold)}</div>
+                )}
+              </div>
             </div>
           );
         })()}
@@ -1877,9 +1879,9 @@ export default function SummaryTabContent({ structure, variation, submission, st
 
       {/* Document History */}
       {documentHistory.length > 0 && (
-        <div className="mt-6 border border-gray-200 rounded-lg overflow-hidden">
-          <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex justify-between items-center">
-            <h3 className="text-xs font-bold text-gray-500 uppercase">Document History</h3>
+        <div className="mt-6 bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="h-9 px-4 flex items-center justify-between bg-gray-50 border-b border-gray-200">
+            <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide leading-none">Document History</h3>
             <span className="text-xs text-gray-400">{documentHistory.length} doc{documentHistory.length !== 1 ? 's' : ''}</span>
           </div>
           <div className="p-4">
