@@ -182,3 +182,76 @@ export function generateOptionName(quote) {
   const retention = tower[0]?.retention || 25000;
   return `${limitStr} x ${formatCompact(retention)}`;
 }
+
+/**
+ * Normalize retro schedule for comparison (JSON string)
+ */
+export function normalizeRetroSchedule(schedule) {
+  if (!schedule || schedule.length === 0) return '[]';
+  const normalized = schedule.map(entry => {
+    const obj = { coverage: entry.coverage, retro: entry.retro };
+    if (entry.retro === 'date' && entry.date) obj.date = entry.date;
+    if (entry.retro === 'custom' && entry.custom_text) obj.custom_text = entry.custom_text;
+    return obj;
+  }).sort((a, b) => (a.coverage || '').localeCompare(b.coverage || ''));
+  return JSON.stringify(normalized);
+}
+
+/**
+ * Format retro schedule as human-readable summary
+ */
+export function formatRetroSummary(schedule) {
+  if (!schedule || schedule.length === 0) return 'Full Prior Acts';
+
+  // Coverage abbreviations
+  const covAbbrev = {
+    cyber: 'Cyber',
+    tech_eo: 'Tech',
+    do: 'D&O',
+    epl: 'EPL',
+    fiduciary: 'Fid',
+  };
+
+  // Retro labels (no abbreviations - need to be readable)
+  const retroLabel = (entry) => {
+    if (entry.retro === 'full_prior_acts') return 'Full Prior Acts';
+    if (entry.retro === 'follow_form') return 'Follow Form';
+    if (entry.retro === 'inception') return 'Inception';
+    if (entry.retro === 'date') return entry.date || 'Date';
+    if (entry.retro === 'custom') return entry.custom_text || 'custom';
+    return entry.retro || '—';
+  };
+
+  // Check if all coverages have the same retro
+  const uniqueRetros = new Set(schedule.map(e => e.retro));
+  if (uniqueRetros.size === 1) {
+    const label = retroLabel(schedule[0]);
+    // Show coverages for context: "Cyber, Tech: Inception"
+    const coverageList = schedule.map(e => covAbbrev[e.coverage] || e.coverage).join(', ');
+    return `${coverageList}: ${label}`;
+  }
+
+  // Mixed - show each coverage with its retro on separate lines
+  return schedule
+    .map(entry => `${covAbbrev[entry.coverage] || entry.coverage}: ${retroLabel(entry)}`)
+    .join('\n');
+}
+
+/**
+ * Format comparison text for subjectivities/endorsements alignment display
+ */
+export function formatComparisonText(missing, extra) {
+  const missingCount = missing.length;
+  const extraCount = extra.length;
+
+  if (missingCount === 0 && extraCount === 0) {
+    return { text: 'Aligned', tone: 'text-gray-500' };
+  }
+  if (missingCount > 0 && extraCount === 0) {
+    return { text: `${missingCount} missing`, tone: 'text-amber-600' };
+  }
+  if (missingCount === 0 && extraCount > 0) {
+    return { text: `${extraCount} extra`, tone: 'text-purple-600' };
+  }
+  return { text: `Mixed +${extraCount}, −${missingCount}`, tone: 'text-amber-600' };
+}
