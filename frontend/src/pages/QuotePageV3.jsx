@@ -126,142 +126,65 @@ function SummaryTabContent({ structure, variation, submission, structureId, stru
   // Coverages card ref
   const coveragesCardRef = useRef(null);
 
-  // Click outside to close expanded retro card
+  // Consolidated click-outside and escape key handler for all expandable cards
   useEffect(() => {
-    if (expandedCard !== 'retro') return;
+    if (!expandedCard) return;
 
-    const handleClickOutside = (e) => {
-      if (retroCardRef.current && !retroCardRef.current.contains(e.target)) {
-        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
-        if (isPopoverClick) return;
-
-        // Trigger blur on active element to save any pending edit
-        if (document.activeElement && retroCardRef.current.contains(document.activeElement)) {
-          document.activeElement.blur();
-        }
-
-        setExpandedCard(null);
-      }
+    // Map card names to their refs
+    const cardRefs = {
+      retro: retroCardRef,
+      terms: termsCardRef,
+      commission: commissionCardRef,
+      tower: towerCardRef,
+      coverages: coveragesCardRef,
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [expandedCard]);
-
-  // Click outside to close expanded terms card
-  useEffect(() => {
-    if (expandedCard !== 'terms') return;
+    const currentRef = cardRefs[expandedCard];
+    if (!currentRef) return; // Card not in our managed set (e.g., subjectivities/endorsements use their own hook)
 
     const handleClickOutside = (e) => {
-      if (termsCardRef.current && !termsCardRef.current.contains(e.target)) {
-        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
-        if (isPopoverClick) return;
+      if (!currentRef.current || currentRef.current.contains(e.target)) return;
 
-        // Trigger blur on active element to save any pending edit
-        if (document.activeElement && termsCardRef.current.contains(document.activeElement)) {
-          document.activeElement.blur();
-        }
+      // Ignore clicks inside Radix popover portals
+      if (e.target.closest('[data-radix-popper-content-wrapper]')) return;
 
-        setExpandedCard(null);
+      // Trigger blur on active element to save any pending edit
+      if (document.activeElement && currentRef.current.contains(document.activeElement)) {
+        document.activeElement.blur();
       }
-    };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [expandedCard]);
-
-  // Click outside to close expanded commission card
-  useEffect(() => {
-    if (expandedCard !== 'commission') return;
-
-    const handleClickOutside = (e) => {
-      if (commissionCardRef.current && !commissionCardRef.current.contains(e.target)) {
-        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
-        if (isPopoverClick) return;
-
-        // Trigger blur on active element to save any pending edit
-        if (document.activeElement && commissionCardRef.current.contains(document.activeElement)) {
-          document.activeElement.blur();
-        }
-
-        setExpandedCard(null);
+      // Special handling for coverages card (excess quotes have save ref)
+      if (expandedCard === 'coverages' && excessCoverageSaveRef.current) {
+        excessCoverageSaveRef.current();
+        return; // onSave callback will close the card
       }
-    };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [expandedCard]);
-
-  // Click outside to close expanded tower card
-  useEffect(() => {
-    if (expandedCard !== 'tower') return;
-
-    const handleClickOutside = (e) => {
-      if (towerCardRef.current && !towerCardRef.current.contains(e.target)) {
-        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
-        if (isPopoverClick) return;
-
-        // Trigger blur on active element to save any pending edit
-        if (document.activeElement && towerCardRef.current.contains(document.activeElement)) {
-          document.activeElement.blur();
-        }
-
-        setExpandedCard(null);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [expandedCard]);
-
-  // Click outside to close expanded coverages card
-  // NOTE: For excess quotes, we call the save ref before closing to preserve draft data
-  useEffect(() => {
-    if (expandedCard !== 'coverages') return;
-
-    const handleClickOutside = (e) => {
-      if (coveragesCardRef.current && !coveragesCardRef.current.contains(e.target)) {
-        const isPopoverClick = e.target.closest('[data-radix-popper-content-wrapper]');
-        if (isPopoverClick) return;
-
-        // Trigger blur on active element to save any pending edit
-        if (document.activeElement && coveragesCardRef.current.contains(document.activeElement)) {
-          document.activeElement.blur();
-        }
-
-        // For excess quotes, trigger save before closing (the save callback will close the card)
-        if (excessCoverageSaveRef.current) {
-          excessCoverageSaveRef.current();
-          // Don't call setExpandedCard(null) here - the onSave callback will do it
-          return;
-        }
-
-        // For primary quotes (no save ref), just close
-        setExpandedCard(null);
+      // Close the card
+      setExpandedCard(null);
+      if (expandedCard === 'coverages') {
         setCachedIsExcess(null);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [expandedCard]);
-
-  // Escape key to close expanded retro card
-  useEffect(() => {
-    if (expandedCard !== 'retro') return;
-
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
         // Trigger blur on active element to save any pending edit
-        if (document.activeElement && retroCardRef.current?.contains(document.activeElement)) {
+        if (document.activeElement && currentRef.current?.contains(document.activeElement)) {
           document.activeElement.blur();
         }
         setExpandedCard(null);
+        if (expandedCard === 'coverages') {
+          setCachedIsExcess(null);
+        }
       }
     };
 
+    document.addEventListener('mousedown', handleClickOutside);
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
   }, [expandedCard]);
 
   const submissionId = submission?.id;
