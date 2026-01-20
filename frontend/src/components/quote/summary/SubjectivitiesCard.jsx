@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import * as HoverCard from '@radix-ui/react-hover-card';
 import { useCardExpand } from '../../../hooks/useEditMode';
+import AppliesToPopover from '../AppliesToPopover';
 
 /**
  * SubjectivitiesCard - Displays and manages subjectivities for a quote or submission
@@ -316,9 +317,6 @@ function SubmissionModeContent({
       <SubmissionModeExpandedView
         allSubmissionSubjectivities={allSubmissionSubjectivities}
         allOptions={allOptions}
-        allOptionIds={allOptionIds}
-        allPrimaryIds={allPrimaryIds}
-        allExcessIds={allExcessIds}
         editingSubjId={editingSubjId}
         setEditingSubjId={setEditingSubjId}
         editingSubjText={editingSubjText}
@@ -366,9 +364,6 @@ function SubmissionModeContent({
 function SubmissionModeExpandedView({
   allSubmissionSubjectivities,
   allOptions,
-  allOptionIds,
-  allPrimaryIds,
-  allExcessIds,
   editingSubjId,
   setEditingSubjId,
   editingSubjText,
@@ -400,9 +395,6 @@ function SubmissionModeExpandedView({
         const isEditing = editingSubjId === item.id;
         const mutationId = item.rawId || item.id;
         const linkedQuoteIds = item.quoteIds?.map(String) || [];
-        const linkedCount = linkedQuoteIds.length;
-        const totalCount = allOptions.length;
-        const isAllLinked = linkedCount === totalCount && totalCount > 0;
 
         return (
           <div
@@ -454,147 +446,15 @@ function SubmissionModeExpandedView({
               </button>
             )}
 
-            {/* Coverage badge with hover preview and popover */}
-            <HoverCard.Root
-              openDelay={300}
-              closeDelay={100}
-              open={subjectivityAppliesToPopoverId !== item.id ? undefined : false}
-            >
-              <HoverCard.Trigger asChild>
-                <span>
-                  <Popover.Root
-                    open={subjectivityAppliesToPopoverId === item.id}
-                    onOpenChange={(open) => setSubjectivityAppliesToPopoverId(open ? item.id : null)}
-                    modal={false}
-                  >
-                    <Popover.Trigger asChild>
-                      <button
-                        className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors flex-shrink-0 ${
-                          isAllLinked
-                            ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100'
-                            : linkedCount > 0
-                            ? 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
-                            : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
-                        }`}
-                      >
-                        {isAllLinked ? (
-                          `All ${totalCount} Options`
-                        ) : linkedCount === 0 ? (
-                          'No quotes'
-                        ) : (
-                          `${linkedCount}/${totalCount} Options`
-                        )}
-                      </button>
-                    </Popover.Trigger>
-                    <Popover.Portal>
-                      <Popover.Content
-                        className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
-                        sideOffset={4}
-                        align="end"
-                      >
-                        <div className="text-xs font-medium text-gray-500 mb-2 px-1">Applies To</div>
-                        {/* Quick select shortcuts */}
-                        {(() => {
-                          const linkedSet = new Set(linkedQuoteIds);
-                          const isAllSelected = allOptionIds.every(id => linkedSet.has(id));
-                          const isAllPrimarySelected = allPrimaryIds.length > 0 && allPrimaryIds.every(id => linkedSet.has(id));
-                          const isAllExcessSelected = allExcessIds.length > 0 && allExcessIds.every(id => linkedSet.has(id));
-                          return (
-                            <div className="space-y-1 mb-2 pb-2 border-b border-gray-100">
-                              <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-700 font-medium">
-                                <input
-                                  type="checkbox"
-                                  checked={isAllSelected}
-                                  onChange={() => {
-                                    onApplySelection(mutationId, linkedQuoteIds, isAllSelected ? [] : allOptionIds);
-                                  }}
-                                  className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
-                                />
-                                <span>All Options</span>
-                              </label>
-                              {allPrimaryIds.length > 0 && (
-                                <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
-                                  <input
-                                    type="checkbox"
-                                    checked={isAllPrimarySelected}
-                                    onChange={() => {
-                                      let newIds = isAllPrimarySelected
-                                        ? linkedQuoteIds.filter(id => !allPrimaryIds.includes(id))
-                                        : [...new Set([...linkedQuoteIds, ...allPrimaryIds])];
-                                      onApplySelection(mutationId, linkedQuoteIds, newIds);
-                                    }}
-                                    className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
-                                  />
-                                  <span>All Primary</span>
-                                </label>
-                              )}
-                              {allExcessIds.length > 0 && (
-                                <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600">
-                                  <input
-                                    type="checkbox"
-                                    checked={isAllExcessSelected}
-                                    onChange={() => {
-                                      let newIds = isAllExcessSelected
-                                        ? linkedQuoteIds.filter(id => !allExcessIds.includes(id))
-                                        : [...new Set([...linkedQuoteIds, ...allExcessIds])];
-                                      onApplySelection(mutationId, linkedQuoteIds, newIds);
-                                    }}
-                                    className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
-                                  />
-                                  <span>All Excess</span>
-                                </label>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        <div className="space-y-1 max-h-40 overflow-y-auto">
-                          {allOptions.map(opt => {
-                            const isLinked = linkedQuoteIds.includes(String(opt.id));
-                            return (
-                              <label
-                                key={opt.id}
-                                className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded text-gray-600"
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isLinked}
-                                  onChange={() => {
-                                    onToggleLink(mutationId, opt.id, isLinked);
-                                  }}
-                                  className="w-3.5 h-3.5 text-purple-600 rounded border-gray-300"
-                                />
-                                <span className="truncate">{opt.name}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </Popover.Content>
-                    </Popover.Portal>
-                  </Popover.Root>
-                </span>
-              </HoverCard.Trigger>
-              <HoverCard.Portal>
-                <HoverCard.Content
-                  className="z-[9999] w-56 rounded-lg border border-gray-200 bg-white shadow-xl p-2"
-                  sideOffset={4}
-                  align="end"
-                >
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-1 px-1">Applies To</div>
-                  <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                    {allOptions.filter(opt => linkedQuoteIds.includes(String(opt.id))).map(opt => (
-                      <div key={opt.id} className="text-xs text-gray-600 flex items-center gap-1.5 px-1 py-0.5">
-                        <span className="text-green-400">•</span>
-                        <span className="truncate">{opt.name}</span>
-                      </div>
-                    ))}
-                    {linkedQuoteIds.length === 0 && (
-                      <div className="text-xs text-gray-400 italic px-1">No quotes linked</div>
-                    )}
-                  </div>
-                  <HoverCard.Arrow className="fill-white" />
-                </HoverCard.Content>
-              </HoverCard.Portal>
-            </HoverCard.Root>
+            {/* Applies To badge with popover */}
+            <AppliesToPopover
+              linkedQuoteIds={linkedQuoteIds}
+              allOptions={allOptions}
+              onToggle={(quoteId, isLinked) => onToggleLink(mutationId, quoteId, isLinked)}
+              onApplySelection={(targetIds) => onApplySelection(mutationId, linkedQuoteIds, targetIds)}
+              isOpen={subjectivityAppliesToPopoverId === item.id}
+              onOpenChange={(open) => setSubjectivityAppliesToPopoverId(open ? item.id : null)}
+            />
 
             {/* Remove button */}
             <button
@@ -627,6 +487,8 @@ function SubmissionModeExpandedView({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && newSubjectivityText.trim()) {
                 onCreate(newSubjectivityText.trim());
+                setNewSubjectivityText('');
+                setIsAddingSubjectivity(false);
               }
               if (e.key === 'Escape') {
                 setIsAddingSubjectivity(false);
@@ -641,6 +503,8 @@ function SubmissionModeExpandedView({
             onClick={() => {
               if (newSubjectivityText.trim()) {
                 onCreate(newSubjectivityText.trim());
+                setNewSubjectivityText('');
+                setIsAddingSubjectivity(false);
               }
             }}
             disabled={!newSubjectivityText.trim()}
@@ -700,7 +564,11 @@ function SubmissionModeExpandedView({
                       {filteredTemplates.slice(0, 10).map(template => (
                         <button
                           key={template.id}
-                          onClick={() => onLinkFromLibrary(template.id)}
+                          onClick={() => {
+                            onLinkFromLibrary(template.id);
+                            handleLibraryPickerOpenChange(false); // Close picker after selection
+                            setLibrarySearchTerm(''); // Clear search
+                          }}
                           className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-purple-50 text-gray-700 hover:text-purple-700 truncate"
                         >
                           {template.text || template.subjectivity_text}
@@ -1166,6 +1034,8 @@ function QuoteModeExpandedContent({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && newSubjectivityText.trim()) {
                 onCreate(newSubjectivityText.trim());
+                setNewSubjectivityText('');
+                setIsAddingSubjectivity(false);
               }
               if (e.key === 'Escape') {
                 setIsAddingSubjectivity(false);
@@ -1180,6 +1050,8 @@ function QuoteModeExpandedContent({
             onClick={() => {
               if (newSubjectivityText.trim()) {
                 onCreate(newSubjectivityText.trim());
+                setNewSubjectivityText('');
+                setIsAddingSubjectivity(false);
               }
             }}
             disabled={!newSubjectivityText.trim()}
@@ -1240,7 +1112,11 @@ function QuoteModeExpandedContent({
                       {filteredTemplates.slice(0, 10).map(template => (
                         <button
                           key={template.id}
-                          onClick={() => onLinkFromLibrary(template.id)}
+                          onClick={() => {
+                            onLinkFromLibrary(template.id);
+                            handleLibraryPickerOpenChange(false); // Close picker after selection
+                            setLibrarySearchTerm(''); // Clear search
+                          }}
                           className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-purple-50 text-gray-700 hover:text-purple-700 truncate"
                         >
                           {template.text || template.subjectivity_text}
