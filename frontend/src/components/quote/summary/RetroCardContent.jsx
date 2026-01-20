@@ -901,7 +901,7 @@ function AddNewRetroSection({
                 <span className="font-medium text-gray-700">All Options</span>
               </label>
               {allQuoteRetros.map(qr => {
-                const schedule = qr.schedule || [];
+                const schedule = qr.retroSchedule || [];
                 const uniqueRetros = new Set(schedule.map(e => e.retro));
                 const retroLabel = schedule.length === 0 ? 'Full Prior' :
                   uniqueRetros.size === 1 ? Array.from(uniqueRetros)[0] : 'Mixed';

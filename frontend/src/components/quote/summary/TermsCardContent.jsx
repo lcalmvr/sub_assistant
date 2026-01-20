@@ -724,7 +724,7 @@ function AddNewTermSection({
                   />
                   <span className="truncate">{qt.quoteName}</span>
                   <span className="text-gray-400 ml-auto text-[10px]">
-                    {qt.datesTbd ? 'TBD' : qt.effectiveDate ? new Date(qt.effectiveDate).toLocaleDateString() : '—'}
+                    {qt.datesTbd ? 'TBD' : qt.effDate ? new Date(qt.effDate).toLocaleDateString() : '—'}
                   </span>
                 </label>
               ))}
