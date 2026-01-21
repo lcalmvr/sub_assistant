@@ -237,14 +237,10 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
     const basisForUI = currentBasis === PREMIUM_BASIS.ANNUAL
       ? PREMIUM_BASIS.PRO_RATA
       : (currentBasis === PREMIUM_BASIS.MINIMUM ? PREMIUM_BASIS.FLAT : currentBasis);
-    if (basisForUI === PREMIUM_BASIS.PRO_RATA) {
-      return;
-    }
+
     const draft = termDrafts[actualIdx] || {};
     const rawStart = String(draft.start ?? layer.term_start ?? '').trim();
-    const rawEnd = String(draft.end ?? layer.term_end ?? '').trim();
     const hasStart = rawStart.length > 0;
-    const hasEnd = rawEnd.length > 0;
 
     const setError = (message) => {
       setTermErrors(prev => ({ ...prev, [actualIdx]: message }));
@@ -256,7 +252,8 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
       });
     };
 
-    if (!hasStart && !hasEnd) {
+    // If no start date, use inherited term
+    if (!hasStart) {
       const newLayers = [...layers];
       const nextLayer = { ...layer, term_start: null, term_end: null };
       nextLayer.actual_premium = basisForUI === PREMIUM_BASIS.FLAT
@@ -277,28 +274,23 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
       return;
     }
 
-    if (hasStart !== hasEnd) {
-      setError('Enter both effective and expiration dates.');
-      return;
-    }
-
     const normalizedStart = normalizeDateInput(rawStart);
-    const normalizedEnd = normalizeDateInput(rawEnd);
-    if (!normalizedStart || !normalizedEnd) {
+    if (!normalizedStart) {
       setError('Use YYYY-MM-DD or MM/DD/YYYY.');
       return;
     }
 
+    // Always use structure's expiration date
+    const resolvedEnd = structureTerm.end;
     const startDate = new Date(`${normalizedStart}T00:00:00`);
-    const endDate = new Date(`${normalizedEnd}T00:00:00`);
+    const endDate = new Date(`${resolvedEnd}T00:00:00`);
     if (startDate > endDate) {
-      setError('Expiration must be after effective date.');
+      setError('Effective must be before policy expiration.');
       return;
     }
 
-    const isInherited = normalizedStart === structureTerm.start && normalizedEnd === structureTerm.end;
-    const resolvedStart = normalizedStart || structureTerm.start;
-    const resolvedEnd = normalizedEnd || structureTerm.end;
+    const isInherited = normalizedStart === structureTerm.start;
+    const resolvedStart = normalizedStart;
     const newProRata = getProRataFactor(resolvedStart, resolvedEnd);
     const annual = getAnnualPremium(layer);
     let newBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
@@ -319,14 +311,14 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
     newLayers[actualIdx] = {
       ...layer,
       term_start: isInherited ? null : normalizedStart,
-      term_end: isInherited ? null : normalizedEnd,
+      term_end: null, // Always use inherited expiration
       actual_premium: newActual,
       premium_basis: newBasis,
     };
     setLayers(newLayers);
     setTermDrafts(prev => ({
       ...prev,
-      [actualIdx]: isInherited ? { start: '', end: '' } : { start: normalizedStart, end: normalizedEnd },
+      [actualIdx]: isInherited ? { start: '' } : { start: normalizedStart },
     }));
     clearError();
   }, [layers, structureTerm.end, structureTerm.start, termDrafts]);
@@ -415,7 +407,7 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
       )}
 
       {/* Table */}
-      <div className={embedded ? '' : 'overflow-x-auto rounded-lg border border-gray-100 mx-4 mb-4'}>
+      <div className={embedded ? 'overflow-x-auto' : 'overflow-x-auto rounded-lg border border-gray-100 mx-4 mb-4'}>
         <table className="w-full min-w-max text-sm">
           <thead className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
             <tr>
@@ -425,10 +417,11 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
               <th className="px-4 py-2.5 text-left font-semibold">{quote.position === 'primary' ? 'Retention' : 'Attach'}</th>
               {showTermOverrides && (
                 <>
-                  <th className="px-4 py-2.5 text-center font-semibold">Term</th>
+                  <th className="px-4 py-2.5 text-center font-semibold">Eff. Date</th>
                   <th className="px-4 py-2.5 text-right font-semibold">Annual</th>
                   <th className="px-4 py-2.5 text-right font-semibold">Pro-rata</th>
                   <th className="px-4 py-2.5 text-right font-semibold">Charged</th>
+                  <th className="px-4 py-2.5 text-center font-semibold">Basis</th>
                 </>
               )}
               {!showTermOverrides && (
@@ -463,14 +456,7 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                 ? PREMIUM_BASIS.PRO_RATA
                 : (premiumBasis === PREMIUM_BASIS.MINIMUM ? PREMIUM_BASIS.FLAT : premiumBasis);
               const termDraft = termDrafts[actualIdx] || {};
-              const termStartValue = (basisForUI === PREMIUM_BASIS.PRO_RATA
-                ? structureTerm.start
-                : (termDraft.start ?? (layer.term_start || structureTerm.start))
-              ) || '';
-              const termEndValue = (basisForUI === PREMIUM_BASIS.PRO_RATA
-                ? structureTerm.end
-                : (termDraft.end ?? (layer.term_end || structureTerm.end))
-              ) || '';
+              const termStartValue = (termDraft.start ?? (layer.term_start || structureTerm.start)) || '';
               const termError = termErrors[actualIdx];
               const termInputClass = `w-28 text-xs text-gray-700 bg-white border rounded px-2 py-1 text-center outline-none disabled:bg-gray-50 disabled:text-gray-400 disabled:border-gray-100 ${
                 termError ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-purple-500'
@@ -596,151 +582,57 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
 
                   {showTermOverrides && (
                     <>
+                      {/* Effective Date */}
                       <td className="px-4 py-1.5 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <select
-                            className="text-xs text-gray-600 bg-white border border-gray-200 rounded px-2 py-1 focus:border-purple-500 outline-none cursor-pointer"
-                            value={basisForUI}
+                        <div className="flex flex-col items-center">
+                          <input
+                            type="date"
+                            data-term-idx={actualIdx}
+                            data-term-field="start"
+                            value={termStartValue}
+                            placeholder={structureTerm.start || 'YYYY-MM-DD'}
+                            className={termInputClass}
+                            title={termError || ''}
+                            aria-invalid={Boolean(termError)}
+                            disabled={!termColumnEnabled}
                             onChange={(e) => {
-                              const newBasis = e.target.value;
-                              const newLayers = [...layers];
-                              const nextLayer = { ...layer, premium_basis: newBasis };
-                              if (newBasis === PREMIUM_BASIS.PRO_RATA) {
-                                nextLayer.term_start = null;
-                                nextLayer.term_end = null;
-                                setTermDrafts(prev => {
-                                  const { [actualIdx]: _removed, ...rest } = prev;
-                                  return rest;
-                                });
-                              }
-                              const termStart = newBasis === PREMIUM_BASIS.PRO_RATA
-                                ? (structureTerm.start || effectiveStart)
-                                : effectiveStart;
-                              const termEnd = newBasis === PREMIUM_BASIS.PRO_RATA
-                                ? (structureTerm.end || effectiveEnd)
-                                : effectiveEnd;
-                              if (newBasis === PREMIUM_BASIS.FLAT) {
-                                if (!nextLayer.actual_premium) {
-                                  nextLayer.actual_premium = proRataValue || annualPremium || null;
-                                }
-                                nextLayer.flat_premium = nextLayer.actual_premium;
-                              } else {
-                                nextLayer.actual_premium = calculateActualPremium({
-                                  annualPremium,
-                                  termStart,
-                                  termEnd,
-                                  premiumBasis: PREMIUM_BASIS.PRO_RATA,
-                                });
-                              }
-                              newLayers[actualIdx] = nextLayer;
-                              setLayers(newLayers);
+                              const value = e.target.value;
+                              setTermDrafts(prev => ({
+                                ...prev,
+                                [actualIdx]: { ...prev[actualIdx], start: value },
+                              }));
+                              setTermErrors(prev => {
+                                const { [actualIdx]: _removed, ...rest } = prev;
+                                return rest;
+                              });
                             }}
-                          >
-                            <option value={PREMIUM_BASIS.PRO_RATA}>Pro-rata</option>
-                            <option value={PREMIUM_BASIS.FLAT}>Flat</option>
-                          </select>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="date"
-                              data-term-idx={actualIdx}
-                              data-term-field="start"
-                              value={termStartValue}
-                              placeholder={structureTerm.start || 'YYYY-MM-DD'}
-                              className={termInputClass}
-                              title={termError || ''}
-                              aria-invalid={Boolean(termError)}
-                              disabled={basisForUI === PREMIUM_BASIS.PRO_RATA}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                setTermDrafts(prev => ({
+                            onFocus={() => {
+                              if (!termColumnEnabled) return;
+                              setTermDrafts(prev => {
+                                const current = prev[actualIdx] || {};
+                                if (current.start) return prev;
+                                return {
                                   ...prev,
-                                  [actualIdx]: { ...prev[actualIdx], start: value },
-                                }));
-                                setTermErrors(prev => {
-                                  const { [actualIdx]: _removed, ...rest } = prev;
-                                  return rest;
-                                });
-                              }}
-                              onFocus={() => {
-                                if (basisForUI !== PREMIUM_BASIS.FLAT) return;
-                                setTermDrafts(prev => {
-                                  const current = prev[actualIdx] || {};
-                                  if (current.start || current.end) return prev;
-                                  return {
-                                    ...prev,
-                                    [actualIdx]: {
-                                      start: layer.term_start || structureTerm.start || '',
-                                      end: layer.term_end || structureTerm.end || '',
-                                    },
-                                  };
-                                });
-                              }}
-                              onBlur={(e) => {
-                                const next = e.relatedTarget;
-                                if (next && next.dataset && next.dataset.termIdx === String(actualIdx)) return;
+                                  [actualIdx]: {
+                                    start: layer.term_start || structureTerm.start || '',
+                                  },
+                                };
+                              });
+                            }}
+                            onBlur={() => applyTermDraft(actualIdx, layer)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
                                 applyTermDraft(actualIdx, layer);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  applyTermDraft(actualIdx, layer);
-                                }
-                              }}
-                            />
-                            <span className="text-gray-300">–</span>
-                            <input
-                              type="date"
-                              data-term-idx={actualIdx}
-                              data-term-field="end"
-                              value={termEndValue}
-                              placeholder={structureTerm.end || 'YYYY-MM-DD'}
-                              className={termInputClass}
-                              title={termError || ''}
-                              aria-invalid={Boolean(termError)}
-                              disabled={basisForUI === PREMIUM_BASIS.PRO_RATA}
-                              onChange={(e) => {
-                                const value = e.target.value;
-                                setTermDrafts(prev => ({
-                                  ...prev,
-                                  [actualIdx]: { ...prev[actualIdx], end: value },
-                                }));
-                                setTermErrors(prev => {
-                                  const { [actualIdx]: _removed, ...rest } = prev;
-                                  return rest;
-                                });
-                              }}
-                              onFocus={() => {
-                                if (basisForUI !== PREMIUM_BASIS.FLAT) return;
-                                setTermDrafts(prev => {
-                                  const current = prev[actualIdx] || {};
-                                  if (current.start || current.end) return prev;
-                                  return {
-                                    ...prev,
-                                    [actualIdx]: {
-                                      start: layer.term_start || structureTerm.start || '',
-                                      end: layer.term_end || structureTerm.end || '',
-                                    },
-                                  };
-                                });
-                              }}
-                              onBlur={(e) => {
-                                const next = e.relatedTarget;
-                                if (next && next.dataset && next.dataset.termIdx === String(actualIdx)) return;
-                                applyTermDraft(actualIdx, layer);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  applyTermDraft(actualIdx, layer);
-                                }
-                              }}
-                            />
-                          </div>
+                              }
+                            }}
+                          />
+                          {termError && (
+                            <div className="text-[10px] text-red-500 mt-1">{termError}</div>
+                          )}
                         </div>
-                        {termError && (
-                          <div className="text-[10px] text-red-500 mt-1">{termError}</div>
-                        )}
                       </td>
+                      {/* Annual */}
                       <td className={`px-4 text-right ${isEditing ? 'py-1.5' : 'py-3'}`}>
                         {isEditing ? (
                           <input
@@ -778,11 +670,13 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                           </span>
                         )}
                       </td>
+                      {/* Pro-rata */}
                       <td className="px-4 py-1.5 text-right">
                         <span className="text-xs text-gray-600">
                           {proRataValue ? formatCurrency(proRataValue) : '—'}
                         </span>
                       </td>
+                      {/* Charged */}
                       <td className="px-4 py-1.5 text-right">
                         {basisForUI === PREMIUM_BASIS.FLAT ? (
                           <input
@@ -810,6 +704,50 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                             {proRataValue ? formatCurrency(proRataValue) : '—'}
                           </span>
                         )}
+                      </td>
+                      {/* Basis */}
+                      <td className="px-4 py-1.5 text-center">
+                        <select
+                          className="text-xs text-gray-600 bg-white border border-gray-200 rounded px-2 py-1 focus:border-purple-500 outline-none cursor-pointer"
+                          value={basisForUI}
+                          onChange={(e) => {
+                            const newBasis = e.target.value;
+                            const newLayers = [...layers];
+                            const nextLayer = { ...layer, premium_basis: newBasis };
+                            if (newBasis === PREMIUM_BASIS.PRO_RATA) {
+                              nextLayer.term_start = null;
+                              nextLayer.term_end = null;
+                              setTermDrafts(prev => {
+                                const { [actualIdx]: _removed, ...rest } = prev;
+                                return rest;
+                              });
+                            }
+                            const termStart = newBasis === PREMIUM_BASIS.PRO_RATA
+                              ? (structureTerm.start || effectiveStart)
+                              : effectiveStart;
+                            const termEnd = newBasis === PREMIUM_BASIS.PRO_RATA
+                              ? (structureTerm.end || effectiveEnd)
+                              : effectiveEnd;
+                            if (newBasis === PREMIUM_BASIS.FLAT) {
+                              if (!nextLayer.actual_premium) {
+                                nextLayer.actual_premium = proRataValue || annualPremium || null;
+                              }
+                              nextLayer.flat_premium = nextLayer.actual_premium;
+                            } else {
+                              nextLayer.actual_premium = calculateActualPremium({
+                                annualPremium,
+                                termStart,
+                                termEnd,
+                                premiumBasis: PREMIUM_BASIS.PRO_RATA,
+                              });
+                            }
+                            newLayers[actualIdx] = nextLayer;
+                            setLayers(newLayers);
+                          }}
+                        >
+                          <option value={PREMIUM_BASIS.PRO_RATA}>Pro-rata</option>
+                          <option value={PREMIUM_BASIS.FLAT}>Flat</option>
+                        </select>
                       </td>
                     </>
                   )}
