@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { formatCurrency, formatCompact, calculateAttachment } from '../../../utils/quoteUtils';
 import { getAnnualPremium } from '../../../utils/premiumUtils';
 import TowerEditor from '../../quote/TowerEditor';
@@ -23,6 +24,7 @@ export default function TowerCard({
   onUpdateOption,
   structureId,
 }) {
+  const towerSaveRef = useRef(null);
   // Determine if excess by checking structure.position OR if any layer has attachment > 0
   const structureIsExcess = structure?.position === 'excess';
   const hasStoredAttachments = tower.some(l => (l.attachment || 0) > 0);
@@ -150,13 +152,24 @@ export default function TowerCard({
             </div>
             {isEditingTower ? (
               <button
-                onClick={(e) => { e.stopPropagation(); setExpandedCard(null); }}
+                data-tower-editor-ignore
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (towerSaveRef.current) {
+                    towerSaveRef.current();
+                  } else {
+                    setExpandedCard(null);
+                  }
+                }}
                 className="text-xs text-purple-600 hover:text-purple-800 font-medium"
               >
                 Done
               </button>
             ) : (
               <button
+                data-tower-editor-ignore
+                onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); setExpandedCard('tower'); }}
                 className="text-xs text-purple-600 hover:text-purple-800 font-medium"
               >
@@ -177,6 +190,7 @@ export default function TowerCard({
               }}
               isPending={false}
               embedded={true}
+              saveRef={towerSaveRef}
             />
           </div>
         ) : (
