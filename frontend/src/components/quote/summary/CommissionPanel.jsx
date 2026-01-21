@@ -3,6 +3,7 @@ import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
 import { updateVariation, updateQuoteOption } from '../../../api/client';
 import { formatCurrency } from '../../../utils/quoteUtils';
 import { calculateNetOutPremium, calculateCommissionAmount, calculateNetToCarrier } from '../../../utils/commissionUtils';
+import { getActualPremium, serializeTower, PREMIUM_BASIS } from '../../../utils/premiumUtils';
 import CommissionEditor from '../../CommissionEditor';
 import NetOutEditor from '../../NetOutEditor';
 
@@ -17,10 +18,10 @@ export default function CommissionPanel({ structure, variation, submissionId }) 
   const [netOutTo, setNetOutTo] = useState('');
   const [netOutApplied, setNetOutApplied] = useState(null); // { originalPremium, originalCommission, newPremium, newCommission, originalTower }
 
-  // Get premium from CMAI layer
+  // Get premium from CMAI layer (use actual for commission calculations)
   const tower = structure?.tower_json || [];
   const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-  const grossPremium = cmaiLayer?.premium || 0;
+  const grossPremium = cmaiLayer ? getActualPremium(cmaiLayer) : 0;
 
   useEffect(() => {
     if (variation) {
@@ -66,17 +67,22 @@ export default function CommissionPanel({ structure, variation, submissionId }) 
       newCommission: netOutNum,
     });
 
-    // Build updated tower with new premium
+    // Build updated tower with new premium (update both annual and actual)
     const currentTower = structure?.tower_json || [];
     const updatedTower = currentTower.map(layer => {
       if (layer.carrier?.toUpperCase().includes('CMAI')) {
-        return { ...layer, premium: newGross };
+        return {
+          ...layer,
+          annual_premium: newGross,
+          actual_premium: newGross,
+          premium_basis: PREMIUM_BASIS.ANNUAL,
+        };
       }
       return layer;
     });
 
     // Update tower and commission sequentially to avoid race conditions
-    await updateTowerMutation.mutateAsync({ tower_json: updatedTower });
+    await updateTowerMutation.mutateAsync({ tower_json: serializeTower(updatedTower) });
     await updateCommissionMutation.mutateAsync({ commission_override: netOutNum });
 
     // Clear the net out input
@@ -90,13 +96,18 @@ export default function CommissionPanel({ structure, variation, submissionId }) 
     const currentTower = structure?.tower_json || [];
     const restoredTower = currentTower.map(layer => {
       if (layer.carrier?.toUpperCase().includes('CMAI')) {
-        return { ...layer, premium: netOutApplied.originalPremium };
+        return {
+          ...layer,
+          annual_premium: netOutApplied.originalPremium,
+          actual_premium: netOutApplied.originalPremium,
+          premium_basis: PREMIUM_BASIS.ANNUAL,
+        };
       }
       return layer;
     });
 
     // Restore tower and commission sequentially
-    await updateTowerMutation.mutateAsync({ tower_json: restoredTower });
+    await updateTowerMutation.mutateAsync({ tower_json: serializeTower(restoredTower) });
     await updateCommissionMutation.mutateAsync({ commission_override: netOutApplied.originalCommission });
 
     // Clear the applied state

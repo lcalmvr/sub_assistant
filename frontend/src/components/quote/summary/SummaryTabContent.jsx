@@ -33,6 +33,11 @@ import {
   formatRetroSummary,
   formatComparisonText,
 } from '../../../utils/quoteUtils';
+import {
+  getAnnualPremium,
+  serializeTower,
+  PREMIUM_BASIS,
+} from '../../../utils/premiumUtils';
 import EndorsementsCard from './EndorsementsCard';
 import SubjectivitiesCard from './SubjectivitiesCard';
 import NotesCard from './NotesCard';
@@ -200,7 +205,8 @@ export default function SummaryTabContent({ structure, variation, submission, st
     (structures || []).forEach(struct => {
       const tower = struct.tower_json || [];
       const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-      initialDraft[struct.id] = cmaiLayer?.premium || 0;
+      // Use getAnnualPremium for the draft value
+      initialDraft[struct.id] = cmaiLayer ? getAnnualPremium(cmaiLayer) : 0;
     });
     setPremiumDraft(initialDraft);
     setIsEditingPremiums(true);
@@ -223,15 +229,22 @@ export default function SummaryTabContent({ structure, variation, submission, st
 
       const tower = struct.tower_json || [];
       const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-      const currentPremium = cmaiLayer?.premium || 0;
+      const currentPremium = cmaiLayer ? getAnnualPremium(cmaiLayer) : 0;
 
       if (newPremium !== currentPremium) {
         const newTower = [...tower];
         const cmaiIdx = newTower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
         if (cmaiIdx >= 0) {
-          newTower[cmaiIdx] = { ...newTower[cmaiIdx], premium: newPremium };
+          // Update with proper premium model fields
+          newTower[cmaiIdx] = {
+            ...newTower[cmaiIdx],
+            annual_premium: newPremium,
+            actual_premium: newPremium,
+            premium_basis: PREMIUM_BASIS.ANNUAL,
+          };
           if (onUpdateOption) {
-            onUpdateOption(struct.id, { tower_json: newTower });
+            // Serialize to ensure legacy premium field stays in sync
+            onUpdateOption(struct.id, { tower_json: serializeTower(newTower) });
           }
         }
       }
@@ -1105,8 +1118,8 @@ export default function SummaryTabContent({ structure, variation, submission, st
   const tower = structure?.tower_json || [];
   const cmaiLayer = tower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
   const ourLimit = cmaiLayer?.limit || tower[0]?.limit || 0;
-  // For bound quotes, use sold_premium; otherwise use tower premium
-  const premium = structure?.sold_premium || cmaiLayer?.premium || 0;
+  // For bound quotes, use sold_premium; otherwise use annual premium from tower
+  const premium = structure?.sold_premium || (cmaiLayer ? getAnnualPremium(cmaiLayer) : 0);
   const commission = variation?.commission_override ?? 15;
 
   // For excess quotes: calculate attachment
@@ -1345,8 +1358,8 @@ export default function SummaryTabContent({ structure, variation, submission, st
                 {allOptions.map((opt, idx) => {
                   const struct = structures?.find(s => String(s.id) === String(opt.id));
                   const optTower = struct?.tower_json || [];
-                  const cmaiLayer = optTower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
-                  const optPremium = struct?.sold_premium || cmaiLayer?.premium || 0;
+                  const optCmaiLayer = optTower.find(l => l.carrier?.toUpperCase().includes('CMAI'));
+                  const optPremium = struct?.sold_premium || (optCmaiLayer ? getAnnualPremium(optCmaiLayer) : 0);
                   const draftPremium = premiumDraft[opt.id] ?? optPremium;
                   const optStatus = struct?.is_bound ? 'bound' : (struct?.status || 'draft');
                   const isExcess = getStructurePosition(struct) === 'excess';

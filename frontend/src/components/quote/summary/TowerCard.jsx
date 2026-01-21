@@ -1,4 +1,5 @@
 import { formatCurrency, formatCompact, calculateAttachment } from '../../../utils/quoteUtils';
+import { getAnnualPremium } from '../../../utils/premiumUtils';
 import TowerEditor from '../../quote/TowerEditor';
 
 /**
@@ -196,11 +197,13 @@ export default function TowerCard({
                 .filter(layer => !showOnlyOurLayer || layer.carrier?.toUpperCase().includes('CMAI'))
                 .map((layer, idx) => {
                 const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
-                // For CMAI, fall back to structure.sold_premium for bound quotes
-                const layerPremium = isCMAI ? (layer.premium || structure?.sold_premium || 0) : (layer.premium || 0);
+                // For CMAI, fall back to structure.sold_premium for bound quotes; use annual for display
+                const layerPremium = isCMAI
+                  ? (structure?.sold_premium || getAnnualPremium(layer))
+                  : getAnnualPremium(layer);
                 const layerRpm = layer.limit ? Math.round(layerPremium / (layer.limit / 1_000_000)) : null;
-                // For ILF, use CMAI premium as base
-                const basePremium = cmaiLayer?.premium || tower[0]?.premium || 1;
+                // For ILF, use CMAI annual premium as base (annual-to-annual comparison)
+                const basePremium = cmaiLayer ? getAnnualPremium(cmaiLayer) : (tower[0] ? getAnnualPremium(tower[0]) : 1);
                 const ilf = basePremium > 0 ? Math.round((layerPremium / basePremium) * 100) : null;
 
                 return (
