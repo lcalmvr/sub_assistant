@@ -63,11 +63,15 @@ export function serializeLayer(layer) {
   };
 
   // Only include term if custom (save space, cleaner data)
-  if (layer.term_start && layer.term_end) {
+  // Note: term_start can be set alone (term_end inherits from policy)
+  if (layer.term_start) {
     serialized.term_start = layer.term_start;
-    serialized.term_end = layer.term_end;
   } else {
     delete serialized.term_start;
+  }
+  if (layer.term_end) {
+    serialized.term_end = layer.term_end;
+  } else {
     delete serialized.term_end;
   }
 
@@ -151,9 +155,84 @@ export function getEffectiveTerm(layer, structure, submission) {
 
 /**
  * Check if a layer has a custom term (different from inherited).
+ * Note: Only checks term_start since term_end always inherits from policy.
  */
 export function hasCustomTerm(layer) {
-  return !!(layer?.term_start && layer?.term_end);
+  return !!layer?.term_start;
+}
+
+/**
+ * Get inherited effective date for a layer in a tower.
+ * Layers inherit from the layer below (lower attachment) unless they have their own term_start.
+ *
+ * @param {Array} tower - Tower array sorted by attachment (index 0 = lowest/primary)
+ * @param {number} layerIndex - Index of the layer in the tower
+ * @param {string} policyEffective - Default effective date from policy/structure
+ * @returns {{ date: string|null, inherited: boolean, sourceIndex: number|null }}
+ */
+export function getInheritedEffectiveDate(tower, layerIndex, policyEffective) {
+  if (!tower || layerIndex < 0 || layerIndex >= tower.length) {
+    return { date: policyEffective, inherited: true, sourceIndex: null };
+  }
+
+  const layer = tower[layerIndex];
+
+  // If this layer has its own term_start, use it
+  if (layer?.term_start) {
+    return { date: layer.term_start, inherited: false, sourceIndex: layerIndex };
+  }
+
+  // Walk down to lower layers (lower indices = lower attachment) to find inherited date
+  for (let i = layerIndex - 1; i >= 0; i--) {
+    if (tower[i]?.term_start) {
+      return { date: tower[i].term_start, inherited: true, sourceIndex: i };
+    }
+  }
+
+  // No layer below has a term_start, use policy effective
+  return { date: policyEffective, inherited: true, sourceIndex: null };
+}
+
+/**
+ * Group tower layers into blocks by their effective date.
+ * Returns array of { startIndex, endIndex, effectiveDate, isExplicit }
+ *
+ * @param {Array} tower - Tower array sorted by attachment (index 0 = lowest/primary)
+ * @param {string} policyEffective - Default effective date from policy/structure
+ */
+export function getTowerDateBlocks(tower, policyEffective) {
+  if (!tower || tower.length === 0) return [];
+
+  const blocks = [];
+  let currentBlockStart = 0;
+  let currentDate = tower[0]?.term_start || policyEffective;
+  let currentIsExplicit = !!tower[0]?.term_start;
+
+  for (let i = 1; i < tower.length; i++) {
+    const layer = tower[i];
+    if (layer?.term_start) {
+      // This layer starts a new block
+      blocks.push({
+        startIndex: currentBlockStart,
+        endIndex: i - 1,
+        effectiveDate: currentDate,
+        isExplicit: currentIsExplicit,
+      });
+      currentBlockStart = i;
+      currentDate = layer.term_start;
+      currentIsExplicit = true;
+    }
+  }
+
+  // Push the last block
+  blocks.push({
+    startIndex: currentBlockStart,
+    endIndex: tower.length - 1,
+    effectiveDate: currentDate,
+    isExplicit: currentIsExplicit,
+  });
+
+  return blocks;
 }
 
 /**

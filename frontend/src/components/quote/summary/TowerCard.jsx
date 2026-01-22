@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { formatCurrency, formatCompact, calculateAttachment } from '../../../utils/quoteUtils';
-import { getAnnualPremium } from '../../../utils/premiumUtils';
+import { getAnnualPremium, getActualPremium } from '../../../utils/premiumUtils';
 import TowerEditor from '../../quote/TowerEditor';
 
 /**
@@ -147,8 +147,26 @@ export default function TowerCard({
           </div>
           <div className="flex items-center gap-4">
             <div className="text-sm">
-              <span className="text-gray-500">Our Premium: </span>
-              <span className="text-green-600 font-semibold">{formatCurrency(premium)}</span>
+              {(() => {
+                const annualPremium = cmaiLayer ? getAnnualPremium(cmaiLayer) : premium;
+                const chargedPremium = cmaiLayer ? getActualPremium(cmaiLayer) : premium;
+                const showBoth = annualPremium && chargedPremium && Math.abs(annualPremium - chargedPremium) > 0.01;
+                console.log('[TowerCard Header] cmaiLayer=', cmaiLayer, 'annual=', annualPremium, 'charged=', chargedPremium, 'showBoth=', showBoth);
+                return showBoth ? (
+                  <>
+                    <span className="text-gray-500">Term: </span>
+                    <span className="text-green-600 font-semibold">{formatCurrency(chargedPremium)}</span>
+                    <span className="text-gray-400 mx-1">|</span>
+                    <span className="text-gray-500">Annual: </span>
+                    <span className="text-gray-600 font-medium">{formatCurrency(annualPremium)}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-gray-500">Our Premium: </span>
+                    <span className="text-green-600 font-semibold">{formatCurrency(annualPremium || premium)}</span>
+                  </>
+                );
+              })()}
             </div>
             {isEditingTower ? (
               <button
@@ -156,6 +174,7 @@ export default function TowerCard({
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
+                  console.log('[TowerCard] Done clicked, towerSaveRef.current=', towerSaveRef.current);
                   if (towerSaveRef.current) {
                     towerSaveRef.current();
                   } else {
@@ -211,10 +230,12 @@ export default function TowerCard({
                 .filter(layer => !showOnlyOurLayer || layer.carrier?.toUpperCase().includes('CMAI'))
                 .map((layer, idx) => {
                 const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
-                // For CMAI, fall back to structure.sold_premium for bound quotes; use annual for display
+                // For CMAI, get both annual and term (actual) premiums
+                const annualPremium = getAnnualPremium(layer);
+                const termPremium = isCMAI ? getActualPremium(layer) : null;
                 const layerPremium = isCMAI
-                  ? (structure?.sold_premium || getAnnualPremium(layer))
-                  : getAnnualPremium(layer);
+                  ? (structure?.sold_premium || annualPremium)
+                  : annualPremium;
                 const layerRpm = layer.limit ? Math.round(layerPremium / (layer.limit / 1_000_000)) : null;
                 // For ILF, use CMAI annual premium as base (annual-to-annual comparison)
                 const basePremium = cmaiLayer ? getAnnualPremium(cmaiLayer) : (tower[0] ? getAnnualPremium(tower[0]) : 1);
@@ -242,7 +263,14 @@ export default function TowerCard({
                         : `xs ${formatCompact(layer.calculatedAttachment)}`}
                     </td>
                     <td className="px-4 py-3 text-right font-medium text-green-600">
-                      {layerPremium ? formatCurrency(layerPremium) : '—'}
+                      {isCMAI && termPremium && annualPremium && Math.abs(termPremium - annualPremium) > 0.01 ? (
+                        <>
+                          {formatCurrency(termPremium)}
+                          <span className="text-gray-400 text-xs font-normal ml-1">({formatCurrency(annualPremium)} annual)</span>
+                        </>
+                      ) : (
+                        annualPremium ? formatCurrency(annualPremium) : '—'
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right text-gray-500">
                       {layerRpm ? `$${layerRpm.toLocaleString()}` : '—'}

@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Financial Crimes Response</title>
+    <style>
+        /* WeasyPrint page setup */
+        @page {
+            size: letter;
+            margin: 20mm 20mm 25mm 20mm;
+
+            @bottom-center {
+                content: "Page " counter(page) " of " counter(pages);
+                font-size: 9px;
+                color: #718096;
+            }
+        }
+
+        @page :first {
+            @bottom-center {
+                content: none;
+            }
+        }
+
+        :root {
+            --primary: #1a365d;
+            --secondary: #2c5282;
+            --accent: #3182ce;
+            --light-bg: #f7fafc;
+            --border: #e2e8f0;
+            --text: #2d3748;
+            --text-light: #718096;
+            --success: #38a169;
+            --warning: #d69e2e;
+            --danger: #e53e3e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 24px;
+            background: #fff;
+        }
+
+        /* Prevent page breaks inside elements */
+        .summary-box, .endorsement-box, .vendor-card, .decision-box, .battle-card, .no-break {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+
+        /* Keep headers with their content - need padding trick for WeasyPrint */
+        h2 {
+            break-after: avoid;
+            page-break-after: avoid;
+            padding-top: 20px;
+            margin-top: 28px;
+        }
+
+        h3 {
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+
+        /* Section wrapper keeps heading + first content together */
+        .section {
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+
+        /* Force page break before element */
+        .new-page {
+            break-before: page;
+            page-break-before: always;
+        }
+
+        header {
+            border-bottom: 3px solid var(--primary);
+            padding-bottom: 24px;
+            margin-bottom: 40px;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            color: var(--primary);
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        header .subtitle {
+            color: var(--text-light);
+            font-size: 0.95rem;
+        }
+
+        h2 {
+            font-size: 1.35rem;
+            color: var(--primary);
+            margin: 48px 0 20px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border);
+        }
+
+        h3 {
+            font-size: 1.1rem;
+            color: var(--secondary);
+            margin: 28px 0 12px 0;
+        }
+
+        p {
+            margin-bottom: 16px;
+        }
+
+        .summary-box {
+            background: var(--light-bg);
+            border-left: 4px solid var(--accent);
+            padding: 24px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .summary-box h3 {
+            margin-top: 0;
+            color: var(--primary);
+        }
+
+        .summary-box ul {
+            margin: 12px 0 0 20px;
+        }
+
+        .summary-box li {
+            margin-bottom: 8px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 24px 0;
+            font-size: 0.9rem;
+        }
+
+        th {
+            background: var(--primary);
+            color: white;
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 500;
+        }
+
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        tr:nth-child(even) {
+            background: var(--light-bg);
+        }
+
+        .covered {
+            color: var(--success);
+            font-weight: 500;
+        }
+
+        .maybe {
+            color: var(--warning);
+            font-weight: 500;
+        }
+
+        .excluded, .denied {
+            color: var(--danger);
+            font-weight: 500;
+        }
+
+        .grey {
+            color: var(--text-light);
+            font-weight: 500;
+        }
+
+        .endorsement-box {
+            background: #fff;
+            border: 2px solid var(--primary);
+            border-radius: 8px;
+            padding: 24px;
+            margin: 24px 0;
+        }
+
+        .endorsement-box h4 {
+            color: var(--primary);
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
+        }
+
+        .limit-tier {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 20px;
+        }
+
+        .tier {
+            flex: 1;
+            padding: 16px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .tier.base {
+            background: #fed7d7;
+            border: 1px solid #fc8181;
+        }
+
+        .tier.enhanced {
+            background: #c6f6d5;
+            border: 1px solid #68d391;
+        }
+
+        .tier .amount {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .tier .label {
+            font-size: 0.85rem;
+            color: var(--text-light);
+            margin-top: 4px;
+        }
+
+        .vendor-card {
+            background: var(--light-bg);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+
+        .vendor-card h4 {
+            color: var(--secondary);
+            margin-bottom: 8px;
+        }
+
+        .vendor-card .role {
+            font-weight: 500;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        .vendor-card .value {
+            color: var(--text-light);
+            font-size: 0.95rem;
+        }
+
+        .battle-card {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 32px;
+            margin: 32px 0;
+        }
+
+        .battle-card h3 {
+            color: white;
+            font-size: 1.3rem;
+            margin: 0 0 8px 0;
+        }
+
+        .battle-card .tagline {
+            opacity: 0.9;
+            margin-bottom: 24px;
+            font-size: 1.05rem;
+        }
+
+        .battle-card .intro {
+            opacity: 0.85;
+            margin-bottom: 24px;
+            font-size: 0.95rem;
+        }
+
+        .step {
+            background: rgba(255,255,255,0.15);
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin: 12px 0;
+        }
+
+        .step-header {
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+        }
+
+        .step-content {
+            opacity: 0.9;
+            font-size: 0.9rem;
+        }
+
+        .step-content ul {
+            margin: 8px 0 0 20px;
+        }
+
+        .comparison-good {
+            background: #f0fff4;
+        }
+
+        .comparison-bad {
+            background: #fff5f5;
+        }
+
+        .outcome-good {
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .outcome-bad {
+            color: var(--danger);
+            font-weight: 600;
+        }
+
+        .decision-box {
+            background: var(--primary);
+            color: white;
+            border-radius: 8px;
+            padding: 28px;
+            margin: 40px 0;
+        }
+
+        .decision-box h2 {
+            color: white;
+            border-bottom: 2px solid rgba(255,255,255,0.3);
+            margin-top: 0;
+        }
+
+        .decision-box ul {
+            margin: 16px 0 0 20px;
+        }
+
+        .decision-box li {
+            margin-bottom: 10px;
+            opacity: 0.95;
+        }
+
+        ul {
+            margin-left: 20px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        strong {
+            color: var(--primary);
+        }
+
+        .note {
+            font-size: 0.9rem;
+            color: var(--text-light);
+            font-style: italic;
+        }
+
+        @media print {
+            body {
+                padding: 20px;
+            }
+            .battle-card, .decision-box {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Unified Financial Crimes Response</h1>
+        <div class="subtitle">Cyber & Tech E&O Underwriting | January 2026</div>
+    </header>
+
+    <h2>Executive Summary</h2>
+
+    <div class="summary-box">
+        <h3>The Problem</h3>
+        <p>Our current response to Funds Transfer Fraud (FTF) is fragmented. When an Insured loses funds, they face a "definitions roulette" to determine if the loss is covered by Crime (Theft), Cyber (Hacking), or Professional Liability (Negligence). This hesitation causes latency, and in wire fraud, latency guarantees a total loss.</p>
+    </div>
+
+    <div class="summary-box">
+        <h3>The Opportunity</h3>
+        <p>We propose a <strong>Unified Financial Crimes Overlay</strong> that sits above all three lines. By shifting focus from "Liability Defense" to "Asset Recovery," we can:</p>
+        <ul>
+            <li><strong>Reduce Net Payouts:</strong> Recovering the asset eliminates the claim</li>
+            <li><strong>Increase Limits Safely:</strong> Offer market-leading capacity ($1M+) conditional on speed</li>
+            <li><strong>End Coverage Disputes:</strong> If the money is recovered, the "Cyber vs. Crime" argument becomes moot</li>
+        </ul>
+    </div>
+
+    <h2>The Market Failure</h2>
+    <p>Current policies force the Insured to navigate complex exclusionary language during a crisis.</p>
+
+    <div class="no-break">
+    <table>
+        <thead>
+            <tr>
+                <th>Scenario</th>
+                <th>Commercial Crime</th>
+                <th>Cyber Liability</th>
+                <th>Professional Liability</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>The "Hack"</strong><br><span class="note">Hacker accesses bank portal</span></td>
+                <td><span class="covered">COVERED</span><br>Computer Fraud</td>
+                <td><span class="maybe">MAYBE</span><br>If Endorsed</td>
+                <td><span class="excluded">EXCLUDED</span><br>Not a professional error</td>
+            </tr>
+            <tr>
+                <td><strong>The "Phish"</strong><br><span class="note">CFO tricked into wiring funds</span></td>
+                <td><span class="maybe">SUB-LIMITED</span><br>Social Engineering</td>
+                <td><span class="excluded">EXCLUDED</span><br>No system breach</td>
+                <td><span class="excluded">EXCLUDED</span><br>Not a professional error</td>
+            </tr>
+            <tr>
+                <td><strong>The "Trust Account"</strong><br><span class="note">Lawyer tricked with client funds</span></td>
+                <td><span class="denied">DENIED</span><br>3rd Party Property</td>
+                <td><span class="denied">DENIED</span><br>Not 1st party loss</td>
+                <td><span class="grey">GREY AREA</span><br>Exclusion for Theft</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+
+    <p><strong>The strategy:</strong> The gap is the product. We introduce a service layer that ignores <em>how</em> the money was lost and focuses entirely on getting it back.</p>
+
+    <div class="no-break new-page">
+    <h2>The Mechanism: Conditional Limits</h2>
+    <p>We trade capacity for speed. We can offer a higher sub-limit ($1M) because we only pay it if the Insured gives us a fighting chance to recover the funds.</p>
+    </div>
+
+    <div class="endorsement-box">
+        <h4>Draft Endorsement Concept</h4>
+
+        <div class="limit-tier">
+            <div class="tier base">
+                <div class="amount">$100,000</div>
+                <div class="label">Base Sub-Limit<br>("Cold Loss" Tier)</div>
+            </div>
+            <div class="tier enhanced">
+                <div class="amount">$1,000,000</div>
+                <div class="label">Enhanced Sub-Limit<br>("Hot Loss" Tier)</div>
+            </div>
+        </div>
+
+        <h4>Conditions for Enhancement</h4>
+        <p>The Enhanced Sub-Limit applies <strong>only</strong> to Loss reported to the Company's Financial Crimes Response Center within <strong>72 hours</strong> (or 5 days) of the initial transfer of funds.</p>
+        <p>Any Loss reported after this period shall be subject to the Base Sub-Limit, regardless of when the Insured discovered the Loss.</p>
+    </div>
+
+    <h3>Why This Works</h3>
+    <ul>
+        <li><strong>Operational Reality:</strong> It ties coverage to the "Transaction Date," not the subjective "Discovery Date."</li>
+        <li><strong>Risk Control:</strong> We don't insure "negligence" (waiting 2 weeks); we insure "operational response" (acting fast).</li>
+    </ul>
+
+    <div class="no-break new-page">
+    <h2>The Vendor Ecosystem</h2>
+    <p>To execute this, we need a specialist panel distinct from our General Breach Counsel.</p>
+    </div>
+
+    <div class="vendor-card">
+        <h4>1. The "Specialized Unit" Model (e.g., McDonald Hopkins)</h4>
+        <div class="role">Role: Operations & Banking Liaison</div>
+        <div class="value">Differentiates "Wire Fraud Response" from general data privacy. Focuses purely on the financial kill chain.</div>
+    </div>
+
+    <div class="vendor-card">
+        <h4>2. The "Hybrid Intelligence" Model (e.g., Clark Hill)</h4>
+        <div class="role">Role: Technical Asset Tracking</div>
+        <div class="value">Bridges the gap between legal counsel and forensic accounting. Uses intelligence specialists to track SWIFT flows.</div>
+    </div>
+
+    <div class="vendor-card">
+        <h4>3. The "Scale" Model (e.g., Mullen Coughlin)</h4>
+        <div class="role">Role: Volume & Benchmarking</div>
+        <div class="value">High-volume handling of BEC (Business Email Compromise) with deep contacts at FBI field offices.</div>
+    </div>
+
+    <div class="no-break new-page">
+    <h2>The Sales Tool: Battle Card</h2>
+    <p>Marketing one-pager to be distributed with all Cyber, Crime, and PL quotes.</p>
+    </div>
+
+    <div class="battle-card">
+        <h3>Financial Crimes Rapid Response Program</h3>
+        <div class="tagline">Turn Your Policy Into a Recovery Engine</div>
+        <div class="intro">Speed is the only currency that matters. In a Funds Transfer Fraud event, the window to recover stolen assets is less than 72 hours. Traditional insurance claims processes are too slow. We've replaced the "Claim Form" with the "Kill Chain."</div>
+
+        <div class="step">
+            <div class="step-header">Step 1: The First Mile (0-1 Hour)</div>
+            <div class="step-content">
+                <ul>
+                    <li>Call your bank immediately</li>
+                    <li>Demand the "Fraud Department"</li>
+                    <li>Request a "SWIFT Recall"</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="step">
+            <div class="step-header">Step 2: The Second Mile (1-2 Hours)</div>
+            <div class="step-content">
+                <strong>Activate the Hotline: 1-800-XXX-XXXX</strong>
+                <ul>
+                    <li>&lt; 72 Hours from Transfer: Unlocks your $1,000,000 Limit</li>
+                    <li>&gt; 72 Hours from Transfer: Limits coverage to $100,000</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="step">
+            <div class="step-header">Step 3: The Recovery</div>
+            <div class="step-content">Our team will activate the FBI "Recovery Asset Team" (RAT) protocols to freeze funds before they leave the country.</div>
+        </div>
+    </div>
+
+    <div class="no-break">
+    <h2>Proof of Concept: A Tale of Two Wires</h2>
+    <p><strong>The Scenario:</strong> A paralegal at a Law Firm wires $2,000,000 of client money to a hacker on a Friday afternoon.</p>
+    </div>
+
+    <div class="no-break">
+    <table>
+        <thead>
+            <tr>
+                <th>Feature</th>
+                <th>Path A: Siloed Approach (Current)</th>
+                <th>Path B: Unified Approach (Future)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>First Action</strong></td>
+                <td class="comparison-bad">Broker debates if it's a Crime or PL claim</td>
+                <td class="comparison-good">Insured calls 24/7 Hotline immediately</td>
+            </tr>
+            <tr>
+                <td><strong>Weekend Activity</strong></td>
+                <td class="comparison-bad">Claims sits in a queue. Hackers move money.</td>
+                <td class="comparison-good">Specialist activates Bank Kill Chain & FBI RAT</td>
+            </tr>
+            <tr>
+                <td><strong>Monday Morning</strong></td>
+                <td class="comparison-bad">Crime & PL carriers issue "Reservation of Rights" letters denying coverage</td>
+                <td class="comparison-good">Specialist presents Indemnity Agreement to bank. Funds reversed.</td>
+            </tr>
+            <tr>
+                <td><strong>Outcome</strong></td>
+                <td><span class="outcome-bad">$2.2M Net Loss</span><br>(Payout + Legal Fees)</td>
+                <td><span class="outcome-good">$15k Net Loss</span><br>(Vendor Fees Only)</td>
+            </tr>
+            <tr>
+                <td><strong>Insured Sentiment</strong></td>
+                <td class="comparison-bad">"Insurance is a scam."</td>
+                <td class="comparison-good">"You saved our business."</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+
+    <div class="decision-box">
+        <h2>Decision Required</h2>
+        <p>Approval to form a cross-departmental Working Group (Cyber, Crime, Claims) to:</p>
+        <ul>
+            <li>Vet and select the "Wire Fraud Specialist" vendor</li>
+            <li>Finalize the "Conditional Limits" endorsement wording</li>
+            <li>Launch a Pilot Program in Q2</li>
+        </ul>
+    </div>
+
+</body>
+</html>
