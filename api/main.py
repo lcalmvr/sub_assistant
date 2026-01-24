@@ -902,12 +902,19 @@ def extract_document_integrated(document_id: str):
 
         temp_file = None
         try:
+            # Try storage first, fall back to local file_path
             if storage_key:
-                # Download from storage to temp file
                 from core import storage
-                temp_file = storage.download_document(storage_key)
-                file_path = str(temp_file)
-            elif not file_path or not os.path.exists(file_path):
+                if storage.is_configured():
+                    try:
+                        temp_file = storage.download_document(storage_key)
+                        file_path = str(temp_file)
+                    except Exception as e:
+                        print(f"[api] Storage download failed, trying file_path: {e}")
+                        # Fall through to file_path check below
+
+            # Check if we have a valid file path (either from storage or local)
+            if not file_path or not os.path.exists(file_path):
                 raise HTTPException(
                     status_code=400,
                     detail="Document has no storage_key or valid file_path. Re-upload the document."
@@ -1523,13 +1530,20 @@ def trigger_extraction(submission_id: str, document_id: Optional[str] = None):
             storage_key = metadata.get("storage_key")
             file_path = metadata.get("file_path")
 
+            # Try storage first, fall back to local file_path
             temp_file = None
             if storage_key:
-                # Download from storage to temp file
                 from core import storage
-                temp_file = storage.download_document(storage_key)
-                file_path = str(temp_file)
-            elif not file_path or not os.path.exists(file_path):
+                if storage.is_configured():
+                    try:
+                        temp_file = storage.download_document(storage_key)
+                        file_path = str(temp_file)
+                    except Exception as e:
+                        print(f"[api] Storage download failed, trying file_path: {e}")
+                        # Fall through to file_path check below
+
+            # Check if we have a valid file path (either from storage or local)
+            if not file_path or not os.path.exists(file_path):
                 raise HTTPException(
                     status_code=400,
                     detail="Document has no storage_key or valid file_path. Re-upload the document."
@@ -1776,13 +1790,20 @@ def trigger_textract_extraction(submission_id: str, request: TextractRequest = N
             storage_key = metadata.get("storage_key")
             file_path = metadata.get("file_path")
 
+            # Try storage first, fall back to local file_path
             temp_file = None
             if storage_key:
-                # Download from storage to temp file
                 from core import storage
-                temp_file = storage.download_document(storage_key)
-                file_path = str(temp_file)
-            elif not file_path or not os.path.exists(file_path):
+                if storage.is_configured():
+                    try:
+                        temp_file = storage.download_document(storage_key)
+                        file_path = str(temp_file)
+                    except Exception as e:
+                        print(f"[api] Storage download failed, trying file_path: {e}")
+                        # Fall through to file_path check below
+
+            # Check if we have a valid file path (either from storage or local)
+            if not file_path or not os.path.exists(file_path):
                 raise HTTPException(
                     status_code=400,
                     detail="Document has no storage_key or valid file_path. Re-upload the document."
@@ -9227,12 +9248,18 @@ def analyze_document_for_schema(document_id: str):
                 storage_key = metadata.get("storage_key")
                 file_path = metadata.get("file_path")
 
+                # Try storage first, fall back to local file_path
                 temp_file = None
                 try:
                     if storage_key:
                         from core import storage
-                        temp_file = storage.download_document(storage_key)
-                        file_path = str(temp_file)
+                        if storage.is_configured():
+                            try:
+                                temp_file = storage.download_document(storage_key)
+                                file_path = str(temp_file)
+                            except Exception as e:
+                                print(f"[api] Storage download failed, trying file_path: {e}")
+                                # Fall through to file_path check below
 
                     if file_path and os.path.exists(file_path):
                         with pdfplumber.open(file_path) as pdf:
