@@ -18,7 +18,7 @@ What we're focused on right now:
 
 1. **Premium/Term Model** - Layer-level term dates for short-term/annual premium calculation
    - Branch: `feature/annual-short-term-premium`
-   - Plan: [active/premium-term-plan.md](active/premium-term-plan.md)
+   - Plan: [projects/active/premium-term-plan.md](projects/active/premium-term-plan.md)
 
 2. **Codebase Cleanup** - In progress
    - Consolidated folder structure
@@ -28,12 +28,12 @@ What we're focused on right now:
 
 ## Active Work
 
-Features in progress. Each should have a doc in `active/`.
+Features in progress. Each should have a doc in `projects/active/`.
 
 | Feature | Doc | Status |
 |---------|-----|--------|
-| Premium/Term Model | [premium-term-plan.md](active/premium-term-plan.md) | In progress |
-| QuotePageV3 Refinements | [quotepagev3-refactor-plan.md](active/quotepagev3-refactor-plan.md), [quote-v3-formatting.md](active/quote-v3-formatting.md) | Ongoing |
+| Premium/Term Model | [premium-term-plan.md](projects/active/premium-term-plan.md) | In progress |
+| QuotePageV3 Refinements | [quotepagev3-refactor-plan.md](projects/active/quotepagev3-refactor-plan.md), [quote-v3-formatting.md](projects/active/quote-v3-formatting.md) | Ongoing |
 
 ---
 
@@ -54,7 +54,7 @@ Planned but not started:
 
 ## Done
 
-Major features completed (detailed docs in `archived/implemented/`):
+Major features completed (detailed docs in `docs/projects/implemented/`):
 
 ### Infrastructure
 - Unified data flow (extraction → `submission_extracted_values`)
@@ -79,6 +79,9 @@ Major features completed (detailed docs in `archived/implemented/`):
 
 ## Reference
 
-- **Active project docs:** `docs/active/`
-- **Completed/archived docs:** `docs/archived/`
-- **Historical 15-phase roadmap:** `docs/archived/PROJECT_ROADMAP.md`
+- **Active project docs:** `docs/projects/active/`
+- **Backlog (planned):** `docs/projects/backlog/`
+- **Completed feature docs:** `docs/projects/implemented/`
+- **Outdated/legacy docs:** `docs/projects/legacy/`
+- **Operational guides:** `docs/guides/`
+- **Historical 15-phase roadmap:** `docs/projects/implemented/PROJECT_ROADMAP.md`

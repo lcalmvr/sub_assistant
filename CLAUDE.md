@@ -8,6 +8,24 @@ This file provides context for Claude Code sessions working on this project.
 
 **AI-first approach**: AI proposes, human disposes. AI extracts data, suggests conflicts, drafts documents - humans review and approve. Don't build elaborate manual UI for things AI should just do.
 
+### When to Build AI-First vs Manual-First
+
+| Build Manual-First When | Build AI-First When |
+|-------------------------|---------------------|
+| Domain is complex, still learning it | Task is clearly automatable |
+| Failure is costly (wrong premium, missed exclusion) | Failure is cheap to fix |
+| Users need to trust/verify output | Manual would be tedious busywork |
+| Need baseline to measure AI accuracy | You already understand the domain |
+
+### Performance Expectations
+
+| Interaction | Frustrating | Tolerable | Good |
+|-------------|-------------|-----------|------|
+| Button click | >500ms | 200-500ms | <100ms |
+| Tab switch | >1s | 300ms-1s | <300ms |
+| Form submit | >2s | 500ms-2s | <500ms |
+| Page load | >3s | 1-3s | <1s |
+
 ## Tech Stack
 
 - **Frontend**: React + Vite (primary), Streamlit (legacy)
@@ -26,8 +44,12 @@ docs/
   ROADMAP.md           # Master orchestrator - vision, priorities, links to active work
   folder-reference.md  # Detailed inventory of every folder/file in codebase
   architecture.md      # How the system is built (data flow, components)
-  active/              # Docs for work in progress (plans, specs, analysis)
-  archived/            # Completed or abandoned project docs
+  guides/              # Operational how-to docs (stable, accurate)
+  projects/
+    active/            # Docs for work in progress
+    backlog/           # Planned but not yet started
+    implemented/       # Completed feature plans (historical reference)
+    legacy/            # Outdated, abandoned, superseded docs
 ```
 
 ### What Each Doc Is For
@@ -38,17 +60,21 @@ docs/
 | `ROADMAP.md` | Master orchestrator - priorities, links to active projects | Before starting work | After completing features, changing priorities |
 | `folder-reference.md` | WHERE things are - file inventory, what's legacy vs active | "Where does X live?" / "What is this folder?" | When adding/moving/archiving folders |
 | `architecture.md` | HOW things work - data flow, component interaction | "How does data flow?" / Working on cross-system features | When architecture changes |
-| `active/` | Detailed docs for current work | When working on a specific feature | When starting new work |
-| `archived/` | Historical reference | When you need context on past decisions | When projects complete or are abandoned |
+| `guides/` | Operational how-to docs | "How do I do X?" | When procedures change |
+| `projects/active/` | Current work in progress | When working on a specific feature | When starting new work |
+| `projects/backlog/` | Planned but not started | When planning future work | When specs are written |
+| `projects/implemented/` | Completed feature plans | When you need context on how something was built | When a feature is done |
+| `projects/legacy/` | Outdated/abandoned docs | Rarely - only if you need historical context | When docs become obsolete |
 
 ### Keeping Docs Updated
 
-1. **Starting new work**: Create doc in active/, link from ROADMAP.md
-2. **After completing a feature**: Move doc from active/ to archived/, update ROADMAP.md
-3. **After abandoning a plan**: Move doc to archived/, note in ROADMAP.md
-4. **When establishing new patterns**: Add to this file (CLAUDE.md)
-5. **When architecture changes**: Update architecture.md
-6. **When adding/moving folders**: Update folder-reference.md
+1. **Starting new work**: Create doc in projects/active/, link from ROADMAP.md
+2. **After completing a feature**: Move doc from projects/active/ to projects/implemented/, update ROADMAP.md
+3. **After abandoning a plan**: Move doc to projects/legacy/, note in ROADMAP.md
+4. **When docs become outdated**: Move to projects/legacy/
+5. **When establishing new patterns**: Add to this file (CLAUDE.md)
+6. **When architecture changes**: Update architecture.md
+7. **When adding/moving folders**: Update folder-reference.md
 
 ## Directory Structure
 

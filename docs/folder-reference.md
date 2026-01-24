@@ -262,6 +262,59 @@ A "museum" of old code. When we replaced or abandoned something, it went here in
 
 ---
 
+## docs/ - Documentation
+
+**What this is:** Project documentation organized by lifecycle stage.
+
+**Master file:** `ROADMAP.md` - the orchestrator that links to everything else.
+
+### Structure
+
+```
+docs/
+├── ROADMAP.md              # Master orchestrator - start here
+├── architecture.md         # HOW things work (data flow, components)
+├── folder-reference.md     # WHERE things are (this file)
+├── projects/               # Project documentation by lifecycle
+│   ├── active/             # Currently in progress
+│   ├── backlog/            # Planned but not started
+│   ├── implemented/        # Completed features
+│   └── legacy/             # Abandoned/outdated
+└── guides/                 # Stable operational guides
+```
+
+### Project Lifecycle
+
+| Folder | Purpose | When to Use |
+|--------|---------|-------------|
+| `active/` | Work in progress | Feature currently being built |
+| `backlog/` | Planned future work | Spec exists, not started |
+| `implemented/` | Completed features | Feature shipped, doc is historical reference |
+| `legacy/` | Abandoned/outdated | Superseded or no longer accurate |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `ROADMAP.md` | Current priorities, active work, backlog overview |
+| `architecture.md` | System architecture, data flow, component relationships |
+| `folder-reference.md` | File/folder inventory with purpose descriptions |
+
+### Guides
+
+Stable operational documentation:
+
+| Guide | Purpose |
+|-------|---------|
+| `account-renewal-guide.md` | Account renewal workflow |
+| `conflicts_guide.md` | Conflict detection system |
+| `document-generation-guide.md` | Document generation system |
+| `quote-v3-smoke.md` | QuotePageV3 testing checklist |
+| `supabase-security-fix.md` | Supabase security configuration |
+| `supabase-storage-setup.md` | Supabase storage setup |
+
+---
+
 ## CLAUDE.md - AI Session Instructions
 
 **What this is:** Project instructions that Claude Code reads automatically at the start of every session. Sets context, conventions, and patterns.
