@@ -1,96 +1,25 @@
-# Sub Assistant - Cyber Insurance Submission Processing System
+# Sub Assistant
 
-AI-powered system for processing cyber insurance submissions, analyzing documents, and generating quotes with automated risk assessment.
+AI-powered cyber insurance underwriting platform.
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- PostgreSQL (via Supabase)
-- OpenAI API key
+**Prerequisites:** Python 3.11+, Node.js 18+, Supabase account
 
-### Installation
 ```bash
-# Clone and setup
-git clone <repository-url>
-cd sub_assistant
-
-# Backend setup
+# Backend
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your API keys and Supabase URL
-
-# Frontend setup
-cd frontend
-npm install
-```
-
-### Run the Application
-```bash
-# Start the API server
+cp .env.example .env  # Add your API keys
 uvicorn api.main:app --reload
 
-# Start the React frontend (in another terminal)
-cd frontend
-npm run dev
-
-# Process test data
-python ingest_local.py --dir fixtures/acme/
+# Frontend (separate terminal)
+cd frontend && npm install && npm run dev
 ```
 
-## System Overview
-
-**Architecture:**
-- **React Frontend** (primary) - Modern underwriting dashboard at `frontend/`
-- **FastAPI Backend** - REST API at `api/main.py` (328 endpoints)
-- **Supabase** - PostgreSQL database with auth and storage
-- **AI Engine** - Document extraction and underwriting recommendations
-
-**Process Flow:**
-```
-Email/Upload → Document Processing → AI Analysis → Rating → Quote Generation
-```
-
-## Project Structure
-
-```
-sub_assistant/
-├── frontend/              # React frontend (primary UI)
-│   ├── src/
-│   │   ├── pages/         # Main page components
-│   │   ├── components/    # Reusable UI components
-│   │   └── utils/         # Frontend utilities
-│   └── mockups/           # UI design mockups
-├── api/                   # FastAPI backend
-│   └── main.py            # All API endpoints
-├── core/                  # Shared business logic
-├── rating_engine/         # Premium calculation engine
-├── ai/                    # AI/LLM integration
-├── ingestion/             # Document ingestion pipeline
-├── db_setup/              # Database migrations
-├── fixtures/              # Test data
-├── docs/                  # Documentation
-├── sandbox/               # Side projects and experiments
-└── archive/               # Deprecated code (reference only)
-    └── streamlit/         # Archived Streamlit frontend
-```
-
-## Key Features
-
-- **Automated Document Extraction** - AI parses applications and extracts structured data
-- **Security Controls Detection** - Identifies MFA, EDR, backups from text
-- **AI-Powered Underwriting** - Quote/Decline/Refer recommendations with citations
-- **Tower-Based Rating** - Configurable excess tower structures with multiple carriers
-- **PDF Quote Generation** - Professional quote documents
+App runs at http://localhost:5173
 
 ## Documentation
 
-See [`docs/`](docs/) directory:
-- [Roadmap](docs/ROADMAP.md) - Current priorities and project status
-- [Architecture](docs/architecture.md) - System architecture
-- [Folder Reference](docs/folder-reference.md) - Complete folder-by-folder guide
-
-## License
-
-[Add your license information here]
+- [ROADMAP.md](docs/ROADMAP.md) - Current priorities and status
+- [architecture.md](docs/architecture.md) - How the system works
+- [folder-reference.md](docs/folder-reference.md) - What each folder contains
