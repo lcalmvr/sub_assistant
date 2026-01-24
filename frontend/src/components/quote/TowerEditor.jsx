@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   formatCompact,
   formatCurrency,
@@ -13,34 +13,11 @@ import {
   serializeTower,
   getAnnualPremium,
   getActualPremium,
-  getProRataFactor,
-  getTheoreticalProRata,
-  hasCustomTerm,
-  getInheritedEffectiveDate,
-  getTowerDateBlocks,
+  getLayerEffectiveFromConfig,
+  groupLayersByEffective,
   calculateActualPremium,
   PREMIUM_BASIS,
 } from '../../utils/premiumUtils';
-
-function isValidIsoDate(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00`);
-  return Number.isFinite(date.getTime()) && date.toISOString().startsWith(value);
-}
-
-function normalizeDateInput(value) {
-  if (!value) return '';
-  const trimmed = value.trim();
-  if (isValidIsoDate(trimmed)) return trimmed;
-
-  const mdyMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!mdyMatch) return '';
-
-  const month = String(mdyMatch[1]).padStart(2, '0');
-  const day = String(mdyMatch[2]).padStart(2, '0');
-  const iso = `${mdyMatch[3]}-${month}-${day}`;
-  return isValidIsoDate(iso) ? iso : '';
-}
 
 export default function TowerEditor({ quote, onSave, isPending, embedded = false, setEditControls, saveRef }) {
   const [isEditing, setIsEditing] = useState(embedded); // Start in edit mode if embedded
@@ -48,34 +25,41 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
   const [layers, setLayers] = useState(() => normalizeTower(quote.tower_json));
   const hasQs = layers.some(l => l.quota_share);
   const [showQsColumn, setShowQsColumn] = useState(hasQs);
-  const [termColumnEnabled, setTermColumnEnabled] = useState(false);
   const containerRef = useRef(null); // For click-outside detection (includes header + table)
 
-  // Draft state for term inputs (apply on blur/enter)
-  const [termDrafts, setTermDrafts] = useState({});
-  const [termErrors, setTermErrors] = useState({});
+  // Draft values for charged inputs (allows clearing without immediate reset)
+  const [chargedDrafts, setChargedDrafts] = useState({});
 
-  // Structure term from quote (for term inheritance)
+  // Structure term from quote (dates are merged from variation/structure/submission cascade)
   const structureTerm = {
     start: quote.effective_date_override || quote.effective_date || null,
     end: quote.expiration_date_override || quote.expiration_date || null,
   };
 
-  // Tower-level term info (for header badge and column visibility)
-  const anyLayerHasCustomTerm = layers.some(l => hasCustomTerm(l));
-  const showTermColumn = termColumnEnabled;
-  const showTermOverrides = isEditing && showTermColumn;
+  // Get date_config from quote
+  const dateConfig = quote.date_config || null;
 
-  // Compute date blocks for visual grouping
-  const dateBlocks = getTowerDateBlocks(layers, structureTerm.start);
+  // Group layers by effective date based on date_config
+  const dateGroups = groupLayersByEffective(layers, dateConfig, structureTerm.start);
 
-  // Helper to find which block a layer belongs to
-  const getBlockForLayer = (actualIdx) => {
-    return dateBlocks.find(b => actualIdx >= b.startIndex && actualIdx <= b.endIndex);
+  // Check if we have multiple date groups (need to show group headers)
+  const hasMultipleDateGroups = dateGroups.length > 1;
+
+  // Helper to get the effective date for a layer based on its attachment
+  const getLayerEffective = (layerIdx) => {
+    const attachment = layerIdx === 0 ? 0 : layers.slice(0, layerIdx).reduce((sum, l) => sum + (l.limit || 0), 0);
+    return getLayerEffectiveFromConfig(attachment, dateConfig, structureTerm.start);
   };
 
-  // Single subtle color for block indicator
-  const blockBorderColor = 'border-gray-300';
+  // Check if any layer has a short term (< 350 days)
+  // This determines whether to show Annual + Charged columns vs single Premium column
+  const hasShortTermLayers = layers.some((l, idx) => {
+    const layerStart = getLayerEffective(idx);
+    const layerEnd = structureTerm.end;
+    if (!layerStart || layerStart === 'TBD' || !layerEnd) return false;
+    const termDays = Math.ceil((new Date(layerEnd) - new Date(layerStart)) / (1000 * 60 * 60 * 24));
+    return termDays < 350;
+  });
 
   // Refs for inputs (keyed by displayIdx for arrow navigation)
   const carrierInputRefs = useRef({});
@@ -83,6 +67,7 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
   const qsInputRefs = useRef({});
   const retentionInputRefs = useRef({});
   const premiumInputRefs = useRef({});
+  const chargedInputRefs = useRef({});
   const rpmInputRefs = useRef({});
   const ilfInputRefs = useRef({});
 
@@ -91,11 +76,7 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
     const normalized = normalizeTower(quote.tower_json);
     setLayers(normalized);
     setShowQsColumn((quote.tower_json || []).some(l => l.quota_share));
-    // Auto-enable term column if any layer has custom term data
-    const hasExistingCustomTerm = normalized.some(l => hasCustomTerm(l));
-    setTermColumnEnabled(hasExistingCustomTerm);
-    setTermDrafts({});
-    setTermErrors({});
+    setChargedDrafts({}); // Clear any draft values
     setIsEditing(embedded); // Keep edit mode if embedded, otherwise reset
     // Note: Don't clear refs here - they're populated by render via ref callbacks
     // Clearing after render breaks arrow navigation on fresh mounts
@@ -142,7 +123,7 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
   }, [isEditing, layers, quote, onSave]);
 
   // All column refs in left-to-right order for horizontal navigation
-  const columnRefs = [carrierInputRefs, limitInputRefs, qsInputRefs, retentionInputRefs, premiumInputRefs, rpmInputRefs, ilfInputRefs];
+  const columnRefs = [carrierInputRefs, limitInputRefs, qsInputRefs, retentionInputRefs, premiumInputRefs, chargedInputRefs, rpmInputRefs, ilfInputRefs];
 
   // Handle arrow key navigation in column fields
   const handleArrowNav = (e, displayIdx, currentRefs) => {
@@ -223,170 +204,29 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
   };
 
   const handleSave = useCallback(() => {
-    console.log('[TowerEditor] handleSave called');
-    console.log('[TowerEditor] termDrafts:', JSON.stringify(termDrafts));
-    console.log('[TowerEditor] layers before:', layers.map(l => ({ carrier: l.carrier, term_start: l.term_start, actual_premium: l.actual_premium })));
-
-    // Apply any pending term drafts before saving
-    let finalLayers = [...layers];
-    Object.entries(termDrafts).forEach(([idxStr, draft]) => {
-      const idx = parseInt(idxStr, 10);
-      const layer = finalLayers[idx];
-      console.log(`[TowerEditor] Processing draft idx=${idx}, draft=`, draft, 'layer=', layer?.carrier);
-      if (!layer || !draft.start) {
-        console.log('[TowerEditor] Skipping - no layer or no draft.start');
-        return;
-      }
-
-      const normalizedStart = normalizeDateInput(String(draft.start).trim());
-      console.log(`[TowerEditor] normalizedStart=${normalizedStart}`);
-      if (!normalizedStart) return;
-
-      const isInherited = normalizedStart === structureTerm.start;
-      const resolvedEnd = structureTerm.end;
-
-      const currentBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
-      const basisForUI = currentBasis === PREMIUM_BASIS.ANNUAL
-        ? PREMIUM_BASIS.PRO_RATA
-        : (currentBasis === PREMIUM_BASIS.MINIMUM ? PREMIUM_BASIS.FLAT : currentBasis);
-
-      const newActual = basisForUI === PREMIUM_BASIS.FLAT
-        ? layer.actual_premium
-        : calculateActualPremium({
-          annualPremium: getAnnualPremium(layer),
-          termStart: normalizedStart,
-          termEnd: resolvedEnd,
-          premiumBasis: PREMIUM_BASIS.PRO_RATA,
-        });
-
-      console.log(`[TowerEditor] Applying: term_start=${isInherited ? null : normalizedStart}, actual_premium=${newActual}`);
-      finalLayers[idx] = {
-        ...layer,
-        term_start: isInherited ? null : normalizedStart,
-        term_end: null,
-        actual_premium: newActual,
-      };
-    });
-
-    console.log('[TowerEditor] finalLayers after drafts:', finalLayers.map(l => ({ carrier: l.carrier, term_start: l.term_start, actual_premium: l.actual_premium })));
-
-    const recalculated = recalculateAttachments(finalLayers);
+    const recalculated = recalculateAttachments(layers);
     // Serialize to ensure legacy premium field stays in sync
     const serialized = serializeTower(recalculated);
-    console.log('[TowerEditor] serialized tower:', serialized.map(l => ({ carrier: l.carrier, term_start: l.term_start, actual_premium: l.actual_premium })));
     onSave({ tower_json: serialized, quote_name: generateOptionName({ ...quote, tower_json: serialized }) });
+    setChargedDrafts({});
     setIsEditing(false);
     setEditControls?.(null);
-    setTermDrafts({});
-  }, [layers, termDrafts, structureTerm, onSave, quote, setEditControls]);
+  }, [layers, onSave, quote, setEditControls]);
 
   useEffect(() => {
     if (!saveRef) return undefined;
-    console.log('[TowerEditor] Updating saveRef.current, termDrafts=', termDrafts);
     saveRef.current = handleSave;
     return () => {
       saveRef.current = null;
     };
-  }, [saveRef, handleSave, termDrafts]);
+  }, [saveRef, handleSave]);
 
   const handleCancel = () => {
     setLayers(normalizeTower(quote.tower_json));
-    setTermDrafts({});
-    setTermErrors({});
+    setChargedDrafts({});
     setIsEditing(false);
     setEditControls?.(null);
   };
-
-  const applyTermDraft = useCallback((actualIdx, layer) => {
-    const currentBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
-    const basisForUI = currentBasis === PREMIUM_BASIS.ANNUAL
-      ? PREMIUM_BASIS.PRO_RATA
-      : (currentBasis === PREMIUM_BASIS.MINIMUM ? PREMIUM_BASIS.FLAT : currentBasis);
-
-    const draft = termDrafts[actualIdx] || {};
-    const rawStart = String(draft.start ?? layer.term_start ?? '').trim();
-    const hasStart = rawStart.length > 0;
-
-    const setError = (message) => {
-      setTermErrors(prev => ({ ...prev, [actualIdx]: message }));
-    };
-    const clearError = () => {
-      setTermErrors(prev => {
-        const { [actualIdx]: _removed, ...rest } = prev;
-        return rest;
-      });
-    };
-
-    // If no start date, use inherited term
-    if (!hasStart) {
-      const newLayers = [...layers];
-      const nextLayer = { ...layer, term_start: null, term_end: null };
-      nextLayer.actual_premium = basisForUI === PREMIUM_BASIS.FLAT
-        ? nextLayer.actual_premium
-        : calculateActualPremium({
-          annualPremium: getAnnualPremium(nextLayer),
-          termStart: structureTerm.start,
-          termEnd: structureTerm.end,
-          premiumBasis: PREMIUM_BASIS.PRO_RATA,
-        });
-      newLayers[actualIdx] = nextLayer;
-      setLayers(newLayers);
-      setTermDrafts(prev => {
-        const { [actualIdx]: _removed, ...rest } = prev;
-        return rest;
-      });
-      clearError();
-      return;
-    }
-
-    const normalizedStart = normalizeDateInput(rawStart);
-    if (!normalizedStart) {
-      setError('Use YYYY-MM-DD or MM/DD/YYYY.');
-      return;
-    }
-
-    // Always use structure's expiration date
-    const resolvedEnd = structureTerm.end;
-    const startDate = new Date(`${normalizedStart}T00:00:00`);
-    const endDate = new Date(`${resolvedEnd}T00:00:00`);
-    if (startDate > endDate) {
-      setError('Effective must be before policy expiration.');
-      return;
-    }
-
-    const isInherited = normalizedStart === structureTerm.start;
-    const resolvedStart = normalizedStart;
-    const newProRata = getProRataFactor(resolvedStart, resolvedEnd);
-    const annual = getAnnualPremium(layer);
-    let newBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
-    const layerHasCustomTerm = hasCustomTerm(layer);
-    if (!isInherited && !layerHasCustomTerm && newBasis === PREMIUM_BASIS.ANNUAL && newProRata < 0.95) {
-      newBasis = PREMIUM_BASIS.PRO_RATA;
-    }
-    const newActual = basisForUI === PREMIUM_BASIS.FLAT
-      ? layer.actual_premium
-      : calculateActualPremium({
-        annualPremium: annual,
-        termStart: resolvedStart,
-        termEnd: resolvedEnd,
-        premiumBasis: PREMIUM_BASIS.PRO_RATA,
-      });
-
-    const newLayers = [...layers];
-    newLayers[actualIdx] = {
-      ...layer,
-      term_start: isInherited ? null : normalizedStart,
-      term_end: null, // Always use inherited expiration
-      actual_premium: newActual,
-      premium_basis: newBasis,
-    };
-    setLayers(newLayers);
-    setTermDrafts(prev => ({
-      ...prev,
-      [actualIdx]: isInherited ? { start: '' } : { start: normalizedStart },
-    }));
-    clearError();
-  }, [layers, structureTerm.end, structureTerm.start, termDrafts]);
 
   // Update edit controls when editing state changes (for embedded mode)
   useEffect(() => {
@@ -457,7 +297,7 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
             {(cmaiAnnual || cmaiCharged) && (
               <span className="text-sm font-semibold text-green-600 normal-case ml-2">
                 {showBothPremiums ? (
-                  <>Our Premium: {formatCurrency(cmaiCharged)} <span className="text-gray-400 font-normal">|</span> Annual {formatCurrency(cmaiAnnual)}</>
+                  <>Our Premium: {formatCurrency(cmaiCharged)} <span className="text-gray-400 font-normal">(Annual: {formatCurrency(cmaiAnnual)})</span></>
                 ) : (
                   <>Our Premium: {formatCurrency(cmaiAnnual || cmaiCharged)}</>
                 )}
@@ -478,24 +318,23 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
       )}
 
       {/* Table */}
-      <div className={embedded ? 'overflow-x-auto' : 'overflow-x-auto rounded-lg border border-gray-100 mx-4 mb-4'}>
+      <div className={embedded ? 'overflow-x-auto' : 'overflow-x-auto rounded-lg mx-4 mb-4'}>
         <table className="w-full min-w-max text-sm">
           <thead className="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
             <tr>
+              {/* Spine column - only when multiple date groups */}
+              {hasMultipleDateGroups && <th className="w-1 p-0"></th>}
               <th className="px-4 py-2.5 text-left font-semibold">Carrier</th>
               <th className="px-4 py-2.5 text-left font-semibold">Limit</th>
               {showQsColumn && <th className="px-4 py-2.5 text-left font-semibold">Part Of</th>}
               <th className="px-4 py-2.5 text-left font-semibold">{quote.position === 'primary' ? 'Retention' : 'Attach'}</th>
-              {showTermOverrides && (
+              {hasShortTermLayers && (
                 <>
-                  <th className="px-4 py-2.5 text-center font-semibold">Eff. Date</th>
                   <th className="px-4 py-2.5 text-right font-semibold">Annual</th>
-                  <th className="px-4 py-2.5 text-right font-semibold">Pro-rata</th>
                   <th className="px-4 py-2.5 text-right font-semibold">Charged</th>
-                  <th className="px-4 py-2.5 text-center font-semibold">Basis</th>
                 </>
               )}
-              {!showTermOverrides && (
+              {!hasShortTermLayers && (
                 <th className="px-4 py-2.5 text-right font-semibold">Premium</th>
               )}
               <th className="px-4 py-2.5 text-right font-semibold">RPM</th>
@@ -503,75 +342,133 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
               {isEditing && <th className="px-4 py-2.5 w-10"></th>}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
-            {[...layers].reverse().map((layer, displayIdx) => {
-              const actualIdx = layers.length - 1 - displayIdx;
-              const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
-              const isPrimary = actualIdx === 0;
-              const attachment = calculateAttachment(layers, actualIdx);
-              // Use annual premium for RPM/ILF calculations (correct for rate comparison)
-              const annualPremium = getAnnualPremium(layer);
-              const actualPremium = getActualPremium(layer);
-              const rpm = annualPremium && layer.limit ? Math.round(annualPremium / (layer.limit / 1_000_000)) : null;
-              const baseLayer = layers[0];
-              const baseAnnual = getAnnualPremium(baseLayer);
-              const baseRpm = baseAnnual && baseLayer?.limit ? baseAnnual / (baseLayer.limit / 1_000_000) : null;
-              const ilfPercent = rpm && baseRpm ? Math.round((rpm / baseRpm) * 100) : null;
+          {/* Render each date group as a separate tbody with card styling */}
+          {[...dateGroups].reverse().map((group, groupDisplayIdx) => {
+            const groupIsTbd = group.effective === 'TBD';
+            const policyExpiration = structureTerm.end;
+            const groupTermDays = !groupIsTbd && group.effective && policyExpiration
+              ? Math.ceil((new Date(policyExpiration) - new Date(group.effective)) / (1000 * 60 * 60 * 24))
+              : null;
 
-              // Term calculations using block inheritance
-              const inheritedDateInfo = getInheritedEffectiveDate(layers, actualIdx, structureTerm.start);
-              const effectiveStart = inheritedDateInfo.date || structureTerm.start;
-              const effectiveEnd = structureTerm.end; // Always inherit expiration from policy
-              const isDateInherited = inheritedDateInfo.inherited;
-              const hasExplicitDate = !!layer.term_start;
-              const proRataValue = annualPremium ? getTheoreticalProRata(annualPremium, effectiveStart, effectiveEnd) : null;
-              const premiumBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
-              const basisForUI = premiumBasis === PREMIUM_BASIS.ANNUAL
-                ? PREMIUM_BASIS.PRO_RATA
-                : (premiumBasis === PREMIUM_BASIS.MINIMUM ? PREMIUM_BASIS.FLAT : premiumBasis);
-              const termDraft = termDrafts[actualIdx] || {};
-              const termError = termErrors[actualIdx];
+            // Format date for group header
+            const formatGroupDate = (dateStr) => {
+              if (!dateStr || dateStr === 'TBD') return 'TBD';
+              const date = new Date(dateStr + 'T00:00:00');
+              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+            };
 
-              // Block info for visual grouping
-              const block = getBlockForLayer(actualIdx);
-              const isBlockStart = hasExplicitDate; // Layer with explicit date starts a block
+            // Get layers for this group (reversed for display - highest attachment first)
+            const groupLayers = layers.slice(group.startIndex, group.endIndex + 1).reverse();
 
-              return (
-                <tr
-                  key={actualIdx}
-                  className={`${isCMAI ? 'bg-purple-50' : ''} ${isEditing ? 'bg-blue-50/30' : 'hover:bg-gray-50 cursor-pointer'}`}
-                  onClick={(e) => {
-                    if (!isEditing) {
-                      e.stopPropagation();
-                      setIsEditing(true);
-                    }
-                  }}
-                >
+            // Column count for header row colspan (add 1 for spine column when multiple groups)
+            const colCount = 5 + (hasShortTermLayers ? 2 : 1) + (showQsColumn ? 1 : 0) + (isEditing ? 1 : 0) + (hasMultipleDateGroups ? 1 : 0);
+
+            // Header styling: amber for TBD, purple for dated
+            const headerBg = groupIsTbd ? 'bg-amber-50' : 'bg-purple-50';
+            const headerText = groupIsTbd ? 'text-amber-700' : 'text-purple-700';
+
+            return (
+              <tbody
+                key={`group-${group.startIndex}`}
+                className="border-b border-gray-200"
+              >
+                {/* Group header row - only show when multiple groups */}
+                {hasMultipleDateGroups && (
+                  <tr className={`${headerBg} ${groupDisplayIdx > 0 ? 'border-t-8 border-t-white' : ''}`}>
+                    {/* Spine cell */}
+                    <td className={`w-1.5 p-0 ${groupIsTbd ? 'bg-amber-400' : 'bg-purple-500'}`} rowSpan={groupLayers.length + 1}></td>
+                    <td colSpan={colCount - 1} className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold ${headerText} uppercase tracking-wide`}>
+                          {formatGroupDate(group.effective)}
+                          {policyExpiration ? ` — ${formatGroupDate(policyExpiration)}` : ''}
+                          {groupTermDays ? ` (${groupTermDays}d)` : ''}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {/* Layer rows for this group */}
+                {groupLayers.map((layer, localIdx) => {
+                  // Calculate the actual index in the full layers array
+                  const actualIdx = group.endIndex - localIdx;
+                  // Calculate display index for ref management (global position in reversed display)
+                  const displayIdx = [...dateGroups].reverse()
+                    .slice(0, groupDisplayIdx)
+                    .reduce((sum, g) => sum + (g.endIndex - g.startIndex + 1), 0) + localIdx;
+
+                  const isCMAI = layer.carrier?.toUpperCase().includes('CMAI');
+                  const isPrimary = actualIdx === 0;
+                  const attachment = calculateAttachment(layers, actualIdx);
+                  // Use annual premium for RPM/ILF calculations (correct for rate comparison)
+                  const annualPremium = getAnnualPremium(layer);
+                  const storedActualPremium = getActualPremium(layer);
+                  const premiumBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
+                  const rpm = annualPremium && layer.limit ? Math.round(annualPremium / (layer.limit / 1_000_000)) : null;
+                  // ILF = this layer's RPM / preceding layer's RPM
+                  // layers is sorted by attachment ascending (index 0 = primary), so preceding is actualIdx - 1
+                  const precedingLayer = actualIdx > 0 ? layers[actualIdx - 1] : null;
+                  const precedingAnnual = precedingLayer ? getAnnualPremium(precedingLayer) : null;
+                  const precedingRpm = precedingAnnual && precedingLayer?.limit ? precedingAnnual / (precedingLayer.limit / 1_000_000) : null;
+                  const ilfPercent = rpm && precedingRpm ? Math.round((rpm / precedingRpm) * 100) : null;
+
+                  // Term calculations using date_config (attachment-based)
+                  const effectiveStart = getLayerEffective(actualIdx);
+                  const effectiveEnd = structureTerm.end; // Always inherit expiration from policy
+                  const isTbd = effectiveStart === 'TBD';
+                  // Calculate term days for this layer
+                  const termDays = !isTbd && effectiveStart && effectiveEnd
+                    ? Math.ceil((new Date(effectiveEnd) - new Date(effectiveStart)) / (1000 * 60 * 60 * 24))
+                    : 365;
+                  const isShortTerm = !isTbd && termDays < 350;
+
+                  // Calculate the actual/charged premium to display
+                  // If FLAT basis: show stored value; otherwise pro-rate based on term
+                  const actualPremium = premiumBasis === PREMIUM_BASIS.FLAT
+                    ? storedActualPremium
+                    : (isShortTerm && annualPremium
+                        ? Math.round(annualPremium * (termDays / 365))
+                        : annualPremium);
+
+                  // Row background - CMAI gets subtle purple only when no date blocks (spine provides distinction)
+                  const rowBg = isCMAI && !hasMultipleDateGroups ? 'bg-purple-50/50' : 'bg-white';
+
+                  return (
+                    <tr
+                      key={actualIdx}
+                      className={`${rowBg} ${isEditing ? '' : 'hover:bg-gray-50 cursor-pointer'} border-b border-gray-100 last:border-b-0`}
+                      onClick={(e) => {
+                        if (!isEditing) {
+                          e.stopPropagation();
+                          setIsEditing(true);
+                        }
+                      }}
+                    >
                   {/* Carrier */}
                   <td className={`px-4 ${isEditing ? 'py-1.5' : 'py-3'}`}>
-                    {isEditing && !isCMAI ? (
-                      <input
-                        ref={(el) => { carrierInputRefs.current[displayIdx] = el; }}
-                        type="text"
-                        className="w-full text-sm font-medium text-gray-800 bg-white border border-gray-200 rounded px-2 py-1 focus:border-purple-500 focus:ring-1 focus:ring-purple-200 outline-none"
-                        value={layer.carrier || ''}
-                        onChange={(e) => {
-                          const newLayers = [...layers];
-                          newLayers[actualIdx] = { ...newLayers[actualIdx], carrier: e.target.value };
-                          setLayers(newLayers);
-                        }}
-                        onKeyDown={(e) => handleArrowNav(e, displayIdx, carrierInputRefs)}
-                        onFocus={(e) => e.target.select()}
-                        placeholder="Carrier name"
-                      />
-                    ) : (
-                      <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2">
+                      {isEditing && !isCMAI ? (
+                        <input
+                          ref={(el) => { carrierInputRefs.current[displayIdx] = el; }}
+                          type="text"
+                          className="flex-1 min-w-0 text-sm font-medium text-gray-800 bg-transparent border-b border-transparent focus:border-purple-400 py-1 outline-none"
+                          value={layer.carrier || ''}
+                          onChange={(e) => {
+                            const newLayers = [...layers];
+                            newLayers[actualIdx] = { ...newLayers[actualIdx], carrier: e.target.value };
+                            setLayers(newLayers);
+                          }}
+                          onKeyDown={(e) => handleArrowNav(e, displayIdx, carrierInputRefs)}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="Carrier name"
+                        />
+                      ) : (
                         <span className={`font-medium ${isCMAI ? 'text-purple-700' : 'text-gray-800'}`}>
                           {layer.carrier || 'Unnamed'}
                         </span>
-                        {isCMAI && <span className="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded">Ours</span>}
-                      </div>
-                    )}
+                      )}
+                      {isCMAI && <span className="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded flex-shrink-0">Ours</span>}
+                    </div>
                   </td>
 
                   {/* Limit */}
@@ -654,104 +551,8 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                     )}
                   </td>
 
-                  {showTermOverrides && (
+                  {hasShortTermLayers && (
                     <>
-                      {/* Effective Date - Block Inheritance UI */}
-                      <td className="px-4 py-1.5 text-center">
-                        {termDraft.editing ? (
-                          // Editing mode - show date input
-                          <div className="flex flex-col items-center">
-                            <input
-                              type="date"
-                              autoFocus
-                              value={termDraft.start || effectiveStart || ''}
-                              className={`w-28 text-xs text-gray-700 bg-white border rounded px-2 py-1 text-center outline-none ${
-                                termError ? 'border-red-300 focus:border-red-400' : 'border-gray-200 focus:border-purple-500'
-                              }`}
-                              onChange={(e) => {
-                                setTermDrafts(prev => ({
-                                  ...prev,
-                                  [actualIdx]: { ...prev[actualIdx], start: e.target.value },
-                                }));
-                              }}
-                              onBlur={() => {
-                                applyTermDraft(actualIdx, layer);
-                                setTermDrafts(prev => {
-                                  const { [actualIdx]: draft, ...rest } = prev;
-                                  return { ...rest, [actualIdx]: { ...draft, editing: false } };
-                                });
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  applyTermDraft(actualIdx, layer);
-                                  setTermDrafts(prev => {
-                                    const { [actualIdx]: draft, ...rest } = prev;
-                                    return { ...rest, [actualIdx]: { ...draft, editing: false } };
-                                  });
-                                } else if (e.key === 'Escape') {
-                                  setTermDrafts(prev => {
-                                    const { [actualIdx]: _removed, ...rest } = prev;
-                                    return rest;
-                                  });
-                                }
-                              }}
-                            />
-                            {termError && (
-                              <div className="text-[10px] text-red-500 mt-1">{termError}</div>
-                            )}
-                          </div>
-                        ) : hasExplicitDate ? (
-                          // This layer has an explicit date - show it with edit/clear options
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              onClick={() => setTermDrafts(prev => ({
-                                ...prev,
-                                [actualIdx]: { start: layer.term_start, editing: true },
-                              }))}
-                              className="text-xs font-medium text-purple-600 hover:text-purple-800 px-2 py-0.5 rounded hover:bg-purple-50"
-                              title="Edit effective date"
-                            >
-                              {new Date(layer.term_start + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            </button>
-                            <button
-                              onClick={() => {
-                                // Clear explicit date - inherit from below
-                                const newLayers = [...layers];
-                                newLayers[actualIdx] = {
-                                  ...layer,
-                                  term_start: null,
-                                  term_end: null,
-                                };
-                                setLayers(newLayers);
-                              }}
-                              className="text-gray-400 hover:text-red-500 p-0.5"
-                              title="Clear and inherit from below"
-                            >
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </div>
-                        ) : (
-                          // Inherited - show the inherited date with arrow indicator
-                          <button
-                            onClick={() => setTermDrafts(prev => ({
-                              ...prev,
-                              [actualIdx]: { start: '', editing: true },
-                            }))}
-                            className="flex items-center justify-center gap-1 text-xs text-gray-400 hover:text-gray-600 px-2 py-0.5"
-                            title={`Inheriting ${effectiveStart ? new Date(effectiveStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'policy date'} - click to override`}
-                          >
-                            <span className="text-gray-300">↑</span>
-                            {effectiveStart && (
-                              <span className="text-gray-400">
-                                {new Date(effectiveStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                              </span>
-                            )}
-                          </button>
-                        )}
-                      </td>
                       {/* Annual */}
                       <td className={`px-4 text-right ${isEditing ? 'py-1.5' : 'py-3'}`}>
                         {isEditing ? (
@@ -766,14 +567,17 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                               const newLayers = [...layers];
                               const parsed = parseFormattedNumber(e.target.value);
                               const newAnnual = parsed ? Number(parsed) : null;
-                              const newActual = basisForUI === PREMIUM_BASIS.FLAT
-                                ? actualPremium
+                              const currentBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
+                              // If flat rate is set, don't auto-recalculate charged
+                              // Otherwise, pro-rate based on term
+                              const newActual = currentBasis === PREMIUM_BASIS.FLAT
+                                ? layer.actual_premium
                                 : calculateActualPremium({
-                                  annualPremium: newAnnual,
-                                  termStart: effectiveStart,
-                                  termEnd: effectiveEnd,
-                                  premiumBasis: PREMIUM_BASIS.PRO_RATA,
-                                });
+                                    annualPremium: newAnnual,
+                                    termStart: effectiveStart,
+                                    termEnd: effectiveEnd,
+                                    premiumBasis: PREMIUM_BASIS.PRO_RATA,
+                                  });
                               newLayers[actualIdx] = {
                                 ...newLayers[actualIdx],
                                 annual_premium: newAnnual,
@@ -790,89 +594,79 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                           </span>
                         )}
                       </td>
-                      {/* Pro-rata */}
-                      <td className="px-4 py-1.5 text-right">
-                        <span className="text-xs text-gray-600">
-                          {proRataValue ? formatCurrency(proRataValue) : '—'}
-                        </span>
-                      </td>
-                      {/* Charged */}
-                      <td className="px-4 py-1.5 text-right">
-                        {basisForUI === PREMIUM_BASIS.FLAT ? (
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            className="w-24 text-xs text-right bg-white border border-gray-200 rounded px-2 py-1 focus:border-purple-500 outline-none"
-                            value={actualPremium ? formatNumberWithCommas(actualPremium) : ''}
-                            placeholder="—"
-                            onChange={(e) => {
-                              const parsed = parseFormattedNumber(e.target.value);
-                              const nextValue = parsed ? Number(parsed) : null;
-                              const newLayers = [...layers];
-                              newLayers[actualIdx] = {
-                                ...newLayers[actualIdx],
-                                actual_premium: nextValue,
-                                flat_premium: nextValue,
-                                premium_basis: PREMIUM_BASIS.FLAT,
-                              };
-                              setLayers(newLayers);
-                            }}
-                            onFocus={(e) => e.target.select()}
-                          />
-                        ) : (
-                          <span className="text-xs text-gray-600">
-                            {proRataValue ? formatCurrency(proRataValue) : '—'}
+                      {/* Charged (editable for flat rate override) */}
+                      <td className={`px-4 text-right ${isEditing ? 'py-1.5' : 'py-3'}`}>
+                        {isEditing ? (() => {
+                          const hasDraft = actualIdx in chargedDrafts;
+                          const displayValue = hasDraft
+                            ? chargedDrafts[actualIdx]
+                            : (actualPremium ? formatNumberWithCommas(actualPremium) : '');
+                          return (
+                            <input
+                              ref={(el) => { chargedInputRefs.current[displayIdx] = el; }}
+                              type="text"
+                              inputMode="numeric"
+                              className={`w-24 text-sm font-medium bg-white border rounded px-2 py-1 focus:border-purple-500 outline-none text-right ${
+                                premiumBasis === PREMIUM_BASIS.FLAT ? 'text-blue-700 border-blue-200' : 'text-green-700 border-gray-200'
+                              }`}
+                              value={displayValue}
+                              placeholder="Pro-rata"
+                              title={premiumBasis === PREMIUM_BASIS.FLAT ? 'Flat rate (override)' : 'Pro-rata calculated - edit to override'}
+                              onChange={(e) => {
+                                // Store as draft while typing
+                                setChargedDrafts(prev => ({ ...prev, [actualIdx]: e.target.value }));
+                              }}
+                              onKeyDown={(e) => handleArrowNav(e, displayIdx, chargedInputRefs)}
+                              onBlur={() => {
+                                // On blur, commit the value
+                                const draft = chargedDrafts[actualIdx];
+                                if (draft === undefined) return; // No draft, nothing to commit
+
+                                const parsed = parseFormattedNumber(draft);
+                                const newCharged = parsed ? Number(parsed) : null;
+                                const newLayers = [...layers];
+
+                                if (newCharged === null) {
+                                  // Empty = reset to pro-rata
+                                  const proRataValue = calculateActualPremium({
+                                    annualPremium,
+                                    termStart: effectiveStart,
+                                    termEnd: effectiveEnd,
+                                    premiumBasis: PREMIUM_BASIS.PRO_RATA,
+                                  });
+                                  newLayers[actualIdx] = {
+                                    ...newLayers[actualIdx],
+                                    actual_premium: proRataValue,
+                                    premium_basis: PREMIUM_BASIS.PRO_RATA,
+                                  };
+                                } else {
+                                  // Has value = set as flat rate
+                                  newLayers[actualIdx] = {
+                                    ...newLayers[actualIdx],
+                                    actual_premium: newCharged,
+                                    premium_basis: PREMIUM_BASIS.FLAT,
+                                  };
+                                }
+                                setLayers(newLayers);
+                                // Clear the draft
+                                setChargedDrafts(prev => {
+                                  const { [actualIdx]: _, ...rest } = prev;
+                                  return rest;
+                                });
+                              }}
+                              onFocus={(e) => e.target.select()}
+                            />
+                          );
+                        })() : (
+                          <span className={`font-medium ${premiumBasis === PREMIUM_BASIS.FLAT ? 'text-blue-700' : 'text-green-700'}`}>
+                            {formatCurrency(actualPremium)}
                           </span>
                         )}
-                      </td>
-                      {/* Basis */}
-                      <td className="px-4 py-1.5 text-center">
-                        <select
-                          className="text-xs text-gray-600 bg-white border border-gray-200 rounded px-2 py-1 focus:border-purple-500 outline-none cursor-pointer"
-                          value={basisForUI}
-                          onChange={(e) => {
-                            const newBasis = e.target.value;
-                            const newLayers = [...layers];
-                            const nextLayer = { ...layer, premium_basis: newBasis };
-                            if (newBasis === PREMIUM_BASIS.PRO_RATA) {
-                              nextLayer.term_start = null;
-                              nextLayer.term_end = null;
-                              setTermDrafts(prev => {
-                                const { [actualIdx]: _removed, ...rest } = prev;
-                                return rest;
-                              });
-                            }
-                            const termStart = newBasis === PREMIUM_BASIS.PRO_RATA
-                              ? (structureTerm.start || effectiveStart)
-                              : effectiveStart;
-                            const termEnd = newBasis === PREMIUM_BASIS.PRO_RATA
-                              ? (structureTerm.end || effectiveEnd)
-                              : effectiveEnd;
-                            if (newBasis === PREMIUM_BASIS.FLAT) {
-                              if (!nextLayer.actual_premium) {
-                                nextLayer.actual_premium = proRataValue || annualPremium || null;
-                              }
-                              nextLayer.flat_premium = nextLayer.actual_premium;
-                            } else {
-                              nextLayer.actual_premium = calculateActualPremium({
-                                annualPremium,
-                                termStart,
-                                termEnd,
-                                premiumBasis: PREMIUM_BASIS.PRO_RATA,
-                              });
-                            }
-                            newLayers[actualIdx] = nextLayer;
-                            setLayers(newLayers);
-                          }}
-                        >
-                          <option value={PREMIUM_BASIS.PRO_RATA}>Pro-rata</option>
-                          <option value={PREMIUM_BASIS.FLAT}>Flat</option>
-                        </select>
                       </td>
                     </>
                   )}
 
-                  {!showTermOverrides && (
+                  {!hasShortTermLayers && (
                     <td className={`px-4 text-right ${isEditing ? 'py-1.5' : 'py-3'}`}>
                       {isEditing ? (
                         <input
@@ -993,25 +787,28 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                     )}
                   </td>
 
-                  {/* Delete */}
-                  {isEditing && (
-                    <td className="px-4 py-1.5 text-center">
-                      {!isCMAI && (
-                        <button
-                          onClick={() => setLayers(layers.filter((_, i) => i !== actualIdx))}
-                          className="text-red-500 hover:text-red-700"
-                        >
-                          ×
-                        </button>
+                      {/* Delete */}
+                      {isEditing && (
+                        <td className="px-4 py-1.5 text-center">
+                          {!isCMAI && (
+                            <button
+                              onClick={() => setLayers(layers.filter((_, i) => i !== actualIdx))}
+                              className="text-red-500 hover:text-red-700"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </td>
                       )}
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            );
+          })}
         </table>
       </div>
+
 
       {/* Add layer button (when editing) */}
       {isEditing && (
@@ -1033,25 +830,6 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                 className="rounded border-gray-300 text-purple-600 w-3 h-3"
               />
               Quota Share
-            </label>
-            <label
-              className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer"
-              title="Show term overrides"
-            >
-              <input
-                type="checkbox"
-                checked={termColumnEnabled}
-                onChange={(e) => {
-                  const enabled = e.target.checked;
-                  setTermColumnEnabled(enabled);
-                  if (!enabled) {
-                    setTermDrafts({});
-                    setTermErrors({});
-                  }
-                }}
-                className="rounded border-gray-300 text-purple-600 w-3 h-3"
-              />
-              Term Overrides
             </label>
           </div>
           <button
@@ -1080,6 +858,7 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
           </button>
         </div>
       )}
+
     </div>
   );
 }

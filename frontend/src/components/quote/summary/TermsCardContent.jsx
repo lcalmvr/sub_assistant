@@ -2,7 +2,8 @@ import * as Popover from '@radix-ui/react-popover';
 import * as HoverCard from '@radix-ui/react-hover-card';
 import PolicyTermEditor from '../../PolicyTermEditor';
 import TermsPanel from './TermsPanel';
-import { formatDate } from '../../../utils/quoteUtils';
+import { formatDate, calculateAttachment } from '../../../utils/quoteUtils';
+import { isMultidateTower, getLayerEffectiveFromConfig } from '../../../utils/premiumUtils';
 
 // Note: TermsPanel is a small "smart" component that handles its own mutation.
 // It's extracted separately since it has self-contained state.
@@ -50,12 +51,48 @@ export default function TermsCardContent({
   setTermAppliesToPopoverId,
   // Mutation handler
   onApplyPolicyTerm,
+  // Tower data for layer terms modal
+  tower = [],
 }) {
   // Derived values
-  const datesTbd = variation?.dates_tbd || false;
-  const effDate = variation?.effective_date_override || structure?.effective_date || submission?.effective_date;
   const expDate = variation?.expiration_date_override || structure?.expiration_date || submission?.expiration_date;
   const isExpanded = expandedCard === 'terms';
+
+  // Get date_config and check for multidate
+  const dateConfig = variation?.date_config || null;
+  const hasMultipleDates = isMultidateTower(dateConfig);
+
+  // Find CMAI layer and its effective date
+  const cmaiIndex = tower.findIndex(l => l.carrier?.toUpperCase().includes('CMAI'));
+  const cmaiAttachment = cmaiIndex >= 0 ? calculateAttachment(tower, cmaiIndex) : 0;
+
+  // Get program (primary layer) effective date
+  const programEffective = dateConfig?.[0]?.effective === 'TBD'
+    ? null
+    : (dateConfig?.[0]?.effective || variation?.effective_date_override || structure?.effective_date || submission?.effective_date || '');
+  const programDatesTbd = dateConfig?.[0]?.effective === 'TBD';
+
+  // Get CMAI layer's effective date (for "Our Term")
+  let ourEffDate = '';
+  let ourDatesTbd = false;
+
+  if (cmaiIndex >= 0) {
+    const cmaiEffective = getLayerEffectiveFromConfig(cmaiAttachment, dateConfig, programEffective);
+    if (cmaiEffective === 'TBD') {
+      ourDatesTbd = true;
+      ourEffDate = '';
+    } else {
+      ourEffDate = cmaiEffective || programEffective || '';
+    }
+  } else {
+    // No CMAI layer, use program dates
+    ourEffDate = programEffective || '';
+    ourDatesTbd = programDatesTbd;
+  }
+
+  // For backward compatibility, keep effDate and datesTbd pointing to "our" dates
+  const effDate = ourEffDate;
+  const datesTbd = ourDatesTbd;
 
   return (
     <div
@@ -163,8 +200,24 @@ export default function TermsCardContent({
                 })}
               </div>
             )
+          ) : hasMultipleDates ? (
+            /* Quote mode collapsed with multiple dates: show dual date display */
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-500">Program</span>
+                <span className="text-sm text-gray-700">
+                  {programDatesTbd ? 'TBD' : formatDate(programEffective)} - {formatDate(expDate)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-purple-600 font-medium">Our Term</span>
+                <span className="text-sm text-purple-700 font-semibold">
+                  {ourDatesTbd ? 'TBD' : formatDate(ourEffDate)} - {formatDate(expDate)}
+                </span>
+              </div>
+            </div>
           ) : (
-            /* Quote mode collapsed: show date range */
+            /* Quote mode collapsed: show single date range */
             <div className="text-sm font-semibold text-gray-800">
               {datesTbd ? 'TBD' : `${formatDate(effDate)} - ${formatDate(expDate)}`}
             </div>
@@ -202,7 +255,7 @@ export default function TermsCardContent({
               onApplyPolicyTerm={onApplyPolicyTerm}
             />
           ) : (
-            <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} />
+            <TermsPanel structure={structure} variation={variation} submission={submission} submissionId={submission?.id} tower={tower} />
           )}
         </div>
       )}
