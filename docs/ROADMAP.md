@@ -18,22 +18,22 @@ What we're focused on right now:
 
 1. **Premium/Term Model** - Layer-level term dates for short-term/annual premium calculation
    - Branch: `feature/annual-short-term-premium`
-   - Plan: See active plan file in `.claude/plans/`
+   - Plan: [active/premium-term-plan.md](active/premium-term-plan.md)
 
-2. **Codebase Cleanup** - Complete (this session)
+2. **Codebase Cleanup** - In progress
    - Consolidated folder structure
-   - Updated documentation system
+   - Reviewing docs for integration vs archive
 
 ---
 
 ## Active Work
 
-Features in progress:
+Features in progress. Each should have a doc in `active/`.
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Premium/Term Model | In progress | Term date configuration modal planned |
-| QuotePageV3 | Active | Main quote interface |
+| Feature | Doc | Status |
+|---------|-----|--------|
+| Premium/Term Model | [premium-term-plan.md](active/premium-term-plan.md) | In progress |
+| QuotePageV3 Refinements | [quotepagev3-refactor-plan.md](active/quotepagev3-refactor-plan.md), [quote-v3-formatting.md](active/quote-v3-formatting.md) | Ongoing |
 
 ---
 
@@ -45,7 +45,6 @@ Planned but not started:
 |---------|----------|-------|
 | API Router Refactor | Medium | Split api/main.py (15K lines) into routers |
 | Update architecture.md | Medium | Currently references old Streamlit files |
-| Vet docs (plans/, wip/) | Medium | Review and archive stale docs |
 | UW Knowledge Base | Medium | Phase 13 - API layer, DB questions |
 | Endorsement Management | Medium | Phase 14 - More endorsement types |
 | Claims Feedback Loop | Low | Phase 5 - Control → outcome correlation |
@@ -55,7 +54,7 @@ Planned but not started:
 
 ## Done
 
-Major features completed:
+Major features completed (detailed docs in `archived/implemented/`):
 
 ### Infrastructure
 - Unified data flow (extraction → `submission_extracted_values`)
@@ -78,8 +77,8 @@ Major features completed:
 
 ---
 
-## Archive
+## Reference
 
-Historical plans and completed specs are in `docs/archived/`.
-
-For detailed phase breakdown of the original 15-phase roadmap, see `docs/archived/PROJECT_ROADMAP.md`.
+- **Active project docs:** `docs/active/`
+- **Completed/archived docs:** `docs/archived/`
+- **Historical 15-phase roadmap:** `docs/archived/PROJECT_ROADMAP.md`

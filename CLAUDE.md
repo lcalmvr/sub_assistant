@@ -23,10 +23,11 @@ The project uses a simple documentation structure. **Keep this current as we wor
 ```
 CLAUDE.md              # This file - patterns, conventions, session instructions
 docs/
-  ROADMAP.md           # Vision → Priorities → Active Work → Done
-  folder-reference.md  # Detailed inventory of every folder/file
+  ROADMAP.md           # Master orchestrator - vision, priorities, links to active work
+  folder-reference.md  # Detailed inventory of every folder/file in codebase
   architecture.md      # How the system is built (data flow, components)
-  archived/            # Old plans, completed specs, historical decisions
+  active/              # Docs for work in progress (plans, specs, analysis)
+  archived/            # Completed or abandoned project docs
 ```
 
 ### What Each Doc Is For
@@ -34,18 +35,20 @@ docs/
 | Doc | Purpose | When to Check | When to Update |
 |-----|---------|---------------|----------------|
 | `CLAUDE.md` | Patterns, conventions, how to work | Start of session | When we establish new patterns |
-| `ROADMAP.md` | What we're building, priorities, progress | Before starting work | After completing features, changing priorities |
+| `ROADMAP.md` | Master orchestrator - priorities, links to active projects | Before starting work | After completing features, changing priorities |
 | `folder-reference.md` | WHERE things are - file inventory, what's legacy vs active | "Where does X live?" / "What is this folder?" | When adding/moving/archiving folders |
 | `architecture.md` | HOW things work - data flow, component interaction | "How does data flow?" / Working on cross-system features | When architecture changes |
-| `archived/` | Historical reference | When you need context on past decisions | When plans complete or are abandoned |
+| `active/` | Detailed docs for current work | When working on a specific feature | When starting new work |
+| `archived/` | Historical reference | When you need context on past decisions | When projects complete or are abandoned |
 
 ### Keeping Docs Updated
 
-1. **After completing a feature**: Move it from "Active" to "Done" in ROADMAP.md
-2. **After abandoning a plan**: Move the plan doc to archived/
-3. **When establishing new patterns**: Add to this file (CLAUDE.md)
-4. **When architecture changes**: Update architecture.md
-5. **When adding/moving folders**: Update folder-reference.md
+1. **Starting new work**: Create doc in active/, link from ROADMAP.md
+2. **After completing a feature**: Move doc from active/ to archived/, update ROADMAP.md
+3. **After abandoning a plan**: Move doc to archived/, note in ROADMAP.md
+4. **When establishing new patterns**: Add to this file (CLAUDE.md)
+5. **When architecture changes**: Update architecture.md
+6. **When adding/moving folders**: Update folder-reference.md
 
 ## Directory Structure
 
