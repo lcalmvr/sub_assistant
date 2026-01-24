@@ -166,6 +166,41 @@ def get_document_url(storage_key: str, expires_sec: int = 3600) -> str:
     return signed_url(storage_key, expires_sec=expires_sec)
 
 
+def download_document(storage_key: str, dest_path: str | Path | None = None) -> Path:
+    """
+    Download a document from storage to a local file.
+
+    Args:
+        storage_key: The storage key to download
+        dest_path: Optional destination path. If not provided, creates a temp file.
+
+    Returns:
+        Path to the downloaded file
+    """
+    import tempfile
+
+    sb = require_sb()
+
+    # Download the file bytes
+    data = sb.storage.from_(_BUCKET).download(storage_key)
+
+    # Determine destination
+    if dest_path:
+        path = Path(dest_path)
+    else:
+        # Create temp file with same extension
+        suffix = Path(storage_key).suffix or ".bin"
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        path = Path(temp.name)
+        temp.close()
+
+    # Write to file
+    with open(path, "wb") as f:
+        f.write(data)
+
+    return path
+
+
 def delete_document(storage_key: str) -> bool:
     """
     Delete a document from storage.

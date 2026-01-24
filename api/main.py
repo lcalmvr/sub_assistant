@@ -895,18 +895,34 @@ def extract_document_integrated(document_id: str):
                 if not doc:
                     raise HTTPException(status_code=404, detail="Document not found")
 
-        # Extract file_path from metadata
+        # Get file for extraction (download from storage if needed)
         metadata = doc["doc_metadata"] or {}
+        storage_key = metadata.get("storage_key")
         file_path = metadata.get("file_path")
-        if not file_path:
-            raise HTTPException(status_code=400, detail="Document has no file_path in metadata")
 
-        # Run integrated extraction
-        result = extract_application_integrated(
-            document_id=str(doc["id"]),
-            file_path=file_path,
-            submission_id=str(doc["submission_id"]),
-        )
+        temp_file = None
+        try:
+            if storage_key:
+                # Download from storage to temp file
+                from core import storage
+                temp_file = storage.download_document(storage_key)
+                file_path = str(temp_file)
+            elif not file_path or not os.path.exists(file_path):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Document has no storage_key or valid file_path. Re-upload the document."
+                )
+
+            # Run integrated extraction
+            result = extract_application_integrated(
+                document_id=str(doc["id"]),
+                file_path=file_path,
+                submission_id=str(doc["submission_id"]),
+            )
+        finally:
+            # Clean up temp file
+            if temp_file and temp_file.exists():
+                temp_file.unlink()
 
         return {
             "document_id": document_id,
@@ -993,19 +1009,24 @@ async def upload_submission_document(
                 elif "loss" in fname_lower:
                     doc_type = "loss_run"
 
-        # Upload to Supabase Storage
-        storage_key = None
-        storage_url = None
-        if storage.is_configured():
-            try:
-                storage_result = storage.upload_document(file_path, submission_id, file.filename)
-                storage_key = storage_result["storage_key"]
-                storage_url = storage_result["url"]
-            except Exception as e:
-                print(f"[api] Storage upload failed for {file.filename}: {e}")
-                # Continue without storage - file still processed
+        # Upload to Supabase Storage (required for later extraction)
+        if not storage.is_configured():
+            raise HTTPException(
+                status_code=503,
+                detail="Storage not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE in .env"
+            )
 
-        # Insert document record
+        try:
+            storage_result = storage.upload_document(file_path, submission_id, file.filename)
+            storage_key = storage_result["storage_key"]
+            storage_url = storage_result["url"]
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Storage upload failed: {str(e)}"
+            )
+
+        # Insert document record (only after successful storage upload)
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
@@ -1497,13 +1518,21 @@ def trigger_extraction(submission_id: str, document_id: Optional[str] = None):
             if not doc:
                 raise HTTPException(status_code=404, detail="No document found for extraction")
 
-            # Determine file path from metadata
+            # Get file for extraction (download from storage if needed)
             metadata = doc.get("doc_metadata") or {}
-            file_path = metadata.get("file_path") or metadata.get("storage_key")
-            if not file_path or not os.path.exists(file_path):
+            storage_key = metadata.get("storage_key")
+            file_path = metadata.get("file_path")
+
+            temp_file = None
+            if storage_key:
+                # Download from storage to temp file
+                from core import storage
+                temp_file = storage.download_document(storage_key)
+                file_path = str(temp_file)
+            elif not file_path or not os.path.exists(file_path):
                 raise HTTPException(
                     status_code=400,
-                    detail="Document file not found on disk. Re-upload the document."
+                    detail="Document has no storage_key or valid file_path. Re-upload the document."
                 )
 
             # Run extraction
@@ -1588,6 +1617,10 @@ def trigger_extraction(submission_id: str, document_id: Optional[str] = None):
                 """, (submission_id, str(e)))
                 conn.commit()
                 raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
+            finally:
+                # Clean up temp file if we downloaded from storage
+                if temp_file and temp_file.exists():
+                    temp_file.unlink()
 
 
 @app.post("/api/extractions/{extraction_id}/correct")
@@ -1738,13 +1771,21 @@ def trigger_textract_extraction(submission_id: str, request: TextractRequest = N
             if not doc:
                 raise HTTPException(status_code=404, detail="No document found for extraction")
 
-            # Determine file path from metadata
+            # Get file for extraction (download from storage if needed)
             metadata = doc.get("doc_metadata") or {}
-            file_path = metadata.get("file_path") or metadata.get("storage_key")
-            if not file_path or not os.path.exists(file_path):
+            storage_key = metadata.get("storage_key")
+            file_path = metadata.get("file_path")
+
+            temp_file = None
+            if storage_key:
+                # Download from storage to temp file
+                from core import storage
+                temp_file = storage.download_document(storage_key)
+                file_path = str(temp_file)
+            elif not file_path or not os.path.exists(file_path):
                 raise HTTPException(
                     status_code=400,
-                    detail="Document file not found on disk. Re-upload the document."
+                    detail="Document has no storage_key or valid file_path. Re-upload the document."
                 )
 
             # Run Textract extraction
@@ -1766,6 +1807,10 @@ def trigger_textract_extraction(submission_id: str, request: TextractRequest = N
 
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Textract extraction failed: {str(e)}")
+            finally:
+                # Clean up temp file if we downloaded from storage
+                if temp_file and temp_file.exists():
+                    temp_file.unlink()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -9176,13 +9221,25 @@ def analyze_document_for_schema(document_id: str):
                     doc_text = "\n".join(lines)
 
             if not doc_text:
-                # Try to get text from file
+                # Try to get text from file (download from storage if needed)
+                import pdfplumber
                 metadata = row.get("doc_metadata") or {}
+                storage_key = metadata.get("storage_key")
                 file_path = metadata.get("file_path")
-                if file_path and os.path.exists(file_path):
-                    import pdfplumber
-                    with pdfplumber.open(file_path) as pdf:
-                        doc_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+                temp_file = None
+                try:
+                    if storage_key:
+                        from core import storage
+                        temp_file = storage.download_document(storage_key)
+                        file_path = str(temp_file)
+
+                    if file_path and os.path.exists(file_path):
+                        with pdfplumber.open(file_path) as pdf:
+                            doc_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+                finally:
+                    if temp_file and temp_file.exists():
+                        temp_file.unlink()
 
             if not doc_text:
                 raise HTTPException(status_code=400, detail="Could not extract text from document")
