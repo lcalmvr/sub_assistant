@@ -129,6 +129,8 @@ function TowerPositionCard({
                 ? 'rounded-b-full'
                 : '';
 
+              const layerPremium = getAnnualPremium(layer);
+
               return (
                 <div key={idx} className="flex gap-2 items-stretch">
                   {/* Rail segment - extends into gap below when not last in group */}
@@ -141,24 +143,36 @@ function TowerPositionCard({
                   />
                   {/* Layer card */}
                   {isCMAI ? (
-                    <div className="flex-1 bg-purple-600 text-white rounded py-2.5 px-4 text-center shadow-md">
-                      <div className="text-sm font-bold flex items-center justify-center gap-1">
-                        <span>{formatCompact(layer.limit)}</span>
-                        {showAsExcess && layerAttachment > 0 && (
-                          <span className="text-xs opacity-80">xs {formatCompact(layerAttachment)}</span>
-                        )}
+                    <div className="flex-1 bg-purple-600 text-white rounded py-1.5 px-3 shadow-md flex items-center justify-between">
+                      <div>
+                        <div className="text-[11px] font-medium opacity-90 truncate">{layer.carrier || 'CMAI'}</div>
+                        <div className="text-sm font-bold flex items-center gap-1">
+                          <span>{formatCompact(layer.limit)}</span>
+                          {showAsExcess && layerAttachment > 0 && (
+                            <span className="text-xs opacity-80">xs {formatCompact(layerAttachment)}</span>
+                          )}
+                        </div>
                       </div>
+                      {layerPremium > 0 && (
+                        <span className="text-sm font-semibold">{formatCurrency(layerPremium)}</span>
+                      )}
                     </div>
                   ) : (
-                    <div className="flex-1 bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
-                      <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
-                        <span>{formatCompact(layer.limit)}</span>
-                        {layerAttachment > 0 ? (
-                          <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
-                        ) : (
-                          <span className="text-[11px] font-semibold text-gray-600">Primary</span>
-                        )}
+                    <div className="flex-1 bg-gray-100 border border-gray-200 rounded py-1.5 px-3 flex items-center justify-between">
+                      <div>
+                        <div className="text-[11px] text-gray-500 truncate">{layer.carrier || 'TBD'}</div>
+                        <div className="text-sm font-semibold text-gray-700 flex items-center gap-1">
+                          <span>{formatCompact(layer.limit)}</span>
+                          {layerAttachment > 0 ? (
+                            <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
+                          ) : (
+                            <span className="text-[11px] font-semibold text-gray-600">Primary</span>
+                          )}
+                        </div>
                       </div>
+                      {layerPremium > 0 && (
+                        <span className="text-sm font-semibold text-green-600">{formatCurrency(layerPremium)}</span>
+                      )}
                     </div>
                   )}
                 </div>
@@ -201,41 +215,66 @@ function TowerPositionCard({
             {/* Layers above ours */}
             {!showOnlyOurLayer && showAsExcess && layersAbove.map((layer, idx) => {
               const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
+              const layerPremium = getAnnualPremium(layer);
               return (
-                <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
-                  <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
-                    <span>{formatCompact(layer.limit)}</span>
-                    {layerAttachment > 0 && (
-                      <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
-                    )}
+                <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-1.5 px-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-[11px] text-gray-500 truncate">{layer.carrier || 'TBD'}</div>
+                    <div className="text-sm font-semibold text-gray-700 flex items-center gap-1">
+                      <span>{formatCompact(layer.limit)}</span>
+                      {layerAttachment > 0 && (
+                        <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
+                      )}
+                    </div>
                   </div>
+                  {layerPremium > 0 && (
+                    <span className="text-sm font-semibold text-green-600">{formatCurrency(layerPremium)}</span>
+                  )}
                 </div>
               );
             })}
 
             {/* Our Layer */}
-            <div className="bg-purple-600 text-white rounded py-2.5 px-4 text-center shadow-md">
-              <div className="text-sm font-bold flex items-center justify-center gap-1">
-                <span>{formatCompact(ourLimit)}</span>
-                {showAsExcess && cmaiAttachment > 0 && (
-                  <span className="text-xs opacity-80">xs {formatCompact(cmaiAttachment)}</span>
-                )}
-              </div>
-            </div>
+            {(() => {
+              const cmaiPremium = cmaiLayer ? getAnnualPremium(cmaiLayer) : 0;
+              return (
+                <div className="bg-purple-600 text-white rounded py-1.5 px-3 shadow-md flex items-center justify-between">
+                  <div>
+                    <div className="text-[11px] font-medium opacity-90 truncate">{cmaiLayer?.carrier || 'CMAI'}</div>
+                    <div className="text-sm font-bold flex items-center gap-1">
+                      <span>{formatCompact(ourLimit)}</span>
+                      {showAsExcess && cmaiAttachment > 0 && (
+                        <span className="text-xs opacity-80">xs {formatCompact(cmaiAttachment)}</span>
+                      )}
+                    </div>
+                  </div>
+                  {cmaiPremium > 0 && (
+                    <span className="text-sm font-semibold">{formatCurrency(cmaiPremium)}</span>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Layers below ours */}
             {!showOnlyOurLayer && showAsExcess && layersBelow.map((layer, idx) => {
               const layerAttachment = layer.calculatedAttachment || layer.attachment || 0;
+              const layerPremium = getAnnualPremium(layer);
               return (
-                <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
-                  <div className="text-sm font-semibold text-gray-700 flex items-center justify-center gap-1">
-                    <span>{formatCompact(layer.limit)}</span>
-                    {layerAttachment > 0 ? (
-                      <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
-                    ) : (
-                      <span className="text-[11px] font-semibold text-gray-600">Primary</span>
-                    )}
+                <div key={idx} className="bg-gray-100 border border-gray-200 rounded py-1.5 px-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-[11px] text-gray-500 truncate">{layer.carrier || 'TBD'}</div>
+                    <div className="text-sm font-semibold text-gray-700 flex items-center gap-1">
+                      <span>{formatCompact(layer.limit)}</span>
+                      {layerAttachment > 0 ? (
+                        <span className="text-xs opacity-75">xs {formatCompact(layerAttachment)}</span>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-gray-600">Primary</span>
+                      )}
+                    </div>
                   </div>
+                  {layerPremium > 0 && (
+                    <span className="text-sm font-semibold text-green-600">{formatCurrency(layerPremium)}</span>
+                  )}
                 </div>
               );
             })}
