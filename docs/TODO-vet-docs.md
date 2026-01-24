@@ -2,60 +2,69 @@
 
 **Created**: 2024-01-24
 **Updated**: 2024-01-24
-**Purpose**: Review all docs to determine if they're active resources or dead-end artifacts
+**Status**: COMPLETE
 
 ## Summary
 
-71 total markdown files in docs/. Priority review needed for `plans/` (10 files) and `wip/` (17 files).
+Reviewed 26 files across docs/plans/ (9) and docs/wip/ (17). All files triaged.
 
-## Action Required
+## Actions Taken
 
-Go through each folder and for each doc ask:
-1. Is this actively used/referenced?
-2. Is this an incomplete plan that should become an action item?
-3. Is this stale and should be archived?
+### plans/ (9 files)
 
-## Folders to Review
+**Archived (completed/superseded):**
+- `PLAN_midterm_endorsement_redesign.md` → implemented/ (Phase 1-7 complete)
+- `caching_implementation.md` → implemented/ (Streamlit caching done)
+- `quote-page-redesign.md` → implemented/ (V3 is live)
+- `page-consolidation-project.md` → archived/ (SetupPage/AnalyzePage exist)
 
-### Priority (likely has stale content)
+**Kept (backlog):**
+- `premium-term-implementation-plan.md` - Current work
+- `broker_relationship_management_plan.md` - Future (CRM-lite)
+- `carrier-reference-data-plan.md` - Future (carrier normalization)
+- `document_library_redesign.md` - Future (component-based docs)
+- `retro_schedule_plan.md` - Future (smart defaults)
 
-- [ ] `docs/plans/` (10 files) - Are these plans active? Completed? Abandoned?
-- [ ] `docs/wip/` (17 files) - What's the status of each WIP item?
+### wip/ (17 files → 7 remaining)
 
-### Lower Priority (likely stable)
+**Moved to guides/:**
+- `supabase-storage-setup.md`
+- `supabase-security-fix.md`
+- `quote-v3-smoke.md` (QA checklist)
 
-- [ ] `docs/guides/` (6 files) - Are these guides current and accurate?
-- [ ] `docs/specs/` (10 files) - Are these specs implemented? If yes, move to `implemented/`
-- [ ] `docs/reference/tech/` (8 files) - Are these still accurate?
+**Moved to docs/:**
+- `IMPLEMENTATION_STATUS.md` (useful status tracker)
 
-### Already Triaged
+**Archived (completed):**
+- `ui-ux-expert-eval-quotev3.md` - Most items fixed
+- `page-consolidation-review.md` - Review complete
+- `page-overlap-analysis.md` - Analysis complete
+- `coverage-editor-positions.md` - Fixes applied
+- `coverage-system-analysis.md` - Analysis complete
 
-- `docs/archived/` (4 files) - Already archived
-- `docs/implemented/` (6 files) - Already marked complete
+**Deleted (redundant):**
+- `batch-edit-rollback.md` - Too specific, regeneratable
+- `quote-v3-pill-consistency.md` - Content already in quote-v3-formatting.md
 
-## Notes from Quick Scan
+**Kept (active):**
+- `quotepagev3-refactor-plan.md` - Ongoing refactor (30% done)
+- `quote-v3-formatting.md` - Active UI consistency work
+- `premium-term-data-model.md` - Part of current work
+- `keyboard-behavior-todo.md` - Awaiting user decision
+- `bound-quote-editing-todo.md` - Awaiting product decision
+- `source-verification-highlighting.md` - Future roadmap
+- `code-review-followups.md` - Running list
 
-**plans/ candidates for `implemented/`:**
-- `quote-page-redesign.md` - V3 is live
-- `PLAN_midterm_endorsement_redesign.md` - Mostly complete per IMPL_STATUS
+## Final Structure
 
-**plans/ candidates for `archived/`:**
-- `page-consolidation-project.md` - Streamlit-focused
-
-**wip/ candidates to move:**
-- `IMPLEMENTATION_STATUS.md` - Useful tracker, move to docs/ root
-- `supabase-*.md` - Setup guides, move to `guides/`
-- `page-*.md` - Streamlit analysis, archive
-
-**wip/ needs status check:**
-- `quote-v3-*.md` - May be done
-- `quotepagev3-refactor-plan.md` - May be done
-- `batch-edit-rollback.md` - May be done
-
-## Outcome
-
-Each doc should end up as:
-- **Active resource** → stays in place, linked from README
-- **Action item** → converted to GitHub issue or task
-- **Completed** → move to `implemented/`
-- **Stale/abandoned** → move to `archived/`
+```
+docs/
+├── plans/           # 5 files (backlog items)
+├── wip/             # 7 files (active work & decisions)
+├── guides/          # 9 files (how-to docs)
+├── implemented/     # 9 files (completed features)
+├── archived/        # 12 files (historical)
+├── IMPLEMENTATION_STATUS.md  # Status tracker
+├── ROADMAP.md       # Master planning
+└── TODO-vet-docs.md # This file (complete)
+```
