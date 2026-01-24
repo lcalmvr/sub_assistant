@@ -28,7 +28,7 @@ This file provides context for Claude Code sessions working on this project.
 
 ## Tech Stack
 
-- **Frontend**: React + Vite (primary), Streamlit (legacy)
+- **Frontend**: React + Vite
 - **Backend**: FastAPI (Python)
 - **Database**: Supabase (PostgreSQL with auth and storage)
 - **Language**: Python 3.11+ (backend), JavaScript/JSX (frontend)
@@ -95,12 +95,7 @@ ai/                    # AI/LLM integration (extraction, classification)
 ingestion/             # Document ingestion pipeline
 db_setup/              # Database migrations
 utils/                 # Python utilities
-
-# Legacy (Streamlit) - do not extend, will archive when React has parity
-app.py                 # Streamlit entry point
-pages/                 # Streamlit page wrappers
-pages_workflows/       # Streamlit page implementations
-pages_components/      # Streamlit UI components
+archive/streamlit/     # Archived Streamlit frontend (reference only)
 ```
 
 ## Code Style
@@ -108,7 +103,7 @@ pages_components/      # Streamlit UI components
 - **No emojis** unless user explicitly requests them
 - **Avoid over-engineering** - only make changes that are directly requested
 - **Don't add features beyond what was asked** - a bug fix doesn't need surrounding code cleaned up
-- **Currency formatting**: In React, use standard `$` formatting. In Streamlit (legacy), escape as `\\$`
+- **Currency formatting**: Use standard `$` formatting
 
 ## React Patterns
 
@@ -124,13 +119,8 @@ pages_components/      # Streamlit UI components
 4. **When we establish a new pattern**, offer to add it to this file
 5. **Prefer editing existing files** over creating new ones
 
-## Streamlit (Legacy)
+## Streamlit (Archived)
 
-Streamlit is the legacy frontend. Do not extend it. Reference only.
+Streamlit frontend has been archived to `archive/streamlit/`. React has full parity.
 
-For Streamlit-specific patterns (if needed for maintenance), see `STYLE_GUIDE.md`.
-
-Streamlit-related folders to eventually archive when React has full parity:
-- `app.py`, `pages/`, `pages_workflows/`, `pages_components/`
-- `utils/tab_state.py`
-- Streamlit-only modules in `ai/`
+Do not use or extend archived code. Reference only if needed for historical context.

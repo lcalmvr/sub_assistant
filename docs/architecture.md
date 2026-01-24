@@ -11,7 +11,7 @@ graph TD
     A[Email Submission] --> B[Email Polling<br/>poll_inbox.py]
     C[Local Testing] --> D[Local Ingestion<br/>ingest_local.py]
     
-    B --> E[Document Processing<br/>app/pipeline.py]
+    B --> E[Document Processing<br/>core/pipeline.py]
     D --> E
     
     E --> F[Document Standardization]
@@ -31,7 +31,7 @@ graph TD
     P --> Q[PDF Creation]
     Q --> R[Storage<br/>Supabase]
     
-    R --> S[Admin Interface<br/>viewer_with_modular_rating.py]
+    R --> S[React Frontend]
     S --> T[Underwriter Review]
 ```
 
@@ -102,7 +102,7 @@ graph LR
 
 ## 🏗️ Component Details
 
-### 1. Document Processing Pipeline (`app/pipeline.py`)
+### 1. Document Processing Pipeline (`core/pipeline.py`)
 
 **Purpose**: Standardizes incoming documents and extracts structured data
 
@@ -160,27 +160,27 @@ control_modifiers.yml:
 Industry + Revenue → Base Rate → Control Adjustments → Limit/Retention Factors → Final Premium
 ```
 
-### 4. Modular UI Architecture
+### 4. UI Architecture
 
 **Current Structure**:
-- **`viewer_with_modular_rating.py`**: Production interface with full functionality
-- **`components/rating_panel_v2.py`**: Reusable rating component (400+ lines → 3-line integration)
-- **`viewer.py`**: Legacy interface preserved for reference
+- **React Frontend** (`frontend/`) - Primary user interface
+- **FastAPI Backend** (`api/main.py`) - REST API serving the frontend
+- **Reusable Components** (`frontend/src/components/`) - Modular React components
 
-**Benefits of Modular Design**:
-- ✅ **Reusable Components**: Rating panel can be used in alternate interfaces
-- ✅ **Maintainable**: 525+ lines of rating code extracted to separate component
-- ✅ **Extensible**: Foundation ready for alternate rating mechanisms
-- ✅ **Testable**: Components can be tested independently
+**Key Pages**:
+- `QuotePageV3` - Tower visualization and quote management
+- `SetupPage` - Account and review (consolidated)
+- `AnalyzePage` - UW, rating, and benchmarking (consolidated)
+- `PolicyPage` - Policy issuance and management
 
 ## 🔧 Technical Stack
 
 ### Core Technologies
-- **Backend**: Python 3.8+, PostgreSQL with pgvector
-- **AI/ML**: OpenAI GPT-4, text-embedding-3-small
-- **UI**: Streamlit with modular components
-- **Storage**: Supabase for file storage
-- **Documentation**: Markdown with Mermaid diagrams
+- **Frontend**: React + Vite
+- **Backend**: Python 3.11+, FastAPI
+- **Database**: PostgreSQL via Supabase (with pgvector)
+- **AI/ML**: Claude (Anthropic), AWS Textract
+- **Storage**: Supabase storage
 
 ### Database Schema
 ```sql
@@ -223,10 +223,10 @@ quotes (
 ### Development Environment
 ```
 Local Machine
-├── PostgreSQL + pgvector
-├── Streamlit dev server
-├── OpenAI API integration
-└── Local file storage
+├── FastAPI backend (uvicorn)
+├── React dev server (Vite)
+├── Supabase (cloud database)
+└── AI APIs (Claude, Textract)
 ```
 
 ### Production Considerations
@@ -303,7 +303,7 @@ rating_engine/config/
 - **Database**: Verify data persistence and retrieval
 
 ### Performance Testing
-- **Concurrent Users**: Streamlit interface under load
+- **API Response Times**: Backend endpoint latency
 - **Large Documents**: Processing performance with large PDFs
 - **Vector Search**: Retrieval performance with large guideline database
 

@@ -8,7 +8,7 @@ AI-powered cyber insurance underwriting platform. AI extracts, analyzes, and rec
 
 **Primary UI:** React frontend (`frontend/`)
 **Backend:** FastAPI + Supabase
-**Legacy:** Streamlit (maintenance only, will archive)
+**Legacy:** Streamlit (archived to `archive/streamlit/`)
 
 ---
 
@@ -44,7 +44,6 @@ Planned but not started:
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | API Router Refactor | Medium | Split api/main.py (15K lines) into routers |
-| Update architecture.md | Medium | Currently references old Streamlit files |
 | UW Knowledge Base | Medium | Phase 13 - API layer, DB questions |
 | Endorsement Management | Medium | Phase 14 - More endorsement types |
 | Claims Feedback Loop | Low | Phase 5 - Control → outcome correlation |
