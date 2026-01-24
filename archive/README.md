@@ -1,43 +1,28 @@
 # Archive Directory
 
-This directory contains files that are no longer part of the main workflow but are preserved for reference and historical purposes.
+**Status**: Do not use. Preserved for reference only.
 
-## Directory Structure
+This directory contains files that are no longer part of the active codebase but are kept for historical reference.
 
-### `legacy_viewers/`
-- `viewer_backup_20250908_155611.py` - Backup of original viewer before modular refactoring
-- `viewer_with_upload_backup.py` - Earlier version with upload functionality
+## Contents
 
-### `failed_modular/`
-- `viewer_modular.py` - Simplified modular version that removed too much functionality
-- `streamlit/` - Complete failed modular architecture (proved too simplified for production)
+| Folder/File | Description | Why Archived |
+|-------------|-------------|--------------|
+| `legacy_viewers/` | Old Streamlit viewer versions | Replaced by React frontend |
+| `failed_modular/` | Over-simplified modular architecture | Removed too much functionality |
+| `dev_scripts/` | One-time development scripts | Already executed |
+| `setup_scripts/` | Database migration scripts | Already executed |
+| `tests/` | Old development tests | May be useful for reference |
+| `pages_workflows/` | Old Streamlit page workflows | Replaced by React |
+| `mockups-streamlit/` | Python/Streamlit UI mockups | Project moved to React |
+| `attachments/` | Sample attachment files | Test data |
+| `responses/` | Sample API responses | Test data |
+| `*.py` files | Various deprecated scripts | No longer needed |
+| `*.sql` files | Old database scripts | Already executed |
 
-### `dev_scripts/`
-- `replace_rating_section.py` - One-time script to replace rating code with modular component
-- `compare_versions.py` - Development helper for comparing file versions
+## Guidelines
 
-### `setup_scripts/`
-- `add_revenue_column.py` - One-time database migration script
-- `fix_documents_placement.py` - One-time fix for document placement issues
-- `setup_*.py` - Various setup and initialization scripts
-
-### `tests/`
-- `test_*.py` - Development test files for various features
-- Includes controls parsing tests, rating tests, performance tests, etc.
-
-## Why These Files Are Archived
-
-These files represent the evolution of the codebase but are no longer needed for the main workflow:
-- **Legacy viewers**: Replaced by `viewer_with_modular_rating.py`
-- **Failed modular**: Full modularization that removed too much functionality
-- **Dev scripts**: One-time use scripts that served their purpose
-- **Setup scripts**: Migration scripts already executed
-- **Tests**: Development tests that may be useful for reference
-
-## Main Workflow Files (Active)
-
-The current active files in the main directory are:
-- `viewer.py` - Original full-featured viewer
-- `viewer_with_modular_rating.py` - Current production viewer with modular rating
-- `components/rating_panel_v2.py` - Reusable rating component
-- Core application files (`app/`, `rating_engine/`, etc.)
+- **Do not import** from this directory
+- **Do not modify** unless cleaning up
+- **Safe to delete** if space is needed (check with team first)
+- **Reference only** for understanding historical decisions
