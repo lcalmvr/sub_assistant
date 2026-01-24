@@ -30,6 +30,46 @@ app.add_middleware(
 )
 
 
+# ─────────────────────────────────────────────────────────────
+# Startup Health Checks
+# ─────────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+def check_required_config():
+    """Check required configuration on startup and log warnings."""
+    from core import storage
+
+    print("\n" + "=" * 60)
+    print("STARTUP CONFIGURATION CHECK")
+    print("=" * 60)
+
+    # Check Supabase storage (required for uploads/extraction)
+    if not storage.is_configured():
+        print("\n[WARNING] Supabase Storage NOT configured!")
+        print("  - Document uploads will fail")
+        print("  - Set SUPABASE_URL and SUPABASE_SERVICE_ROLE in .env")
+        print("  - See docs/guides/supabase-storage-setup.md for setup instructions")
+    else:
+        print("\n[OK] Supabase Storage configured")
+        # Try to verify bucket exists
+        try:
+            if storage.ensure_bucket_exists():
+                print(f"[OK] Storage bucket '{os.getenv('STORAGE_BUCKET', 'documents')}' exists")
+        except Exception as e:
+            print(f"[WARNING] Could not verify storage bucket: {e}")
+
+    # Check database connection
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        print("[OK] Database connected")
+    except Exception as e:
+        print(f"[ERROR] Database connection failed: {e}")
+
+    print("\n" + "=" * 60 + "\n")
+
+
 def get_conn():
     """Get database connection using existing DATABASE_URL."""
     return psycopg2.connect(
