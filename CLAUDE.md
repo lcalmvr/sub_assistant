@@ -24,8 +24,9 @@ The project uses a simple documentation structure. **Keep this current as we wor
 CLAUDE.md              # This file - patterns, conventions, session instructions
 docs/
   ROADMAP.md           # Vision → Priorities → Active Work → Done
-  architecture.md      # How the system is built
-  archived/             # Old plans, completed specs, historical decisions
+  folder-reference.md  # Detailed inventory of every folder/file
+  architecture.md      # How the system is built (data flow, components)
+  archived/            # Old plans, completed specs, historical decisions
 ```
 
 ### What Each Doc Is For
@@ -34,7 +35,8 @@ docs/
 |-----|---------|---------------|----------------|
 | `CLAUDE.md` | Patterns, conventions, how to work | Start of session | When we establish new patterns |
 | `ROADMAP.md` | What we're building, priorities, progress | Before starting work | After completing features, changing priorities |
-| `architecture.md` | How the system works | When writing code that touches multiple systems | When architecture changes |
+| `folder-reference.md` | WHERE things are - file inventory, what's legacy vs active | "Where does X live?" / "What is this folder?" | When adding/moving/archiving folders |
+| `architecture.md` | HOW things work - data flow, component interaction | "How does data flow?" / Working on cross-system features | When architecture changes |
 | `archived/` | Historical reference | When you need context on past decisions | When plans complete or are abandoned |
 
 ### Keeping Docs Updated
@@ -43,6 +45,7 @@ docs/
 2. **After abandoning a plan**: Move the plan doc to archived/
 3. **When establishing new patterns**: Add to this file (CLAUDE.md)
 4. **When architecture changes**: Update architecture.md
+5. **When adding/moving folders**: Update folder-reference.md
 
 ## Directory Structure
 
