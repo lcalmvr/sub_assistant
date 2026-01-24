@@ -1,6 +1,10 @@
 # UI Style Guide for Streamlit
 
-## Currency Formatting - CRITICAL ⚠️
+**Status: Legacy** - Streamlit is no longer the primary frontend. React is the primary UI. This guide is kept for reference while Streamlit remains runnable.
+
+---
+
+## Currency Formatting - CRITICAL
 
 **Problem:** Dollar signs (`$`) in st.markdown() are interpreted as LaTeX math delimiters, causing weird spacing like "1, 000, 000" instead of "1,000,000".
 

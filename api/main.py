@@ -932,7 +932,8 @@ async def upload_submission_document(
     """
     Upload a document to an existing submission.
 
-    - Saves file to local storage
+    - Saves file to temp storage for processing
+    - Uploads to Supabase Storage for permanent storage
     - Classifies document type (or uses provided document_type override)
     - Optionally triggers extraction via the orchestrator
 
@@ -941,6 +942,7 @@ async def upload_submission_document(
     import tempfile
     import shutil
     from pathlib import Path
+    from core import storage
 
     # Verify submission exists
     with get_conn() as conn:
@@ -949,164 +951,189 @@ async def upload_submission_document(
             if not cur.fetchone():
                 raise HTTPException(status_code=404, detail="Submission not found")
 
-    # Save uploaded file
-    uploads_dir = Path("uploads") / submission_id
-    uploads_dir.mkdir(parents=True, exist_ok=True)
+    # Save to temp file for processing (auto-deleted when closed)
+    suffix = Path(file.filename).suffix
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.flush()
+        file_path = Path(temp_file.name)
 
-    file_path = uploads_dir / file.filename
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        # Get page count for PDFs
+        page_count = None
+        if file.filename.lower().endswith('.pdf'):
+            try:
+                import fitz
+                doc = fitz.open(str(file_path))
+                page_count = len(doc)
+                doc.close()
+            except Exception:
+                pass
+        elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            page_count = 1
 
-    # Get page count for PDFs
-    page_count = None
-    if file.filename.lower().endswith('.pdf'):
-        try:
-            import fitz
-            doc = fitz.open(str(file_path))
-            page_count = len(doc)
-            doc.close()
-        except Exception:
-            pass
-    elif file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-        page_count = 1
+        # Classify document type (use override if provided)
+        if document_type:
+            doc_type = document_type
+        else:
+            doc_type = "other"
+            try:
+                from ai.document_classifier import classify_document
+                classification = classify_document(str(file_path))
+                if classification:
+                    doc_type = classification.get("document_type", "other")
+            except Exception as e:
+                print(f"[api] Classification failed for {file.filename}: {e}")
+                # Fallback: guess from filename
+                fname_lower = file.filename.lower()
+                if "app" in fname_lower or "application" in fname_lower:
+                    doc_type = "application"
+                elif "policy" in fname_lower or "dec" in fname_lower:
+                    doc_type = "policy"
+                elif "loss" in fname_lower:
+                    doc_type = "loss_run"
 
-    # Classify document type (use override if provided)
-    if document_type:
-        doc_type = document_type
-    else:
-        doc_type = "other"
-        try:
-            from ai.document_classifier import classify_document
-            classification = classify_document(str(file_path))
-            if classification:
-                doc_type = classification.get("document_type", "other")
-        except Exception as e:
-            print(f"[api] Classification failed for {file.filename}: {e}")
-            # Fallback: guess from filename
-            fname_lower = file.filename.lower()
-            if "app" in fname_lower or "application" in fname_lower:
-                doc_type = "application"
-            elif "policy" in fname_lower or "dec" in fname_lower:
-                doc_type = "policy"
-            elif "loss" in fname_lower:
-                doc_type = "loss_run"
+        # Upload to Supabase Storage
+        storage_key = None
+        storage_url = None
+        if storage.is_configured():
+            try:
+                storage_result = storage.upload_document(file_path, submission_id, file.filename)
+                storage_key = storage_result["storage_key"]
+                storage_url = storage_result["url"]
+            except Exception as e:
+                print(f"[api] Storage upload failed for {file.filename}: {e}")
+                # Continue without storage - file still processed
 
-    # Insert document record
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO documents (submission_id, filename, document_type, page_count, doc_metadata)
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id
-            """, (
-                submission_id,
-                file.filename,
-                doc_type,
-                page_count,
-                json.dumps({"file_path": str(file_path), "ingest_source": "api_upload"})
-            ))
-            doc_id = str(cur.fetchone()["id"])
-            conn.commit()
+        # Insert document record
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO documents (submission_id, filename, document_type, page_count, doc_metadata)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    submission_id,
+                    file.filename,
+                    doc_type,
+                    page_count,
+                    json.dumps({
+                        "storage_key": storage_key,
+                        "ingest_source": "api_upload"
+                    })
+                ))
+                doc_id = str(cur.fetchone()["id"])
+                conn.commit()
 
-    result = {
-        "id": doc_id,
-        "filename": file.filename,
-        "document_type": doc_type,
-        "page_count": page_count,
-        "file_path": str(file_path),
-    }
+        result = {
+            "id": doc_id,
+            "filename": file.filename,
+            "document_type": doc_type,
+            "page_count": page_count,
+            "storage_key": storage_key,
+            "url": storage_url,
+        }
 
-    # Run extraction if requested
-    if run_extraction and doc_type in ("application", "policy", "loss_run"):
-        try:
-            from core.extraction_orchestrator import extract_document
-            extraction = extract_document(
-                document_id=doc_id,
-                file_path=str(file_path),
-                doc_type=doc_type,
-                submission_id=submission_id,
-            )
-            result["extraction"] = {
-                "status": "completed" if not extraction.errors else "error",
-                "strategy": extraction.strategy_used,
-                "pages_processed": extraction.pages_extracted,
-                "cost": extraction.cost,
-                "errors": extraction.errors,
-            }
-        except Exception as e:
-            result["extraction"] = {"status": "error", "error": str(e)}
+        # Run extraction if requested
+        if run_extraction and doc_type in ("application", "policy", "loss_run"):
+            try:
+                from core.extraction_orchestrator import extract_document
+                extraction = extract_document(
+                    document_id=doc_id,
+                    file_path=str(file_path),
+                    doc_type=doc_type,
+                    submission_id=submission_id,
+                )
+                result["extraction"] = {
+                    "status": "completed" if not extraction.errors else "error",
+                    "strategy": extraction.strategy_used,
+                    "pages_processed": extraction.pages_extracted,
+                    "cost": extraction.cost,
+                    "errors": extraction.errors,
+                }
+            except Exception as e:
+                result["extraction"] = {"status": "error", "error": str(e)}
 
-    # For applications, also run Claude extraction to populate extraction_provenance
-    is_application = doc_type.lower() in ("application", "application form", "application_supplemental", "application_acord")
-    if run_extraction and is_application and str(file_path).lower().endswith('.pdf'):
-        try:
-            from ai.application_extractor import extract_from_pdf
-            from datetime import datetime
+        # For applications, also run Claude extraction to populate extraction_provenance
+        is_application = doc_type.lower() in ("application", "application form", "application_supplemental", "application_acord")
+        if run_extraction and is_application and str(file_path).lower().endswith('.pdf'):
+            try:
+                from ai.application_extractor import extract_from_pdf
+                from datetime import datetime
 
-            start_time = datetime.utcnow()
-            ai_result = extract_from_pdf(str(file_path))
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                start_time = datetime.utcnow()
+                ai_result = extract_from_pdf(str(file_path))
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
-            with get_conn() as conn:
-                with conn.cursor() as cur:
-                    # Save extraction run
-                    cur.execute("""
-                        INSERT INTO extraction_runs
-                        (submission_id, model_used, input_tokens, output_tokens, duration_ms,
-                         fields_extracted, high_confidence_count, low_confidence_count, status, completed_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'completed', NOW())
-                        RETURNING id
-                    """, (
-                        submission_id,
-                        ai_result.model_used,
-                        ai_result.extraction_metadata.get("input_tokens"),
-                        ai_result.extraction_metadata.get("output_tokens"),
-                        duration_ms,
-                        sum(len(fields) for fields in ai_result.data.values()),
-                        sum(1 for s in ai_result.data.values() for f in s.values() if f.confidence >= 0.8),
-                        sum(1 for s in ai_result.data.values() for f in s.values() if f.confidence < 0.5 and f.is_present),
-                    ))
-
-                    # Save provenance records
-                    for record in ai_result.to_provenance_records(submission_id):
+                with get_conn() as conn:
+                    with conn.cursor() as cur:
+                        # Save extraction run
                         cur.execute("""
-                            INSERT INTO extraction_provenance
-                            (submission_id, field_name, extracted_value, confidence,
-                             source_document_id, source_page, source_text, is_present, model_used)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (submission_id, field_name, source_document_id)
-                            DO UPDATE SET
-                                extracted_value = EXCLUDED.extracted_value,
-                                confidence = EXCLUDED.confidence,
-                                source_page = EXCLUDED.source_page,
-                                source_text = EXCLUDED.source_text,
-                                is_present = EXCLUDED.is_present,
-                                model_used = EXCLUDED.model_used,
-                                created_at = NOW()
+                            INSERT INTO extraction_runs
+                            (submission_id, model_used, input_tokens, output_tokens, duration_ms,
+                             fields_extracted, high_confidence_count, low_confidence_count, status, completed_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'completed', NOW())
+                            RETURNING id
                         """, (
-                            record["submission_id"],
-                            record["field_name"],
-                            json.dumps(record["extracted_value"]) if record["extracted_value"] is not None else None,
-                            record["confidence"],
-                            doc_id,
-                            record["source_page"],
-                            record["source_text"],
-                            record["is_present"],
+                            submission_id,
                             ai_result.model_used,
+                            ai_result.extraction_metadata.get("input_tokens"),
+                            ai_result.extraction_metadata.get("output_tokens"),
+                            duration_ms,
+                            sum(len(fields) for fields in ai_result.data.values()),
+                            sum(1 for s in ai_result.data.values() for f in s.values() if f.confidence >= 0.8),
+                            sum(1 for s in ai_result.data.values() for f in s.values() if f.confidence < 0.5 and f.is_present),
                         ))
 
-                    conn.commit()
+                        # Save provenance records
+                        for record in ai_result.to_provenance_records(submission_id):
+                            cur.execute("""
+                                INSERT INTO extraction_provenance
+                                (submission_id, field_name, extracted_value, confidence,
+                                 source_document_id, source_page, source_text, is_present, model_used)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (submission_id, field_name, source_document_id)
+                                DO UPDATE SET
+                                    extracted_value = EXCLUDED.extracted_value,
+                                    confidence = EXCLUDED.confidence,
+                                    source_page = EXCLUDED.source_page,
+                                    source_text = EXCLUDED.source_text,
+                                    is_present = EXCLUDED.is_present,
+                                    model_used = EXCLUDED.model_used,
+                                    created_at = NOW()
+                            """, (
+                                record["submission_id"],
+                                record["field_name"],
+                                json.dumps(record["extracted_value"]) if record["extracted_value"] is not None else None,
+                                record["confidence"],
+                                doc_id,
+                                record["source_page"],
+                                record["source_text"],
+                                record["is_present"],
+                                ai_result.model_used,
+                            ))
 
-            result["ai_extraction"] = {
-                "status": "completed",
-                "fields_extracted": sum(len(fields) for fields in ai_result.data.values()),
-                "model": ai_result.model_used,
-            }
-        except Exception as e:
-            print(f"[api] AI extraction failed for {file.filename}: {e}")
-            result["ai_extraction"] = {"status": "error", "error": str(e)}
+                        conn.commit()
 
-    return result
+                result["ai_extraction"] = {
+                    "status": "completed",
+                    "fields_extracted": sum(len(fields) for fields in ai_result.data.values()),
+                    "model": ai_result.model_used,
+                }
+            except Exception as e:
+                print(f"[api] AI extraction failed for {file.filename}: {e}")
+                result["ai_extraction"] = {"status": "error", "error": str(e)}
+
+        return result
+
+    finally:
+        # Clean up temp file
+        try:
+            temp_file.close()
+            import os
+            os.unlink(temp_file.name)
+        except Exception:
+            pass  # Best effort cleanup
 
 
 # ─────────────────────────────────────────────────────────────

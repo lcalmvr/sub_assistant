@@ -65,6 +65,7 @@ tmp/
 temp/
 *.tmp.env
 endorsement_test.pdf
+uploads/
 
 # Design mockups
 mockups/
@@ -75,3 +76,10 @@ node_modules/
 # Large binary files (images, playwright browsers)
 docs/images/
 .playwright-mcp/
+
+# Training data (large PDFs/images for AI extraction training)
+training docs/
+
+# Test fixtures (sample submissions, email dumps - keep README tracked)
+fixtures/*
+!fixtures/README.md
