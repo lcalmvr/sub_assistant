@@ -47,36 +47,25 @@ Python modules for AI-powered extraction, classification, and analysis. Called b
 
 | File | Lines | Purpose | Used By |
 |------|-------|---------|---------|
-| `application_extractor.py` | 918 | Extract structured data from insurance apps (Claude) | **React** via API |
-| `textract_extractor.py` | 431 | AWS Textract PDF text extraction | **React** via API |
-| `document_classifier.py` | 312 | Classify PDFs (app, quote, loss run, etc.) | **React** via API |
-| `document_extractor.py` | 221 | Basic text extraction from PDF/DOCX | **React** via API |
-| `schema_recommender.py` | 284 | Analyze extraction gaps, recommend schema changes | **React** via API |
-| `sublimit_intel.py` | 378 | Parse coverages from quote documents | **React** via API |
-| `ai_decision.py` | 625 | Rule-based underwriting decisions | **React** via API |
+| `application_extractor.py` | 918 | Extract structured data from insurance apps (Claude) | API |
+| `textract_extractor.py` | 431 | AWS Textract PDF text extraction | API |
+| `document_classifier.py` | 312 | Classify PDFs (app, quote, loss run, etc.) | API |
+| `document_extractor.py` | 221 | Basic text extraction from PDF/DOCX | API |
+| `schema_recommender.py` | 284 | Analyze extraction gaps, recommend schema changes | API |
+| `sublimit_intel.py` | 378 | Parse coverages from quote documents | API |
+| `ai_decision.py` | 625 | Rule-based underwriting decisions | API |
 | `ocr_utils.py` | 309 | OCR utilities with fallback | Support module |
-| `admin_agent.py` | 996 | AI agent for admin commands | Streamlit only |
-| `guideline_rag.py` | 352 | RAG for underwriting guidelines Q&A | Streamlit only |
-| `conflict_analyzer.py` | 536 | Detect conflicts in application data | Streamlit only |
-| `tower_intel.py` | 413 | Tower/quote intelligence | Streamlit only |
-| `market_news_intel.py` | 156 | Market news intelligence | Streamlit only |
+| `guideline_rag.py` | 352 | RAG for underwriting guidelines Q&A | core/ (shared) |
+| `conflict_analyzer.py` | 536 | Detect conflicts in application data | core/ (shared) |
 | `load_guidelines.py` | 68 | Load guidelines into vector store | One-time script |
 | `naics_2022_...parquet` | — | NAICS code embeddings | Data file |
 
 ### Notes
 
-**Large files to consider splitting:**
-- `admin_agent.py` (996 lines) - but Streamlit-only, low priority
-- `application_extractor.py` (918 lines) - complex but cohesive, probably fine
-
-**Streamlit-only modules:** If Streamlit is sunset, these could be archived:
-- `admin_agent.py`, `guideline_rag.py`, `conflict_analyzer.py`, `tower_intel.py`, `market_news_intel.py`
-
-**TODO before archiving Streamlit-only files:**
-1. Analyze each module's functionality
-2. Check if React/API already has comparable function
-3. If not, decide: port to API or confirm not needed
-4. Only then archive
+**Archived to `archive/streamlit/ai/`:**
+- `admin_agent.py` - AI chat for admin commands
+- `tower_intel.py` - AI for tower commands
+- `market_news_intel.py` - AI for news tagging
 
 **Architecture note:** Python backend for AI is correct even with React frontend. Python has superior AI/ML libraries (anthropic, openai, langchain, pandas, AWS SDK). The pattern is:
 - React frontend → calls Python API → API uses ai/ modules
@@ -148,58 +137,6 @@ FastAPI has built-in support for this via `APIRouter`. Each router file would co
 
 ---
 
-## app.py - Streamlit Entry Point
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `app.py` | 59 | Streamlit home page with navigation to 7 pages |
-
-**What it does:** Landing page when you run `streamlit run app.py`. Links to Submissions, Accounts, Brokers, Stats, Catalog, Documents, Compliance pages.
-
-**Status:** Legacy frontend - React is the future.
-
-**Related folders:** `pages/`, `pages_workflows/`, `pages_components/`
-
----
-
-## Streamlit Sunsetting Strategy
-
-**Current state:**
-- Streamlit = MVP, worked, validated the product
-- React = production frontend, actively developed
-- Some features exist only in Streamlit (not yet ported)
-
-**Recommendation: Phased sunset, not immediate deletion**
-
-| Phase | Action |
-|-------|--------|
-| **Now** | Stop new Streamlit development (already doing this) |
-| **Now** | Keep Streamlit runnable for features not yet in React |
-| **Ongoing** | Track which Streamlit features still get used |
-| **As React catches up** | Archive corresponding Streamlit pieces |
-| **Eventually** | Archive entire Streamlit frontend |
-
-**Why not delete now:**
-- Working code is an asset, not a liability (if it's not in the way)
-- Reference for how features were implemented
-- Fallback if React feature has bugs
-- No cost to keeping it (it's not deployed, just in repo)
-
-**Streamlit-related folders to eventually archive:**
-- `app.py`
-- `pages/`
-- `pages_workflows/`
-- `pages_components/`
-- `.streamlit/`
-- Streamlit-only modules in `ai/` (after analysis)
-
-**Before archiving each piece:**
-1. Confirm React has equivalent functionality
-2. Check if any useful logic should be extracted to `core/` or `api/`
-3. Then move to `archive/streamlit/`
-
----
-
 ## archive/ - Historical Reference
 
 **Status:** Do not use. Kept for historical reference only.
@@ -225,6 +162,7 @@ A "museum" of old code. When we replaced or abandoned something, it went here in
 
 | Folder | Files | Purpose |
 |--------|-------|---------|
+| `streamlit/` | ~60 | **Complete Streamlit frontend** - app.py, pages/, pages_workflows/, pages_components/, plus Streamlit-only AI and core modules |
 | `attachments/` | 2 | Sample test attachments |
 | `responses/` | 2 | Sample API response JSON |
 | `legacy_viewers/` | 2 | Old Streamlit viewer versions |
@@ -233,7 +171,22 @@ A "museum" of old code. When we replaced or abandoned something, it went here in
 | `dev_scripts/` | 2 | One-time dev utilities |
 | `setup_scripts/` | 4 | DB setup scripts (already run) |
 | `tests/` | 6 | Old development tests |
-| `pages_workflows/` | 1 | Old workflow page |
+
+### archive/streamlit/ Contents
+
+The complete Streamlit frontend, archived after React reached full parity:
+
+| Folder | Purpose |
+|--------|---------|
+| `app.py` | Streamlit entry point |
+| `pages/` | Streamlit page wrappers |
+| `pages_workflows/` | Page implementations (~8K lines) |
+| `pages_components/` | Reusable UI components (~21K lines) |
+| `ai/` | Streamlit-only AI modules (admin_agent, tower_intel, market_news_intel) |
+| `core/` | Streamlit-only core modules (policy_tab_data, market_news) |
+| `utils/` | Streamlit utilities (tab_state) |
+| `.streamlit/` | Streamlit config |
+| `STYLE_GUIDE.md` | Streamlit UI conventions |
 
 ### Notes
 
@@ -367,12 +320,12 @@ The "brain" of the application. While `api/` handles HTTP requests and `ai/` han
 | `expiring_tower.py` | 280 | Expiring tower handling |
 | `storage.py` | 217 | File storage operations |
 
-### Modules NOT in API (Streamlit-only or internal)
+### Modules NOT in API (internal use)
 
 | Module | Lines | Purpose | Notes |
 |--------|-------|---------|-------|
 | `pipeline.py` | 2,235 | Main submission processing | May be called indirectly |
-| `conflict_service.py` | 1,123 | Conflict detection service | Uses Streamlit-only AI |
+| `conflict_service.py` | 1,123 | Conflict detection service | Uses ai/conflict_analyzer |
 | `conflict_detection.py` | 889 | Conflict detection | Related to conflict_service |
 | `bor_management.py` | 691 | Broker of record | May need API exposure |
 | `account_management.py` | 612 | Account operations | May need API exposure |
@@ -381,13 +334,15 @@ The "brain" of the application. While `api/` handles HTTP requests and `ai/` han
 | `document_router.py` | 415 | Document routing | Internal routing logic |
 | `submission_inheritance.py` | 381 | Submission inheritance | Internal logic |
 | `conflict_config.py` | 376 | Conflict configuration | Config module |
-| `policy_tab_data.py` | 354 | Policy tab data | Streamlit UI support |
 | `compliance_management.py` | 301 | Compliance management | May need API exposure |
 | `prior_submission.py` | 284 | Prior submission lookup | May need API exposure |
 | `status_history.py` | 247 | Status history tracking | Utility |
 | `submission_status.py` | 222 | Status utilities | Utility |
-| `market_news.py` | 166 | Market news | Streamlit-only feature |
 | `db.py` | 39 | Database connection | Utility |
+
+**Archived to `archive/streamlit/core/`:**
+- `policy_tab_data.py` - Streamlit policy tab support
+- `market_news.py` - Streamlit market news feature
 
 ### TODO: Potential Refactors
 
@@ -505,93 +460,6 @@ The main user interface. This is the React application that internal underwriter
 
 ---
 
-## pages/ - Streamlit Page Wrappers (Legacy)
-
-**Status:** Streamlit legacy - will archive when React has full parity.
-
-**What this is:** Thin wrapper files for Streamlit's multipage app. Each file just sets page config and calls `render()` from the corresponding `pages_workflows/` module. The actual implementation lives in `pages_workflows/`.
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `submissions.py` | 23 | Main submissions workflow |
-| `account_dashboard.py` | 22 | Account search/dashboard |
-| `admin.py` | 24 | Admin functions |
-| `brokers.py` | 24 | Broker management |
-| `compliance.py` | 25 | Compliance resources |
-| `coverage_catalog.py` | 25 | Coverage catalog management |
-| `document_library.py` | 29 | Document library |
-| `stats.py` | 23 | Statistics dashboard |
-| `uw_guide.py` | 24 | Underwriting guide |
-
-**Note:** Archive together with `pages_workflows/`, `pages_components/`, and `app.py` when sunsetting Streamlit.
-
----
-
-## pages_workflows/ - Streamlit Page Implementations (Legacy)
-
-**Status:** Streamlit legacy - will archive when React has full parity.
-
-**What this is:** The actual Streamlit UI code. The `pages/` wrappers call `render()` functions from these modules.
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `submissions.py` | 2,206 | **Main workflow** - 7 tabs (Account, Review, UW, Comps, Rating, Quote, Policy) |
-| `brokers_alt.py` | 2,281 | Alternative broker system |
-| `brokers.py` | 850 | Original broker system |
-| `uw_guide.py` | 1,018 | Underwriting guide |
-| `admin.py` | 616 | Admin functions |
-| `account_dashboard.py` | 442 | Account search/dashboard |
-| `compliance.py` | 392 | Compliance resources |
-| `coverage_catalog.py` | 358 | Coverage catalog management |
-| `stats.py` | 184 | Statistics dashboard |
-
-**Total:** ~8,300 lines
-
-**Notes:**
-- `submissions.py` is the primary workflow - most complex page
-- Two broker implementations exist (`brokers.py` vs `brokers_alt.py`) - may want to consolidate or deprecate one
-- Some business logic here may need extraction to `core/` before archiving
-
-**Before archiving:**
-1. Review for business logic that should move to `core/`
-2. Ensure React equivalents exist for needed features
-3. Archive together with `pages/`, `pages_components/`, and `app.py`
-
----
-
-## pages_components/ - Streamlit Reusable Components (Legacy)
-
-**Status:** Streamlit legacy - will archive when React has full parity.
-
-**What this is:** Reusable UI panels and widgets used by `pages_workflows/`. These are the building blocks of the Streamlit interface.
-
-**Stats:** 40 files, ~21,300 lines
-
-**Largest files:**
-| File | Lines | Purpose |
-|------|-------|---------|
-| `endorsements_history_panel.py` | 2,014 | Endorsements history |
-| `tower_panel.py` | 1,762 | Tower visualization |
-| `quote_options_panel.py` | 1,269 | Quote options UI |
-| `review_queue_panel.py` | 1,258 | Review queue |
-| `sublimits_panel.py` | 1,037 | Sublimits management |
-| `rating_panel_v2.py` | 981 | Rating panel |
-| `benchmarking_panel.py` | 978 | Benchmarking UI |
-| `ai_command_box.py` | 931 | AI command interface |
-
-**Categories:**
-- **Quote/Tower:** tower_panel, quote_options_*, tower_db
-- **Coverage:** coverage_editor, coverage_summary_panel, coverages_panel, sublimits_panel
-- **Documents:** document_library_panel, document_actions_panel, document_history_panel
-- **Account:** account_drilldown, account_history_panel, account_matching_panel
-- **Admin/AI:** admin_agent_sidebar, ai_command_box
-
-**Notes:**
-- Reference these when building React equivalents - contains UI patterns and business logic
-- Archive together with `pages/`, `pages_workflows/`, and `app.py`
-
----
-
 ## rating_engine/ - Premium Calculation & Document Templates
 
 **Status:** Active - core business logic. **Note: Logic is expected to change.**
@@ -680,12 +548,11 @@ They work together: ingestion fetches → ai extracts/classifies.
 | `policy_summary.py` | 195 | Policy summary generation |
 | `quote_formatting.py` | 65 | Quote formatting utilities |
 | `quote_option_factory.py` | 430 | Quote option creation |
-| `tab_state.py` | 180 | Streamlit tab state management (legacy) |
 | `test_extraction_diagnostic.py` | 113 | CLI tool for testing extraction pipeline |
 
 **Notes:**
-- `tab_state.py` is Streamlit-specific - archive with Streamlit components
 - `test_extraction_diagnostic.py` - run via `python utils/test_extraction_diagnostic.py file.pdf`
+- `tab_state.py` archived to `archive/streamlit/utils/`
 
 ---
 
@@ -714,8 +581,7 @@ Training documents for the AI system.
 | File | Purpose | Status |
 |------|---------|--------|
 | `README.md` | Project overview and setup instructions | Active |
-| `CLAUDE.md` | AI session instructions for Claude Code | Needs update |
-| `STYLE_GUIDE.md` | Streamlit UI styling conventions | **Legacy** - archive with Streamlit |
+| `CLAUDE.md` | AI session instructions for Claude Code | Active |
 | `requirements.txt` | Python dependencies | Active |
 
 ---
@@ -752,12 +618,10 @@ Consolidated list of TODOs identified during folder review:
 | Priority | Task | Section |
 |----------|------|---------|
 | Medium | Refactor api/main.py into routers | api/ |
-| Medium | Update CLAUDE.md for React-primary | CLAUDE.md |
 | Low | Export full DB schema from Supabase | db_setup/ |
-| Low | Review Streamlit-only AI modules before archiving | ai/ |
 
 ---
 
 *Document created: 2025-01-24*
-*Last updated: 2025-01-24*
+*Last updated: 2026-01-24*
 
