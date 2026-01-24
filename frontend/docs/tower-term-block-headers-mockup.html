@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tower Term UI - Block Headers Mockup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Custom styles for the mockup */
+    .block-header {
+      background: linear-gradient(90deg, #f3f4f6 0%, transparent 100%);
+    }
+  </style>
+</head>
+<body class="bg-gray-100 p-8">
+  <div class="max-w-5xl mx-auto space-y-8">
+
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-2xl font-bold text-gray-800">Tower Term UI - Option B: Block Headers</h1>
+      <p class="text-gray-500 mt-2">Layers grouped by effective date with section headers</p>
+    </div>
+
+    <!-- Current Design (for comparison) -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div class="px-4 py-3 border-b border-gray-100 bg-gray-50">
+        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide">Current Design (per-row badges)</h2>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
+          <tr>
+            <th class="px-4 py-2.5 text-left font-semibold">Carrier</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Limit</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Attach</th>
+            <th class="px-4 py-2.5 text-right font-semibold">Annual</th>
+            <th class="px-4 py-2.5 text-right font-semibold">Charged</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <tr class="bg-purple-50">
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-purple-700">CMAI</span>
+                <span class="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded">Ours</span>
+                <span class="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">44d</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $60M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,630</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-gray-800">Validus</span>
+                <span class="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">46d</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $55M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,932</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-gray-800">Upland</span>
+                <span class="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">46d</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $45M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$65,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$8,192</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-gray-800">Corvus</span>
+                <span class="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">47d</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $40M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$50,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,438</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Option B: Block Headers -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide">Option B: Block Headers</h2>
+        <span class="text-sm text-green-600 font-semibold">Our Premium: $6,630 <span class="text-gray-400 font-normal">(Annual: $55,000)</span></span>
+      </div>
+
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
+          <tr>
+            <th class="px-4 py-2.5 text-left font-semibold">Carrier</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Limit</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Attach</th>
+            <th class="px-4 py-2.5 text-right font-semibold">Annual</th>
+            <th class="px-4 py-2.5 text-right font-semibold">Charged</th>
+            <th class="px-4 py-2.5 text-right font-semibold">RPM</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Block 1: Dec 9 (44d) -->
+          <tr class="block-header">
+            <td colspan="6" class="px-4 py-2 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold text-gray-500">Effective Dec 9, 2025</span>
+                <span class="text-xs text-gray-400">(44 days)</span>
+                <button class="text-xs text-purple-600 hover:text-purple-800 ml-2">Edit</button>
+              </div>
+            </td>
+          </tr>
+          <tr class="bg-purple-50 border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-purple-700">CMAI</span>
+                <span class="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded">Ours</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $60M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,630</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+          </tr>
+
+          <!-- Block 2: Dec 7 (46d) -->
+          <tr class="block-header">
+            <td colspan="6" class="px-4 py-2 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold text-gray-500">Effective Dec 7, 2025</span>
+                <span class="text-xs text-gray-400">(46 days)</span>
+                <button class="text-xs text-purple-600 hover:text-purple-800 ml-2">Edit</button>
+              </div>
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">Validus</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $55M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,932</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">Upland</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $45M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$65,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$8,192</td>
+            <td class="px-4 py-3 text-right text-gray-500">$6,500</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">Bowhead</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $35M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$70,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$8,822</td>
+            <td class="px-4 py-3 text-right text-gray-500">$7,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">Westfield</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $25M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$75,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$9,452</td>
+            <td class="px-4 py-3 text-right text-gray-500">$7,500</td>
+          </tr>
+
+          <!-- Block 3: Dec 6 (47d) - Full year / Policy term -->
+          <tr class="block-header">
+            <td colspan="6" class="px-4 py-2 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold text-gray-500">Effective Dec 6, 2025</span>
+                <span class="text-xs text-gray-400">(47 days)</span>
+                <button class="text-xs text-purple-600 hover:text-purple-800 ml-2">Edit</button>
+              </div>
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">Corvus</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $20M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$50,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,438</td>
+            <td class="px-4 py-3 text-right text-gray-500">$10,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">XL</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $15M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$7,082</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">AIG</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $10M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$60,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$7,726</td>
+            <td class="px-4 py-3 text-right text-gray-500">$12,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">Beazley</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $5M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$65,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$8,370</td>
+            <td class="px-4 py-3 text-right text-gray-500">$13,000</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-3 pl-8">
+              <span class="font-medium text-gray-800">Primary Carrier</span>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">$25K ret</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$100,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$12,877</td>
+            <td class="px-4 py-3 text-right text-gray-500">$20,000</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Alternative: Minimal Block Headers (just a line) -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide">Option B2: Minimal Block Dividers</h2>
+        <span class="text-sm text-green-600 font-semibold">Our Premium: $6,630 <span class="text-gray-400 font-normal">(Annual: $55,000)</span></span>
+      </div>
+
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
+          <tr>
+            <th class="px-4 py-2.5 text-left font-semibold">Carrier</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Limit</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Attach</th>
+            <th class="px-4 py-2.5 text-right font-semibold">Annual</th>
+            <th class="px-4 py-2.5 text-right font-semibold">Charged</th>
+            <th class="px-4 py-2.5 text-right font-semibold">RPM</th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Block 1 header - inline style -->
+          <tr>
+            <td colspan="6" class="px-4 py-1.5 bg-gray-50 border-y border-gray-200">
+              <span class="text-[10px] font-medium text-gray-400 uppercase tracking-wide">Dec 9 (44d)</span>
+            </td>
+          </tr>
+          <tr class="bg-purple-50 border-b border-gray-100">
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-purple-700">CMAI</span>
+                <span class="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded">Ours</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $60M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,630</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+          </tr>
+
+          <!-- Block 2 header -->
+          <tr>
+            <td colspan="6" class="px-4 py-1.5 bg-gray-50 border-y border-gray-200">
+              <span class="text-[10px] font-medium text-gray-400 uppercase tracking-wide">Dec 7 (46d)</span>
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Validus</span></td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $55M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,932</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Upland</span></td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $45M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$65,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$8,192</td>
+            <td class="px-4 py-3 text-right text-gray-500">$6,500</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Bowhead</span></td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $35M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$70,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$8,822</td>
+            <td class="px-4 py-3 text-right text-gray-500">$7,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Westfield</span></td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $25M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$75,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$9,452</td>
+            <td class="px-4 py-3 text-right text-gray-500">$7,500</td>
+          </tr>
+
+          <!-- Block 3 header -->
+          <tr>
+            <td colspan="6" class="px-4 py-1.5 bg-gray-50 border-y border-gray-200">
+              <span class="text-[10px] font-medium text-gray-400 uppercase tracking-wide">Dec 6 (47d)</span>
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Corvus</span></td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $20M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$50,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$6,438</td>
+            <td class="px-4 py-3 text-right text-gray-500">$10,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">XL</span></td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $15M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$7,082</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">AIG</span></td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $10M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$60,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$7,726</td>
+            <td class="px-4 py-3 text-right text-gray-500">$12,000</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Beazley</span></td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $5M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$65,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$8,370</td>
+            <td class="px-4 py-3 text-right text-gray-500">$13,000</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Primary Carrier</span></td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">$25K ret</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$100,000</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$12,877</td>
+            <td class="px-4 py-3 text-right text-gray-500">$20,000</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Full Year (no blocks needed) -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide">Full-Year Policy (no blocks)</h2>
+        <span class="text-sm text-green-600 font-semibold">Our Premium: $55,000</span>
+      </div>
+
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 text-xs text-gray-400 uppercase tracking-wide">
+          <tr>
+            <th class="px-4 py-2.5 text-left font-semibold">Carrier</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Limit</th>
+            <th class="px-4 py-2.5 text-left font-semibold">Attach</th>
+            <th class="px-4 py-2.5 text-right font-semibold">Premium</th>
+            <th class="px-4 py-2.5 text-right font-semibold">RPM</th>
+            <th class="px-4 py-2.5 text-right font-semibold">ILF</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          <tr class="bg-purple-50">
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-purple-700">CMAI</span>
+                <span class="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded">Ours</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $60M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+            <td class="px-4 py-3 text-right text-gray-500">100%</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Validus</span></td>
+            <td class="px-4 py-3 text-gray-700">$5M</td>
+            <td class="px-4 py-3 text-gray-600">xs $55M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$55,000</td>
+            <td class="px-4 py-3 text-right text-gray-500">$11,000</td>
+            <td class="px-4 py-3 text-right text-gray-500">100%</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-3"><span class="font-medium text-gray-800">Upland</span></td>
+            <td class="px-4 py-3 text-gray-700">$10M</td>
+            <td class="px-4 py-3 text-gray-600">xs $45M</td>
+            <td class="px-4 py-3 text-right font-medium text-green-700">$65,000</td>
+            <td class="px-4 py-3 text-right text-gray-500">$6,500</td>
+            <td class="px-4 py-3 text-right text-gray-500">59%</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="px-4 py-2 text-xs text-gray-400 border-t border-gray-100">
+        When all layers share the same term, no block headers are shown - clean single table
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+      <h3 class="font-semibold mb-2">Design Notes</h3>
+      <ul class="list-disc list-inside space-y-1 text-blue-700">
+        <li><strong>Option B:</strong> Full block headers with date, days, and edit link</li>
+        <li><strong>Option B2:</strong> Minimal dividers - just date/days in small caps</li>
+        <li><strong>Full-year:</strong> No blocks needed when all layers share same term</li>
+        <li>Block headers only appear when there are multiple effective dates</li>
+        <li>Clicking "Edit" on a block header opens date picker for that group</li>
+      </ul>
+    </div>
+
+  </div>
+</body>
+</html>

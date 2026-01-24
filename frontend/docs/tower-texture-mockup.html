@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tower Texture + Dual-Date Mockup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #f8f9fa; }
+
+    /* Diagonal stripes for mid-term layers */
+    .texture-stripes {
+      background: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 4px,
+        rgba(255,255,255,0.3) 4px,
+        rgba(255,255,255,0.3) 8px
+      );
+    }
+
+    /* Dotted pattern for TBD layers */
+    .texture-tbd {
+      background: radial-gradient(circle, rgba(255,255,255,0.4) 1px, transparent 1px);
+      background-size: 6px 6px;
+    }
+
+    /* Combined: purple with stripes */
+    .layer-midterm {
+      background:
+        repeating-linear-gradient(
+          -45deg,
+          transparent,
+          transparent 3px,
+          rgba(255,255,255,0.25) 3px,
+          rgba(255,255,255,0.25) 6px
+        ),
+        #9333ea;
+    }
+
+    /* Combined: purple with dots (TBD) */
+    .layer-tbd {
+      background:
+        radial-gradient(circle, rgba(255,255,255,0.35) 1.5px, transparent 1.5px),
+        #9333ea;
+      background-size: 8px 8px, 100% 100%;
+    }
+
+    /* Gray layer with stripes */
+    .layer-gray-midterm {
+      background:
+        repeating-linear-gradient(
+          -45deg,
+          transparent,
+          transparent 3px,
+          rgba(0,0,0,0.08) 3px,
+          rgba(0,0,0,0.08) 6px
+        ),
+        #f3f4f6;
+    }
+  </style>
+</head>
+<body class="p-8">
+  <h1 class="text-xl font-bold mb-8 text-gray-700">Texture + Dual-Date Card Mockup</h1>
+
+  <div class="flex gap-12">
+
+    <!-- CURRENT STATE -->
+    <div>
+      <h2 class="text-sm font-semibold text-gray-500 mb-4 uppercase tracking-wide">Current</h2>
+
+      <!-- Policy Term Card (Current) -->
+      <div class="border border-gray-200 rounded-lg bg-white mb-4 w-80">
+        <div class="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200 rounded-t-lg">
+          <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Policy Term</h3>
+        </div>
+        <div class="px-4 py-3">
+          <div class="text-sm font-semibold text-gray-800">Jan 26, 2026 - Feb 6, 2026</div>
+        </div>
+      </div>
+
+      <!-- Tower Position (Current) -->
+      <div class="border border-gray-200 rounded-lg bg-white p-4 w-80">
+        <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+          Tower Position
+        </h3>
+        <div class="relative">
+          <div class="absolute left-0 top-0 bottom-0 w-4 flex flex-col items-center">
+            <div class="flex-1 border-l-2 border-dashed border-gray-300"></div>
+          </div>
+          <div class="pl-6 space-y-1">
+            <div class="bg-purple-600 text-white rounded py-2.5 px-4 text-center shadow-md">
+              <div class="text-sm font-bold">$5M <span class="text-xs opacity-80">xs $60M</span></div>
+            </div>
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs opacity-75">xs $55M</span></div>
+            </div>
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$10M <span class="text-xs opacity-75">xs $45M</span></div>
+            </div>
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs opacity-75">xs $20M</span></div>
+            </div>
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs text-gray-600">Primary</span></div>
+            </div>
+            <div class="bg-gray-50 border border-gray-200 rounded py-1 px-3 text-center">
+              <div class="text-[10px] text-gray-500 uppercase">Retention $250K</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-gray-400 mt-2 max-w-80 italic">No indication that dates differ across layers</p>
+    </div>
+
+    <!-- PROPOSED: Texture + Dual Card -->
+    <div>
+      <h2 class="text-sm font-semibold text-purple-600 mb-4 uppercase tracking-wide">Proposed: Texture + Dual Card</h2>
+
+      <!-- Policy Term Card (Dual) -->
+      <div class="border border-gray-200 rounded-lg bg-white mb-4 w-80">
+        <div class="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200 rounded-t-lg">
+          <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Policy Term</h3>
+        </div>
+        <div class="px-4 py-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-gray-500">Program</span>
+            <span class="text-sm text-gray-700">Dec 21, 2025 - Feb 6, 2026</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-purple-600 font-medium">Our Term</span>
+            <span class="text-sm text-purple-700 font-semibold">TBD - Feb 6, 2026</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tower Position (With Texture) -->
+      <div class="border border-gray-200 rounded-lg bg-white p-4 w-80">
+        <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+          Tower Position
+        </h3>
+        <div class="relative">
+          <div class="absolute left-0 top-0 bottom-0 w-4 flex flex-col items-center">
+            <div class="flex-1 border-l-2 border-dashed border-gray-300"></div>
+          </div>
+          <div class="pl-6 space-y-1">
+            <!-- TBD Layer - dotted texture -->
+            <div class="layer-tbd text-white rounded py-2.5 px-4 text-center shadow-md">
+              <div class="text-sm font-bold">$5M <span class="text-xs opacity-80">xs $60M</span></div>
+            </div>
+            <!-- Mid-term layer - striped -->
+            <div class="layer-gray-midterm border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs opacity-75">xs $55M</span></div>
+            </div>
+            <!-- Mid-term layer - striped -->
+            <div class="layer-gray-midterm border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$10M <span class="text-xs opacity-75">xs $45M</span></div>
+            </div>
+            <!-- Full term - solid -->
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs opacity-75">xs $20M</span></div>
+            </div>
+            <!-- Full term - solid -->
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs text-gray-600">Primary</span></div>
+            </div>
+            <div class="bg-gray-50 border border-gray-200 rounded py-1 px-3 text-center">
+              <div class="text-[10px] text-gray-500 uppercase">Retention $250K</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="mt-4 pt-3 border-t border-gray-100">
+          <div class="flex items-center gap-4 text-[10px] text-gray-500">
+            <div class="flex items-center gap-1.5">
+              <div class="w-4 h-3 bg-gray-100 border border-gray-200 rounded-sm"></div>
+              <span>Full Term</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <div class="w-4 h-3 layer-gray-midterm border border-gray-200 rounded-sm"></div>
+              <span>Short Term</span>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <div class="w-4 h-3 layer-tbd rounded-sm"></div>
+              <span>TBD</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 mt-2 max-w-80">Texture encodes time. Solid = full term, stripes = short term, dots = TBD.</p>
+    </div>
+
+    <!-- ALTERNATIVE: More subtle texture -->
+    <div>
+      <h2 class="text-sm font-semibold text-gray-500 mb-4 uppercase tracking-wide">Alt: Subtle Opacity + Border</h2>
+
+      <!-- Policy Term Card (Dual) -->
+      <div class="border border-gray-200 rounded-lg bg-white mb-4 w-80">
+        <div class="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200 rounded-t-lg">
+          <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Policy Term</h3>
+        </div>
+        <div class="px-4 py-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-gray-500">Program</span>
+            <span class="text-sm text-gray-700">Dec 21, 2025 - Feb 6, 2026</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-purple-600 font-medium">Our Term</span>
+            <span class="text-sm text-purple-700 font-semibold">TBD - Feb 6, 2026</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tower Position (Opacity + Border approach) -->
+      <div class="border border-gray-200 rounded-lg bg-white p-4 w-80">
+        <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+          Tower Position
+        </h3>
+        <div class="relative">
+          <div class="absolute left-0 top-0 bottom-0 w-4 flex flex-col items-center">
+            <div class="flex-1 border-l-2 border-dashed border-gray-300"></div>
+          </div>
+          <div class="pl-6 space-y-1">
+            <!-- TBD Layer - dashed border + slightly faded -->
+            <div class="bg-purple-500 text-white rounded py-2.5 px-4 text-center shadow-md border-2 border-dashed border-purple-300">
+              <div class="text-sm font-bold">$5M <span class="text-xs opacity-80">xs $60M</span></div>
+            </div>
+            <!-- Mid-term layer - left accent -->
+            <div class="bg-gray-100 border border-gray-200 border-l-4 border-l-amber-400 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs opacity-75">xs $55M</span></div>
+            </div>
+            <!-- Mid-term layer - left accent -->
+            <div class="bg-gray-100 border border-gray-200 border-l-4 border-l-amber-400 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$10M <span class="text-xs opacity-75">xs $45M</span></div>
+            </div>
+            <!-- Full term - solid -->
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs opacity-75">xs $20M</span></div>
+            </div>
+            <!-- Full term - solid -->
+            <div class="bg-gray-100 border border-gray-200 rounded py-2 px-3 text-center">
+              <div class="text-sm font-semibold text-gray-700">$5M <span class="text-xs text-gray-600">Primary</span></div>
+            </div>
+            <div class="bg-gray-50 border border-gray-200 rounded py-1 px-3 text-center">
+              <div class="text-[10px] text-gray-500 uppercase">Retention $250K</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 mt-2 max-w-80">Dashed border = TBD, left accent = short term. Simpler than patterns.</p>
+    </div>
+
+  </div>
+
+  <!-- Full context mockup -->
+  <div class="mt-12">
+    <h2 class="text-lg font-semibold text-gray-700 mb-4">Full Context: KPI Row + Tower</h2>
+
+    <div class="bg-white border border-gray-200 rounded-lg p-6 max-w-5xl">
+      <!-- KPI Cards Row -->
+      <div class="grid grid-cols-4 gap-4 mb-6">
+        <!-- Policy Term (Dual) -->
+        <div class="border border-gray-200 rounded-lg">
+          <div class="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200 rounded-t-lg">
+            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Policy Term</h3>
+          </div>
+          <div class="px-4 py-3 space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] text-gray-400 uppercase">Program</span>
+              <span class="text-xs text-gray-600">Dec 21 '25 - Feb 6 '26</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] text-purple-500 uppercase font-medium">Ours</span>
+              <span class="text-sm text-purple-700 font-semibold">TBD - Feb 6 '26</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Retro -->
+        <div class="border border-gray-200 rounded-lg">
+          <div class="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200 rounded-t-lg">
+            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Retro</h3>
+          </div>
+          <div class="px-4 py-3">
+            <div class="text-xs text-gray-600">Tech E&O: Inception</div>
+            <div class="text-xs text-gray-600">Cyber: Full Prior Acts</div>
+          </div>
+        </div>
+
+        <!-- Premium -->
+        <div class="border border-gray-200 rounded-lg">
+          <div class="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200 rounded-t-lg">
+            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Premium</h3>
+          </div>
+          <div class="px-4 py-3">
+            <div class="text-xl font-semibold text-gray-800">$55,000</div>
+          </div>
+        </div>
+
+        <!-- Commission -->
+        <div class="border border-gray-200 rounded-lg">
+          <div class="h-9 px-4 flex items-center bg-gray-50 border-b border-gray-200 rounded-t-lg">
+            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Commission</h3>
+          </div>
+          <div class="px-4 py-3">
+            <div class="text-xl font-semibold text-gray-800">20%</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tower Section -->
+      <div class="grid grid-cols-12 gap-4">
+        <!-- Tower Position -->
+        <div class="col-span-3 border border-gray-200 rounded-lg p-4">
+          <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Tower Position</h3>
+          <div class="space-y-1">
+            <!-- TBD - dashed -->
+            <div class="bg-purple-500 text-white rounded py-2 px-3 text-center shadow-sm border-2 border-dashed border-purple-300">
+              <div class="text-xs font-bold">$5M <span class="opacity-80">xs $60M</span></div>
+            </div>
+            <!-- Short term -->
+            <div class="bg-gray-100 border border-gray-200 border-l-4 border-l-amber-400 rounded py-1.5 px-3 text-center">
+              <div class="text-xs font-semibold text-gray-700">$5M <span class="opacity-75">xs $55M</span></div>
+            </div>
+            <div class="bg-gray-100 border border-gray-200 border-l-4 border-l-amber-400 rounded py-1.5 px-3 text-center">
+              <div class="text-xs font-semibold text-gray-700">$10M <span class="opacity-75">xs $45M</span></div>
+            </div>
+            <!-- Full term -->
+            <div class="bg-gray-100 border border-gray-200 rounded py-1.5 px-3 text-center">
+              <div class="text-xs font-semibold text-gray-700">$5M <span class="opacity-75">xs $20M</span></div>
+            </div>
+            <div class="bg-gray-100 border border-gray-200 rounded py-1.5 px-3 text-center">
+              <div class="text-xs font-semibold text-gray-700">$5M <span class="text-gray-500">Primary</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tower Table -->
+        <div class="col-span-9 border border-gray-200 rounded-lg">
+          <div class="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wide">Tower Structure</h3>
+            <span class="text-sm text-green-600 font-semibold">Our Premium: $55,000</span>
+          </div>
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-xs text-gray-400 uppercase">
+              <tr>
+                <th class="px-4 py-2 text-left">Carrier</th>
+                <th class="px-4 py-2 text-left">Limit</th>
+                <th class="px-4 py-2 text-left">Attach</th>
+                <th class="px-4 py-2 text-right">Premium</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr class="bg-purple-50/50">
+                <td class="px-4 py-2 font-medium text-purple-700">CMAI <span class="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded ml-1">Ours</span></td>
+                <td class="px-4 py-2 text-gray-700">$5M</td>
+                <td class="px-4 py-2 text-gray-600">xs $60M</td>
+                <td class="px-4 py-2 text-right text-green-600 font-medium">$55,000</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2 text-gray-700">Validus</td>
+                <td class="px-4 py-2 text-gray-700">$5M</td>
+                <td class="px-4 py-2 text-gray-600">xs $55M</td>
+                <td class="px-4 py-2 text-right text-green-600 font-medium">$55,000</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2 text-gray-700">Upland</td>
+                <td class="px-4 py-2 text-gray-700">$10M</td>
+                <td class="px-4 py-2 text-gray-600">xs $45M</td>
+                <td class="px-4 py-2 text-right text-green-600 font-medium">$65,000</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-8 p-4 bg-purple-50 border border-purple-200 rounded-lg max-w-3xl">
+    <h3 class="font-semibold text-purple-800 mb-2">Key Changes</h3>
+    <ul class="text-sm text-purple-700 space-y-1">
+      <li><strong>Policy Term Card:</strong> Now shows both "Program" (submission dates) and "Ours" (CMAI dates) - clarifies context</li>
+      <li><strong>Tower Visual:</strong> Dashed border = TBD, left amber accent = short term, solid = full term</li>
+      <li><strong>No legend needed:</strong> The visual language is intuitive enough without explicit labels</li>
+    </ul>
+  </div>
+
+</body>
+</html>

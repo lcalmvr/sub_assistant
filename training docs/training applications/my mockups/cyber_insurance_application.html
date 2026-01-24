@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Insurance Application</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        @page {
+            size: letter;
+            margin: 0.5in 0.6in;
+        }
+
+        @page :first {
+            margin-top: 0.5in;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+            font-size: 10pt;
+            line-height: 1.4;
+            color: #1a1a1a;
+            background: #fff;
+            max-width: 8.5in;
+            margin: 0 auto;
+            padding: 0.5in 0.6in;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding-bottom: 12px;
+            border-bottom: 3px solid #294773;
+            margin-bottom: 16px;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-placeholder {
+            width: 52px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logo-placeholder img {
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        .company-name {
+            font-size: 20pt;
+            font-weight: 700;
+            color: #294773;
+            letter-spacing: 1px;
+        }
+
+        .company-tagline {
+            font-size: 10pt;
+            color: #294773;
+            margin-top: 0;
+            font-weight: 500;
+            letter-spacing: 1px;
+        }
+
+        .header-right {
+            text-align: right;
+            font-size: 8pt;
+            color: #666;
+        }
+
+        .header-right .form-number {
+            font-weight: 600;
+            color: #294773;
+            font-size: 9pt;
+        }
+
+        /* Title */
+        .document-title {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+        .document-title h1 {
+            font-size: 16pt;
+            font-weight: 700;
+            color: #294773;
+            margin-bottom: 4px;
+        }
+
+        .document-title .subtitle {
+            font-size: 10pt;
+            color: #666;
+        }
+
+        /* Notice Box */
+        .notice-box {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-left: 4px solid #294773;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            font-size: 8.5pt;
+            line-height: 1.5;
+        }
+
+        .notice-box strong {
+            color: #294773;
+        }
+
+        /* Sections */
+        .section {
+            margin-bottom: 28px;
+        }
+
+        .section-header {
+            background: #294773;
+            color: white;
+            padding: 8px 14px;
+            font-size: 11pt;
+            font-weight: 600;
+            margin-bottom: 14px;
+            border-radius: 3px;
+        }
+
+        .section-number {
+            display: inline-block;
+            margin-right: 10px;
+            font-size: 11pt;
+            font-weight: 600;
+        }
+
+        .subsection-header {
+            font-size: 10pt;
+            font-weight: 600;
+            color: #294773;
+            margin: 14px 0 10px 0;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        /* Questions */
+        .question-row {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 10px;
+            gap: 12px;
+        }
+
+        .question-text {
+            flex: 1;
+            padding-right: 8px;
+        }
+
+        .question-text .hint {
+            color: #666;
+            font-weight: normal;
+            font-size: 9pt;
+        }
+
+        .question-number {
+            font-weight: 600;
+            color: #294773;
+            min-width: 24px;
+        }
+
+        .answer-options {
+            display: flex;
+            gap: 12px;
+            flex-shrink: 0;
+            min-width: 180px;
+            justify-content: flex-end;
+        }
+
+        .answer-option {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 9pt;
+            min-width: 50px;
+        }
+
+        input.checkbox {
+            width: 14px;
+            height: 14px;
+            border: 1.5px solid #294773;
+            border-radius: 2px;
+            background: #fff;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            cursor: pointer;
+            vertical-align: middle;
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        input.checkbox:checked {
+            background: #294773;
+        }
+
+        input.checkbox:checked::after {
+            content: '✓';
+            color: white;
+            font-size: 10px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        input.checkbox.radio {
+            border-radius: 50%;
+        }
+
+        input.checkbox.radio:checked::after {
+            content: '';
+            width: 6px;
+            height: 6px;
+            background: white;
+            border-radius: 50%;
+        }
+
+        /* Input Fields */
+        input.input-field {
+            background: #f8fafc;
+            border: none;
+            border-bottom: 1.5px solid #294773;
+            padding: 6px 8px;
+            min-height: 24px;
+            margin-top: 4px;
+            width: 100%;
+            font-family: inherit;
+            font-size: 10pt;
+            color: #1a1a1a;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            outline: none;
+        }
+
+        input.input-field::placeholder {
+            color: #999;
+            font-style: italic;
+        }
+
+        input.input-field.inline {
+            display: inline-block;
+            width: auto;
+            min-width: 60px;
+            margin: 0 4px;
+            vertical-align: bottom;
+        }
+
+        textarea.input-field {
+            background: #f8fafc;
+            border: none;
+            border-bottom: 1.5px solid #294773;
+            padding: 6px 8px;
+            min-height: 48px;
+            margin-top: 4px;
+            width: 100%;
+            font-family: inherit;
+            font-size: 10pt;
+            color: #1a1a1a;
+            appearance: none;
+            -webkit-appearance: none;
+            resize: none;
+            outline: none;
+        }
+
+        /* Applicant Info Grid */
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px 24px;
+            margin-bottom: 12px;
+            align-items: end;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-item .info-label {
+            min-height: 2.4em;
+            display: flex;
+            align-items: flex-end;
+        }
+
+        .info-item.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .info-label {
+            font-size: 8.5pt;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-bottom: 2px;
+            font-weight: 500;
+        }
+
+        /* Multi-select grid */
+        .multi-select-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px 16px;
+            margin: 4px 0 16px 36px;
+        }
+
+        .multi-select-grid.two-col {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .multi-select-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 9pt;
+        }
+
+        .vertical-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        /* Conditional follow-up */
+        .conditional {
+            margin-left: 36px;
+            padding-left: 12px;
+            border-left: 2px solid #e0e7ed;
+            margin-top: 4px;
+            margin-bottom: 16px;
+        }
+
+        .conditional-label {
+            font-size: 9pt;
+            color: #666;
+            font-style: italic;
+            margin-bottom: 4px;
+        }
+
+        /* Range options */
+        .range-options {
+            display: flex;
+            gap: 20px;
+            margin: 4px 0 16px 36px;
+        }
+
+        .range-option {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 9pt;
+        }
+
+        /* Table-style questions */
+        .question-table {
+            width: 100%;
+            margin: 4px 0 16px 0;
+        }
+
+        .question-table .table-row {
+            display: flex;
+            align-items: center;
+            padding: 6px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .question-table .table-row:last-child {
+            border-bottom: none;
+        }
+
+        .question-table .table-question {
+            flex: 1;
+            padding-left: 36px;
+            font-size: 9.5pt;
+        }
+
+        .question-table .table-answers {
+            display: flex;
+            gap: 8px;
+            min-width: 200px;
+            justify-content: flex-end;
+        }
+
+        .question-table .table-answers .answer-option {
+            min-width: 55px;
+            justify-content: flex-start;
+        }
+
+        /* Signature Section */
+        .signature-section {
+            margin-top: 24px;
+            page-break-inside: avoid;
+        }
+
+        .attestation-text {
+            font-size: 9pt;
+            line-height: 1.5;
+            margin-bottom: 16px;
+            color: #444;
+        }
+
+        .signature-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px 32px;
+            margin-top: 16px;
+        }
+
+        .signature-item {
+            border-bottom: 1px solid #1a1a1a;
+            padding-bottom: 4px;
+            min-height: 32px;
+        }
+
+        .signature-label {
+            font-size: 8pt;
+            color: #666;
+            text-transform: uppercase;
+            margin-top: 4px;
+        }
+
+        /* Warning Box */
+        .warning-box {
+            background: #fff8e6;
+            border: 1px solid #f0d58c;
+            padding: 12px 16px;
+            margin-top: 16px;
+            font-size: 8pt;
+            line-height: 1.5;
+        }
+
+        .warning-box .warning-title {
+            font-weight: 700;
+            color: #8a6d00;
+            margin-bottom: 6px;
+            font-size: 9pt;
+        }
+
+        /* End matter - warning and footer together */
+        .end-matter {
+            page-break-inside: avoid;
+        }
+
+        /* Footer */
+        .page-footer {
+            margin-top: 16px;
+            padding-top: 10px;
+            border-top: 1px solid #294773;
+            display: flex;
+            justify-content: space-between;
+            font-size: 9pt;
+            color: #294773;
+            font-weight: 500;
+        }
+
+        /* Page break helper */
+        .page-break {
+            page-break-before: always;
+            margin-top: 0;
+            padding-top: 0;
+        }
+
+        /* Print styles */
+        @media print {
+            body {
+                padding: 0;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            * {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+
+            input.input-field,
+            textarea.input-field {
+                background: #f8fafc !important;
+                border: none !important;
+                border-bottom: 1px solid #294773 !important;
+            }
+
+            input.checkbox {
+                border: 1.5px solid #294773 !important;
+                background: #fff !important;
+            }
+
+            input.checkbox:checked {
+                background: #294773 !important;
+            }
+
+            .section-header {
+                page-break-after: avoid;
+                page-break-inside: avoid;
+            }
+
+            .subsection-header {
+                page-break-after: avoid;
+            }
+
+            .question-row {
+                page-break-inside: avoid;
+            }
+
+            .conditional {
+                page-break-inside: avoid;
+            }
+
+            .info-grid {
+                page-break-inside: avoid;
+            }
+
+            .signature-section {
+                page-break-inside: avoid;
+            }
+
+            .end-matter {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="logo-area">
+            <div class="logo-placeholder">
+                <svg viewBox="0 0 60 60" width="52" height="52">
+                    <!-- Circular background -->
+                    <circle cx="30" cy="30" r="28" fill="none" stroke="#294773" stroke-width="2.5"/>
+                    <!-- Bulldog head silhouette -->
+                    <g fill="#294773" transform="translate(12, 10) scale(0.75)">
+                        <!-- Head shape -->
+                        <ellipse cx="24" cy="28" rx="22" ry="20"/>
+                        <!-- Left ear -->
+                        <ellipse cx="6" cy="14" rx="7" ry="10" transform="rotate(-15, 6, 14)"/>
+                        <!-- Right ear -->
+                        <ellipse cx="42" cy="14" rx="7" ry="10" transform="rotate(15, 42, 14)"/>
+                        <!-- Left jowl -->
+                        <ellipse cx="10" cy="38" rx="10" ry="8"/>
+                        <!-- Right jowl -->
+                        <ellipse cx="38" cy="38" rx="10" ry="8"/>
+                        <!-- Snout -->
+                        <ellipse cx="24" cy="40" rx="12" ry="9" fill="#294773"/>
+                        <!-- Nose area - white cutout -->
+                        <ellipse cx="24" cy="38" rx="6" ry="4" fill="white"/>
+                        <!-- Eyes - white cutouts -->
+                        <ellipse cx="16" cy="26" rx="3.5" ry="4" fill="white"/>
+                        <ellipse cx="32" cy="26" rx="3.5" ry="4" fill="white"/>
+                        <!-- Nose -->
+                        <ellipse cx="24" cy="36" rx="3" ry="2" fill="#294773"/>
+                    </g>
+                </svg>
+            </div>
+            <div>
+                <div class="company-name">APPLIED</div>
+                <div class="company-tagline">FINANCIAL LINES</div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="form-number">AFL-CYB-APP-2025</div>
+            <div>Applied Financial Lines</div>
+            <div>appliedfinanciallines.com</div>
+        </div>
+    </div>
+
+    <!-- Title -->
+    <div class="document-title">
+        <h1>Cyber Insurance Application</h1>
+        <div class="subtitle">Comprehensive Risk Assessment</div>
+    </div>
+
+    <!-- Notice Box -->
+    <div class="notice-box">
+        <strong>IMPORTANT NOTICE:</strong> This policy provides coverage on a <strong>claims-made and reported basis</strong>
+        and applies only to claims first made against the Insured during the Policy Period or Extended Reporting Period,
+        if purchased, and reported to the Insurer in accordance with the terms of the Policy. Defense costs are included
+        within the Limit of Liability and will reduce and may exhaust the Limit of Liability.
+        <br><br>
+        Please read the entire Application and Policy carefully before signing. If a policy is issued, this Application
+        will attach to and become part of the Policy.
+    </div>
+
+    <!-- Section 1: Applicant Information -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">1</span>Applicant Information
+        </div>
+
+        <div class="info-grid">
+            <div class="info-item full-width">
+                <label class="info-label" for="legal_name">Legal Name of Applicant</label>
+                <input type="text" class="input-field" id="legal_name" name="legal_name">
+            </div>
+            <div class="info-item full-width">
+                <label class="info-label" for="primary_industry">Primary Industry</label>
+                <input type="text" class="input-field" id="primary_industry" name="primary_industry">
+            </div>
+            <div class="info-item full-width">
+                <label class="info-label" for="description_of_operations">Description of Operations</label>
+                <textarea class="input-field" id="description_of_operations" name="description_of_operations" rows="2"></textarea>
+            </div>
+            <div class="info-item full-width">
+                <label class="info-label" for="address_street">Headquarters Address (Street)</label>
+                <input type="text" class="input-field" id="address_street" name="address_street">
+            </div>
+            <div class="info-item" style="grid-column: span 1;">
+                <label class="info-label" for="address_city">City</label>
+                <input type="text" class="input-field" id="address_city" name="address_city">
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <div class="info-item">
+                    <label class="info-label" for="address_state">State</label>
+                    <input type="text" class="input-field" id="address_state" name="address_state">
+                </div>
+                <div class="info-item">
+                    <label class="info-label" for="address_zip">Zip Code</label>
+                    <input type="text" class="input-field" id="address_zip" name="address_zip">
+                </div>
+            </div>
+            <div class="info-item">
+                <label class="info-label" for="primary_website">Primary Website / Email Domain(s)</label>
+                <input type="text" class="input-field" id="primary_website" name="primary_website">
+            </div>
+            <div class="info-item">
+                <label class="info-label" for="total_employees">Total Number of Employees</label>
+                <input type="text" class="input-field" id="total_employees" name="total_employees">
+            </div>
+            <div class="info-item">
+                <label class="info-label" for="annual_revenue">Annual Revenue (Most Recent Fiscal Year)</label>
+                <div style="display: flex; align-items: flex-end;">
+                    <span style="color: #666; font-size: 10pt; padding: 6px 4px 6px 0;">$</span>
+                    <input type="text" class="input-field" id="annual_revenue" name="annual_revenue" style="flex: 1;">
+                </div>
+            </div>
+            <div class="info-item">
+                <label class="info-label" for="policy_effective_date">Requested Policy Effective Date</label>
+                <input type="text" class="input-field" id="policy_effective_date" name="policy_effective_date" placeholder="MM/DD/YYYY">
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 2: Data & Systems -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">2</span>Data & Systems
+        </div>
+
+        <div class="subsection-header">A. Sensitive Data</div>
+
+        <div class="question-row">
+            <span class="question-number">2.1</span>
+            <span class="question-text">Estimated number of records containing PII, PHI, or financial data stored or processed: <span class="hint">(choose one)</span></span>
+        </div>
+        <div class="conditional">
+            <div class="range-options" style="margin-left: 0;">
+                <div class="range-option"><input type="radio" class="checkbox radio" name="records_count" value="lt_250k"> &lt;250,000</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="records_count" value="250k_1m"> 250K – 1M</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="records_count" value="1m_5m"> 1M – 5M</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="records_count" value="gt_5m"> &gt;5M</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">2.2</span>
+            <span class="question-text">Do you store or process biometric data?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="biometric_data" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="biometric_data" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">2.3</span>
+            <span class="question-text">Do you accept or process payment cards?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="payment_cards" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="payment_cards" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="question-row">
+                <span class="question-text">If Yes, are you or your payment processor PCI compliant?</span>
+                <div class="answer-options">
+                    <div class="answer-option"><input type="radio" class="checkbox" name="pci_compliant" value="yes"> Yes</div>
+                    <div class="answer-option"><input type="radio" class="checkbox" name="pci_compliant" value="no"> No</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="subsection-header">B. Data Controls</div>
+
+        <div class="question-row">
+            <span class="question-number">2.4</span>
+            <span class="question-text">Do you have a process to classify and secure sensitive data?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="data_classification" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="data_classification" value="no"> No</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="data_classification" value="na"> N/A</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">2.5</span>
+            <span class="question-text">Do you have written contracts with third-party data processors?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="third_party_contracts" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="third_party_contracts" value="no"> No</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="third_party_contracts" value="na"> N/A</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">2.6</span>
+            <span class="question-text">Do vendors handling sensitive data undergo security review?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="vendor_security_review" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="vendor_security_review" value="no"> No</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="vendor_security_review" value="na"> N/A</div>
+            </div>
+        </div>
+
+        <div class="subsection-header">C. Infrastructure</div>
+
+        <div class="question-row">
+            <span class="question-number">2.7</span>
+            <span class="question-text">Primary critical system environment: <span class="hint">(choose one)</span></span>
+        </div>
+        <div class="conditional">
+            <div class="range-options" style="margin-left: 0;">
+                <div class="range-option"><input type="radio" class="checkbox radio" name="system_environment" value="cloud"> Cloud-based</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="system_environment" value="on_premises"> On-premises</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="system_environment" value="hybrid"> Hybrid</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 3: Access Security -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">3</span>Access Security
+        </div>
+
+        <div class="subsection-header">A. Multi-Factor Authentication (MFA)</div>
+
+        <div class="question-row">
+            <span class="question-number">3.1</span>
+            <span class="question-text">Is Multi-Factor Authentication required for the following?</span>
+        </div>
+        <div class="conditional">
+            <div class="question-table" style="margin: 0;">
+                <div class="table-row">
+                    <div class="table-question" style="padding-left: 0;">Email access (Office 365, Gmail, etc.)</div>
+                    <div class="table-answers">
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_email" value="yes"> Yes</div>
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_email" value="partial"> Partial</div>
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_email" value="no"> No</div>
+                    </div>
+                </div>
+                <div class="table-row">
+                    <div class="table-question" style="padding-left: 0;">Remote access (VPN, RDP, Citrix, etc.)</div>
+                    <div class="table-answers">
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_remote" value="yes"> Yes</div>
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_remote" value="partial"> Partial</div>
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_remote" value="no"> No</div>
+                    </div>
+                </div>
+                <div class="table-row">
+                    <div class="table-question" style="padding-left: 0;">Admin / Privileged accounts</div>
+                    <div class="table-answers">
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_admin" value="yes"> Yes</div>
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_admin" value="partial"> Partial</div>
+                        <div class="answer-option"><input type="radio" class="checkbox" name="mfa_admin" value="no"> No</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="subsection-header">B. General Access Controls</div>
+
+        <div class="question-row">
+            <span class="question-number">3.2</span>
+            <span class="question-text">Do end users have local administrator rights on their workstations?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="local_admin_rights" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="local_admin_rights" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">3.3</span>
+            <span class="question-text">Is Single Sign-On (SSO) in place?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="sso_in_place" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="sso_in_place" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">3.4</span>
+            <span class="question-text">Do you use a Privileged Access Management (PAM) tool?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="pam_tool" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="pam_tool" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">3.5</span>
+            <span class="question-text">Do you use a password manager for staff?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="password_manager" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="password_manager" value="no"> No</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 4: Endpoint & Network Security -->
+    <div class="section page-break">
+        <div class="section-header">
+            <span class="section-number">4</span>Endpoint & Network Security
+        </div>
+
+        <div class="subsection-header">A. Endpoint Protection</div>
+
+        <div class="question-row">
+            <span class="question-number">4.1</span>
+            <span class="question-text">What endpoint protection solution do you use?</span>
+        </div>
+        <div class="conditional">
+            <input type="text" class="input-field" name="endpoint_protection_solution" placeholder="(e.g., CrowdStrike, Microsoft Defender, SentinelOne, Sophos, Carbon Black)" style="margin-left: 0; width: 100%;">
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">4.2</span>
+            <span class="question-text">Is Endpoint Detection & Response (EDR) deployed on all workstations and servers?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="edr_deployed" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="edr_deployed" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="conditional-label">If Yes, what percentage of endpoints are covered? <input type="text" class="input-field inline" name="edr_coverage_percentage" style="min-width: 60px;"> %</div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">4.3</span>
+            <span class="question-text">Do you have Managed Detection & Response (MDR) or 24/7 SOC monitoring?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="mdr_soc_monitoring" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="mdr_soc_monitoring" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="subsection-header">B. Network Security</div>
+
+        <div class="question-row">
+            <span class="question-number">4.4</span>
+            <span class="question-text">Is your network segmented to limit lateral movement?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="network_segmented" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="network_segmented" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">4.5</span>
+            <span class="question-text">Do you use email security measures (filtering, SPF/DKIM/DMARC)?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="email_security" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="email_security" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">4.6</span>
+            <span class="question-text">Do you use remote access tools (VPN, RDP)?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="remote_access_tools" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="remote_access_tools" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="conditional-label">If Yes, please specify:</div>
+            <input type="text" class="input-field" name="remote_access_tools_specify" style="min-height: 28px;">
+        </div>
+    </div>
+
+    <!-- Section 5: Patch & Vulnerability Management -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">5</span>Patch & Vulnerability Management
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">5.1</span>
+            <span class="question-text">Do you track and apply critical security patches?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="track_security_patches" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="track_security_patches" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">5.2</span>
+            <span class="question-text">Critical patches are typically deployed within: <span class="hint">(choose one)</span></span>
+        </div>
+        <div class="conditional">
+            <div class="range-options" style="margin-left: 0;">
+                <div class="range-option"><input type="radio" class="checkbox radio" name="patch_deployment_time" value="lt_1_week"> &lt;1 Week</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="patch_deployment_time" value="1_4_weeks"> 1–4 Weeks</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="patch_deployment_time" value="gt_30_days"> &gt;30 Days</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">5.3</span>
+            <span class="question-text">Do you conduct vulnerability scans?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="vulnerability_scans" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="vulnerability_scans" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="question-row">
+                <span class="question-text">If Yes, how frequently?</span>
+            </div>
+            <div class="range-options" style="margin-left: 0;">
+                <div class="range-option"><input type="radio" class="checkbox radio" name="vulnerability_scan_frequency" value="monthly"> Monthly</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="vulnerability_scan_frequency" value="quarterly"> Quarterly</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="vulnerability_scan_frequency" value="annually"> Annually</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">5.4</span>
+            <span class="question-text">Do you have any end-of-life operating systems or software in production?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="eol_systems" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="eol_systems" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="conditional-label">If Yes, how are they isolated or protected?</div>
+            <input type="text" class="input-field" name="eol_systems_protection" style="min-height: 28px;">
+        </div>
+    </div>
+
+    <!-- Section 6: Backup, Continuity & Incident Response -->
+    <div class="section page-break">
+        <div class="section-header">
+            <span class="section-number">6</span>Backup, Continuity & Incident Response
+        </div>
+
+        <div class="subsection-header">A. Backup Strategy</div>
+
+        <div class="question-row">
+            <span class="question-number">6.1</span>
+            <span class="question-text">Do you maintain regular data backups?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="regular_backups" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="regular_backups" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">6.2</span>
+            <span class="question-text">Backup frequency: <span class="hint">(choose one)</span></span>
+        </div>
+        <div class="conditional">
+            <div class="range-options" style="margin-left: 0;">
+                <div class="range-option"><input type="radio" class="checkbox radio" name="backup_frequency" value="continuous"> Continuous</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="backup_frequency" value="daily"> Daily</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="backup_frequency" value="weekly"> Weekly</div>
+                <div class="range-option"><input type="radio" class="checkbox radio" name="backup_frequency" value="monthly"> Monthly</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">6.3</span>
+            <span class="question-text">Where are backups stored? <span class="hint">(select all that apply)</span></span>
+        </div>
+        <div class="conditional">
+            <div class="vertical-list">
+                <div class="multi-select-item"><input type="checkbox" class="checkbox" name="backup_location_on_premises" value="yes"> On-premises</div>
+                <div class="multi-select-item"><input type="checkbox" class="checkbox" name="backup_location_cloud" value="yes"> Cloud</div>
+                <div class="multi-select-item"><input type="checkbox" class="checkbox" name="backup_location_offsite" value="yes"> Offsite</div>
+                <div class="multi-select-item"><input type="checkbox" class="checkbox" name="backup_location_airgapped" value="yes"> Offline / Air-gapped</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">6.4</span>
+            <span class="question-text">How are backups protected? <span class="hint">(select all that apply)</span></span>
+        </div>
+        <div class="conditional">
+            <div class="vertical-list">
+                <div class="multi-select-item"><input type="checkbox" class="checkbox" name="backup_protection_encrypted" value="yes"> Encrypted</div>
+                <div class="multi-select-item"><input type="checkbox" class="checkbox" name="backup_protection_mfa" value="yes"> MFA-protected access</div>
+                <div class="multi-select-item"><input type="checkbox" class="checkbox" name="backup_protection_immutable" value="yes"> Immutable backups</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">6.5</span>
+            <span class="question-text">Are backups tested regularly?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="backups_tested" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="backups_tested" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">6.6</span>
+            <span class="question-text">Have you completed a full restore test in the last 12 months?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="full_restore_test" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="full_restore_test" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="subsection-header">B. Incident Response & Business Continuity</div>
+
+        <div class="question-row">
+            <span class="question-number">6.7</span>
+            <span class="question-text">Do you have a formal Incident Response Plan?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="incident_response_plan" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="incident_response_plan" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="question-row">
+                <span class="question-text">If Yes, has it been tested in the last 12 months?</span>
+                <div class="answer-options">
+                    <div class="answer-option"><input type="radio" class="checkbox" name="irp_tested" value="yes"> Yes</div>
+                    <div class="answer-option"><input type="radio" class="checkbox" name="irp_tested" value="no"> No</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">6.8</span>
+            <span class="question-text">Do you have a Business Continuity or Disaster Recovery Plan?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="bc_dr_plan" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="bc_dr_plan" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="question-row">
+                <span class="question-text">If Yes, has it been tested in the last 12 months?</span>
+                <div class="answer-options">
+                    <div class="answer-option"><input type="radio" class="checkbox" name="bc_dr_plan_tested" value="yes"> Yes</div>
+                    <div class="answer-option"><input type="radio" class="checkbox" name="bc_dr_plan_tested" value="no"> No</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 7: Training & Awareness -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">7</span>Training & Awareness
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">7.1</span>
+            <span class="question-text">Do employees receive annual cybersecurity awareness training?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="security_training" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="security_training" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">7.2</span>
+            <span class="question-text">Do you conduct phishing simulation tests?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="phishing_tests" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="phishing_tests" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">7.3</span>
+            <span class="question-text">Do employees have an easy way to report suspicious emails?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="suspicious_email_reporting" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="suspicious_email_reporting" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">7.4</span>
+            <span class="question-text">Are external emails flagged or tagged?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="external_emails_flagged" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="external_emails_flagged" value="no"> No</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 8: Third-Party & IT Management -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">8</span>Third-Party & IT Management
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">8.1</span>
+            <span class="question-text">Do you outsource IT or security management (MSP/MSSP)?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="outsource_it" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="outsource_it" value="no"> No</div>
+            </div>
+        </div>
+        <div class="conditional">
+            <div class="conditional-label">If Yes, please provide provider name:</div>
+            <input type="text" class="input-field" name="msp_provider_name" style="min-height: 24px;">
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">8.2</span>
+            <span class="question-text">Do you use cloud-hosted applications (Microsoft 365, Google Workspace, AWS, etc.)?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="cloud_applications" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="cloud_applications" value="no"> No</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 9: Loss History -->
+    <div class="section">
+        <div class="section-header">
+            <span class="section-number">9</span>Loss History & Prior Claims
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">9.1</span>
+            <span class="question-text">In the past 3 years, has the Applicant experienced any cyber incident, privacy breach, funds transfer fraud, or significant system outage?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="prior_incidents" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="prior_incidents" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="question-row">
+            <span class="question-number">9.2</span>
+            <span class="question-text">Are you aware of any current circumstances that could reasonably give rise to a claim under this policy?</span>
+            <div class="answer-options">
+                <div class="answer-option"><input type="radio" class="checkbox" name="aware_of_circumstances" value="yes"> Yes</div>
+                <div class="answer-option"><input type="radio" class="checkbox" name="aware_of_circumstances" value="no"> No</div>
+            </div>
+        </div>
+
+        <div class="conditional">
+            <div class="conditional-label">If Yes to either question above, please provide details:</div>
+            <textarea class="input-field" name="loss_history_details" rows="3"></textarea>
+        </div>
+
+        <div style="margin-top: 12px; padding: 10px 12px; background: #f8f9fa; border-radius: 4px; font-size: 8.5pt; color: #666; line-height: 1.5;">
+            <em>Note: If the Applicant has knowledge of any fact, circumstance, or situation that may give rise to a claim under this policy, any claim arising therefrom is excluded from coverage.</em>
+        </div>
+    </div>
+
+    <!-- Section 10: Signature -->
+    <div class="section signature-section">
+        <div class="section-header">
+            <span class="section-number">10</span>Representations & Signature
+        </div>
+
+        <div class="attestation-text">
+            The undersigned authorized representative of the Applicant declares that: (1) this Application has been completed
+            after reasonable inquiry; (2) the statements set forth herein are true and complete to the best of their knowledge;
+            and (3) these declarations are a material inducement to the Insurer to provide a proposal for insurance.
+            <br><br>
+            The undersigned agrees that if the information supplied on this Application changes between the date of this
+            Application and the effective date of the insurance, the Applicant will immediately notify the Insurer of such
+            changes, and the Insurer may withdraw or modify any outstanding quotations or authorizations.
+        </div>
+
+        <div class="signature-grid">
+            <div>
+                <input type="text" class="input-field" name="signer_name" style="border-bottom-color: #1a1a1a;">
+                <div class="signature-label">Name of Authorized Representative</div>
+            </div>
+            <div>
+                <input type="text" class="input-field" name="signer_title" style="border-bottom-color: #1a1a1a;">
+                <div class="signature-label">Title</div>
+            </div>
+            <div>
+                <input type="text" class="input-field" name="signature" style="border-bottom-color: #1a1a1a;">
+                <div class="signature-label">Signature</div>
+            </div>
+            <div>
+                <input type="text" class="input-field" name="signature_date" placeholder="MM/DD/YYYY" style="border-bottom-color: #1a1a1a;">
+                <div class="signature-label">Date (MM/DD/YYYY)</div>
+            </div>
+            <div class="info-item full-width" style="margin-top: 8px;">
+                <input type="email" class="input-field" name="signer_email" style="border-bottom-color: #1a1a1a;">
+                <div class="signature-label">Email Address</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Warning Box and Footer - keep together -->
+    <div class="end-matter">
+        <div class="warning-box">
+            <div class="warning-title">FRAUD WARNING</div>
+            <strong>NOTICE TO ALL APPLICANTS:</strong> Any person who knowingly, and with intent to defraud any insurance
+            company or other person, files an application for insurance or statement of claim containing any materially
+            false information, or, for the purpose of misleading, conceals information concerning any fact material thereto,
+            may commit a fraudulent insurance act which is a crime and may subject such person to criminal and civil penalties.
+        </div>
+
+        <div class="page-footer">
+            <div>AFL-CYB-APP-2025</div>
+            <div>Applied Financial Lines</div>
+        </div>
+    </div>
+
+    <script>
+        // Allow radio buttons to be deselected by clicking again
+        document.querySelectorAll('input[type="radio"]').forEach(radio => {
+            radio.addEventListener('click', function(e) {
+                if (this.dataset.checked === 'true') {
+                    this.checked = false;
+                    this.dataset.checked = 'false';
+                } else {
+                    // Unmark all radios in the same group
+                    document.querySelectorAll(`input[name="${this.name}"]`).forEach(r => {
+                        r.dataset.checked = 'false';
+                    });
+                    this.dataset.checked = 'true';
+                }
+            });
+        });
+    </script>
+
+</body>
+</html>

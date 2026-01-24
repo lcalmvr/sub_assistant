@@ -44,7 +44,7 @@ export default function NetOutEditor({
   // Full mode for side panel
   return (
     <div>
-      <div className="text-[10px] text-gray-400 uppercase mb-1">Net Out To</div>
+      <div className="text-[10px] text-gray-400 uppercase mb-1">Net to</div>
       <div className="flex items-center gap-1">
         <input
           type="number"

@@ -58,7 +58,7 @@ export default function CommissionEditor({
   // Full mode for side panel
   return (
     <div>
-      <div className="text-[10px] text-gray-400 uppercase mb-1">{label || 'Broker Commission'}</div>
+      <div className="text-[10px] text-gray-400 uppercase mb-1">{label || 'Standard'}</div>
       <div className="flex items-center gap-1">
         <input
           type="number"

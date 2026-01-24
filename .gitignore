@@ -71,3 +71,7 @@ mockups/
 
 # Node modules (broker portal frontend)
 node_modules/
+
+# Large binary files (images, playwright browsers)
+docs/images/
+.playwright-mcp/

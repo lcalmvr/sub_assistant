@@ -2416,6 +2416,7 @@ def list_quote_structures(submission_id: str):
                     policy_form, coverages, sublimits, retro_schedule, retroactive_date,
                     default_term_months, variation_label, variation_name, period_months,
                     effective_date_override, expiration_date_override, commission_override, dates_tbd,
+                    date_config,
                     sold_premium, technical_premium, risk_adjusted_premium,
                     is_bound, bound_at, created_at
                 FROM insurance_towers
@@ -2434,6 +2435,7 @@ def list_quote_structures(submission_id: str):
                 SELECT
                     id, variation_parent_id, variation_label, variation_name, period_months,
                     effective_date_override, expiration_date_override, commission_override, dates_tbd,
+                    date_config,
                     sold_premium, technical_premium, risk_adjusted_premium,
                     is_bound, bound_at, created_at
                 FROM insurance_towers
@@ -2464,6 +2466,7 @@ def list_quote_structures(submission_id: str):
                     'expiration_date_override': structure.get('expiration_date_override'),
                     'commission_override': structure.get('commission_override'),
                     'dates_tbd': structure.get('dates_tbd', False),
+                    'date_config': structure.get('date_config'),
                     'sold_premium': structure.get('sold_premium'),
                     'technical_premium': structure.get('technical_premium'),
                     'risk_adjusted_premium': structure.get('risk_adjusted_premium'),
@@ -2486,6 +2489,7 @@ def list_quote_structures(submission_id: str):
                         'expiration_date_override': v['expiration_date_override'],
                         'commission_override': v['commission_override'],
                         'dates_tbd': v.get('dates_tbd', False),
+                        'date_config': v.get('date_config'),
                         'sold_premium': v['sold_premium'],
                         'technical_premium': v['technical_premium'],
                         'risk_adjusted_premium': v['risk_adjusted_premium'],
@@ -2608,6 +2612,7 @@ class VariationUpdate(BaseModel):
     commission_override: Optional[float] = None
     sold_premium: Optional[int] = None
     dates_tbd: Optional[bool] = None
+    date_config: Optional[list] = None
 
 
 @app.patch("/api/variations/{variation_id}")
@@ -2618,6 +2623,10 @@ def update_variation(variation_id: str, data: VariationUpdate):
     updates = {k: v for k, v in data.model_dump(exclude_unset=True).items()}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Wrap JSONB fields with Json() for psycopg2
+    if 'date_config' in updates and updates['date_config'] is not None:
+        updates['date_config'] = Json(updates['date_config'])
 
     set_clause = ", ".join(f"{k} = %s" for k in updates.keys())
     values = list(updates.values()) + [variation_id]
@@ -2630,7 +2639,7 @@ def update_variation(variation_id: str, data: VariationUpdate):
                 WHERE id = %s
                 RETURNING id, variation_label, variation_name, period_months,
                           effective_date_override, expiration_date_override,
-                          commission_override, sold_premium, dates_tbd
+                          commission_override, sold_premium, dates_tbd, date_config
             """, values)
             result = cur.fetchone()
             if not result:

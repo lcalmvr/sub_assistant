@@ -210,8 +210,9 @@ export function getTowerDateBlocks(tower, policyEffective) {
 
   for (let i = 1; i < tower.length; i++) {
     const layer = tower[i];
-    if (layer?.term_start) {
-      // This layer starts a new block
+    // Only start a new block if this layer has a DIFFERENT explicit date
+    if (layer?.term_start && layer.term_start !== currentDate) {
+      // This layer starts a new block with a different date
       blocks.push({
         startIndex: currentBlockStart,
         endIndex: i - 1,
@@ -490,4 +491,112 @@ export function formatTermDuration(termStart, termEnd) {
   if (months >= 1 && months <= 12) return `${months} month${months > 1 ? 's' : ''}`;
 
   return `${days} days`;
+}
+
+// === Date Configuration (Attachment-Based) ===
+
+/**
+ * Get the effective date for a layer based on its attachment and date_config rules.
+ * Rules are sorted by attachment_min ascending. The layer gets the date from
+ * the highest rule whose attachment_min <= layer's attachment.
+ *
+ * @param {number} attachment - The layer's attachment point
+ * @param {Array} dateConfig - Array of { effective: string|'TBD', attachment_min: number }
+ * @param {string} defaultDate - Fallback date if no rules match
+ * @returns {string} The effective date for this layer ('TBD' or date string)
+ */
+export function getLayerEffectiveFromConfig(attachment, dateConfig, defaultDate = null) {
+  if (!dateConfig || dateConfig.length === 0) {
+    return defaultDate;
+  }
+
+  // Sort rules by attachment_min ascending
+  const sortedRules = [...dateConfig].sort((a, b) => a.attachment_min - b.attachment_min);
+
+  // Find the highest rule that applies to this attachment
+  let applicableRule = null;
+  for (const rule of sortedRules) {
+    if (rule.attachment_min <= attachment) {
+      applicableRule = rule;
+    } else {
+      break; // Rules are sorted, so we can stop early
+    }
+  }
+
+  return applicableRule ? applicableRule.effective : defaultDate;
+}
+
+/**
+ * Group layers by their effective date based on date_config.
+ * Returns array of { effective: string, layers: Array, startIndex: number, endIndex: number }
+ *
+ * @param {Array} layers - Tower layers (index 0 = primary/lowest)
+ * @param {Array} dateConfig - Array of { effective: string|'TBD', attachment_min: number }
+ * @param {string} defaultDate - Fallback date if no config
+ */
+export function groupLayersByEffective(layers, dateConfig, defaultDate = null) {
+  if (!layers || layers.length === 0) return [];
+
+  const groups = [];
+  let currentGroup = null;
+
+  layers.forEach((layer, idx) => {
+    // Calculate this layer's attachment
+    const attachment = idx === 0 ? 0 : layers.slice(0, idx).reduce((sum, l) => sum + (l.limit || 0), 0);
+    const effective = getLayerEffectiveFromConfig(attachment, dateConfig, defaultDate);
+
+    if (!currentGroup || currentGroup.effective !== effective) {
+      // Start a new group
+      if (currentGroup) {
+        currentGroup.endIndex = idx - 1;
+        groups.push(currentGroup);
+      }
+      currentGroup = {
+        effective,
+        layers: [layer],
+        startIndex: idx,
+        endIndex: idx,
+      };
+    } else {
+      // Add to current group
+      currentGroup.layers.push(layer);
+      currentGroup.endIndex = idx;
+    }
+  });
+
+  // Don't forget the last group
+  if (currentGroup) {
+    groups.push(currentGroup);
+  }
+
+  return groups;
+}
+
+/**
+ * Check if a date_config has multiple dates (is a "multidate tower").
+ */
+export function isMultidateTower(dateConfig) {
+  if (!dateConfig || dateConfig.length <= 1) return false;
+
+  const uniqueDates = new Set(dateConfig.map(r => r.effective));
+  return uniqueDates.size > 1;
+}
+
+/**
+ * Normalize date_config - ensure it's sorted and has at least a primary rule.
+ */
+export function normalizeDateConfig(dateConfig, defaultDate = 'TBD') {
+  if (!dateConfig || dateConfig.length === 0) {
+    return [{ effective: defaultDate, attachment_min: 0 }];
+  }
+
+  // Sort by attachment
+  const sorted = [...dateConfig].sort((a, b) => a.attachment_min - b.attachment_min);
+
+  // Ensure there's a rule for primary (attachment 0)
+  if (sorted[0].attachment_min !== 0) {
+    sorted.unshift({ effective: defaultDate, attachment_min: 0 });
+  }
+
+  return sorted;
 }

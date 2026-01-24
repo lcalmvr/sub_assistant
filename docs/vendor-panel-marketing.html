@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Response Panel | Elite Global Protection</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0ea5e9;
+            --primary-dark: #0284c7;
+            --accent: #22d3ee;
+            --dark: #0f172a;
+            --darker: #020617;
+            --card-bg: rgba(15, 23, 42, 0.8);
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --border: rgba(148, 163, 184, 0.1);
+            --glow: rgba(14, 165, 233, 0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--darker);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Animated background */
+        .bg-grid {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image:
+                linear-gradient(rgba(14, 165, 233, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(14, 165, 233, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            z-index: -2;
+        }
+
+        .bg-glow {
+            position: fixed;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle at 30% 20%, rgba(14, 165, 233, 0.08) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 80%, rgba(34, 211, 238, 0.05) 0%, transparent 50%);
+            z-index: -1;
+            animation: pulse 15s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.1); }
+        }
+
+        /* Header */
+        header {
+            padding: 2rem 4rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(10px);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-sub {
+            font-size: 0.75rem;
+            font-weight: 400;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-top: 2px;
+        }
+
+        /* Hero Section */
+        .hero {
+            min-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 4rem 2rem;
+            position: relative;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(14, 165, 233, 0.1);
+            border: 1px solid rgba(14, 165, 233, 0.3);
+            border-radius: 100px;
+            font-size: 0.875rem;
+            color: var(--accent);
+            margin-bottom: 2rem;
+            font-weight: 500;
+        }
+
+        .hero-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: blink 2s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1.5rem;
+            letter-spacing: -2px;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            max-width: 700px;
+            margin-bottom: 3rem;
+        }
+
+        .hero-visual {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin-top: 4rem;
+        }
+
+        /* Image styling */
+        .hero-image {
+            width: 100%;
+            border-radius: 16px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5), 0 0 60px var(--glow);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+        }
+
+        .kynd-image {
+            width: 100%;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+        }
+
+        /* Section styling */
+        section {
+            padding: 6rem 4rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .section-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .section-title {
+            font-size: clamp(2rem, 4vw, 3rem);
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            letter-spacing: -1px;
+        }
+
+        .section-desc {
+            font-size: 1.125rem;
+            color: var(--text-muted);
+            max-width: 700px;
+            margin-bottom: 3rem;
+        }
+
+        /* Command Structure */
+        .command-structure {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 3rem;
+            margin-top: 3rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .command-structure::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--primary), var(--accent), var(--primary));
+        }
+
+        .structure-grid {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 2rem;
+            align-items: center;
+            margin-top: 2rem;
+        }
+
+        .structure-node {
+            background: rgba(14, 165, 233, 0.05);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+            border-radius: 16px;
+            padding: 2rem;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .structure-node:hover {
+            border-color: var(--primary);
+            box-shadow: 0 0 30px var(--glow);
+            transform: translateY(-2px);
+        }
+
+        .structure-node.primary {
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.15) 0%, rgba(34, 211, 238, 0.1) 100%);
+            border-color: var(--primary);
+        }
+
+        .node-icon {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 1rem;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+        }
+
+        .node-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .node-subtitle {
+            font-size: 0.875rem;
+            color: var(--accent);
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+
+        .node-desc {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .structure-connector {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .connector-line {
+            width: 60px;
+            height: 2px;
+            background: linear-gradient(90deg, var(--primary), var(--accent));
+            position: relative;
+        }
+
+        .connector-line::after {
+            content: '';
+            position: absolute;
+            right: -4px;
+            top: -3px;
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+        }
+
+        .connector-text {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.625rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Vendor Cards */
+        .vendors-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-top: 3rem;
+        }
+
+        .vendor-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2rem;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .vendor-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.05) 0%, transparent 100%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .vendor-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .vendor-card:hover::before {
+            opacity: 1;
+        }
+
+        .vendor-number {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+        }
+
+        .vendor-name {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .vendor-specialty {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .vendor-tag {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: rgba(14, 165, 233, 0.1);
+            border-radius: 100px;
+            font-size: 0.75rem;
+            color: var(--accent);
+            margin-top: 1rem;
+        }
+
+        /* KYND Section */
+        .kynd-section {
+            background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(34, 211, 238, 0.05) 100%);
+            border: 1px solid rgba(14, 165, 233, 0.2);
+            border-radius: 24px;
+            padding: 4rem;
+            margin-top: 4rem;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .kynd-content h3 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .kynd-content p {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+        }
+
+        .vulnerability-levels {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .vuln-level {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+        }
+
+        .vuln-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .vuln-indicator.critical { background: #ef4444; box-shadow: 0 0 10px #ef4444; }
+        .vuln-indicator.moderate { background: #f59e0b; box-shadow: 0 0 10px #f59e0b; }
+        .vuln-indicator.low { background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+
+        .vuln-label {
+            font-weight: 500;
+        }
+
+        .vuln-desc {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-left: auto;
+        }
+
+        .kynd-visual {
+            position: relative;
+        }
+
+        /* Stats Section */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2rem;
+            padding: 4rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            margin-top: 4rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Footer */
+        footer {
+            padding: 4rem;
+            border-top: 1px solid var(--border);
+            text-align: center;
+        }
+
+        .footer-cta {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 2rem;
+        }
+
+        .footer-contact {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .contact-item span {
+            color: var(--accent);
+        }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+            header, section {
+                padding-left: 2rem;
+                padding-right: 2rem;
+            }
+
+            .structure-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .structure-connector {
+                transform: rotate(90deg);
+                margin: 1rem 0;
+            }
+
+            .kynd-section {
+                grid-template-columns: 1fr;
+                padding: 2rem;
+            }
+
+            .stats-bar {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 640px) {
+            .stats-bar {
+                grid-template-columns: 1fr;
+            }
+
+            .hero h1 {
+                font-size: 2rem;
+            }
+        }
+
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.6s ease forwards;
+        }
+
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+        .delay-4 { animation-delay: 0.4s; }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+    <div class="bg-glow"></div>
+
+    <header>
+        <div>
+            <div class="logo">CYBER RESPONSE PANEL</div>
+            <div class="logo-sub">Elite Global Protection</div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="hero-badge">Global Cyber Defense Network Active</div>
+            <h1>
+                World-Class <span>Cyber Response</span><br>
+                When Every Second Counts
+            </h1>
+            <p>
+                A strategically designed hybrid response network combining elite Israeli cyber expertise
+                with seamless U.S. coordination. Top-tier international capabilities paired with
+                accessible, familiar domestic support.
+            </p>
+            <div class="hero-visual">
+                <img src="images/Hero.jpg" alt="Global Cyber Defense Network - Israel and US Command Centers" class="hero-image">
+            </div>
+        </section>
+
+        <!-- Command Structure Section -->
+        <section>
+            <div class="section-label">// Command Structure</div>
+            <h2 class="section-title">Strategic Dual-Command Architecture</h2>
+            <p class="section-desc">
+                Our breach response panel leverages a hybrid structure that delivers the best of both worlds:
+                elite international cyber response capabilities paired with accessible U.S.-based support.
+            </p>
+
+            <div class="command-structure">
+                <div class="structure-grid">
+                    <div class="structure-node primary">
+                        <div class="node-icon">&#127470;&#127473;</div>
+                        <div class="node-title">Gross, Orad, Schlimoff & Co.</div>
+                        <div class="node-subtitle">Strategic Command Center</div>
+                        <div class="node-desc">
+                            Highly respected Israeli law firm serving as the central coordination hub,
+                            directing our specialized network of elite cyber response vendors operating globally.
+                        </div>
+                    </div>
+
+                    <div class="structure-connector">
+                        <div class="connector-line"></div>
+                        <div class="connector-text">Coordinated Response</div>
+                        <div class="connector-line"></div>
+                    </div>
+
+                    <div class="structure-node">
+                        <div class="node-icon">&#127482;&#127480;</div>
+                        <div class="node-title">Pierson Ferdinand</div>
+                        <div class="node-subtitle">U.S. Liaison</div>
+                        <div class="node-desc">
+                            Domestic liaison managing local matters, facilitating communications across
+                            time zones, and handling jurisdiction-specific concerns for seamless policyholder support.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Breach Response Vendors -->
+        <section>
+            <div class="section-label">// Breach Response</div>
+            <h2 class="section-title">Elite Cyber Response Vendors</h2>
+            <p class="section-desc">
+                Our carefully curated panel of Israeli cyber specialists brings unmatched technical
+                expertise to every incident, operating with precision and speed globally.
+            </p>
+
+            <div class="vendors-grid">
+                <div class="vendor-card animate-in delay-1">
+                    <div class="vendor-number">01</div>
+                    <div class="vendor-name">Code Blue Ltd.</div>
+                    <div class="vendor-specialty">Rapid incident response and forensic analysis with 24/7 global coverage.</div>
+                    <div class="vendor-tag">Incident Response</div>
+                </div>
+
+                <div class="vendor-card animate-in delay-2">
+                    <div class="vendor-number">02</div>
+                    <div class="vendor-name">Cyberteam360 Ltd.</div>
+                    <div class="vendor-specialty">Comprehensive threat intelligence and advanced attack mitigation.</div>
+                    <div class="vendor-tag">Threat Intelligence</div>
+                </div>
+
+                <div class="vendor-card animate-in delay-3">
+                    <div class="vendor-number">03</div>
+                    <div class="vendor-name">Profero Ltd.</div>
+                    <div class="vendor-specialty">Deep-dive forensics and evidence preservation for complex breaches.</div>
+                    <div class="vendor-tag">Digital Forensics</div>
+                </div>
+
+                <div class="vendor-card animate-in delay-4">
+                    <div class="vendor-number">04</div>
+                    <div class="vendor-name">Sygnia Ltd.</div>
+                    <div class="vendor-specialty">Elite threat hunting and advanced persistent threat remediation.</div>
+                    <div class="vendor-tag">Threat Hunting</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Ransom Negotiation -->
+        <section>
+            <div class="section-label">// Crisis Resolution</div>
+            <h2 class="section-title">Ransom Negotiation & Payment</h2>
+            <p class="section-desc">
+                When critical situations demand expert negotiation, our specialized partners provide
+                measured, strategic approaches to crisis resolution.
+            </p>
+
+            <div class="vendors-grid">
+                <div class="vendor-card">
+                    <div class="vendor-number">01</div>
+                    <div class="vendor-name">ing Ltd.</div>
+                    <div class="vendor-specialty">Expert negotiation strategies and secure communication protocols.</div>
+                    <div class="vendor-tag">Negotiation</div>
+                </div>
+
+                <div class="vendor-card">
+                    <div class="vendor-number">02</div>
+                    <div class="vendor-name">Critical Impact Ltd.</div>
+                    <div class="vendor-specialty">Secure payment facilitation with full compliance and audit trails.</div>
+                    <div class="vendor-tag">Payment Facilitation</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- KYND Section -->
+        <section>
+            <div class="section-label">// Pre-Breach Intelligence</div>
+            <h2 class="section-title">Proactive Risk Assessment</h2>
+
+            <div class="kynd-section">
+                <div class="kynd-content">
+                    <h3>KYND Cyber Scanning</h3>
+                    <p>
+                        External-facing vulnerability assessment providing clear, actionable insights
+                        into your network posture. No complex scoring models - just straightforward
+                        intelligence you can act on.
+                    </p>
+
+                    <div class="vulnerability-levels">
+                        <div class="vuln-level">
+                            <div class="vuln-indicator critical"></div>
+                            <div class="vuln-label">Critical</div>
+                            <div class="vuln-desc">Immediate action required</div>
+                        </div>
+                        <div class="vuln-level">
+                            <div class="vuln-indicator moderate"></div>
+                            <div class="vuln-label">Moderate</div>
+                            <div class="vuln-desc">Address within 30 days</div>
+                        </div>
+                        <div class="vuln-level">
+                            <div class="vuln-indicator low"></div>
+                            <div class="vuln-label">Low</div>
+                            <div class="vuln-desc">Monitor and schedule</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="kynd-visual">
+                    <img src="images/Kynd Dashboard.png" alt="KYND Cyber Scanning Dashboard" class="kynd-image">
+                </div>
+            </div>
+        </section>
+
+        <!-- Stats Bar -->
+        <section>
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <div class="stat-value">24/7</div>
+                    <div class="stat-label">Global Coverage</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">6</div>
+                    <div class="stat-label">Elite Vendors</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">2</div>
+                    <div class="stat-label">Legal Partners</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">&lt;4hr</div>
+                    <div class="stat-label">Response Time</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-cta">Ready to strengthen your cyber resilience?</div>
+        <div class="footer-contact">
+            <div class="contact-item">
+                <span>Command Center:</span> Gross, Orad, Schlimoff & Co.
+            </div>
+            <div class="contact-item">
+                <span>U.S. Liaison:</span> Pierson Ferdinand
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

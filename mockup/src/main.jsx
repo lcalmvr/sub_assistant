@@ -26,9 +26,15 @@ import AppQuote16 from './AppQuote16.jsx'
 import AppQuote17 from './AppQuote17.jsx'
 import AppQuoteAccordion from './AppQuoteAccordion.jsx'
 import AppLayoutComparison from './AppLayoutComparison.jsx'
+import AppTermDates1 from './AppTermDates1.jsx'
+import AppTermDates2 from './AppTermDates2.jsx'
+import AppTermDates3 from './AppTermDates3.jsx'
 import './index.css'
 
 const versions = {
+  termDates1: { component: AppTermDates1, label: 'Term Dates v1 - Stacked Range Builder' },
+  termDates2: { component: AppTermDates2, label: 'Term Dates v2 - Vertical Timeline' },
+  termDates3: { component: AppTermDates3, label: 'Term Dates v3 - Natural Language Rules' },
   layouts: { component: AppLayoutComparison, label: 'Layout Comparison - C1/C2/C3' },
   accordion: { component: AppQuoteAccordion, label: 'Quote Accordion - Summary as Home' },
   quote17: { component: AppQuote17, label: 'Quote v17 - Scoped Variations + Defaults' },
@@ -57,7 +63,7 @@ const versions = {
   mobile: { component: AppMobile, label: 'Mobile - Drawer' },
 };
 
-const DEFAULT_VERSION = 'layouts';
+const DEFAULT_VERSION = 'termDates1';
 
 function MockupSwitcher() {
   const [version, setVersion] = useState(() => {

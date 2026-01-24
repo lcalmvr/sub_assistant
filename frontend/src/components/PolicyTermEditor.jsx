@@ -15,6 +15,8 @@
  * - onTbdToggle: (datesTbd: boolean) => void
  *   - Called when TBD toggle is clicked
  * - compact?: boolean - use compact spacing
+ * - headerAction?: React.ReactNode - optional action to render in header
+ * - readOnly?: boolean - disable all inputs (used when multiple dates are managed via modal)
  */
 
 export default function PolicyTermEditor({
@@ -24,6 +26,8 @@ export default function PolicyTermEditor({
   onDatesChange,
   onTbdToggle,
   compact = false,
+  headerAction = null,
+  readOnly = false,
 }) {
   const handleTbdToggle = () => {
     const newTbd = !datesTbd;
@@ -51,19 +55,23 @@ export default function PolicyTermEditor({
 
   return (
     <div className={spacingClass}>
-      {/* Policy Period Header with TBD toggle */}
+      {/* Header with TBD toggle */}
       <div className="flex items-center justify-between">
-        <label className="text-xs font-semibold text-gray-500 uppercase">Policy Period</label>
-        <button
-          onClick={handleTbdToggle}
-          className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
-            datesTbd
-              ? 'bg-amber-100 text-amber-700'
-              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-          }`}
-        >
-          TBD
-        </button>
+        {headerAction || (
+          <label className="text-xs font-semibold text-gray-500 uppercase">Policy Period</label>
+        )}
+        {!readOnly && (
+          <button
+            onClick={handleTbdToggle}
+            className={`text-[10px] px-2 py-0.5 rounded font-medium transition-colors ${
+              datesTbd
+                ? 'bg-amber-100 text-amber-700'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            TBD
+          </button>
+        )}
       </div>
 
       {/* Dates - show inputs or TBD message */}
@@ -79,7 +87,12 @@ export default function PolicyTermEditor({
               type="date"
               value={effectiveDate}
               onChange={(e) => handleEffectiveDateChange(e.target.value)}
-              className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none hover:border-gray-400 transition-colors"
+              disabled={readOnly}
+              className={`w-full text-sm border rounded-md px-2 py-1.5 outline-none transition-colors ${
+                readOnly
+                  ? 'border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
+                  : 'border-gray-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 hover:border-gray-400'
+              }`}
             />
           </div>
           <div>
@@ -88,7 +101,12 @@ export default function PolicyTermEditor({
               type="date"
               value={expirationDate}
               onChange={(e) => handleExpirationDateChange(e.target.value)}
-              className="w-full text-sm border border-gray-300 rounded-md px-2 py-1.5 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 outline-none hover:border-gray-400 transition-colors"
+              disabled={readOnly}
+              className={`w-full text-sm border rounded-md px-2 py-1.5 outline-none transition-colors ${
+                readOnly
+                  ? 'border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed'
+                  : 'border-gray-300 focus:border-purple-400 focus:ring-1 focus:ring-purple-200 hover:border-gray-400'
+              }`}
             />
           </div>
         </div>

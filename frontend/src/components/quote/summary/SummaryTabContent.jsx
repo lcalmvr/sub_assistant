@@ -1583,6 +1583,7 @@ export default function SummaryTabContent({ structure, variation, submission, st
           termAppliesToPopoverId={termAppliesToPopoverId}
           setTermAppliesToPopoverId={setTermAppliesToPopoverId}
           onApplyPolicyTerm={(data) => applyPolicyTermSelection.mutate(data)}
+          tower={tower}
         />
 
         {/* Retro Card */}
@@ -1686,6 +1687,8 @@ export default function SummaryTabContent({ structure, variation, submission, st
       {summaryScope !== 'submission' && (
         <TowerCard
           structure={structure}
+          variation={variation}
+          submission={submission}
           tower={tower}
           ourLimit={ourLimit}
           attachment={attachment}
