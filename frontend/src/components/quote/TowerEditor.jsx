@@ -406,8 +406,16 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                   const premiumBasis = layer.premium_basis || PREMIUM_BASIS.ANNUAL;
                   const rpm = annualPremium && layer.limit ? Math.round(annualPremium / (layer.limit / 1_000_000)) : null;
                   // ILF = this layer's RPM / preceding layer's RPM
-                  // layers is sorted by attachment ascending (index 0 = primary), so preceding is actualIdx - 1
-                  const precedingLayer = actualIdx > 0 ? layers[actualIdx - 1] : null;
+                  // layers is sorted by attachment ascending (index 0 = primary)
+                  // When layers share same attachment (quota share), skip to find actual underlying layer
+                  let precedingLayer = null;
+                  for (let i = actualIdx - 1; i >= 0; i--) {
+                    const prevAttach = calculateAttachment(layers, i);
+                    if (prevAttach < attachment) {
+                      precedingLayer = layers[i];
+                      break;
+                    }
+                  }
                   const precedingAnnual = precedingLayer ? getAnnualPremium(precedingLayer) : null;
                   const precedingRpm = precedingAnnual && precedingLayer?.limit ? precedingAnnual / (precedingLayer.limit / 1_000_000) : null;
                   const ilfPercent = rpm && precedingRpm ? Math.round((rpm / precedingRpm) * 100) : null;
@@ -498,28 +506,41 @@ export default function TowerEditor({ quote, onSave, isPending, embedded = false
                   {showQsColumn && (
                     <td className={`px-4 ${isEditing ? 'py-1.5' : 'py-3'}`}>
                       {isEditing ? (
-                        <select
+                        <input
                           ref={(el) => { qsInputRefs.current[displayIdx] = el; }}
-                          className="text-sm text-gray-500 bg-white border border-gray-200 rounded px-2 py-1 focus:border-purple-500 outline-none cursor-pointer"
-                          value={layer.quota_share || ''}
-                          onChange={(e) => {
+                          type="text"
+                          className="w-20 text-sm text-gray-500 bg-white border border-gray-200 rounded px-2 py-1 focus:border-purple-500 outline-none"
+                          placeholder="—"
+                          defaultValue={layer.quota_share ? formatCompact(layer.quota_share) : ''}
+                          onBlur={(e) => {
                             const newLayers = [...layers];
-                            const val = e.target.value ? Number(e.target.value) : null;
-                            if (val) {
-                              newLayers[actualIdx] = { ...newLayers[actualIdx], quota_share: val };
-                            } else {
+                            const raw = e.target.value.trim().replace(/[$,]/g, '');
+                            if (!raw) {
                               const { quota_share, ...rest } = newLayers[actualIdx];
                               newLayers[actualIdx] = rest;
+                            } else {
+                              // Parse value: support M/K suffixes
+                              let val = parseFloat(raw);
+                              if (raw.toLowerCase().endsWith('m')) {
+                                val = parseFloat(raw) * 1_000_000;
+                              } else if (raw.toLowerCase().endsWith('k')) {
+                                val = parseFloat(raw) * 1_000;
+                              } else if (val < 1000) {
+                                // Assume millions if small number entered
+                                val = val * 1_000_000;
+                              }
+                              if (!isNaN(val) && val > 0) {
+                                newLayers[actualIdx] = { ...newLayers[actualIdx], quota_share: val };
+                                e.target.value = formatCompact(val);
+                              }
                             }
                             setLayers(newLayers);
                           }}
-                          onKeyDown={(e) => handleArrowNav(e, displayIdx, qsInputRefs)}
-                        >
-                          <option value="">—</option>
-                          {[5, 10, 15, 25].map(m => (
-                            <option key={m} value={m * 1_000_000}>${m}M</option>
-                          ))}
-                        </select>
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') e.target.blur();
+                            handleArrowNav(e, displayIdx, qsInputRefs);
+                          }}
+                        />
                       ) : (
                         <span className="text-gray-500">{layer.quota_share ? formatCompact(layer.quota_share) : '—'}</span>
                       )}
