@@ -73,13 +73,8 @@ sub_assistant/
 ├── docs/                  # Documentation
 ├── sandbox/               # Side projects and experiments
 └── archive/               # Deprecated code (reference only)
+    └── streamlit/         # Archived Streamlit frontend
 ```
-
-**Legacy (Streamlit):**
-- `app.py` - Streamlit entry point
-- `pages/` - Streamlit multipage routing
-- `pages_workflows/` - Streamlit page implementations
-- `pages_components/` - Streamlit UI components
 
 ## Key Features
 
@@ -92,7 +87,7 @@ sub_assistant/
 ## Documentation
 
 See [`docs/`](docs/) directory:
-- [Developer Guide](docs/developer-guide.md) - Development setup and conventions
+- [Roadmap](docs/ROADMAP.md) - Current priorities and project status
 - [Architecture](docs/architecture.md) - System architecture
 - [Folder Reference](docs/folder-reference.md) - Complete folder-by-folder guide
 
