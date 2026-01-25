@@ -16,13 +16,10 @@ AI-powered cyber insurance underwriting platform. AI extracts, analyzes, and rec
 
 What we're focused on right now:
 
-1. **Premium/Term Model** - Layer-level term dates for short-term/annual premium calculation
-   - Branch: `feature/annual-short-term-premium`
-   - Plan: [projects/active/premium-term-plan.md](projects/active/premium-term-plan.md)
-
-2. **Codebase Cleanup** - In progress
-   - Consolidated folder structure
-   - Reviewing docs for integration vs archive
+1. **Codebase Cleanup** - In progress
+   - Branch: `chore/codebase-cleanup`
+   - Consolidated folder structure, archived Streamlit
+   - Storage/extraction bug fixes
 
 ---
 
@@ -32,7 +29,6 @@ Features in progress. Each should have a doc in `projects/active/`.
 
 | Feature | Doc | Status |
 |---------|-----|--------|
-| Premium/Term Model | [premium-term-plan.md](projects/active/premium-term-plan.md) | In progress |
 | QuotePageV3 Refinements | [quotepagev3-refactor-plan.md](projects/active/quotepagev3-refactor-plan.md), [quote-v3-formatting.md](projects/active/quote-v3-formatting.md) | Ongoing |
 
 ---
