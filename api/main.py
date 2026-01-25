@@ -51,10 +51,15 @@ def check_required_config():
         print("  - See docs/guides/supabase-storage-setup.md for setup instructions")
     else:
         print("\n[OK] Supabase Storage configured")
-        # Try to verify bucket exists
+        # Check bucket exists (read-only, no auto-create)
+        bucket_name = os.getenv('STORAGE_BUCKET', 'documents')
         try:
-            if storage.ensure_bucket_exists():
-                print(f"[OK] Storage bucket '{os.getenv('STORAGE_BUCKET', 'documents')}' exists")
+            if storage.bucket_exists():
+                print(f"[OK] Storage bucket '{bucket_name}' exists")
+            else:
+                print(f"[WARNING] Storage bucket '{bucket_name}' not found!")
+                print("  - Create it in Supabase Dashboard > Storage > New bucket")
+                print("  - Or run: storage.ensure_bucket_exists()")
         except Exception as e:
             print(f"[WARNING] Could not verify storage bucket: {e}")
 

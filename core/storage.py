@@ -224,6 +224,27 @@ def delete_document(storage_key: str) -> bool:
 # Bucket management (for setup)
 # ─────────────────────────────────────────────────────────────
 
+def bucket_exists(bucket_name: str = None) -> bool:
+    """
+    Check if the storage bucket exists (read-only, no side effects).
+
+    Args:
+        bucket_name: Name of bucket (defaults to STORAGE_BUCKET env var)
+
+    Returns:
+        True if bucket exists, False otherwise
+    """
+    bucket = bucket_name or _BUCKET
+    try:
+        sb = require_sb()
+        buckets = sb.storage.list_buckets()
+        bucket_names = [b.name for b in buckets]
+        return bucket in bucket_names
+    except Exception as e:
+        print(f"[storage] Failed to check bucket existence: {e}")
+        return False
+
+
 def ensure_bucket_exists(bucket_name: str = None) -> bool:
     """
     Ensure the storage bucket exists. Creates it if not.
