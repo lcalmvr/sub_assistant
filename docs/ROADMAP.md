@@ -35,13 +35,51 @@ Features in progress. Each should have a doc in `projects/active/`.
 
 ## Backlog
 
-Planned but not started:
+Planned but not started. Full docs in `docs/projects/backlog/`.
 
+### UI/UX Improvements
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| API Router Refactor | Medium | Split api/main.py (15K lines) into routers |
-| UW Knowledge Base | Medium | Phase 13 - API layer, DB questions |
-| Endorsement Management | Medium | Phase 14 - More endorsement types |
+| Quote options grid redesign | Medium | Tighten layout, add columns, consider cards |
+| Quote section completion | Medium | "Done" indicators for UW workflow |
+| Premium card primary vs excess | Medium | Different display for layer types |
+| Coverage editor submission view | Medium | Add missing submission toggle view |
+| Policy page rework | Medium | Apply V2/V3 learnings |
+| Simplify setup page | Low | Remove header, focus on doc extraction |
+| NIST info tooltip | Low | Explain NIST on Analysis V2 tab |
+
+### Workflow Enhancements
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Prescreen immediate pickup | Medium | Skip voting, claim directly |
+| Generate quote from grid | Medium | Quick PDF generation from list |
+| Subjectivity + policy issuance | Medium | Needs scoping |
+| Mid-term additional insureds | Medium | Needs scoping |
+
+### Configuration/Choosers
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Policy form chooser | Medium | Carriers have multiple forms - needs scoping |
+| Paper carrier chooser | Medium | Insurers write on multiple papers - needs scoping |
+| Document type groupings | Low | Group docs by type in UI |
+
+### Tools
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| Endorsement manuscriptor | Medium | Custom endorsement drafting - needs scoping |
+| PDF generation standardization | Medium | Repeatable templates/approach |
+| Optimistic updates pattern | Medium | UI responsiveness guidelines |
+
+### Infrastructure
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| API Router Refactor | Medium | Split api/main.py into routers |
+| Storage fallback tests | Low | Test extraction fallback paths |
+
+### Legacy/Deferred
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| UW Knowledge Base | Low | Phase 13 - API layer, DB questions |
 | Claims Feedback Loop | Low | Phase 5 - Control → outcome correlation |
 | Collaborative Workflow | Low | UI for multi-UW workflow |
 
